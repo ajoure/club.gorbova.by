@@ -1,139 +1,148 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { Target, Lightbulb, CheckCircle2, Loader2, Save } from "lucide-react";
+import { Target, Lightbulb, CheckCircle2, Loader2, Save, Info } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useState } from "react";
 import { useBalanceWheel } from "@/hooks/useBalanceWheel";
 
 const stages = [
   { 
     key: "audit" as const, 
-    title: "Аудит", 
+    title: "Здоровье и спорт", 
     color: "hsl(217 91% 60%)",
-    description: "Анализ текущего состояния дел и ресурсов",
+    description: "Физическое и психическое состояние, уровень энергии, сон, питание и регулярная физическая активность. Основа устойчивости и продуктивности.",
+    tooltip: "Энергия, сон, питание и физическая форма. Без ресурса тела страдает всё остальное.",
     questions: [
-      "Где я нахожусь сейчас?",
-      "Какие ресурсы у меня есть?",
-      "Что работает, а что нет?"
+      "Как я оцениваю своё физическое состояние?",
+      "Достаточно ли я сплю и отдыхаю?",
+      "Что я делаю для поддержания здоровья?"
     ],
     tasks: [
-      "Провести инвентаризацию ресурсов",
-      "Составить список достижений и провалов",
-      "Оценить текущие показатели"
+      "Оценить качество сна за последнюю неделю",
+      "Составить список физических активностей",
+      "Определить одну привычку для улучшения"
     ]
   },
   { 
     key: "awareness" as const, 
-    title: "Осознание", 
+    title: "Деньги", 
     color: "hsl(258 90% 66%)",
-    description: "Понимание истинных причин и мотивов",
+    description: "Финансовая стабильность, доход, расходы, накопления и уверенность в завтрашнем дне. Материальная база жизни.",
+    tooltip: "Доход, расходы, финансовая безопасность и ощущение устойчивости.",
     questions: [
-      "Почему это важно для меня?",
-      "Какие убеждения мной управляют?",
-      "Что я избегаю признать?"
+      "Удовлетворён ли я своим доходом?",
+      "Есть ли у меня финансовая подушка?",
+      "Контролирую ли я свои расходы?"
     ],
     tasks: [
-      "Записать свои истинные мотивы",
-      "Выявить ограничивающие убеждения",
-      "Принять текущую реальность"
+      "Проанализировать доходы и расходы за месяц",
+      "Определить финансовую цель на год",
+      "Выявить возможности увеличения дохода"
     ]
   },
   { 
     key: "intention" as const, 
-    title: "Намерение", 
+    title: "Работа, карьера и бизнес", 
     color: "hsl(330 81% 60%)",
-    description: "Формирование твердого решения действовать",
+    description: "Профессиональная реализация, рост дохода, развитие бизнеса и удовлетворённость своей деятельностью.",
+    tooltip: "Реализация, рост, результаты и удовлетворённость профессиональной деятельностью.",
     questions: [
-      "Чего я действительно хочу?",
-      "Готов ли я заплатить цену?",
-      "Что я обещаю себе?"
+      "Приносит ли работа удовлетворение?",
+      "Есть ли у меня план карьерного роста?",
+      "Развиваюсь ли я профессионально?"
     ],
     tasks: [
-      "Сформулировать чёткое намерение",
-      "Принять ответственность",
-      "Зафиксировать обязательство"
+      "Оценить текущий уровень удовлетворённости работой",
+      "Составить список профессиональных целей",
+      "Определить навыки для развития"
     ]
   },
   { 
     key: "goal" as const, 
-    title: "Цель", 
+    title: "Любовь, семья и дети", 
     color: "hsl(350 89% 60%)",
-    description: "Определение конкретного желаемого результата",
+    description: "Отношения с партнёром, детьми и близкими. Эмоциональная поддержка, доверие и чувство принадлежности.",
+    tooltip: "Качество близких отношений, поддержка и эмоциональная связь.",
     questions: [
-      "Как выглядит успех?",
-      "Как я узнаю, что достиг цели?",
-      "Когда это должно произойти?"
+      "Как я оцениваю качество отношений с близкими?",
+      "Достаточно ли времени я провожу с семьёй?",
+      "Чувствую ли я поддержку и доверие?"
     ],
     tasks: [
-      "Сформулировать SMART-цель",
-      "Визуализировать результат",
-      "Установить дедлайн"
+      "Выделить время для общения с близкими",
+      "Определить, что можно улучшить в отношениях",
+      "Запланировать совместное время"
     ]
   },
   { 
     key: "task" as const, 
-    title: "Задача", 
+    title: "Окружение и друзья", 
     color: "hsl(24 94% 53%)",
-    description: "Декомпозиция цели на конкретные шаги",
+    description: "Социальные связи, друзья, коллеги и профессиональное окружение, которые влияют на мышление и результаты.",
+    tooltip: "Люди, которые формируют привычки, мышление и уровень жизни.",
     questions: [
-      "Какие шаги нужно сделать?",
-      "Что первое?",
-      "Кто может помочь?"
+      "Поддерживает ли меня моё окружение?",
+      "С кем я провожу больше всего времени?",
+      "Развивают ли меня мои связи?"
     ],
     tasks: [
-      "Разбить цель на подзадачи",
-      "Определить зависимости",
-      "Назначить ответственных"
+      "Составить список ключевых людей в жизни",
+      "Оценить качество каждого общения",
+      "Определить, какие связи укреплять"
     ]
   },
   { 
     key: "plan" as const, 
-    title: "План", 
+    title: "Личностный рост", 
     color: "hsl(48 96% 53%)",
-    description: "Выстраивание задач во времени",
+    description: "Саморазвитие, обучение, навыки, мышление, чтение и работа над качеством личности.",
+    tooltip: "Развитие навыков, обучение и работа над собой.",
     questions: [
-      "В каком порядке действовать?",
-      "Сколько времени на каждый этап?",
-      "Какие риски учесть?"
+      "Чему я научился за последний месяц?",
+      "Какие навыки хочу развить?",
+      "Читаю ли я, учусь ли?"
     ],
     tasks: [
-      "Составить дорожную карту",
-      "Расставить приоритеты",
-      "Предусмотреть план Б"
+      "Выбрать книгу или курс для изучения",
+      "Определить 3 навыка для развития",
+      "Запланировать время на обучение"
     ]
   },
   { 
     key: "action" as const, 
-    title: "Действие", 
+    title: "Хобби и развлечения", 
     color: "hsl(142 71% 45%)",
-    description: "Систематическое выполнение плана",
+    description: "Отдых, увлечения, новые впечатления и удовольствие от жизни как источник энергии и баланса.",
+    tooltip: "Отдых, удовольствие и восстановление через интересы.",
     questions: [
-      "Что я делаю сегодня?",
-      "Следую ли я плану?",
-      "Есть ли прогресс?"
+      "Есть ли у меня хобби?",
+      "Как часто я отдыхаю по-настоящему?",
+      "Что приносит мне радость?"
     ],
     tasks: [
-      "Выполнить первый шаг",
-      "Отслеживать прогресс",
-      "Корректировать действия"
+      "Составить список любимых занятий",
+      "Запланировать время для хобби",
+      "Попробовать что-то новое"
     ]
   },
   { 
     key: "reflection" as const, 
-    title: "Рефлексия", 
+    title: "Духовность", 
     color: "hsl(188 94% 43%)",
-    description: "Анализ результатов и извлечение уроков",
+    description: "Ценности, смыслы, мировоззрение, внутренняя гармония, философия или вера.",
+    tooltip: "Ценности, смыслы, внутренняя опора и гармония.",
     questions: [
-      "Что получилось?",
-      "Чему я научился?",
-      "Что сделать иначе?"
+      "Понимаю ли я свои ценности?",
+      "Есть ли у меня внутренняя опора?",
+      "Живу ли я в согласии с собой?"
     ],
     tasks: [
-      "Подвести итоги",
-      "Зафиксировать уроки",
-      "Начать новый цикл"
+      "Сформулировать свои главные ценности",
+      "Определить, что даёт смысл жизни",
+      "Выделить время для рефлексии"
     ]
   },
 ];
@@ -176,8 +185,8 @@ export default function BalanceWheel() {
             <Target className="w-7 h-7 text-primary-foreground" />
           </div>
           <div className="flex-1">
-            <h1 className="text-3xl font-bold text-foreground">Колесо баланса</h1>
-            <p className="text-muted-foreground">Стратегическое планирование через 8 этапов развития</p>
+            <h1 className="text-3xl font-bold text-foreground">Колесо жизненного баланса</h1>
+            <p className="text-muted-foreground">Оцените ключевые сферы жизни и найдите точки роста</p>
           </div>
           {saving && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -192,9 +201,9 @@ export default function BalanceWheel() {
           <div className="flex items-start gap-3">
             <Lightbulb className="w-5 h-5 text-primary shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm text-foreground font-medium">Движение по колесу</p>
+              <p className="text-sm text-foreground font-medium">Принцип колеса баланса</p>
               <p className="text-sm text-muted-foreground">
-                Каждый этап — шаг к цели. Нажмите на сектор, чтобы погрузиться в работу с этапом. Данные сохраняются автоматически.
+                Цель — не идеальные «10», а осознанное управление жизнью и ресурсами. Нажмите на сферу для подробностей.
               </p>
             </div>
           </div>
@@ -296,45 +305,55 @@ export default function BalanceWheel() {
 
           {/* Sliders */}
           <GlassCard>
-            <h3 className="font-semibold text-foreground mb-6">Оцените каждый этап (1-10)</h3>
-            <div className="space-y-4">
-              {stages.map(stage => (
-                <div 
-                  key={stage.key} 
-                  className="group p-3 -mx-3 rounded-xl hover:bg-muted/50 transition-colors cursor-pointer"
-                  onClick={() => handleStageSelect(stage)}
-                >
-                  <div className="flex justify-between items-center mb-2">
-                    <div className="flex items-center gap-2">
-                      <div 
-                        className="w-3 h-3 rounded-full transition-transform group-hover:scale-125" 
-                        style={{ backgroundColor: stage.color }} 
-                      />
-                      <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
-                        {stage.title}
-                      </span>
+            <h3 className="font-semibold text-foreground mb-6">Оцените каждую сферу (1-10)</h3>
+            <TooltipProvider>
+              <div className="space-y-4">
+                {stages.map(stage => (
+                  <div 
+                    key={stage.key} 
+                    className="group p-3 -mx-3 rounded-xl hover:bg-muted/50 transition-colors cursor-pointer"
+                    onClick={() => handleStageSelect(stage)}
+                  >
+                    <div className="flex justify-between items-center mb-2">
+                      <div className="flex items-center gap-2">
+                        <div 
+                          className="w-3 h-3 rounded-full transition-transform group-hover:scale-125" 
+                          style={{ backgroundColor: stage.color }} 
+                        />
+                        <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
+                          {stage.title}
+                        </span>
+                        <Tooltip>
+                          <TooltipTrigger asChild onClick={(e) => e.stopPropagation()}>
+                            <Info className="w-3.5 h-3.5 text-muted-foreground hover:text-primary cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-[250px]">
+                            <p className="text-xs">{stage.tooltip}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <span className="text-sm font-bold" style={{ color: stage.color }}>{values[stage.key]}</span>
                     </div>
-                    <span className="text-sm font-bold" style={{ color: stage.color }}>{values[stage.key]}</span>
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <Slider 
+                        value={[values[stage.key]]} 
+                        min={1} 
+                        max={10} 
+                        step={1} 
+                        onValueChange={(v) => updateValue(stage.key, v[0])} 
+                        className="w-full"
+                      />
+                    </div>
                   </div>
-                  <div onClick={(e) => e.stopPropagation()}>
-                    <Slider 
-                      value={[values[stage.key]]} 
-                      min={1} 
-                      max={10} 
-                      step={1} 
-                      onValueChange={(v) => updateValue(stage.key, v[0])} 
-                      className="w-full"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </TooltipProvider>
           </GlassCard>
         </div>
 
         {/* Stage cards grid */}
         <div>
-          <h2 className="text-xl font-semibold text-foreground mb-4">Этапы стратегии</h2>
+          <h2 className="text-xl font-semibold text-foreground mb-4">Сферы жизни</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {stages.map((stage, i) => (
               <GlassCard 
@@ -355,6 +374,58 @@ export default function BalanceWheel() {
             ))}
           </div>
         </div>
+
+        {/* Methodology section */}
+        <GlassCard>
+          <h2 className="text-xl font-semibold text-foreground mb-4">Как работать с колесом баланса</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full bg-primary/20 text-primary text-xs font-bold flex items-center justify-center">1</div>
+                <h4 className="font-medium text-foreground">Оценка</h4>
+              </div>
+              <p className="text-sm text-muted-foreground pl-8">
+                Оцените каждую сферу по шкале от 1 до 10, опираясь на реальное текущее состояние, а не на желаемый результат.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full bg-primary/20 text-primary text-xs font-bold flex items-center justify-center">2</div>
+                <h4 className="font-medium text-foreground">Анализ формы</h4>
+              </div>
+              <p className="text-sm text-muted-foreground pl-8">
+                Посмотрите на форму колеса: ровное — устойчивость, перекосы — зоны напряжения, провалы — точки риска.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full bg-primary/20 text-primary text-xs font-bold flex items-center justify-center">3</div>
+                <h4 className="font-medium text-foreground">Фокус</h4>
+              </div>
+              <p className="text-sm text-muted-foreground pl-8">
+                Выберите 1–2 сферы с наименьшими значениями. Баланс достигается не усилением сильных зон, а подтягиванием слабых.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full bg-primary/20 text-primary text-xs font-bold flex items-center justify-center">4</div>
+                <h4 className="font-medium text-foreground">Малые действия</h4>
+              </div>
+              <p className="text-sm text-muted-foreground pl-8">
+                Определите 1–2 простых действия для улучшения выбранных сфер.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full bg-primary/20 text-primary text-xs font-bold flex items-center justify-center">5</div>
+                <h4 className="font-medium text-foreground">Регулярность</h4>
+              </div>
+              <p className="text-sm text-muted-foreground pl-8">
+                Возвращайтесь к колесу раз в месяц или квартал, чтобы отслеживать динамику.
+              </p>
+            </div>
+          </div>
+        </GlassCard>
       </div>
 
       {/* Stage detail dialog */}
