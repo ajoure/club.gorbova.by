@@ -1,5 +1,8 @@
 import { useState } from "react";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useAdminContent, ContentItem, ContentFormData } from "@/hooks/useAdminContent";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +24,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -36,77 +49,39 @@ import {
   Edit,
   Eye,
   EyeOff,
+  Trash2,
   FileText,
   Video,
   BookOpen,
   Loader2
 } from "lucide-react";
-import { toast } from "sonner";
-
-// Mock content data for demonstration
-interface ContentItem {
-  id: string;
-  title: string;
-  type: "article" | "video" | "course";
-  status: "draft" | "published" | "hidden";
-  accessLevel: "free" | "paid" | "premium";
-  createdAt: string;
-  updatedAt: string;
-}
-
-const mockContent: ContentItem[] = [
-  {
-    id: "1",
-    title: "Введение в финансовое планирование",
-    type: "article",
-    status: "published",
-    accessLevel: "free",
-    createdAt: "2024-01-15",
-    updatedAt: "2024-01-20",
-  },
-  {
-    id: "2",
-    title: "Матрица Эйзенхауэра: Полное руководство",
-    type: "video",
-    status: "published",
-    accessLevel: "paid",
-    createdAt: "2024-01-10",
-    updatedAt: "2024-01-18",
-  },
-  {
-    id: "3",
-    title: "Курс по личной эффективности",
-    type: "course",
-    status: "draft",
-    accessLevel: "premium",
-    createdAt: "2024-01-05",
-    updatedAt: "2024-01-25",
-  },
-  {
-    id: "4",
-    title: "Колесо баланса: Как использовать",
-    type: "article",
-    status: "hidden",
-    accessLevel: "free",
-    createdAt: "2024-01-01",
-    updatedAt: "2024-01-22",
-  },
-];
 
 export default function AdminContent() {
   const { hasPermission } = usePermissions();
+  const { items, loading, createContent, updateContent, deleteContent, publishContent, hideContent } = useAdminContent();
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [editDialog, setEditDialog] = useState<{ open: boolean; item: ContentItem | null }>({
     open: false,
     item: null,
   });
-  const [loading] = useState(false);
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; item: ContentItem | null }>({
+    open: false,
+    item: null,
+  });
+  const [formData, setFormData] = useState<ContentFormData>({
+    title: "",
+    type: "article",
+    content: "",
+    status: "draft",
+    access_level: "free",
+  });
+  const [saving, setSaving] = useState(false);
 
   const canEdit = hasPermission("content.edit");
   const canPublish = hasPermission("content.publish");
 
-  const filteredContent = mockContent.filter((item) => {
+  const filteredContent = items.filter((item) => {
     const matchesSearch = item.title.toLowerCase().includes(search.toLowerCase());
     const matchesTab = activeTab === "all" || item.type === activeTab;
     return matchesSearch && matchesTab;
@@ -164,17 +139,62 @@ export default function AdminContent() {
     }
   };
 
-  const handleSaveContent = () => {
-    toast.success("Контент сохранен");
-    setEditDialog({ open: false, item: null });
+  const openEditDialog = (item: ContentItem | null) => {
+    if (item) {
+      setFormData({
+        title: item.title,
+        type: item.type,
+        content: item.content || "",
+        status: item.status,
+        access_level: item.access_level,
+      });
+    } else {
+      setFormData({
+        title: "",
+        type: "article",
+        content: "",
+        status: "draft",
+        access_level: "free",
+      });
+    }
+    setEditDialog({ open: true, item });
   };
 
-  const handlePublish = (item: ContentItem) => {
-    toast.success(`${item.title} опубликован`);
+  const handleSaveContent = async () => {
+    if (!formData.title.trim()) {
+      return;
+    }
+
+    setSaving(true);
+    let success: boolean;
+
+    if (editDialog.item) {
+      success = await updateContent(editDialog.item.id, formData);
+    } else {
+      success = await createContent(formData);
+    }
+
+    setSaving(false);
+    if (success) {
+      setEditDialog({ open: false, item: null });
+    }
   };
 
-  const handleHide = (item: ContentItem) => {
-    toast.success(`${item.title} скрыт`);
+  const handleDelete = async () => {
+    if (!deleteDialog.item) return;
+    
+    const success = await deleteContent(deleteDialog.item.id);
+    if (success) {
+      setDeleteDialog({ open: false, item: null });
+    }
+  };
+
+  const handlePublish = async (item: ContentItem) => {
+    await publishContent(item.id);
+  };
+
+  const handleHide = async (item: ContentItem) => {
+    await hideContent(item.id);
   };
 
   if (loading) {
@@ -200,7 +220,7 @@ export default function AdminContent() {
             />
           </div>
           {canEdit && (
-            <Button onClick={() => setEditDialog({ open: true, item: null })}>
+            <Button onClick={() => openEditDialog(null)}>
               <Plus className="w-4 h-4 mr-2" />
               Добавить
             </Button>
@@ -210,75 +230,91 @@ export default function AdminContent() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
-          <TabsTrigger value="all">Все</TabsTrigger>
-          <TabsTrigger value="article">Статьи</TabsTrigger>
-          <TabsTrigger value="video">Видео</TabsTrigger>
-          <TabsTrigger value="course">Курсы</TabsTrigger>
+          <TabsTrigger value="all">Все ({items.length})</TabsTrigger>
+          <TabsTrigger value="article">Статьи ({items.filter(i => i.type === "article").length})</TabsTrigger>
+          <TabsTrigger value="video">Видео ({items.filter(i => i.type === "video").length})</TabsTrigger>
+          <TabsTrigger value="course">Курсы ({items.filter(i => i.type === "course").length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value={activeTab} className="mt-4">
           <GlassCard>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Название</TableHead>
-                  <TableHead>Тип</TableHead>
-                  <TableHead>Статус</TableHead>
-                  <TableHead>Доступ</TableHead>
-                  <TableHead>Обновлен</TableHead>
-                  <TableHead className="w-[150px]">Действия</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredContent.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-medium">{item.title}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {getTypeIcon(item.type)}
-                        <span>{getTypeName(item.type)}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>{getStatusBadge(item.status)}</TableCell>
-                    <TableCell>{getAccessBadge(item.accessLevel)}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {item.updatedAt}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {canEdit && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setEditDialog({ open: true, item })}
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                        )}
-                        {canPublish && item.status !== "published" && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handlePublish(item)}
-                          >
-                            <Eye className="w-4 h-4" />
-                          </Button>
-                        )}
-                        {canPublish && item.status === "published" && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleHide(item)}
-                          >
-                            <EyeOff className="w-4 h-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
+            {filteredContent.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                {search ? "Ничего не найдено" : "Контент пока не добавлен"}
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Название</TableHead>
+                    <TableHead>Тип</TableHead>
+                    <TableHead>Статус</TableHead>
+                    <TableHead>Доступ</TableHead>
+                    <TableHead>Обновлен</TableHead>
+                    <TableHead className="w-[150px]">Действия</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredContent.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-medium">{item.title}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {getTypeIcon(item.type)}
+                          <span>{getTypeName(item.type)}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>{getStatusBadge(item.status)}</TableCell>
+                      <TableCell>{getAccessBadge(item.access_level)}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {format(new Date(item.updated_at), "dd MMM yyyy HH:mm", { locale: ru })}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          {canEdit && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditDialog(item)}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {canPublish && item.status !== "published" && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handlePublish(item)}
+                            >
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {canPublish && item.status === "published" && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleHide(item)}
+                            >
+                              <EyeOff className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {canEdit && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => setDeleteDialog({ open: true, item })}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </GlassCard>
         </TabsContent>
       </Tabs>
@@ -296,14 +332,20 @@ export default function AdminContent() {
               <Label htmlFor="title">Название</Label>
               <Input
                 id="title"
-                defaultValue={editDialog.item?.title || ""}
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 placeholder="Введите название"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Тип контента</Label>
-                <Select defaultValue={editDialog.item?.type || "article"}>
+                <Select
+                  value={formData.type}
+                  onValueChange={(value: "article" | "video" | "course") => 
+                    setFormData({ ...formData, type: value })
+                  }
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -316,7 +358,12 @@ export default function AdminContent() {
               </div>
               <div className="space-y-2">
                 <Label>Уровень доступа</Label>
-                <Select defaultValue={editDialog.item?.accessLevel || "free"}>
+                <Select
+                  value={formData.access_level}
+                  onValueChange={(value: "free" | "paid" | "premium") => 
+                    setFormData({ ...formData, access_level: value })
+                  }
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -329,10 +376,30 @@ export default function AdminContent() {
               </div>
             </div>
             <div className="space-y-2">
+              <Label>Статус</Label>
+              <Select
+                value={formData.status}
+                onValueChange={(value: "draft" | "published" | "hidden") => 
+                  setFormData({ ...formData, status: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="draft">Черновик</SelectItem>
+                  <SelectItem value="published">Опубликован</SelectItem>
+                  <SelectItem value="hidden">Скрыт</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="content">Содержимое</Label>
               <Textarea
                 id="content"
                 rows={6}
+                value={formData.content}
+                onChange={(e) => setFormData({ ...formData, content: e.target.value })}
                 placeholder="Введите содержимое..."
               />
             </div>
@@ -341,12 +408,30 @@ export default function AdminContent() {
             <Button variant="outline" onClick={() => setEditDialog({ open: false, item: null })}>
               Отмена
             </Button>
-            <Button onClick={handleSaveContent}>
+            <Button onClick={handleSaveContent} disabled={saving || !formData.title.trim()}>
+              {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               Сохранить
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteDialog.open} onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить контент?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Вы уверены, что хотите удалить "{deleteDialog.item?.title}"? Это действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

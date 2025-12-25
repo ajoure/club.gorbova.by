@@ -71,6 +71,42 @@ export type Database = {
         }
         Relationships: []
       }
+      content: {
+        Row: {
+          access_level: string
+          author_id: string
+          content: string | null
+          created_at: string
+          id: string
+          status: string
+          title: string
+          type: string
+          updated_at: string
+        }
+        Insert: {
+          access_level?: string
+          author_id: string
+          content?: string | null
+          created_at?: string
+          id?: string
+          status?: string
+          title: string
+          type?: string
+          updated_at?: string
+        }
+        Update: {
+          access_level?: string
+          author_id?: string
+          content?: string | null
+          created_at?: string
+          id?: string
+          status?: string
+          title?: string
+          type?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       eisenhower_tasks: {
         Row: {
           category_id: string | null
