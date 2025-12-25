@@ -45,7 +45,7 @@ const quickLinks = [
 
 const leaderTools = [
   {
-    title: "Матрица Эйзенхауэра",
+    title: "Матрица продуктивности",
     description: "Приоритизация задач по важности и срочности",
     icon: LayoutGrid,
     url: "/tools/eisenhower",

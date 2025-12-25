@@ -56,6 +56,7 @@ interface TaskEditModalProps {
   onDelete: () => void;
   isNew?: boolean;
   defaultQuadrant?: string;
+  defaultCategoryId?: string;
 }
 
 const quadrantOptions = [
@@ -106,6 +107,7 @@ export function TaskEditModal({
   onDelete,
   isNew = false,
   defaultQuadrant,
+  defaultCategoryId,
 }: TaskEditModalProps) {
   const [content, setContent] = useState("");
   const [quadrant, setQuadrant] = useState<string | null>(null);
@@ -152,18 +154,18 @@ export function TaskEditModal({
       setUseAiQuadrant(false);
       setUseAiSphere(false);
     } else {
-      // New task - start with empty/null values
+      // New task - start with empty/null values or defaults
       setContent("");
       setQuadrant(null); // No priority by default for new tasks
       setCompleted(false);
       setDeadlineDate(undefined);
       setDeadlineTime("");
-      setSphereId("none");
+      setSphereId(defaultCategoryId || "none");
       setAiRecommendation(null);
       setUseAiQuadrant(false);
       setUseAiSphere(false);
     }
-  }, [task, open]);
+  }, [task, open, defaultCategoryId]);
 
   const requestAiAnalysis = async () => {
     if (!content.trim()) return;

@@ -141,7 +141,7 @@ export function useWheelTasks(sphereKey?: string) {
     setTasks(prev => [...prev, wheelTask]);
     toast({
       title: "Задача добавлена",
-      description: "Задача также добавлена в матрицу Эйзенхауэра",
+      description: "Задача также добавлена в матрицу продуктивности",
     });
     return wheelTask;
   };

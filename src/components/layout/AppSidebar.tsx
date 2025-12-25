@@ -36,7 +36,7 @@ const mainMenuItems = [
 ];
 
 const leaderToolsItems = [
-  { title: "Матрица Эйзенхауэра", url: "/tools/eisenhower", icon: LayoutGrid },
+  { title: "Матрица продуктивности", url: "/tools/eisenhower", icon: LayoutGrid },
   { title: "Колесо баланса", url: "/tools/balance-wheel", icon: Target },
 ];
 

@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Plus, Loader2, ListTodo, X, Sparkles } from "lucide-react";
+import { Plus, Loader2, ListTodo, X, Sparkles, Expand } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWheelTasks, WheelTask } from "@/hooks/useWheelTasks";
 import { TaskEditModal } from "@/components/eisenhower/TaskEditModal";
 import {
@@ -37,6 +38,9 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
   // Task edit modal state
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<WheelTask | null>(null);
+  
+  // New task modal state (expanded creation)
+  const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
   
   // Delete confirmation
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -100,6 +104,25 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
       setEditModalOpen(false);
       setSelectedTask(null);
     }
+  };
+
+  const handleSaveNewTask = async (updates: {
+    content: string;
+    quadrant: string | null;
+    completed: boolean;
+    deadline_date: string | null;
+    deadline_time: string | null;
+    category_id: string | null;
+    importance: number;
+    urgency: number;
+  }) => {
+    if (!updates.content.trim()) return;
+    
+    // Create task via addTask - it will sync with Productivity Matrix
+    await addTask(updates.content.trim(), sphereKey);
+    
+    // TODO: If there's a linked eisenhower task, update it with deadline/quadrant
+    setNewTaskModalOpen(false);
   };
 
   // Map wheel task to format expected by TaskEditModal
@@ -213,15 +236,29 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
               <Plus className="w-4 h-4" />
             )}
           </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline"
+                size="sm"
+                onClick={() => setNewTaskModalOpen(true)}
+              >
+                <Expand className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Расширенное добавление задачи</p>
+            </TooltipContent>
+          </Tooltip>
         </div>
         
         <p className="text-[10px] text-muted-foreground flex items-center gap-1">
           <Sparkles className="w-3 h-3" />
-          Откройте задачу для AI-анализа приоритета. Задачи синхронизируются с Матрицей Эйзенхауэра.
+          Откройте задачу для AI-анализа приоритета. Задачи синхронизируются с Матрицей продуктивности.
         </p>
       </div>
 
-      {/* Task edit modal - reusing from Eisenhower Matrix */}
+      {/* Task edit modal - reusing from Productivity Matrix */}
       {selectedTask && (
         <TaskEditModal
           open={editModalOpen}
@@ -232,13 +269,23 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
         />
       )}
 
+      {/* New task modal - for expanded creation */}
+      <TaskEditModal
+        open={newTaskModalOpen}
+        onOpenChange={setNewTaskModalOpen}
+        task={null}
+        onSave={handleSaveNewTask}
+        onDelete={() => setNewTaskModalOpen(false)}
+        defaultCategoryId={sphereKey}
+      />
+
       {/* Delete confirmation dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Удалить задачу?</AlertDialogTitle>
             <AlertDialogDescription>
-              Это действие нельзя отменить. Задача будет удалена из сферы и Матрицы Эйзенхауэра.
+              Это действие нельзя отменить. Задача будет удалена из сферы и Матрицы продуктивности.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

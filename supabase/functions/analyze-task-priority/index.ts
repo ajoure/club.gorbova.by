@@ -113,7 +113,7 @@ serve(async (req) => {
 
     const spheresList = allSpheres.map(s => `- ${s.id}: ${s.name}`).join("\n");
 
-    const prompt = `Определи приоритет и сферу задачи для Матрицы Эйзенхауэра.
+    const prompt = `Определи приоритет и сферу задачи для Матрицы продуктивности.
 
 Задача: "${title}"
 ${categoryInfo}

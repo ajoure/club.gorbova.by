@@ -430,7 +430,7 @@ export default function EisenhowerMatrix() {
               <LayoutGrid className="w-7 h-7 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold text-foreground">Матрица Эйзенхауэра</h1>
+              <h1 className="text-3xl font-bold text-foreground">Матрица продуктивности</h1>
               <p className="text-muted-foreground">Перетаскивайте задачи между секторами для приоритизации</p>
             </div>
           </div>
