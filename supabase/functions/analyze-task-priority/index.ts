@@ -22,41 +22,22 @@ const AVAILABLE_SPHERES = [
   { id: "projects", name: "Проекты" },
 ];
 
-// Get allowed origins from environment or use defaults
-const getAllowedOrigins = (): string[] => {
-  const origins = [
-    "https://hdjgkjceownmmnrqqtuz.lovableproject.com",
-    "https://gorbova.lovable.app"
-  ];
-  const customOrigin = Deno.env.get("ALLOWED_ORIGIN");
-  if (customOrigin) {
-    origins.push(customOrigin);
-  }
-  return origins;
-};
-
-const getCorsHeaders = (origin: string | null): Record<string, string> => {
-  const allowedOrigins = getAllowedOrigins();
-  const allowedOrigin = origin && allowedOrigins.some(o => origin.startsWith(o.replace(/\/$/, ''))) 
-    ? origin 
-    : allowedOrigins[0];
-  
-  return {
-    "Access-Control-Allow-Origin": allowedOrigin,
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Credentials": "true",
-  };
+// Use permissive CORS for Lovable preview environments
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 serve(async (req) => {
-  const origin = req.headers.get("origin");
-  const corsHeaders = getCorsHeaders(origin);
-
+  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    console.log("Request received, validating auth...");
+    
     // Validate JWT and get user
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
@@ -71,6 +52,7 @@ serve(async (req) => {
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
     
     if (!supabaseUrl || !supabaseAnonKey) {
+      console.error("Missing Supabase config");
       throw new Error("Supabase configuration missing");
     }
 
@@ -90,7 +72,10 @@ serve(async (req) => {
 
     console.log("Authenticated user:", user.id);
 
-    const { title, category, deadline_date, deadline_time, user_spheres } = await req.json();
+    const body = await req.json();
+    const { title, category, deadline_date, deadline_time, user_spheres } = body;
+    
+    console.log("Analyzing task:", title);
     
     // Input validation
     if (!title || typeof title !== 'string' || title.length > 500) {
@@ -103,6 +88,7 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     
     if (!LOVABLE_API_KEY) {
+      console.error("LOVABLE_API_KEY not found");
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
@@ -124,116 +110,127 @@ serve(async (req) => {
 
     const spheresList = allSpheres.map(s => `- ${s.id}: ${s.name}`).join("\n");
 
-    const prompt = `Ты эксперт по продуктивности и тайм-менеджменту. Определи приоритет и сферу задачи для Матрицы Эйзенхауэра.
+    const prompt = `Определи приоритет и сферу задачи для Матрицы Эйзенхауэра.
 
 Задача: "${title}"
 ${categoryInfo}
 ${deadlineInfo}
 
 КРИТЕРИИ ПРИОРИТЕТА:
-- Q1 (Срочно и Важно): Критические задачи с близким дедлайном, влияющие на ключевые цели
-- Q2 (Важно, не Срочно): Стратегические задачи развития, без острого дедлайна
-- Q3 (Срочно, не Важно): Рутинные срочные дела, можно делегировать
-- Q4 (Не Срочно, не Важно): Развлечения, отвлекающие задачи
+- q1: Срочно и Важно (критические задачи с близким дедлайном)
+- q2: Важно, не Срочно (стратегические задачи развития)
+- q3: Срочно, не Важно (рутинные срочные дела)
+- q4: Не Срочно, не Важно (развлечения, отвлечения)
 
-ДОСТУПНЫЕ СФЕРЫ (выбери ТОЛЬКО из этого списка):
+СФЕРЫ (выбери ОДНУ):
 ${spheresList}
 
-Проанализируй задачу и определи:
-1. Приоритет (квадрант Q1-Q4)
-2. Наиболее подходящую сферу из списка выше
+Ответь JSON: {"quadrant":"q1|q2|q3|q4","quadrant_reason":"причина","sphere_id":"id","sphere_reason":"причина"}`;
 
-Ответь ТОЛЬКО в формате JSON:
-{
-  "quadrant": "q1" | "q2" | "q3" | "q4",
-  "quadrant_reason": "краткое объяснение приоритета (1 предложение)",
-  "sphere_id": "id сферы из списка",
-  "sphere_reason": "краткое объяснение выбора сферы (1 предложение)"
-}`;
+    console.log("Calling AI gateway...");
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s timeout
+    
+    try {
+      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            { role: "system", content: "Отвечай только JSON. Выбирай сферу из списка." },
+            { role: "user", content: prompt },
+          ],
+        }),
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: "Ты эксперт по продуктивности. Отвечай только в JSON формате. Всегда выбирай сферу из предоставленного списка." },
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Слишком много запросов, попробуйте позже" }), {
-          status: 429,
+      if (!response.ok) {
+        const status = response.status;
+        console.error("AI gateway error status:", status);
+        
+        if (status === 429) {
+          return new Response(JSON.stringify({ error: "Слишком много запросов, попробуйте позже" }), {
+            status: 429,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (status === 402) {
+          return new Response(JSON.stringify({ error: "Необходимо пополнить баланс" }), {
+            status: 402,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const errorText = await response.text();
+        console.error("AI gateway error:", status, errorText);
+        return new Response(JSON.stringify({ error: "Ошибка AI сервиса" }), {
+          status: 500,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Необходимо пополнить баланс" }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content || "";
+      
+      console.log("AI response received:", content.substring(0, 200));
+
+      // Parse JSON from response
+      let result;
+      try {
+        const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/) || content.match(/\{[\s\S]*\}/);
+        const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : content;
+        result = JSON.parse(jsonStr.trim());
+      } catch (parseError) {
+        console.error("Failed to parse AI response:", parseError);
+        result = { 
+          quadrant: "q2", 
+          quadrant_reason: "Рекомендуется запланировать",
+          sphere_id: null,
+          sphere_reason: null
+        };
       }
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
-      return new Response(JSON.stringify({ error: "Ошибка AI сервиса" }), {
-        status: 500,
+
+      // Map quadrant names
+      const quadrantMap: Record<string, string> = {
+        q1: "urgent-important",
+        q2: "not-urgent-important",
+        q3: "urgent-not-important",
+        q4: "not-urgent-not-important",
+      };
+
+      // Validate sphere_id exists in available spheres
+      const validSphere = allSpheres.find(s => s.id === result.sphere_id);
+      const sphereId = validSphere ? result.sphere_id : null;
+      const sphereName = validSphere?.name || null;
+
+      console.log("Returning result - quadrant:", result.quadrant, "sphere:", sphereId);
+
+      return new Response(JSON.stringify({
+        quadrant: quadrantMap[result.quadrant] || "not-urgent-important",
+        quadrant_reason: result.quadrant_reason || result.reason || "AI рекомендация",
+        sphere_id: sphereId,
+        sphere_name: sphereName,
+        sphere_reason: result.sphere_reason || null,
+      }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        console.error("AI request timeout");
+        return new Response(JSON.stringify({ error: "Превышено время ожидания AI" }), {
+          status: 504,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      throw fetchError;
     }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
-    
-    console.log("AI response:", content);
-
-    // Parse JSON from response
-    let result;
-    try {
-      // Try to extract JSON from markdown code block if present
-      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/) || content.match(/\{[\s\S]*\}/);
-      const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : content;
-      result = JSON.parse(jsonStr.trim());
-    } catch {
-      console.error("Failed to parse AI response:", content);
-      // Default to Q2 and no sphere if parsing fails
-      result = { 
-        quadrant: "q2", 
-        quadrant_reason: "Рекомендуется запланировать",
-        sphere_id: null,
-        sphere_reason: null
-      };
-    }
-
-    // Map quadrant names
-    const quadrantMap: Record<string, string> = {
-      q1: "urgent-important",
-      q2: "not-urgent-important",
-      q3: "urgent-not-important",
-      q4: "not-urgent-not-important",
-    };
-
-    // Validate sphere_id exists in available spheres
-    const validSphere = allSpheres.find(s => s.id === result.sphere_id);
-    const sphereId = validSphere ? result.sphere_id : null;
-    const sphereName = validSphere?.name || null;
-
-    console.log("Returning sphere:", sphereId, sphereName);
-
-    return new Response(JSON.stringify({
-      quadrant: quadrantMap[result.quadrant] || "not-urgent-important",
-      quadrant_reason: result.quadrant_reason || result.reason || "AI рекомендация",
-      sphere_id: sphereId,
-      sphere_name: sphereName,
-      sphere_reason: result.sphere_reason || null,
-    }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
   } catch (error) {
     console.error("Error in analyze-task-priority:", error);
     return new Response(JSON.stringify({ 
