@@ -302,7 +302,35 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Generate a unique token
+        // Get target user email
+        const { data: targetUser, error: targetUserError } = await supabaseAdmin.auth.admin.getUserById(targetUserId);
+        if (targetUserError || !targetUser?.user?.email) {
+          console.error("Get target user error:", targetUserError);
+          return new Response(JSON.stringify({ error: "Target user not found" }), {
+            status: 404,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Generate a magic link for the target user
+        const origin = req.headers.get("origin") || "http://localhost:5173";
+        const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+          type: "magiclink",
+          email: targetUser.user.email,
+          options: {
+            redirectTo: `${origin}/?impersonating=true`,
+          },
+        });
+
+        if (linkError || !linkData) {
+          console.error("Generate link error:", linkError);
+          return new Response(JSON.stringify({ error: "Failed to generate impersonation link" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Record the impersonation session
         const token = crypto.randomUUID();
         const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
@@ -316,15 +344,22 @@ serve(async (req: Request): Promise<Response> => {
           });
 
         if (insertError) {
-          console.error("Impersonation start error:", insertError);
-          return new Response(JSON.stringify({ error: "Failed to start impersonation" }), {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
+          console.error("Impersonation session insert error:", insertError);
         }
 
         await logAction("impersonate.start", targetUserId);
-        return new Response(JSON.stringify({ success: true, token, expiresAt: expiresAt.toISOString() }), {
+        
+        // Return the magic link properties for the client to use
+        const magicLinkUrl = `${origin}/auth?access_token=${linkData.properties?.hashed_token}&type=magiclink&redirect_to=${encodeURIComponent(origin + "/?impersonating=true")}`;
+        
+        return new Response(JSON.stringify({ 
+          success: true, 
+          token,
+          // Use token_hash for OTP verification
+          tokenHash: linkData.properties?.hashed_token,
+          email: targetUser.user.email,
+          expiresAt: expiresAt.toISOString() 
+        }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }

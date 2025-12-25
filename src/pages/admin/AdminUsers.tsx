@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { supabase } from "@/integrations/supabase/client";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { usePermissions } from "@/hooks/usePermissions";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -48,6 +50,7 @@ import {
 export default function AdminUsers() {
   const { users, loading, blockUser, unblockUser, deleteUser, resetPassword, forceLogout, startImpersonation } = useAdminUsers();
   const { hasPermission } = usePermissions();
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean;
@@ -81,7 +84,21 @@ export default function AdminUsers() {
         await forceLogout(userId);
         break;
       case "impersonate":
-        await startImpersonation(userId);
+        const impersonationData = await startImpersonation(userId);
+        if (impersonationData) {
+          // Use verifyOtp with token_hash to sign in as the target user
+          const { error } = await supabase.auth.verifyOtp({
+            type: "magiclink",
+            token_hash: impersonationData.tokenHash,
+          });
+          if (error) {
+            console.error("Impersonation OTP error:", error);
+          } else {
+            // Redirect to home page after successful impersonation
+            navigate("/?impersonating=true");
+            window.location.reload();
+          }
+        }
         break;
     }
     setConfirmDialog({ open: false, action: "", userId: "", email: "" });

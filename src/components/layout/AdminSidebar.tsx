@@ -25,6 +25,7 @@ import {
   ArrowLeft,
   Settings,
   Package,
+  FileText,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -61,6 +62,10 @@ export function AdminSidebar() {
 
   if (hasAnyPermission(["entitlements.view", "entitlements.manage"])) {
     adminMenuItems.push({ title: "Доступы", url: "/admin/entitlements", icon: Package });
+  }
+
+  if (hasAnyPermission(["content.view", "content.edit", "content.publish"])) {
+    adminMenuItems.push({ title: "Контент", url: "/admin/content", icon: FileText });
   }
 
   if (hasPermission("audit.view")) {
