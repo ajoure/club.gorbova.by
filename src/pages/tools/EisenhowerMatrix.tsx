@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { LayoutGrid, Plus, X, Loader2, Settings, Trash2, Info, ClipboardList, Expand } from "lucide-react";
+import { LayoutGrid, Plus, X, Loader2, Settings, Trash2, Info, ClipboardList, Expand, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MatrixAnalysisModal } from "@/components/eisenhower/MatrixAnalysisModal";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -214,6 +215,9 @@ export default function EisenhowerMatrix() {
   // Delete confirmation state
   const [taskToDelete, setTaskToDelete] = useState<EisenhowerTask | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  
+  // Analysis modal state
+  const [showAnalysisModal, setShowAnalysisModal] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -434,6 +438,15 @@ export default function EisenhowerMatrix() {
             </div>
 
             <div className="flex gap-2 ml-auto">
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => setShowAnalysisModal(true)}
+                className="gap-1"
+              >
+                <BarChart3 className="w-4 h-4" />
+                Анализ матрицы
+              </Button>
               {completedCount > 0 && (
                 <Button 
                   variant="outline" 
@@ -713,6 +726,12 @@ export default function EisenhowerMatrix() {
           onOpenChange={setShowDeleteDialog}
           taskName={taskToDelete?.content || ""}
           onConfirm={confirmDeleteTask}
+        />
+
+        <MatrixAnalysisModal
+          open={showAnalysisModal}
+          onOpenChange={setShowAnalysisModal}
+          tasks={tasks}
         />
       </DashboardLayout>
     </TooltipProvider>
