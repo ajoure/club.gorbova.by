@@ -71,7 +71,7 @@ export function TaskEditModal({
   const [completed, setCompleted] = useState(false);
   const [deadlineDate, setDeadlineDate] = useState<Date | undefined>(undefined);
   const [deadlineTime, setDeadlineTime] = useState("");
-  const [categoryId, setCategoryId] = useState<string>("");
+  const [categoryId, setCategoryId] = useState<string>("__none__");
 
   useEffect(() => {
     if (task) {
@@ -80,14 +80,14 @@ export function TaskEditModal({
       setCompleted(task.completed);
       setDeadlineDate(task.deadline_date ? parse(task.deadline_date, "yyyy-MM-dd", new Date()) : undefined);
       setDeadlineTime(task.deadline_time || "");
-      setCategoryId(task.category_id || "");
+      setCategoryId(task.category_id || "__none__");
     } else {
       setContent("");
       setQuadrant("urgent-important");
       setCompleted(false);
       setDeadlineDate(undefined);
       setDeadlineTime("");
-      setCategoryId("");
+      setCategoryId("__none__");
     }
   }, [task, open]);
 
@@ -99,7 +99,7 @@ export function TaskEditModal({
       completed,
       deadline_date: deadlineDate ? format(deadlineDate, "yyyy-MM-dd") : null,
       deadline_time: deadlineDate && deadlineTime ? deadlineTime : null,
-      category_id: categoryId || null,
+      category_id: categoryId === "__none__" ? null : categoryId,
     });
     onOpenChange(false);
   };
@@ -129,7 +129,7 @@ export function TaskEditModal({
                 <SelectValue placeholder="Без категории" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Без категории</SelectItem>
+                <SelectItem value="__none__">Без категории</SelectItem>
                 {categories.map((cat) => (
                   <SelectItem key={cat.id} value={cat.id}>
                     <div className="flex items-center gap-2">
