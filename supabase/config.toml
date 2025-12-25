@@ -2,3 +2,9 @@ project_id = "hdjgkjceownmmnrqqtuz"
 
 [functions.analyze-task-priority]
 verify_jwt = true
+
+[functions.users-admin-actions]
+verify_jwt = true
+
+[functions.roles-admin]
+verify_jwt = true
