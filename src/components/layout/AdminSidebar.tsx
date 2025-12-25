@@ -24,6 +24,7 @@ import {
   LogOut,
   ArrowLeft,
   Settings,
+  Package,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -56,6 +57,10 @@ export function AdminSidebar() {
 
   if (hasAnyPermission(["roles.view", "roles.manage", "admins.manage"])) {
     adminMenuItems.push({ title: "Сотрудники и роли", url: "/admin/roles", icon: Shield });
+  }
+
+  if (hasAnyPermission(["entitlements.view", "entitlements.manage"])) {
+    adminMenuItems.push({ title: "Доступы", url: "/admin/entitlements", icon: Package });
   }
 
   if (hasPermission("audit.view")) {

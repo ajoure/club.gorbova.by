@@ -18,6 +18,7 @@ import { AdminLayout } from "./components/layout/AdminLayout";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminRoles from "./pages/admin/AdminRoles";
 import AdminAudit from "./pages/admin/AdminAudit";
+import AdminEntitlements from "./pages/admin/AdminEntitlements";
 
 const queryClient = new QueryClient();
 
@@ -42,6 +43,7 @@ const App = () => (
             <Route path="/admin/users" element={<AdminLayout><AdminUsers /></AdminLayout>} />
             <Route path="/admin/roles" element={<AdminLayout><AdminRoles /></AdminLayout>} />
             <Route path="/admin/audit" element={<AdminLayout><AdminAudit /></AdminLayout>} />
+            <Route path="/admin/entitlements" element={<AdminLayout><AdminEntitlements /></AdminLayout>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>
