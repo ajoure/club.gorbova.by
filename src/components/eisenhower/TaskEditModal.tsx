@@ -51,6 +51,7 @@ interface TaskEditModalProps {
 }
 
 const quadrantOptions = [
+  { value: "inbox", label: "📥 Входящие" },
   { value: "urgent-important", label: "Q1: Срочно и Важно" },
   { value: "not-urgent-important", label: "Q2: Важно, не Срочно" },
   { value: "urgent-not-important", label: "Q3: Срочно, не Важно" },

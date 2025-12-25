@@ -15,7 +15,7 @@ export interface EisenhowerTask {
   category_id: string | null;
 }
 
-type QuadrantType = "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important";
+type QuadrantType = "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox";
 
 function getImportanceUrgency(quadrant: QuadrantType): { important: boolean; urgent: boolean } {
   switch (quadrant) {
@@ -23,6 +23,7 @@ function getImportanceUrgency(quadrant: QuadrantType): { important: boolean; urg
     case "not-urgent-important": return { important: true, urgent: false };
     case "urgent-not-important": return { important: false, urgent: true };
     case "not-urgent-not-important": return { important: false, urgent: false };
+    case "inbox": return { important: false, urgent: false };
   }
 }
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { LayoutGrid, Plus, X, GripVertical, Loader2, Settings, Trash2, Info, Check } from "lucide-react";
+import { LayoutGrid, Plus, X, GripVertical, Loader2, Settings, Trash2, Info, Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -73,7 +73,7 @@ const quadrantConfig: Record<string, Quadrant> = {
   },
 };
 
-type StatusFilter = "all" | "active" | "completed";
+type StatusFilter = "all" | "active" | "completed" | "inbox";
 
 function isOverdue(task: EisenhowerTask): boolean {
   if (!task.deadline_date || task.completed) return false;
@@ -214,9 +214,17 @@ export default function EisenhowerMatrix() {
   const handleAddTask = async (quadrantKey: string) => {
     if (!newTask[quadrantKey]?.trim()) return;
     
-    const dbKey = quadrantConfig[quadrantKey].dbKey as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important";
-    await addTask(newTask[quadrantKey].trim(), dbKey);
+    const dbKey = quadrantKey === "inbox" 
+      ? "inbox" 
+      : quadrantConfig[quadrantKey].dbKey as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important";
+    await addTask(newTask[quadrantKey].trim(), dbKey as any);
     setNewTask(prev => ({ ...prev, [quadrantKey]: "" }));
+  };
+
+  const handleAddInboxTask = async () => {
+    if (!newTask["inbox"]?.trim()) return;
+    await addTask(newTask["inbox"].trim(), "inbox" as any);
+    setNewTask(prev => ({ ...prev, inbox: "" }));
   };
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -235,7 +243,7 @@ export default function EisenhowerMatrix() {
 
     // Check if dropped on a quadrant container
     if (Object.keys(quadrantConfig).includes(overIdStr)) {
-      const newQuadrant = quadrantConfig[overIdStr].dbKey as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important";
+      const newQuadrant = quadrantConfig[overIdStr].dbKey as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox";
       await moveTask(activeTaskId, newQuadrant);
       return;
     }
@@ -243,12 +251,15 @@ export default function EisenhowerMatrix() {
     // Dropped on another task
     const overTask = tasks.find(t => t.id === overIdStr);
     if (overTask && overTask.quadrant) {
-      await moveTask(activeTaskId, overTask.quadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important");
+      await moveTask(activeTaskId, overTask.quadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox");
     }
   };
 
   const getFilteredTasks = (quadrantKey: string) => {
-    let filtered = tasks.filter(t => t.quadrant === quadrantConfig[quadrantKey].dbKey);
+    const isInbox = quadrantKey === "inbox";
+    let filtered = isInbox 
+      ? tasks.filter(t => t.quadrant === "inbox")
+      : tasks.filter(t => t.quadrant === quadrantConfig[quadrantKey].dbKey);
     
     if (statusFilter === "active") {
       filtered = filtered.filter(t => !t.completed);
@@ -263,6 +274,9 @@ export default function EisenhowerMatrix() {
     return filtered;
   };
 
+  const inboxTasks = tasks.filter(t => t.quadrant === "inbox");
+  const showInbox = statusFilter === "inbox" || inboxTasks.length > 0;
+
   const completedCount = tasks.filter(t => t.completed).length;
 
   const handleSaveTask = async (updates: {
@@ -276,7 +290,7 @@ export default function EisenhowerMatrix() {
     if (editingTask) {
       await updateTask(editingTask.id, {
         ...updates,
-        quadrant: updates.quadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important",
+        quadrant: updates.quadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox",
       });
     }
     setEditingTask(null);
@@ -328,6 +342,20 @@ export default function EisenhowerMatrix() {
                 onClick={() => setStatusFilter("all")}
               >
                 Все
+              </Button>
+              <Button 
+                variant={statusFilter === "inbox" ? "default" : "ghost"} 
+                size="sm"
+                onClick={() => setStatusFilter("inbox")}
+                className="gap-1"
+              >
+                <Inbox className="w-4 h-4" />
+                Входящие
+                {inboxTasks.length > 0 && (
+                  <span className="ml-1 bg-primary/20 text-primary text-xs px-1.5 py-0.5 rounded-full">
+                    {inboxTasks.length}
+                  </span>
+                )}
               </Button>
               <Button 
                 variant={statusFilter === "active" ? "default" : "ghost"} 
@@ -395,6 +423,57 @@ export default function EisenhowerMatrix() {
               )}
             </div>
           </div>
+
+          {/* Inbox Section */}
+          {(statusFilter === "inbox" || (statusFilter === "all" && inboxTasks.length > 0)) && (
+            <GlassCard className="border-primary/30">
+              <div className="flex items-center gap-3 mb-4">
+                <Inbox className="w-5 h-5 text-primary" />
+                <div>
+                  <h3 className="font-semibold text-foreground">Входящие</h3>
+                  <p className="text-xs text-muted-foreground">Задачи для распределения по квадрантам</p>
+                </div>
+                <span className="ml-auto text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary">
+                  {getFilteredTasks("inbox").length}
+                </span>
+              </div>
+
+              <div className="space-y-2 mb-4 min-h-[60px]">
+                {getFilteredTasks("inbox").map(task => (
+                  <SortableTask
+                    key={task.id}
+                    task={task}
+                    quadrantColor="hsl(217 91% 60%)"
+                    categoryColor={getCategoryColor(task.category_id)}
+                    onRemove={() => deleteTask(task.id)}
+                    onToggleCompleted={() => toggleCompleted(task.id)}
+                    onClick={() => {
+                      setEditingTask(task);
+                      setShowEditModal(true);
+                    }}
+                  />
+                ))}
+                {getFilteredTasks("inbox").length === 0 && statusFilter === "inbox" && (
+                  <div className="h-[60px] flex items-center justify-center rounded-xl border-2 border-dashed border-border/50 text-sm text-muted-foreground">
+                    Нет входящих задач
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Новая задача во входящие..."
+                  value={newTask["inbox"] || ""}
+                  onChange={(e) => setNewTask(prev => ({ ...prev, inbox: e.target.value }))}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddInboxTask()}
+                  className="h-9 text-sm bg-background/50"
+                />
+                <Button size="sm" onClick={handleAddInboxTask} className="shrink-0">
+                  <Plus className="w-4 h-4" />
+                </Button>
+              </div>
+            </GlassCard>
+          )}
 
           {/* Axis labels */}
           <div className="relative">
