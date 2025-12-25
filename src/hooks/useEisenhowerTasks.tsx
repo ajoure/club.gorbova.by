@@ -17,7 +17,7 @@ export interface EisenhowerTask {
   urgency: number;
 }
 
-type QuadrantType = "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox";
+type QuadrantType = "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "planned";
 
 // Calculate quadrant from importance/urgency scores (1-10)
 export function calculateQuadrant(importance: number, urgency: number): QuadrantType {
@@ -34,7 +34,7 @@ function getScoresForQuadrant(quadrant: QuadrantType): { importance: number; urg
     case "not-urgent-important": return { importance: 8, urgency: 3 };
     case "urgent-not-important": return { importance: 3, urgency: 8 };
     case "not-urgent-not-important": return { importance: 3, urgency: 3 };
-    case "inbox": return { importance: 5, urgency: 5 };
+    case "planned": return { importance: 5, urgency: 5 };
   }
 }
 
@@ -44,7 +44,7 @@ function getImportanceUrgency(quadrant: QuadrantType): { important: boolean; urg
     case "not-urgent-important": return { important: true, urgent: false };
     case "urgent-not-important": return { important: false, urgent: true };
     case "not-urgent-not-important": return { important: false, urgent: false };
-    case "inbox": return { important: false, urgent: false };
+    case "planned": return { important: false, urgent: false };
   }
 }
 
@@ -88,8 +88,8 @@ export function useEisenhowerTasks() {
   }) => {
     if (!user) return null;
 
-    // If no quadrant provided or null, use "inbox" (planned tasks)
-    const finalQuadrant: QuadrantType = quadrant || "inbox";
+    // If no quadrant provided or null, use "planned" (planned tasks)
+    const finalQuadrant: QuadrantType = quadrant || "planned";
 
     // Use provided importance/urgency or calculate defaults from quadrant
     const scores = options?.importance !== undefined && options?.urgency !== undefined

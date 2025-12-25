@@ -73,7 +73,14 @@ const quadrantLabels: Record<string, string> = {
   "urgent-not-important": "Q3 — Срочно, не Важно",
   "not-urgent-not-important": "Q4 — Не Срочно, не Важно",
   "inbox": "Планируемые задачи",
+  "planned": "Планируемые задачи",
 };
+
+// Check if a sphere ID is a UUID (user custom category) vs predefined sphere
+function isValidUUID(str: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str);
+}
 
 function getScoresForQuadrant(quadrant: string | null): { importance: number; urgency: number } {
   switch (quadrant) {
@@ -235,9 +242,13 @@ export function TaskEditModal({
   const handleSave = () => {
     if (!content.trim()) return;
     
-    // If no quadrant selected (neither AI nor manual), task stays in "inbox" (planned)
-    const finalQuadrant = quadrant || "inbox";
-    const scores = getScoresForQuadrant(finalQuadrant === "inbox" ? null : finalQuadrant);
+    // If no quadrant selected (neither AI nor manual), task stays in "planned"
+    const finalQuadrant = quadrant || "planned";
+    const scores = getScoresForQuadrant(finalQuadrant === "planned" ? null : finalQuadrant);
+    
+    // Only use category_id if it's a valid UUID (user custom category)
+    // Predefined spheres (like "personal", "work") are not stored in DB
+    const categoryId = sphereId === "none" ? null : (isValidUUID(sphereId) ? sphereId : null);
     
     onSave({
       content: content.trim(),
@@ -245,7 +256,7 @@ export function TaskEditModal({
       completed,
       deadline_date: deadlineDate ? format(deadlineDate, "yyyy-MM-dd") : null,
       deadline_time: deadlineDate && deadlineTime ? deadlineTime : null,
-      category_id: sphereId === "none" ? null : sphereId,
+      category_id: categoryId,
       importance: scores.importance,
       urgency: scores.urgency,
     });

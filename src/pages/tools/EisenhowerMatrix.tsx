@@ -310,13 +310,13 @@ export default function EisenhowerMatrix() {
 
     // Check if dropped on planned area
     if (overIdStr === "planned") {
-      await moveTask(activeTaskId, "inbox");
+      await moveTask(activeTaskId, "planned");
       return;
     }
 
     // Check if dropped on a quadrant container
     if (Object.keys(quadrantConfig).includes(overIdStr)) {
-      const newQuadrant = quadrantConfig[overIdStr].dbKey as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox";
+      const newQuadrant = quadrantConfig[overIdStr].dbKey as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "planned";
       await moveTask(activeTaskId, newQuadrant);
       return;
     }
@@ -324,7 +324,7 @@ export default function EisenhowerMatrix() {
     // Dropped on another task - move to same quadrant
     const overTask = tasks.find(t => t.id === overIdStr);
     if (overTask) {
-      const targetQuadrant = overTask.quadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox";
+      const targetQuadrant = overTask.quadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "planned";
       await moveTask(activeTaskId, targetQuadrant);
     }
   };
@@ -332,7 +332,7 @@ export default function EisenhowerMatrix() {
   const getFilteredTasks = (quadrantKey: string) => {
     const isPlanned = quadrantKey === "planned";
     let filtered = isPlanned 
-      ? tasks.filter(t => t.quadrant === "inbox")
+      ? tasks.filter(t => t.quadrant === "planned")
       : tasks.filter(t => t.quadrant === quadrantConfig[quadrantKey].dbKey);
     
     if (statusFilter === "active") {
@@ -348,7 +348,7 @@ export default function EisenhowerMatrix() {
     return filtered;
   };
 
-  const plannedTasks = tasks.filter(t => t.quadrant === "inbox");
+  const plannedTasks = tasks.filter(t => t.quadrant === "planned");
 
   const completedCount = tasks.filter(t => t.completed).length;
 
@@ -362,8 +362,8 @@ export default function EisenhowerMatrix() {
     importance: number;
     urgency: number;
   }) => {
-    // Convert null quadrant to "inbox"
-    const finalQuadrant = updates.quadrant || "inbox";
+    // Convert null quadrant to "planned"
+    const finalQuadrant = updates.quadrant || "planned";
     
     if (isNewTask) {
       await addTask(updates.content, finalQuadrant as any, {
@@ -378,7 +378,7 @@ export default function EisenhowerMatrix() {
     } else if (editingTask) {
       await updateTask(editingTask.id, {
         ...updates,
-        quadrant: finalQuadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox",
+        quadrant: finalQuadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "planned",
       });
     }
     setEditingTask(null);
