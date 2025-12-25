@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trash2, Plus } from "lucide-react";
+import { Trash2, Plus, Pencil, Check, X } from "lucide-react";
 import { TaskCategory } from "@/hooks/useTaskCategories";
 
 interface CategoryManagerProps {
@@ -17,6 +17,7 @@ interface CategoryManagerProps {
   onOpenChange: (open: boolean) => void;
   categories: TaskCategory[];
   onAdd: (name: string, color: string) => Promise<TaskCategory | null>;
+  onUpdate: (id: string, name: string, color: string) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
 }
 
@@ -30,11 +31,17 @@ export function CategoryManager({
   onOpenChange,
   categories,
   onAdd,
+  onUpdate,
   onDelete,
 }: CategoryManagerProps) {
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState(defaultColors[0]);
   const [isAdding, setIsAdding] = useState(false);
+  
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editColor, setEditColor] = useState("");
 
   const handleAdd = async () => {
     if (!newName.trim()) return;
@@ -45,35 +52,107 @@ export function CategoryManager({
     setIsAdding(false);
   };
 
+  const startEdit = (cat: TaskCategory) => {
+    setEditingId(cat.id);
+    setEditName(cat.name);
+    setEditColor(cat.color);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditName("");
+    setEditColor("");
+  };
+
+  const saveEdit = async () => {
+    if (!editingId || !editName.trim()) return;
+    const success = await onUpdate(editingId, editName.trim(), editColor);
+    if (success) {
+      cancelEdit();
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[400px]">
+      <DialogContent className="sm:max-w-[450px]">
         <DialogHeader>
           <DialogTitle>Настройка сфер</DialogTitle>
         </DialogHeader>
         
         <div className="space-y-4 py-4">
-          <div className="space-y-2">
+          <div className="space-y-2 max-h-[300px] overflow-y-auto">
             {categories.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">
-                Нет созданных сфер
+                Нет созданных сфер. Добавьте свою первую сферу ниже.
               </p>
             ) : (
               categories.map((cat) => (
                 <div key={cat.id} className="flex items-center gap-2 p-2 rounded-lg border border-border">
-                  <div 
-                    className="w-4 h-4 rounded-full shrink-0" 
-                    style={{ backgroundColor: cat.color }}
-                  />
-                  <span className="flex-1 text-sm">{cat.name}</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => onDelete(cat.id)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  {editingId === cat.id ? (
+                    // Edit mode
+                    <>
+                      <Input
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="flex-1 h-8"
+                        autoFocus
+                      />
+                      <div className="flex gap-1">
+                        {defaultColors.map((color) => (
+                          <button
+                            key={color}
+                            type="button"
+                            className={`w-5 h-5 rounded-full border-2 transition-all ${
+                              editColor === color ? "border-foreground scale-110" : "border-transparent"
+                            }`}
+                            style={{ backgroundColor: color }}
+                            onClick={() => setEditColor(color)}
+                          />
+                        ))}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-green-600 hover:text-green-700"
+                        onClick={saveEdit}
+                      >
+                        <Check className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                        onClick={cancelEdit}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </>
+                  ) : (
+                    // View mode
+                    <>
+                      <div 
+                        className="w-4 h-4 rounded-full shrink-0" 
+                        style={{ backgroundColor: cat.color }}
+                      />
+                      <span className="flex-1 text-sm">{cat.name}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => startEdit(cat)}
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => onDelete(cat.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </>
+                  )}
                 </div>
               ))
             )}
@@ -81,35 +160,40 @@ export function CategoryManager({
 
           <div className="border-t pt-4">
             <Label className="mb-2 block">Добавить сферу</Label>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <Input
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="Название"
+                placeholder="Название новой сферы"
                 className="flex-1"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newName.trim()) {
+                    handleAdd();
+                  }
+                }}
               />
-              <div className="flex gap-1">
-                {defaultColors.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    className={`w-6 h-6 rounded-full border-2 transition-all ${
-                      newColor === color ? "border-foreground scale-110" : "border-transparent"
-                    }`}
-                    style={{ backgroundColor: color }}
-                    onClick={() => setNewColor(color)}
-                  />
-                ))}
-              </div>
+            </div>
+            <div className="flex gap-1 mt-2">
+              {defaultColors.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  className={`w-6 h-6 rounded-full border-2 transition-all ${
+                    newColor === color ? "border-foreground scale-110" : "border-transparent"
+                  }`}
+                  style={{ backgroundColor: color }}
+                  onClick={() => setNewColor(color)}
+                />
+              ))}
             </div>
             <Button 
-              className="mt-2 w-full" 
+              className="mt-3 w-full" 
               size="sm" 
               onClick={handleAdd}
               disabled={!newName.trim() || isAdding}
             >
               <Plus className="w-4 h-4 mr-2" />
-              Добавить
+              Добавить сферу
             </Button>
           </div>
         </div>

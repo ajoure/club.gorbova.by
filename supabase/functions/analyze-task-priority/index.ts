@@ -1,6 +1,27 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// Список доступных сфер (должен соответствовать src/constants/spheres.ts)
+const AVAILABLE_SPHERES = [
+  { id: "none", name: "Без категории" },
+  { id: "work", name: "Работа" },
+  { id: "business", name: "Бизнес" },
+  { id: "finance", name: "Финансы" },
+  { id: "learning", name: "Обучение" },
+  { id: "self-development", name: "Саморазвитие" },
+  { id: "health", name: "Здоровье и спорт" },
+  { id: "family", name: "Семья и дети" },
+  { id: "relationships", name: "Отношения" },
+  { id: "personal", name: "Личное" },
+  { id: "rest", name: "Отдых и восстановление" },
+  { id: "hobbies", name: "Хобби и развлечения" },
+  { id: "friends", name: "Окружение и друзья" },
+  { id: "goals", name: "Цели" },
+  { id: "planning", name: "Планирование" },
+  { id: "strategy", name: "Стратегия" },
+  { id: "projects", name: "Проекты" },
+];
+
 // Get allowed origins from environment or use defaults
 const getAllowedOrigins = (): string[] => {
   const origins = [
@@ -69,7 +90,7 @@ serve(async (req) => {
 
     console.log("Authenticated user:", user.id);
 
-    const { title, category, deadline_date, deadline_time } = await req.json();
+    const { title, category, deadline_date, deadline_time, user_spheres } = await req.json();
     
     // Input validation
     if (!title || typeof title !== 'string' || title.length > 500) {
@@ -89,22 +110,46 @@ serve(async (req) => {
     const deadlineInfo = deadline_date 
       ? `Дедлайн: ${deadline_date}${deadline_time ? ` ${deadline_time}` : ""} (сегодня: ${today})` 
       : "Дедлайн не установлен";
-    const categoryInfo = category ? `Сфера: ${category}` : "Сфера не указана";
+    const categoryInfo = category ? `Текущая сфера: ${category}` : "Сфера не указана";
 
-    const prompt = `Ты эксперт по продуктивности и тайм-менеджменту. Определи приоритет задачи для Матрицы Эйзенхауэра.
+    // Combine predefined spheres with user custom spheres
+    const allSpheres = [...AVAILABLE_SPHERES];
+    if (user_spheres && Array.isArray(user_spheres)) {
+      user_spheres.forEach((s: { id: string; name: string }) => {
+        if (s.id && s.name && !allSpheres.find(sp => sp.id === s.id)) {
+          allSpheres.push({ id: s.id, name: s.name });
+        }
+      });
+    }
+
+    const spheresList = allSpheres.map(s => `- ${s.id}: ${s.name}`).join("\n");
+
+    const prompt = `Ты эксперт по продуктивности и тайм-менеджменту. Определи приоритет и сферу задачи для Матрицы Эйзенхауэра.
 
 Задача: "${title}"
 ${categoryInfo}
 ${deadlineInfo}
 
-Критерии оценки:
+КРИТЕРИИ ПРИОРИТЕТА:
 - Q1 (Срочно и Важно): Критические задачи с близким дедлайном, влияющие на ключевые цели
 - Q2 (Важно, не Срочно): Стратегические задачи развития, без острого дедлайна
 - Q3 (Срочно, не Важно): Рутинные срочные дела, можно делегировать
 - Q4 (Не Срочно, не Важно): Развлечения, отвлекающие задачи
 
+ДОСТУПНЫЕ СФЕРЫ (выбери ТОЛЬКО из этого списка):
+${spheresList}
+
+Проанализируй задачу и определи:
+1. Приоритет (квадрант Q1-Q4)
+2. Наиболее подходящую сферу из списка выше
+
 Ответь ТОЛЬКО в формате JSON:
-{"quadrant": "q1" | "q2" | "q3" | "q4", "reason": "краткое объяснение на русском (1 предложение)"}`;
+{
+  "quadrant": "q1" | "q2" | "q3" | "q4",
+  "quadrant_reason": "краткое объяснение приоритета (1 предложение)",
+  "sphere_id": "id сферы из списка",
+  "sphere_reason": "краткое объяснение выбора сферы (1 предложение)"
+}`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -115,7 +160,7 @@ ${deadlineInfo}
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
         messages: [
-          { role: "system", content: "Ты эксперт по продуктивности. Отвечай только в JSON формате." },
+          { role: "system", content: "Ты эксперт по продуктивности. Отвечай только в JSON формате. Всегда выбирай сферу из предоставленного списка." },
           { role: "user", content: prompt },
         ],
       }),
@@ -145,6 +190,8 @@ ${deadlineInfo}
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "";
     
+    console.log("AI response:", content);
+
     // Parse JSON from response
     let result;
     try {
@@ -154,8 +201,13 @@ ${deadlineInfo}
       result = JSON.parse(jsonStr.trim());
     } catch {
       console.error("Failed to parse AI response:", content);
-      // Default to Q2 if parsing fails
-      result = { quadrant: "q2", reason: "Рекомендуется запланировать" };
+      // Default to Q2 and no sphere if parsing fails
+      result = { 
+        quadrant: "q2", 
+        quadrant_reason: "Рекомендуется запланировать",
+        sphere_id: null,
+        sphere_reason: null
+      };
     }
 
     // Map quadrant names
@@ -166,9 +218,19 @@ ${deadlineInfo}
       q4: "not-urgent-not-important",
     };
 
+    // Validate sphere_id exists in available spheres
+    const validSphere = allSpheres.find(s => s.id === result.sphere_id);
+    const sphereId = validSphere ? result.sphere_id : null;
+    const sphereName = validSphere?.name || null;
+
+    console.log("Returning sphere:", sphereId, sphereName);
+
     return new Response(JSON.stringify({
       quadrant: quadrantMap[result.quadrant] || "not-urgent-important",
-      reason: result.reason || "AI рекомендация",
+      quadrant_reason: result.quadrant_reason || result.reason || "AI рекомендация",
+      sphere_id: sphereId,
+      sphere_name: sphereName,
+      sphere_reason: result.sphere_reason || null,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
