@@ -20,7 +20,7 @@ interface WheelColumnProps {
 
 function WheelColumn({ items, value, onChange, disabled }: WheelColumnProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
-  const itemHeight = 36;
+  const itemHeight = 40;
   const visibleItems = 5;
   const centerIndex = Math.floor(visibleItems / 2);
   
@@ -29,26 +29,10 @@ function WheelColumn({ items, value, onChange, disabled }: WheelColumnProps) {
   // Scroll to current value on mount and value change
   React.useEffect(() => {
     if (containerRef.current && currentIndex >= 0) {
-      const scrollTop = currentIndex * itemHeight;
-      containerRef.current.scrollTop = scrollTop;
+      containerRef.current.scrollTop = currentIndex * itemHeight;
     }
-  }, [currentIndex, value]);
+  }, [currentIndex]);
 
-  const handleScroll = React.useCallback(() => {
-    if (!containerRef.current || disabled) return;
-    
-    const scrollTop = containerRef.current.scrollTop;
-    const newIndex = Math.round(scrollTop / itemHeight);
-    const clampedIndex = Math.max(0, Math.min(items.length - 1, newIndex));
-    
-    if (items[clampedIndex] !== value) {
-      onChange(items[clampedIndex]);
-    }
-  }, [items, value, onChange, disabled, itemHeight]);
-
-  // Debounced scroll handler for snap behavior
-  const scrollTimeoutRef = React.useRef<NodeJS.Timeout>();
-  
   const handleScrollEnd = React.useCallback(() => {
     if (!containerRef.current || disabled) return;
     
@@ -65,14 +49,16 @@ function WheelColumn({ items, value, onChange, disabled }: WheelColumnProps) {
     if (items[clampedIndex] !== value) {
       onChange(items[clampedIndex]);
     }
-  }, [items, value, onChange, disabled, itemHeight]);
+  }, [items, value, onChange, disabled]);
 
+  // Debounced scroll handler
+  const scrollTimeoutRef = React.useRef<ReturnType<typeof setTimeout>>();
+  
   const onScroll = () => {
-    handleScroll();
     if (scrollTimeoutRef.current) {
       clearTimeout(scrollTimeoutRef.current);
     }
-    scrollTimeoutRef.current = setTimeout(handleScrollEnd, 100);
+    scrollTimeoutRef.current = setTimeout(handleScrollEnd, 150);
   };
 
   const handleItemClick = (item: string, index: number) => {
@@ -86,11 +72,17 @@ function WheelColumn({ items, value, onChange, disabled }: WheelColumnProps) {
     }
   };
 
+  // Handle wheel event for mouse scrolling
+  const handleWheel = (e: React.WheelEvent) => {
+    if (disabled) return;
+    e.stopPropagation();
+  };
+
   return (
-    <div className="relative h-[180px] w-[60px]">
+    <div className="relative" style={{ height: `${visibleItems * itemHeight}px`, width: "70px" }}>
       {/* Selection highlight */}
       <div 
-        className="absolute left-0 right-0 pointer-events-none z-10 rounded-lg bg-primary/10 border border-primary/20"
+        className="absolute left-1 right-1 pointer-events-none z-10 rounded-lg bg-primary/10 border border-primary/20"
         style={{ 
           top: `${centerIndex * itemHeight}px`, 
           height: `${itemHeight}px` 
@@ -98,23 +90,42 @@ function WheelColumn({ items, value, onChange, disabled }: WheelColumnProps) {
       />
       
       {/* Gradient overlays for fade effect */}
-      <div className="absolute inset-x-0 top-0 h-[72px] bg-gradient-to-b from-background to-transparent pointer-events-none z-20" />
-      <div className="absolute inset-x-0 bottom-0 h-[72px] bg-gradient-to-t from-background to-transparent pointer-events-none z-20" />
+      <div 
+        className="absolute inset-x-0 top-0 pointer-events-none z-20 rounded-t-lg"
+        style={{ 
+          height: `${centerIndex * itemHeight}px`,
+          background: "linear-gradient(to bottom, hsl(var(--background)) 0%, transparent 100%)"
+        }}
+      />
+      <div 
+        className="absolute inset-x-0 bottom-0 pointer-events-none z-20 rounded-b-lg"
+        style={{ 
+          height: `${centerIndex * itemHeight}px`,
+          background: "linear-gradient(to top, hsl(var(--background)) 0%, transparent 100%)"
+        }}
+      />
       
       {/* Scrollable container */}
       <div
         ref={containerRef}
         className={cn(
-          "h-full overflow-y-auto scrollbar-hide scroll-smooth",
+          "h-full overflow-y-scroll overscroll-contain",
           disabled && "opacity-50 pointer-events-none"
         )}
         style={{ 
           scrollSnapType: "y mandatory",
           paddingTop: `${centerIndex * itemHeight}px`,
-          paddingBottom: `${centerIndex * itemHeight}px`
+          paddingBottom: `${centerIndex * itemHeight}px`,
+          scrollbarWidth: "none",
+          msOverflowStyle: "none",
+          WebkitOverflowScrolling: "touch",
         }}
         onScroll={onScroll}
+        onWheel={handleWheel}
       >
+        <style dangerouslySetInnerHTML={{ __html: `
+          .time-wheel-scroll::-webkit-scrollbar { display: none; }
+        `}} />
         {items.map((item, index) => {
           const isSelected = item === value;
           return (
@@ -124,8 +135,8 @@ function WheelColumn({ items, value, onChange, disabled }: WheelColumnProps) {
                 "flex items-center justify-center cursor-pointer transition-all duration-150",
                 "text-lg font-medium select-none",
                 isSelected 
-                  ? "text-foreground scale-105" 
-                  : "text-muted-foreground/60 hover:text-muted-foreground"
+                  ? "text-foreground font-semibold" 
+                  : "text-muted-foreground/50 hover:text-muted-foreground"
               )}
               style={{ 
                 height: `${itemHeight}px`,
@@ -157,7 +168,7 @@ export function TimePickerWheel({ value, onChange, disabled, className }: TimePi
   };
 
   return (
-    <div className={cn("flex items-center justify-center gap-1 p-4", className)}>
+    <div className={cn("flex items-center justify-center gap-2 py-4", className)}>
       <WheelColumn
         items={HOURS}
         value={hours}
@@ -165,7 +176,7 @@ export function TimePickerWheel({ value, onChange, disabled, className }: TimePi
         disabled={disabled}
       />
       
-      <div className="text-xl font-semibold text-foreground">:</div>
+      <div className="text-2xl font-semibold text-foreground">:</div>
       
       <WheelColumn
         items={MINUTES}
