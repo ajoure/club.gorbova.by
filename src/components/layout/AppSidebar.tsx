@@ -1,5 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   Sidebar,
   SidebarContent,
@@ -25,6 +26,7 @@ import {
   LogOut,
   LayoutGrid,
   ChevronRight,
+  Settings,
 } from "lucide-react";
 
 const mainMenuItems = [
@@ -45,6 +47,7 @@ export function AppSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut, role } = useAuth();
+  const { hasAdminAccess } = usePermissions();
   const collapsed = state === "collapsed";
 
   const handleSignOut = async () => {
@@ -70,6 +73,8 @@ export function AppSidebar() {
     }
     return user?.email?.slice(0, 2).toUpperCase() || "U";
   };
+
+  const showAdminLink = hasAdminAccess();
 
   return (
     <Sidebar
@@ -158,6 +163,37 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {showAdminLink && (
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-wider px-3">
+              {!collapsed && "Администрирование"}
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname.startsWith("/admin")}
+                    tooltip={collapsed ? "Админ-панель" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/users"
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
+                    >
+                      <Settings className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>Админ-панель</span>}
+                      {!collapsed && (
+                        <ChevronRight className="ml-auto h-4 w-4 opacity-50" />
+                      )}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="p-3">
