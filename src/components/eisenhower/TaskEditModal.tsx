@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Slider } from "@/components/ui/slider";
 import {
   Select,
   SelectContent,
@@ -24,6 +25,7 @@ import { ru } from "date-fns/locale";
 import { CalendarIcon, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TaskCategory } from "@/hooks/useTaskCategories";
+import { calculateQuadrant } from "@/hooks/useEisenhowerTasks";
 
 interface TaskEditModalProps {
   open: boolean;
@@ -36,6 +38,8 @@ interface TaskEditModalProps {
     deadline_date: string | null;
     deadline_time: string | null;
     category_id: string | null;
+    importance?: number;
+    urgency?: number;
   } | null;
   categories: TaskCategory[];
   onSave: (updates: {
@@ -45,9 +49,12 @@ interface TaskEditModalProps {
     deadline_date: string | null;
     deadline_time: string | null;
     category_id: string | null;
+    importance: number;
+    urgency: number;
   }) => void;
   onDelete: () => void;
   isNew?: boolean;
+  defaultQuadrant?: string;
 }
 
 const quadrantOptions = [
@@ -58,6 +65,13 @@ const quadrantOptions = [
   { value: "not-urgent-not-important", label: "Q4: Не Срочно, не Важно" },
 ];
 
+function getQuadrantLabel(importance: number, urgency: number): string {
+  if (importance >= 6 && urgency >= 6) return "Q1: Срочно и Важно";
+  if (importance >= 6 && urgency < 6) return "Q2: Важно, не Срочно";
+  if (importance < 6 && urgency >= 6) return "Q3: Срочно, не Важно";
+  return "Q4: Не Срочно, не Важно";
+}
+
 export function TaskEditModal({
   open,
   onOpenChange,
@@ -66,13 +80,17 @@ export function TaskEditModal({
   onSave,
   onDelete,
   isNew = false,
+  defaultQuadrant = "urgent-important",
 }: TaskEditModalProps) {
   const [content, setContent] = useState("");
-  const [quadrant, setQuadrant] = useState("urgent-important");
+  const [quadrant, setQuadrant] = useState(defaultQuadrant);
   const [completed, setCompleted] = useState(false);
   const [deadlineDate, setDeadlineDate] = useState<Date | undefined>(undefined);
   const [deadlineTime, setDeadlineTime] = useState("");
   const [categoryId, setCategoryId] = useState<string>("__none__");
+  const [importance, setImportance] = useState(5);
+  const [urgency, setUrgency] = useState(5);
+  const [useManualQuadrant, setUseManualQuadrant] = useState(false);
 
   useEffect(() => {
     if (task) {
@@ -82,15 +100,34 @@ export function TaskEditModal({
       setDeadlineDate(task.deadline_date ? parse(task.deadline_date, "yyyy-MM-dd", new Date()) : undefined);
       setDeadlineTime(task.deadline_time || "");
       setCategoryId(task.category_id || "__none__");
+      setImportance(task.importance ?? 5);
+      setUrgency(task.urgency ?? 5);
+      setUseManualQuadrant(false);
     } else {
       setContent("");
-      setQuadrant("urgent-important");
+      setQuadrant(defaultQuadrant);
       setCompleted(false);
       setDeadlineDate(undefined);
       setDeadlineTime("");
       setCategoryId("__none__");
+      setImportance(5);
+      setUrgency(5);
+      setUseManualQuadrant(false);
     }
-  }, [task, open]);
+  }, [task, open, defaultQuadrant]);
+
+  // Auto-calculate quadrant when importance/urgency changes
+  useEffect(() => {
+    if (!useManualQuadrant) {
+      const autoQuadrant = calculateQuadrant(importance, urgency);
+      setQuadrant(autoQuadrant);
+    }
+  }, [importance, urgency, useManualQuadrant]);
+
+  const handleQuadrantChange = (value: string) => {
+    setQuadrant(value);
+    setUseManualQuadrant(true);
+  };
 
   const handleSave = () => {
     if (!content.trim()) return;
@@ -101,13 +138,17 @@ export function TaskEditModal({
       deadline_date: deadlineDate ? format(deadlineDate, "yyyy-MM-dd") : null,
       deadline_time: deadlineDate && deadlineTime ? deadlineTime : null,
       category_id: categoryId === "__none__" ? null : categoryId,
+      importance,
+      urgency,
     });
     onOpenChange(false);
   };
 
+  const calculatedQuadrant = getQuadrantLabel(importance, urgency);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
           <DialogTitle>{isNew ? "Новая задача" : "Редактировать задачу"}</DialogTitle>
         </DialogHeader>
@@ -146,9 +187,53 @@ export function TaskEditModal({
             </Select>
           </div>
 
+          {/* Importance/Urgency Sliders */}
+          <div className="space-y-4 p-3 rounded-lg bg-muted/30 border border-border/50">
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <Label className="text-sm">Важность</Label>
+                <span className="text-sm font-medium px-2 py-0.5 rounded bg-primary/10 text-primary">{importance}</span>
+              </div>
+              <Slider
+                value={[importance]}
+                onValueChange={([val]) => {
+                  setImportance(val);
+                  setUseManualQuadrant(false);
+                }}
+                min={1}
+                max={10}
+                step={1}
+                className="w-full"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <Label className="text-sm">Срочность</Label>
+                <span className="text-sm font-medium px-2 py-0.5 rounded bg-destructive/10 text-destructive">{urgency}</span>
+              </div>
+              <Slider
+                value={[urgency]}
+                onValueChange={([val]) => {
+                  setUrgency(val);
+                  setUseManualQuadrant(false);
+                }}
+                min={1}
+                max={10}
+                step={1}
+                className="w-full"
+              />
+            </div>
+            
+            <div className="text-center">
+              <span className="text-xs text-muted-foreground">Автоматический квадрант: </span>
+              <span className="text-xs font-medium text-primary">{calculatedQuadrant}</span>
+            </div>
+          </div>
+
           <div className="space-y-2">
-            <Label>Позиция в матрице</Label>
-            <Select value={quadrant} onValueChange={setQuadrant}>
+            <Label>Позиция в матрице (или выбрать вручную)</Label>
+            <Select value={quadrant} onValueChange={handleQuadrantChange}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>

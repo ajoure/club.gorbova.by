@@ -53,10 +53,12 @@ export type Database = {
           deadline_date: string | null
           deadline_time: string | null
           id: string
+          importance: number
           quadrant: string
           source: string | null
           source_task_id: string | null
           updated_at: string
+          urgency: number
           user_id: string
         }
         Insert: {
@@ -67,10 +69,12 @@ export type Database = {
           deadline_date?: string | null
           deadline_time?: string | null
           id?: string
+          importance?: number
           quadrant: string
           source?: string | null
           source_task_id?: string | null
           updated_at?: string
+          urgency?: number
           user_id: string
         }
         Update: {
@@ -81,10 +85,12 @@ export type Database = {
           deadline_date?: string | null
           deadline_time?: string | null
           id?: string
+          importance?: number
           quadrant?: string
           source?: string | null
           source_task_id?: string | null
           updated_at?: string
+          urgency?: number
           user_id?: string
         }
         Relationships: [
@@ -221,10 +227,12 @@ export type Database = {
           content: string
           created_at: string
           id: string
+          importance_score: number
           important: boolean
           linked_eisenhower_task_id: string | null
           sphere_key: string
           updated_at: string
+          urgency_score: number
           urgent: boolean
           user_id: string
         }
@@ -233,10 +241,12 @@ export type Database = {
           content: string
           created_at?: string
           id?: string
+          importance_score?: number
           important?: boolean
           linked_eisenhower_task_id?: string | null
           sphere_key: string
           updated_at?: string
+          urgency_score?: number
           urgent?: boolean
           user_id: string
         }
@@ -245,10 +255,12 @@ export type Database = {
           content?: string
           created_at?: string
           id?: string
+          importance_score?: number
           important?: boolean
           linked_eisenhower_task_id?: string | null
           sphere_key?: string
           updated_at?: string
+          urgency_score?: number
           urgent?: boolean
           user_id?: string
         }

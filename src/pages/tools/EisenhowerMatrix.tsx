@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { LayoutGrid, Plus, X, GripVertical, Loader2, Settings, Trash2, Info, Inbox } from "lucide-react";
+import { LayoutGrid, Plus, X, GripVertical, Loader2, Settings, Trash2, Info, Inbox, Expand } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -202,6 +202,8 @@ export default function EisenhowerMatrix() {
   const [showClearDialog, setShowClearDialog] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [isNewTask, setIsNewTask] = useState(false);
+  const [newTaskQuadrant, setNewTaskQuadrant] = useState<string>("urgent-important");
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -286,8 +288,21 @@ export default function EisenhowerMatrix() {
     deadline_date: string | null;
     deadline_time: string | null;
     category_id: string | null;
+    importance: number;
+    urgency: number;
   }) => {
-    if (editingTask) {
+    if (isNewTask) {
+      // Creating a new task via extended modal
+      await addTask(updates.content, updates.quadrant as any, {
+        completed: updates.completed,
+        deadline_date: updates.deadline_date,
+        deadline_time: updates.deadline_time,
+        category_id: updates.category_id,
+        importance: updates.importance,
+        urgency: updates.urgency,
+      });
+      setIsNewTask(false);
+    } else if (editingTask) {
       await updateTask(editingTask.id, {
         ...updates,
         quadrant: updates.quadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important" | "inbox",
@@ -296,12 +311,23 @@ export default function EisenhowerMatrix() {
     setEditingTask(null);
   };
 
+  const handleOpenNewTask = (quadrantKey: string) => {
+    const dbKey = quadrantKey === "inbox" 
+      ? "inbox" 
+      : quadrantConfig[quadrantKey]?.dbKey || "urgent-important";
+    setNewTaskQuadrant(dbKey);
+    setIsNewTask(true);
+    setEditingTask(null);
+    setShowEditModal(true);
+  };
+
   const handleDeleteTask = async () => {
     if (editingTask) {
       await deleteTask(editingTask.id);
       setShowEditModal(false);
       setEditingTask(null);
     }
+    setIsNewTask(false);
   };
 
   const getCategoryColor = (categoryId: string | null) => {
@@ -570,6 +596,14 @@ export default function EisenhowerMatrix() {
                           <Button size="sm" onClick={() => handleAddTask(key)} className="shrink-0">
                             <Plus className="w-4 h-4" />
                           </Button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="sm" variant="outline" onClick={() => handleOpenNewTask(key)} className="shrink-0">
+                                <Expand className="w-4 h-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Расширенное создание</TooltipContent>
+                          </Tooltip>
                         </div>
                       </GlassCard>
                     </SortableContext>
@@ -610,11 +644,19 @@ export default function EisenhowerMatrix() {
 
         <TaskEditModal
           open={showEditModal}
-          onOpenChange={setShowEditModal}
+          onOpenChange={(open) => {
+            setShowEditModal(open);
+            if (!open) {
+              setIsNewTask(false);
+              setEditingTask(null);
+            }
+          }}
           task={editingTask}
           categories={categories}
           onSave={handleSaveTask}
           onDelete={handleDeleteTask}
+          isNew={isNewTask}
+          defaultQuadrant={newTaskQuadrant}
         />
 
         <CategoryManager

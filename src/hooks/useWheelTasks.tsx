@@ -9,12 +9,22 @@ export interface WheelTask {
   content: string;
   important: boolean;
   urgent: boolean;
+  importance_score: number;
+  urgency_score: number;
   completed: boolean;
   linked_eisenhower_task_id: string | null;
   created_at: string;
 }
 
 type QuadrantType = "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important";
+
+// Calculate quadrant from importance/urgency scores (1-10)
+function calculateQuadrant(importance: number, urgency: number): QuadrantType {
+  if (importance >= 6 && urgency >= 6) return "urgent-important";
+  if (importance >= 6 && urgency < 6) return "not-urgent-important";
+  if (importance < 6 && urgency >= 6) return "urgent-not-important";
+  return "not-urgent-not-important";
+}
 
 function getQuadrant(important: boolean, urgent: boolean): QuadrantType {
   if (important && urgent) return "urgent-important";
@@ -37,7 +47,7 @@ export function useWheelTasks(sphereKey?: string) {
 
     let query = supabase
       .from("wheel_balance_tasks")
-      .select("id, sphere_key, content, important, urgent, completed, linked_eisenhower_task_id, created_at")
+      .select("id, sphere_key, content, important, urgent, importance_score, urgency_score, completed, linked_eisenhower_task_id, created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: true });
 
@@ -59,11 +69,18 @@ export function useWheelTasks(sphereKey?: string) {
     fetchTasks();
   }, [fetchTasks]);
 
-  const addTask = async (content: string, sphereKey: string, important: boolean, urgent: boolean) => {
+  const addTask = async (
+    content: string, 
+    sphereKey: string, 
+    importanceScore: number = 5, 
+    urgencyScore: number = 5
+  ) => {
     if (!user) return null;
 
-    // First create eisenhower task
-    const quadrant = getQuadrant(important, urgent);
+    // Calculate quadrant and boolean flags from scores
+    const quadrant = calculateQuadrant(importanceScore, urgencyScore);
+    const important = importanceScore >= 6;
+    const urgent = urgencyScore >= 6;
     
     const { data: eisenhowerTask, error: eisenhowerError } = await supabase
       .from("eisenhower_tasks")
@@ -71,7 +88,9 @@ export function useWheelTasks(sphereKey?: string) {
         user_id: user.id, 
         content, 
         quadrant,
-        source: "wheel_balance"
+        source: "wheel_balance",
+        importance: importanceScore,
+        urgency: urgencyScore,
       })
       .select("id")
       .single();
@@ -94,9 +113,11 @@ export function useWheelTasks(sphereKey?: string) {
         content, 
         important,
         urgent,
+        importance_score: importanceScore,
+        urgency_score: urgencyScore,
         linked_eisenhower_task_id: eisenhowerTask.id
       })
-      .select("id, sphere_key, content, important, urgent, completed, linked_eisenhower_task_id, created_at")
+      .select("id, sphere_key, content, important, urgent, importance_score, urgency_score, completed, linked_eisenhower_task_id, created_at")
       .single();
 
     if (wheelError) {
@@ -124,15 +145,31 @@ export function useWheelTasks(sphereKey?: string) {
     return wheelTask;
   };
 
-  const updateTask = async (taskId: string, updates: { content?: string; important?: boolean; urgent?: boolean; completed?: boolean }) => {
+  const updateTask = async (taskId: string, updates: { 
+    content?: string; 
+    important?: boolean; 
+    urgent?: boolean; 
+    importance_score?: number;
+    urgency_score?: number;
+    completed?: boolean 
+  }) => {
     if (!user) return false;
 
     const task = tasks.find(t => t.id === taskId);
     if (!task) return false;
 
+    // Calculate new boolean flags from scores if scores are being updated
+    let finalUpdates = { ...updates };
+    if (updates.importance_score !== undefined || updates.urgency_score !== undefined) {
+      const newImportance = updates.importance_score ?? task.importance_score;
+      const newUrgency = updates.urgency_score ?? task.urgency_score;
+      finalUpdates.important = newImportance >= 6;
+      finalUpdates.urgent = newUrgency >= 6;
+    }
+
     const { error } = await supabase
       .from("wheel_balance_tasks")
-      .update(updates)
+      .update(finalUpdates)
       .eq("id", taskId)
       .eq("user_id", user.id);
 
@@ -146,14 +183,18 @@ export function useWheelTasks(sphereKey?: string) {
     }
 
     // Update linked eisenhower task if importance/urgency changed
-    if ((updates.important !== undefined || updates.urgent !== undefined) && task.linked_eisenhower_task_id) {
-      const newImportant = updates.important ?? task.important;
-      const newUrgent = updates.urgent ?? task.urgent;
-      const newQuadrant = getQuadrant(newImportant, newUrgent);
+    if ((finalUpdates.importance_score !== undefined || finalUpdates.urgency_score !== undefined) && task.linked_eisenhower_task_id) {
+      const newImportance = finalUpdates.importance_score ?? task.importance_score;
+      const newUrgency = finalUpdates.urgency_score ?? task.urgency_score;
+      const newQuadrant = calculateQuadrant(newImportance, newUrgency);
       
       await supabase
         .from("eisenhower_tasks")
-        .update({ quadrant: newQuadrant })
+        .update({ 
+          quadrant: newQuadrant,
+          importance: newImportance,
+          urgency: newUrgency 
+        })
         .eq("id", task.linked_eisenhower_task_id);
     }
 
@@ -165,7 +206,7 @@ export function useWheelTasks(sphereKey?: string) {
         .eq("id", task.linked_eisenhower_task_id);
     }
 
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updates } : t));
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...finalUpdates } : t));
     return true;
   };
 

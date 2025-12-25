@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Plus, Trash2, Check, Loader2, ListTodo } from "lucide-react";
+import { Plus, Trash2, Loader2, ListTodo } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { Label } from "@/components/ui/label";
 import { useWheelTasks, WheelTask } from "@/hooks/useWheelTasks";
 
 interface SphereTasksProps {
@@ -11,26 +12,28 @@ interface SphereTasksProps {
   sphereTitle: string;
 }
 
+function getQuadrantLabel(importance: number, urgency: number): string {
+  if (importance >= 6 && urgency >= 6) return "Q1: Срочно и важно";
+  if (importance >= 6 && urgency < 6) return "Q2: Важно, не срочно";
+  if (importance < 6 && urgency >= 6) return "Q3: Срочно, не важно";
+  return "Q4: Не срочно, не важно";
+}
+
 export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
   const { tasks, loading, addTask, deleteTask, toggleComplete } = useWheelTasks(sphereKey);
   const [newTaskText, setNewTaskText] = useState("");
-  const [important, setImportant] = useState<string>("important");
-  const [urgent, setUrgent] = useState<string>("not-urgent");
+  const [importanceScore, setImportanceScore] = useState(5);
+  const [urgencyScore, setUrgencyScore] = useState(5);
   const [isAdding, setIsAdding] = useState(false);
 
   const handleAddTask = async () => {
     if (!newTaskText.trim()) return;
     
     setIsAdding(true);
-    await addTask(
-      newTaskText.trim(), 
-      sphereKey, 
-      important === "important", 
-      urgent === "urgent"
-    );
+    await addTask(newTaskText.trim(), sphereKey, importanceScore, urgencyScore);
     setNewTaskText("");
-    setImportant("important");
-    setUrgent("not-urgent");
+    setImportanceScore(5);
+    setUrgencyScore(5);
     setIsAdding(false);
   };
 
@@ -41,6 +44,8 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
       </div>
     );
   }
+
+  const quadrantLabel = getQuadrantLabel(importanceScore, urgencyScore);
 
   return (
     <div className="space-y-4">
@@ -66,12 +71,12 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
                 <span className={`text-sm ${task.completed ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
                   {index + 1}. {task.content}
                 </span>
-                <div className="flex gap-1 mt-1">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${task.important ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'}`}>
-                    {task.important ? 'Важно' : 'Не важно'}
+                <div className="flex gap-1 mt-1 flex-wrap">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${task.importance_score >= 6 ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'}`}>
+                    Важность: {task.importance_score}
                   </span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${task.urgent ? 'bg-destructive/20 text-destructive' : 'bg-muted text-muted-foreground'}`}>
-                    {task.urgent ? 'Срочно' : 'Не срочно'}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${task.urgency_score >= 6 ? 'bg-destructive/20 text-destructive' : 'bg-muted text-muted-foreground'}`}>
+                    Срочность: {task.urgency_score}
                   </span>
                 </div>
               </div>
@@ -102,26 +107,42 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
           className="text-sm"
         />
         
-        <div className="flex gap-2">
-          <Select value={important} onValueChange={setImportant}>
-            <SelectTrigger className="flex-1 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="important">Важно</SelectItem>
-              <SelectItem value="not-important">Не важно</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <Label className="text-xs text-muted-foreground">Важность</Label>
+              <span className="text-xs font-medium">{importanceScore}</span>
+            </div>
+            <Slider
+              value={[importanceScore]}
+              onValueChange={([val]) => setImportanceScore(val)}
+              min={1}
+              max={10}
+              step={1}
+              className="w-full"
+            />
+          </div>
           
-          <Select value={urgent} onValueChange={setUrgent}>
-            <SelectTrigger className="flex-1 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="urgent">Срочно</SelectItem>
-              <SelectItem value="not-urgent">Не срочно</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <Label className="text-xs text-muted-foreground">Срочность</Label>
+              <span className="text-xs font-medium">{urgencyScore}</span>
+            </div>
+            <Slider
+              value={[urgencyScore]}
+              onValueChange={([val]) => setUrgencyScore(val)}
+              min={1}
+              max={10}
+              step={1}
+              className="w-full"
+            />
+          </div>
+          
+          <div className="text-center">
+            <span className="text-xs px-2 py-1 rounded bg-primary/10 text-primary">
+              → {quadrantLabel}
+            </span>
+          </div>
         </div>
 
         <Button 
