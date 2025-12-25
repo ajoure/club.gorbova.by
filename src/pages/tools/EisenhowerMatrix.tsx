@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { LayoutGrid, Plus, X, GripVertical } from "lucide-react";
+import { LayoutGrid, Plus, X, GripVertical, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useState } from "react";
 import {
   DndContext,
   DragEndEvent,
@@ -20,18 +21,14 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-
-interface Task {
-  id: string;
-  text: string;
-  quadrant: string;
-}
+import { useEisenhowerTasks, EisenhowerTask } from "@/hooks/useEisenhowerTasks";
 
 interface Quadrant {
   title: string;
   subtitle: string;
   color: string;
   bgColor: string;
+  dbKey: string;
 }
 
 const quadrantConfig: Record<string, Quadrant> = {
@@ -40,24 +37,28 @@ const quadrantConfig: Record<string, Quadrant> = {
     subtitle: "Делать немедленно",
     color: "hsl(350 89% 60%)",
     bgColor: "hsl(350 89% 60% / 0.1)",
+    dbKey: "urgent-important",
   },
   not_urgent_important: {
     title: "Важно, не Срочно",
     subtitle: "Запланировать",
     color: "hsl(217 91% 60%)",
     bgColor: "hsl(217 91% 60% / 0.1)",
+    dbKey: "not-urgent-important",
   },
   urgent_not_important: {
     title: "Срочно, не Важно",
     subtitle: "Делегировать",
     color: "hsl(38 92% 50%)",
     bgColor: "hsl(38 92% 50% / 0.1)",
+    dbKey: "urgent-not-important",
   },
   not_urgent_not_important: {
     title: "Не Срочно, не Важно",
     subtitle: "Исключить",
     color: "hsl(220 9% 46%)",
     bgColor: "hsl(220 9% 46% / 0.1)",
+    dbKey: "not-urgent-not-important",
   },
 };
 
@@ -66,7 +67,7 @@ function SortableTask({
   quadrantColor, 
   onRemove 
 }: { 
-  task: Task; 
+  task: EisenhowerTask; 
   quadrantColor: string;
   onRemove: () => void;
 }) {
@@ -102,7 +103,7 @@ function SortableTask({
         className="w-2 h-2 rounded-full shrink-0" 
         style={{ backgroundColor: quadrantColor }}
       />
-      <span className="flex-1 text-sm text-foreground">{task.text}</span>
+      <span className="flex-1 text-sm text-foreground">{task.content}</span>
       <button 
         onClick={onRemove} 
         className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all"
@@ -113,7 +114,7 @@ function SortableTask({
   );
 }
 
-function TaskOverlay({ task, quadrantColor }: { task: Task; quadrantColor: string }) {
+function TaskOverlay({ task, quadrantColor }: { task: EisenhowerTask; quadrantColor: string }) {
   return (
     <div className="flex items-center gap-2 p-3 rounded-xl bg-card border border-primary shadow-xl">
       <GripVertical className="w-4 h-4 text-muted-foreground" />
@@ -121,15 +122,15 @@ function TaskOverlay({ task, quadrantColor }: { task: Task; quadrantColor: strin
         className="w-2 h-2 rounded-full shrink-0" 
         style={{ backgroundColor: quadrantColor }}
       />
-      <span className="flex-1 text-sm text-foreground">{task.text}</span>
+      <span className="flex-1 text-sm text-foreground">{task.content}</span>
     </div>
   );
 }
 
 export default function EisenhowerMatrix() {
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const { tasks, loading, addTask, deleteTask, moveTask } = useEisenhowerTasks();
   const [newTask, setNewTask] = useState<Record<string, string>>({});
-  const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [activeTask, setActiveTask] = useState<EisenhowerTask | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -139,21 +140,12 @@ export default function EisenhowerMatrix() {
     })
   );
 
-  const addTask = (quadrantKey: string) => {
+  const handleAddTask = async (quadrantKey: string) => {
     if (!newTask[quadrantKey]?.trim()) return;
     
-    const task: Task = {
-      id: Date.now().toString(),
-      text: newTask[quadrantKey].trim(),
-      quadrant: quadrantKey,
-    };
-    
-    setTasks(prev => [...prev, task]);
+    const dbKey = quadrantConfig[quadrantKey].dbKey as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important";
+    await addTask(newTask[quadrantKey].trim(), dbKey);
     setNewTask(prev => ({ ...prev, [quadrantKey]: "" }));
-  };
-
-  const removeTask = (taskId: string) => {
-    setTasks(prev => prev.filter(t => t.id !== taskId));
   };
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -161,7 +153,7 @@ export default function EisenhowerMatrix() {
     setActiveTask(task || null);
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     setActiveTask(null);
 
@@ -172,27 +164,30 @@ export default function EisenhowerMatrix() {
 
     // Check if dropped on a quadrant container
     if (Object.keys(quadrantConfig).includes(overIdStr)) {
-      setTasks(prev =>
-        prev.map(task =>
-          task.id === activeTaskId ? { ...task, quadrant: overIdStr } : task
-        )
-      );
+      const newQuadrant = quadrantConfig[overIdStr].dbKey as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important";
+      await moveTask(activeTaskId, newQuadrant);
       return;
     }
 
     // Dropped on another task
     const overTask = tasks.find(t => t.id === overIdStr);
     if (overTask && overTask.quadrant) {
-      setTasks(prev =>
-        prev.map(task =>
-          task.id === activeTaskId ? { ...task, quadrant: overTask.quadrant } : task
-        )
-      );
+      await moveTask(activeTaskId, overTask.quadrant as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important");
     }
   };
 
   const getQuadrantTasks = (quadrantKey: string) => 
-    tasks.filter(t => t.quadrant === quadrantKey);
+    tasks.filter(t => t.quadrant === quadrantConfig[quadrantKey].dbKey);
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -266,7 +261,7 @@ export default function EisenhowerMatrix() {
                             key={task.id}
                             task={task}
                             quadrantColor={quadrant.color}
-                            onRemove={() => removeTask(task.id)}
+                            onRemove={() => deleteTask(task.id)}
                           />
                         ))}
                         {quadrantTasks.length === 0 && (
@@ -281,10 +276,10 @@ export default function EisenhowerMatrix() {
                           placeholder="Новая задача..."
                           value={newTask[key] || ""}
                           onChange={(e) => setNewTask(prev => ({ ...prev, [key]: e.target.value }))}
-                          onKeyDown={(e) => e.key === "Enter" && addTask(key)}
+                          onKeyDown={(e) => e.key === "Enter" && handleAddTask(key)}
                           className="h-9 text-sm bg-background/50"
                         />
-                        <Button size="sm" onClick={() => addTask(key)} className="shrink-0">
+                        <Button size="sm" onClick={() => handleAddTask(key)} className="shrink-0">
                           <Plus className="w-4 h-4" />
                         </Button>
                       </div>
@@ -298,7 +293,7 @@ export default function EisenhowerMatrix() {
               {activeTask && (
                 <TaskOverlay 
                   task={activeTask} 
-                  quadrantColor={quadrantConfig[activeTask.quadrant].color} 
+                  quadrantColor={Object.values(quadrantConfig).find(q => q.dbKey === activeTask.quadrant)?.color || "hsl(217 91% 60%)"} 
                 />
               )}
             </DragOverlay>

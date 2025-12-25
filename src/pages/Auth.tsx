@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
-import { Loader2, Mail, Lock, User, ArrowRight, Sparkles } from "lucide-react";
+import { Loader2, Mail, Lock, User, ArrowRight, Sparkles, ArrowLeft } from "lucide-react";
 import { z } from "zod";
 
 const loginSchema = z.object({
@@ -17,10 +18,12 @@ const signupSchema = loginSchema.extend({
   fullName: z.string().min(2, "Имя должно содержать минимум 2 символа"),
 });
 
+type AuthMode = "login" | "signup" | "forgot";
+
 export default function Auth() {
   const navigate = useNavigate();
   const { user, signIn, signUp, loading } = useAuth();
-  const [isLogin, setIsLogin] = useState(true);
+  const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
@@ -32,12 +35,48 @@ export default function Auth() {
     }
   }, [user, navigate]);
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+
+    const emailValidation = z.string().email("Введите корректный email").safeParse(email);
+    if (!emailValidation.success) {
+      toast({
+        title: "Ошибка",
+        description: emailValidation.error.errors[0].message,
+        variant: "destructive",
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/auth?mode=reset`,
+    });
+
+    setIsSubmitting(false);
+
+    if (error) {
+      toast({
+        title: "Ошибка",
+        description: error.message,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Письмо отправлено",
+        description: "Проверьте почту для восстановления пароля",
+      });
+      setMode("login");
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
 
     try {
-      if (isLogin) {
+      if (mode === "login") {
         const validation = loginSchema.safeParse({ email, password });
         if (!validation.success) {
           toast({
@@ -65,7 +104,7 @@ export default function Auth() {
           });
           navigate("/");
         }
-      } else {
+      } else if (mode === "signup") {
         const validation = signupSchema.safeParse({ email, password, fullName });
         if (!validation.success) {
           toast({
@@ -142,109 +181,171 @@ export default function Auth() {
             backdropFilter: "blur(20px)",
           }}
         >
-          {/* Header */}
+        {/* Header */}
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-accent mb-4">
               <Sparkles className="w-8 h-8 text-primary-foreground" />
             </div>
             <h1 className="text-2xl font-bold text-foreground">
-              {isLogin ? "Добро пожаловать" : "Создать аккаунт"}
+              {mode === "login" && "Добро пожаловать"}
+              {mode === "signup" && "Создать аккаунт"}
+              {mode === "forgot" && "Восстановление пароля"}
             </h1>
             <p className="text-muted-foreground mt-2">
-              {isLogin 
-                ? "Войдите в свой аккаунт" 
-                : "Зарегистрируйтесь для начала работы"}
+              {mode === "login" && "Войдите в свой аккаунт"}
+              {mode === "signup" && "Зарегистрируйтесь для начала работы"}
+              {mode === "forgot" && "Введите email для получения ссылки"}
             </p>
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {!isLogin && (
+          {/* Forgot Password Form */}
+          {mode === "forgot" ? (
+            <form onSubmit={handleForgotPassword} className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="fullName" className="text-foreground">
-                  Полное имя
+                <Label htmlFor="email" className="text-foreground">
+                  Email
                 </Label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                   <Input
-                    id="fullName"
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     className="pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary"
-                    placeholder="Иван Иванов"
-                    required={!isLogin}
+                    placeholder="your@email.com"
+                    required
                   />
                 </div>
               </div>
-            )}
 
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-foreground">
-                Email
-              </Label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary"
-                  placeholder="your@email.com"
-                  required
-                />
+              <Button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <>
+                    Отправить ссылку
+                    <ArrowRight className="ml-2 h-5 w-5" />
+                  </>
+                )}
+              </Button>
+
+              <button
+                type="button"
+                onClick={() => setMode("login")}
+                className="w-full flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Вернуться к входу
+              </button>
+            </form>
+          ) : (
+            <>
+              {/* Login/Signup Form */}
+              <form onSubmit={handleSubmit} className="space-y-5">
+                {mode === "signup" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="fullName" className="text-foreground">
+                      Полное имя
+                    </Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                      <Input
+                        id="fullName"
+                        type="text"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        className="pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary"
+                        placeholder="Иван Иванов"
+                        required={mode === "signup"}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <Label htmlFor="email" className="text-foreground">
+                    Email
+                  </Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <Input
+                      id="email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary"
+                      placeholder="your@email.com"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <Label htmlFor="password" className="text-foreground">
+                      Пароль
+                    </Label>
+                    {mode === "login" && (
+                      <button
+                        type="button"
+                        onClick={() => setMode("forgot")}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        Забыли пароль?
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <Input
+                      id="password"
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary"
+                      placeholder="••••••••"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <>
+                      {mode === "login" ? "Войти" : "Зарегистрироваться"}
+                      <ArrowRight className="ml-2 h-5 w-5" />
+                    </>
+                  )}
+                </Button>
+              </form>
+
+              {/* Toggle */}
+              <div className="mt-6 text-center">
+                <button
+                  type="button"
+                  onClick={() => setMode(mode === "login" ? "signup" : "login")}
+                  className="text-sm text-muted-foreground hover:text-primary transition-colors"
+                >
+                  {mode === "login" ? (
+                    <>Нет аккаунта? <span className="text-primary font-medium">Зарегистрируйтесь</span></>
+                  ) : (
+                    <>Уже есть аккаунт? <span className="text-primary font-medium">Войдите</span></>
+                  )}
+                </button>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-foreground">
-                Пароль
-              </Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary"
-                  placeholder="••••••••"
-                  required
-                />
-              </div>
-            </div>
-
-            <Button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
-            >
-              {isSubmitting ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <>
-                  {isLogin ? "Войти" : "Зарегистрироваться"}
-                  <ArrowRight className="ml-2 h-5 w-5" />
-                </>
-              )}
-            </Button>
-          </form>
-
-          {/* Toggle */}
-          <div className="mt-6 text-center">
-            <button
-              type="button"
-              onClick={() => setIsLogin(!isLogin)}
-              className="text-sm text-muted-foreground hover:text-primary transition-colors"
-            >
-              {isLogin ? (
-                <>Нет аккаунта? <span className="text-primary font-medium">Зарегистрируйтесь</span></>
-              ) : (
-                <>Уже есть аккаунт? <span className="text-primary font-medium">Войдите</span></>
-              )}
-            </button>
-          </div>
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -12,6 +12,7 @@ import Audits from "./pages/Audits";
 import SelfDevelopment from "./pages/SelfDevelopment";
 import EisenhowerMatrix from "./pages/tools/EisenhowerMatrix";
 import BalanceWheel from "./pages/tools/BalanceWheel";
+import Pricing from "./pages/Pricing";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -32,6 +33,7 @@ const App = () => (
             <Route path="/self-development" element={<SelfDevelopment />} />
             <Route path="/tools/eisenhower" element={<EisenhowerMatrix />} />
             <Route path="/tools/balance-wheel" element={<BalanceWheel />} />
+            <Route path="/pricing" element={<Pricing />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

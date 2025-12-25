@@ -14,6 +14,63 @@ export type Database = {
   }
   public: {
     Tables: {
+      balance_wheel_data: {
+        Row: {
+          created_at: string
+          id: string
+          notes: string | null
+          stage: string
+          updated_at: string
+          user_id: string
+          value: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          stage: string
+          updated_at?: string
+          user_id: string
+          value?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          stage?: string
+          updated_at?: string
+          user_id?: string
+          value?: number
+        }
+        Relationships: []
+      }
+      eisenhower_tasks: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          quadrant: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          quadrant: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          quadrant?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -39,6 +96,39 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      subscriptions: {
+        Row: {
+          created_at: string
+          expires_at: string | null
+          id: string
+          is_active: boolean
+          starts_at: string
+          tier: Database["public"]["Enums"]["subscription_tier"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          starts_at?: string
+          tier?: Database["public"]["Enums"]["subscription_tier"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          starts_at?: string
+          tier?: Database["public"]["Enums"]["subscription_tier"]
           updated_at?: string
           user_id?: string
         }
@@ -84,6 +174,7 @@ export type Database = {
     }
     Enums: {
       app_role: "user" | "admin" | "superadmin"
+      subscription_tier: "free" | "pro" | "premium" | "webinar"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -212,6 +303,7 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["user", "admin", "superadmin"],
+      subscription_tier: ["free", "pro", "premium", "webinar"],
     },
   },
 } as const

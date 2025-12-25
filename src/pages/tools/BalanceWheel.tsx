@@ -1,14 +1,15 @@
-import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { Target, X, ChevronRight, Lightbulb, CheckCircle2 } from "lucide-react";
+import { Target, Lightbulb, CheckCircle2, Loader2, Save } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
-import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { useState } from "react";
+import { useBalanceWheel } from "@/hooks/useBalanceWheel";
 
 const stages = [
   { 
-    key: "audit", 
+    key: "audit" as const, 
     title: "Аудит", 
     color: "hsl(217 91% 60%)",
     description: "Анализ текущего состояния дел и ресурсов",
@@ -24,7 +25,7 @@ const stages = [
     ]
   },
   { 
-    key: "awareness", 
+    key: "awareness" as const, 
     title: "Осознание", 
     color: "hsl(258 90% 66%)",
     description: "Понимание истинных причин и мотивов",
@@ -40,7 +41,7 @@ const stages = [
     ]
   },
   { 
-    key: "intention", 
+    key: "intention" as const, 
     title: "Намерение", 
     color: "hsl(330 81% 60%)",
     description: "Формирование твердого решения действовать",
@@ -56,7 +57,7 @@ const stages = [
     ]
   },
   { 
-    key: "goal", 
+    key: "goal" as const, 
     title: "Цель", 
     color: "hsl(350 89% 60%)",
     description: "Определение конкретного желаемого результата",
@@ -72,7 +73,7 @@ const stages = [
     ]
   },
   { 
-    key: "task", 
+    key: "task" as const, 
     title: "Задача", 
     color: "hsl(24 94% 53%)",
     description: "Декомпозиция цели на конкретные шаги",
@@ -88,7 +89,7 @@ const stages = [
     ]
   },
   { 
-    key: "plan", 
+    key: "plan" as const, 
     title: "План", 
     color: "hsl(48 96% 53%)",
     description: "Выстраивание задач во времени",
@@ -104,7 +105,7 @@ const stages = [
     ]
   },
   { 
-    key: "action", 
+    key: "action" as const, 
     title: "Действие", 
     color: "hsl(142 71% 45%)",
     description: "Систематическое выполнение плана",
@@ -120,7 +121,7 @@ const stages = [
     ]
   },
   { 
-    key: "reflection", 
+    key: "reflection" as const, 
     title: "Рефлексия", 
     color: "hsl(188 94% 43%)",
     description: "Анализ результатов и извлечение уроков",
@@ -138,18 +139,34 @@ const stages = [
 ];
 
 export default function BalanceWheel() {
-  const [values, setValues] = useState<Record<string, number>>(
-    Object.fromEntries(stages.map(s => [s.key, 5]))
-  );
+  const { values, notes, loading, saving, updateValue, updateNotes } = useBalanceWheel();
   const [selectedStage, setSelectedStage] = useState<typeof stages[0] | null>(null);
   const [hoveredStage, setHoveredStage] = useState<string | null>(null);
+  const [localNotes, setLocalNotes] = useState<string>("");
 
-  const updateValue = (key: string, value: number[]) => {
-    setValues(prev => ({ ...prev, [key]: value[0] }));
+  const handleStageSelect = (stage: typeof stages[0]) => {
+    setSelectedStage(stage);
+    setLocalNotes(notes[stage.key] || "");
+  };
+
+  const handleSaveNotes = async () => {
+    if (selectedStage) {
+      await updateNotes(selectedStage.key, localNotes);
+    }
   };
 
   const total = Object.values(values).reduce((a, b) => a + b, 0);
   const average = (total / stages.length).toFixed(1);
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -158,10 +175,16 @@ export default function BalanceWheel() {
           <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center">
             <Target className="w-7 h-7 text-primary-foreground" />
           </div>
-          <div>
+          <div className="flex-1">
             <h1 className="text-3xl font-bold text-foreground">Колесо баланса</h1>
             <p className="text-muted-foreground">Стратегическое планирование через 8 этапов развития</p>
           </div>
+          {saving && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Сохранение...
+            </div>
+          )}
         </div>
 
         {/* Strategy hint */}
@@ -171,7 +194,7 @@ export default function BalanceWheel() {
             <div>
               <p className="text-sm text-foreground font-medium">Движение по колесу</p>
               <p className="text-sm text-muted-foreground">
-                Каждый этап — шаг к цели. Нажмите на сектор, чтобы погрузиться в работу с этапом.
+                Каждый этап — шаг к цели. Нажмите на сектор, чтобы погрузиться в работу с этапом. Данные сохраняются автоматически.
               </p>
             </div>
           </div>
@@ -245,7 +268,7 @@ export default function BalanceWheel() {
                         }}
                         onMouseEnter={() => setHoveredStage(stage.key)}
                         onMouseLeave={() => setHoveredStage(null)}
-                        onClick={() => setSelectedStage(stage)}
+                        onClick={() => handleStageSelect(stage)}
                       />
                       
                       {/* Label */}
@@ -255,7 +278,7 @@ export default function BalanceWheel() {
                         textAnchor="middle" 
                         dominantBaseline="middle"
                         className="fill-muted-foreground text-[6px] font-medium cursor-pointer hover:fill-primary transition-colors"
-                        onClick={() => setSelectedStage(stage)}
+                        onClick={() => handleStageSelect(stage)}
                       >
                         {stage.title}
                       </text>
@@ -279,7 +302,7 @@ export default function BalanceWheel() {
                 <div 
                   key={stage.key} 
                   className="group p-3 -mx-3 rounded-xl hover:bg-muted/50 transition-colors cursor-pointer"
-                  onClick={() => setSelectedStage(stage)}
+                  onClick={() => handleStageSelect(stage)}
                 >
                   <div className="flex justify-between items-center mb-2">
                     <div className="flex items-center gap-2">
@@ -290,7 +313,6 @@ export default function BalanceWheel() {
                       <span className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
                         {stage.title}
                       </span>
-                      <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                     </div>
                     <span className="text-sm font-bold" style={{ color: stage.color }}>{values[stage.key]}</span>
                   </div>
@@ -300,7 +322,7 @@ export default function BalanceWheel() {
                       min={1} 
                       max={10} 
                       step={1} 
-                      onValueChange={(v) => updateValue(stage.key, v)} 
+                      onValueChange={(v) => updateValue(stage.key, v[0])} 
                       className="w-full"
                     />
                   </div>
@@ -318,7 +340,7 @@ export default function BalanceWheel() {
               <GlassCard 
                 key={stage.key} 
                 hover
-                onClick={() => setSelectedStage(stage)}
+                onClick={() => handleStageSelect(stage)}
                 className="text-center"
               >
                 <div 
@@ -385,6 +407,24 @@ export default function BalanceWheel() {
                   ))}
                 </ul>
               </div>
+
+              {/* Notes */}
+              <div>
+                <h4 className="font-semibold text-foreground mb-3">Ваши заметки</h4>
+                <Textarea
+                  placeholder="Запишите свои мысли по этому этапу..."
+                  value={localNotes}
+                  onChange={(e) => setLocalNotes(e.target.value)}
+                  className="min-h-[80px]"
+                />
+                <button
+                  onClick={handleSaveNotes}
+                  className="mt-2 flex items-center gap-2 text-sm text-primary hover:underline"
+                >
+                  <Save className="w-4 h-4" />
+                  Сохранить заметки
+                </button>
+              </div>
               
               <div className="pt-2">
                 <label className="text-sm font-medium text-foreground">Ваша оценка этапа</label>
@@ -394,7 +434,7 @@ export default function BalanceWheel() {
                     min={1} 
                     max={10} 
                     step={1} 
-                    onValueChange={(v) => updateValue(selectedStage.key, v)} 
+                    onValueChange={(v) => updateValue(selectedStage.key, v[0])} 
                     className="flex-1"
                   />
                   <span 
