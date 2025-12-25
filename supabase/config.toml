@@ -1,4 +1,4 @@
 project_id = "hdjgkjceownmmnrqqtuz"
 
 [functions.analyze-task-priority]
-verify_jwt = false
+verify_jwt = true

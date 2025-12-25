@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// Security: This function requires JWT verification at the platform level (verify_jwt = true in config.toml)
+// The manual auth validation below provides defense-in-depth and detailed error handling
+
 // Список доступных сфер (должен соответствовать src/constants/spheres.ts)
 const AVAILABLE_SPHERES = [
   { id: "none", name: "Без категории" },
