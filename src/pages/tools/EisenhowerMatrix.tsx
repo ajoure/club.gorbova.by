@@ -221,12 +221,14 @@ function DroppablePlanned({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Droppable quadrant
-function DroppableQuadrant({ id, children, isOver }: { id: string; children: React.ReactNode; isOver?: boolean }) {
+// Droppable quadrant - using useDroppable hook
+function DroppableQuadrant({ id, children }: { id: string; children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  
   return (
     <div 
+      ref={setNodeRef}
       className={`space-y-2 min-h-[180px] rounded-lg transition-colors ${isOver ? "bg-primary/10" : ""}`}
-      data-droppable={id}
     >
       {children}
     </div>
