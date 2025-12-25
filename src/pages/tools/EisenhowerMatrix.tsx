@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { LayoutGrid, Plus, X, GripVertical, Loader2, Settings, Trash2, Info, Inbox, Expand } from "lucide-react";
+import { LayoutGrid, Plus, X, Loader2, Settings, Trash2, Info, ClipboardList, Expand } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -27,6 +27,7 @@ import { useTaskCategories } from "@/hooks/useTaskCategories";
 import { TaskEditModal } from "@/components/eisenhower/TaskEditModal";
 import { CategoryManager } from "@/components/eisenhower/CategoryManager";
 import { ClearCompletedDialog } from "@/components/eisenhower/ClearCompletedDialog";
+import { DeleteTaskDialog } from "@/components/eisenhower/DeleteTaskDialog";
 import { format, parse, isBefore, startOfDay } from "date-fns";
 
 interface Quadrant {
@@ -73,7 +74,7 @@ const quadrantConfig: Record<string, Quadrant> = {
   },
 };
 
-type StatusFilter = "all" | "active" | "completed" | "inbox";
+type StatusFilter = "all" | "active" | "completed" | "planned";
 
 function isOverdue(task: EisenhowerTask): boolean {
   if (!task.deadline_date || task.completed) return false;
@@ -130,21 +131,22 @@ function SortableTask({
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-2 p-3 rounded-xl bg-background/80 border border-border/50 group hover:border-primary/30 transition-all"
+      {...attributes}
+      {...listeners}
+      className="flex items-center gap-2 p-3 rounded-xl bg-background/80 border border-border/50 group hover:border-primary/30 hover:bg-background/90 hover:shadow-md transition-all cursor-grab active:cursor-grabbing touch-none"
     >
-      <button
-        {...attributes}
-        {...listeners}
-        className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground transition-colors touch-none"
+      <div 
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleCompleted();
+        }}
+        className="cursor-pointer"
       >
-        <GripVertical className="w-4 h-4" />
-      </button>
-      
-      <Checkbox
-        checked={task.completed}
-        onCheckedChange={onToggleCompleted}
-        className="shrink-0"
-      />
+        <Checkbox
+          checked={task.completed}
+          className="shrink-0 pointer-events-none"
+        />
+      </div>
       
       {categoryColor && (
         <div 
@@ -153,9 +155,12 @@ function SortableTask({
         />
       )}
       
-      <button 
-        onClick={onClick}
-        className="flex-1 text-left min-w-0"
+      <div 
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        className="flex-1 min-w-0 cursor-pointer"
       >
         <span className={`text-sm text-foreground block truncate ${task.completed ? "line-through" : ""}`}>
           {task.content}
@@ -165,10 +170,13 @@ function SortableTask({
             {overdue ? "Просрочено: " : ""}{deadline}
           </span>
         )}
-      </button>
+      </div>
       
       <button 
-        onClick={onRemove} 
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }} 
         className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all shrink-0"
       >
         <X className="w-4 h-4" />
@@ -179,8 +187,7 @@ function SortableTask({
 
 function TaskOverlay({ task, quadrantColor }: { task: EisenhowerTask; quadrantColor: string }) {
   return (
-    <div className="flex items-center gap-2 p-3 rounded-xl bg-card border border-primary shadow-xl">
-      <GripVertical className="w-4 h-4 text-muted-foreground" />
+    <div className="flex items-center gap-2 p-3 rounded-xl bg-card border border-primary shadow-xl cursor-grabbing">
       <div 
         className="w-2 h-2 rounded-full shrink-0" 
         style={{ backgroundColor: quadrantColor }}
@@ -194,7 +201,7 @@ export default function EisenhowerMatrix() {
   const { tasks, loading, addTask, updateTask, deleteTask, moveTask, toggleCompleted, clearCompleted } = useEisenhowerTasks();
   const { categories, canManageCategories, addCategory, deleteCategory } = useTaskCategories();
   
-  const [newTask, setNewTask] = useState<Record<string, string>>({});
+  const [plannedTaskInput, setPlannedTaskInput] = useState("");
   const [activeTask, setActiveTask] = useState<EisenhowerTask | null>(null);
   const [editingTask, setEditingTask] = useState<EisenhowerTask | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -203,7 +210,10 @@ export default function EisenhowerMatrix() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [isNewTask, setIsNewTask] = useState(false);
-  const [newTaskQuadrant, setNewTaskQuadrant] = useState<string>("urgent-important");
+  
+  // Delete confirmation state
+  const [taskToDelete, setTaskToDelete] = useState<EisenhowerTask | null>(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -213,20 +223,16 @@ export default function EisenhowerMatrix() {
     })
   );
 
-  const handleAddTask = async (quadrantKey: string) => {
-    if (!newTask[quadrantKey]?.trim()) return;
-    
-    const dbKey = quadrantKey === "inbox" 
-      ? "inbox" 
-      : quadrantConfig[quadrantKey].dbKey as "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important";
-    await addTask(newTask[quadrantKey].trim(), dbKey as any);
-    setNewTask(prev => ({ ...prev, [quadrantKey]: "" }));
+  const handleAddPlannedTask = async () => {
+    if (!plannedTaskInput.trim()) return;
+    await addTask(plannedTaskInput.trim(), "inbox" as any);
+    setPlannedTaskInput("");
   };
 
-  const handleAddInboxTask = async () => {
-    if (!newTask["inbox"]?.trim()) return;
-    await addTask(newTask["inbox"].trim(), "inbox" as any);
-    setNewTask(prev => ({ ...prev, inbox: "" }));
+  const handleOpenNewTaskModal = () => {
+    setIsNewTask(true);
+    setEditingTask(null);
+    setShowEditModal(true);
   };
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -258,8 +264,8 @@ export default function EisenhowerMatrix() {
   };
 
   const getFilteredTasks = (quadrantKey: string) => {
-    const isInbox = quadrantKey === "inbox";
-    let filtered = isInbox 
+    const isPlanned = quadrantKey === "planned";
+    let filtered = isPlanned 
       ? tasks.filter(t => t.quadrant === "inbox")
       : tasks.filter(t => t.quadrant === quadrantConfig[quadrantKey].dbKey);
     
@@ -276,8 +282,8 @@ export default function EisenhowerMatrix() {
     return filtered;
   };
 
-  const inboxTasks = tasks.filter(t => t.quadrant === "inbox");
-  const showInbox = statusFilter === "inbox" || inboxTasks.length > 0;
+  const plannedTasks = tasks.filter(t => t.quadrant === "inbox");
+  const showPlanned = statusFilter === "planned" || plannedTasks.length > 0;
 
   const completedCount = tasks.filter(t => t.completed).length;
 
@@ -311,23 +317,26 @@ export default function EisenhowerMatrix() {
     setEditingTask(null);
   };
 
-  const handleOpenNewTask = (quadrantKey: string) => {
-    const dbKey = quadrantKey === "inbox" 
-      ? "inbox" 
-      : quadrantConfig[quadrantKey]?.dbKey || "urgent-important";
-    setNewTaskQuadrant(dbKey);
-    setIsNewTask(true);
-    setEditingTask(null);
-    setShowEditModal(true);
-  };
-
-  const handleDeleteTask = async () => {
+  const handleDeleteFromModal = async () => {
     if (editingTask) {
       await deleteTask(editingTask.id);
       setShowEditModal(false);
       setEditingTask(null);
     }
     setIsNewTask(false);
+  };
+
+  const handleDeleteTask = (task: EisenhowerTask) => {
+    setTaskToDelete(task);
+    setShowDeleteDialog(true);
+  };
+
+  const confirmDeleteTask = async () => {
+    if (taskToDelete) {
+      await deleteTask(taskToDelete.id);
+      setTaskToDelete(null);
+      setShowDeleteDialog(false);
+    }
   };
 
   const getCategoryColor = (categoryId: string | null) => {
@@ -370,16 +379,16 @@ export default function EisenhowerMatrix() {
                 Все
               </Button>
               <Button 
-                variant={statusFilter === "inbox" ? "default" : "ghost"} 
+                variant={statusFilter === "planned" ? "default" : "ghost"} 
                 size="sm"
-                onClick={() => setStatusFilter("inbox")}
+                onClick={() => setStatusFilter("planned")}
                 className="gap-1"
               >
-                <Inbox className="w-4 h-4" />
-                Входящие
-                {inboxTasks.length > 0 && (
+                <ClipboardList className="w-4 h-4" />
+                Планируемые
+                {plannedTasks.length > 0 && (
                   <span className="ml-1 bg-primary/20 text-primary text-xs px-1.5 py-0.5 rounded-full">
-                    {inboxTasks.length}
+                    {plannedTasks.length}
                   </span>
                 )}
               </Button>
@@ -450,53 +459,95 @@ export default function EisenhowerMatrix() {
             </div>
           </div>
 
-          {/* Inbox Section */}
-          {(statusFilter === "inbox" || (statusFilter === "all" && inboxTasks.length > 0)) && (
+          {/* Planned Tasks Section */}
+          {(statusFilter === "planned" || (statusFilter === "all" && plannedTasks.length > 0)) && (
             <GlassCard className="border-primary/30">
               <div className="flex items-center gap-3 mb-4">
-                <Inbox className="w-5 h-5 text-primary" />
+                <ClipboardList className="w-5 h-5 text-primary" />
                 <div>
-                  <h3 className="font-semibold text-foreground">Входящие</h3>
-                  <p className="text-xs text-muted-foreground">Задачи для распределения по квадрантам</p>
+                  <h3 className="font-semibold text-foreground">Планируемые задачи</h3>
+                  <p className="text-xs text-muted-foreground">Единая точка входа для создания задач. Распределите по квадрантам</p>
                 </div>
                 <span className="ml-auto text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary">
-                  {getFilteredTasks("inbox").length}
+                  {getFilteredTasks("planned").length}
                 </span>
               </div>
 
               <div className="space-y-2 mb-4 min-h-[60px]">
-                {getFilteredTasks("inbox").map(task => (
+                {getFilteredTasks("planned").map(task => (
                   <SortableTask
                     key={task.id}
                     task={task}
                     quadrantColor="hsl(217 91% 60%)"
                     categoryColor={getCategoryColor(task.category_id)}
-                    onRemove={() => deleteTask(task.id)}
+                    onRemove={() => handleDeleteTask(task)}
                     onToggleCompleted={() => toggleCompleted(task.id)}
                     onClick={() => {
                       setEditingTask(task);
+                      setIsNewTask(false);
                       setShowEditModal(true);
                     }}
                   />
                 ))}
-                {getFilteredTasks("inbox").length === 0 && statusFilter === "inbox" && (
+                {getFilteredTasks("planned").length === 0 && statusFilter === "planned" && (
                   <div className="h-[60px] flex items-center justify-center rounded-xl border-2 border-dashed border-border/50 text-sm text-muted-foreground">
-                    Нет входящих задач
+                    Нет планируемых задач
                   </div>
                 )}
               </div>
 
               <div className="flex gap-2">
                 <Input
-                  placeholder="Новая задача во входящие..."
-                  value={newTask["inbox"] || ""}
-                  onChange={(e) => setNewTask(prev => ({ ...prev, inbox: e.target.value }))}
-                  onKeyDown={(e) => e.key === "Enter" && handleAddInboxTask()}
+                  placeholder="Название новой задачи..."
+                  value={plannedTaskInput}
+                  onChange={(e) => setPlannedTaskInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddPlannedTask()}
                   className="h-9 text-sm bg-background/50"
                 />
-                <Button size="sm" onClick={handleAddInboxTask} className="shrink-0">
+                <Button size="sm" onClick={handleAddPlannedTask} className="shrink-0">
                   <Plus className="w-4 h-4" />
                 </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button size="sm" variant="outline" onClick={handleOpenNewTaskModal} className="shrink-0">
+                      <Expand className="w-4 h-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Расширенное создание с AI-приоритетом</TooltipContent>
+                </Tooltip>
+              </div>
+            </GlassCard>
+          )}
+
+          {/* Show create task hint when Planned section is hidden */}
+          {statusFilter !== "planned" && plannedTasks.length === 0 && (
+            <GlassCard className="border-primary/30">
+              <div className="flex items-center gap-3">
+                <ClipboardList className="w-5 h-5 text-primary" />
+                <div className="flex-1">
+                  <h3 className="font-semibold text-foreground">Планируемые задачи</h3>
+                  <p className="text-xs text-muted-foreground">Создавайте задачи здесь, затем распределяйте по квадрантам</p>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Название новой задачи..."
+                    value={plannedTaskInput}
+                    onChange={(e) => setPlannedTaskInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleAddPlannedTask()}
+                    className="h-9 text-sm bg-background/50 w-64"
+                  />
+                  <Button size="sm" onClick={handleAddPlannedTask} className="shrink-0">
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button size="sm" variant="outline" onClick={handleOpenNewTaskModal} className="shrink-0">
+                        <Expand className="w-4 h-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Расширенное создание с AI-приоритетом</TooltipContent>
+                  </Tooltip>
+                </div>
               </div>
             </GlassCard>
           )}
@@ -563,17 +614,18 @@ export default function EisenhowerMatrix() {
                           </span>
                         </div>
 
-                        <div className="space-y-2 mb-4 min-h-[100px]" data-droppable={key}>
+                        <div className="space-y-2 min-h-[180px]" data-droppable={key}>
                           {quadrantTasks.map(task => (
                             <SortableTask
                               key={task.id}
                               task={task}
                               quadrantColor={quadrant.color}
                               categoryColor={getCategoryColor(task.category_id)}
-                              onRemove={() => deleteTask(task.id)}
+                              onRemove={() => handleDeleteTask(task)}
                               onToggleCompleted={() => toggleCompleted(task.id)}
                               onClick={() => {
                                 setEditingTask(task);
+                                setIsNewTask(false);
                                 setShowEditModal(true);
                               }}
                             />
@@ -583,27 +635,6 @@ export default function EisenhowerMatrix() {
                               Перетащите задачу сюда
                             </div>
                           )}
-                        </div>
-
-                        <div className="flex gap-2">
-                          <Input
-                            placeholder="Новая задача..."
-                            value={newTask[key] || ""}
-                            onChange={(e) => setNewTask(prev => ({ ...prev, [key]: e.target.value }))}
-                            onKeyDown={(e) => e.key === "Enter" && handleAddTask(key)}
-                            className="h-9 text-sm bg-background/50"
-                          />
-                          <Button size="sm" onClick={() => handleAddTask(key)} className="shrink-0">
-                            <Plus className="w-4 h-4" />
-                          </Button>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button size="sm" variant="outline" onClick={() => handleOpenNewTask(key)} className="shrink-0">
-                                <Expand className="w-4 h-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Расширенное создание</TooltipContent>
-                          </Tooltip>
                         </div>
                       </GlassCard>
                     </SortableContext>
@@ -654,9 +685,9 @@ export default function EisenhowerMatrix() {
           task={editingTask}
           categories={categories}
           onSave={handleSaveTask}
-          onDelete={handleDeleteTask}
+          onDelete={handleDeleteFromModal}
           isNew={isNewTask}
-          defaultQuadrant={newTaskQuadrant}
+          defaultQuadrant="not-urgent-important"
         />
 
         <CategoryManager
@@ -675,6 +706,13 @@ export default function EisenhowerMatrix() {
             clearCompleted();
             setShowClearDialog(false);
           }}
+        />
+
+        <DeleteTaskDialog
+          open={showDeleteDialog}
+          onOpenChange={setShowDeleteDialog}
+          taskName={taskToDelete?.content || ""}
+          onConfirm={confirmDeleteTask}
         />
       </DashboardLayout>
     </TooltipProvider>

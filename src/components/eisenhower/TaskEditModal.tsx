@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Slider } from "@/components/ui/slider";
 import {
   Select,
   SelectContent,
@@ -22,10 +21,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { format, parse } from "date-fns";
 import { ru } from "date-fns/locale";
-import { CalendarIcon, Trash2 } from "lucide-react";
+import { CalendarIcon, Trash2, Sparkles, Loader2, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TaskCategory } from "@/hooks/useTaskCategories";
-import { calculateQuadrant } from "@/hooks/useEisenhowerTasks";
+import { supabase } from "@/integrations/supabase/client";
 
 interface TaskEditModalProps {
   open: boolean;
@@ -58,18 +57,27 @@ interface TaskEditModalProps {
 }
 
 const quadrantOptions = [
-  { value: "inbox", label: "📥 Входящие" },
   { value: "urgent-important", label: "Q1: Срочно и Важно" },
   { value: "not-urgent-important", label: "Q2: Важно, не Срочно" },
   { value: "urgent-not-important", label: "Q3: Срочно, не Важно" },
   { value: "not-urgent-not-important", label: "Q4: Не Срочно, не Важно" },
 ];
 
-function getQuadrantLabel(importance: number, urgency: number): string {
-  if (importance >= 6 && urgency >= 6) return "Q1: Срочно и Важно";
-  if (importance >= 6 && urgency < 6) return "Q2: Важно, не Срочно";
-  if (importance < 6 && urgency >= 6) return "Q3: Срочно, не Важно";
-  return "Q4: Не Срочно, не Важно";
+const quadrantLabels: Record<string, string> = {
+  "urgent-important": "Q1: Срочно и Важно",
+  "not-urgent-important": "Q2: Важно, не Срочно",
+  "urgent-not-important": "Q3: Срочно, не Важно",
+  "not-urgent-not-important": "Q4: Не Срочно, не Важно",
+};
+
+function getScoresForQuadrant(quadrant: string): { importance: number; urgency: number } {
+  switch (quadrant) {
+    case "urgent-important": return { importance: 8, urgency: 8 };
+    case "not-urgent-important": return { importance: 8, urgency: 3 };
+    case "urgent-not-important": return { importance: 3, urgency: 8 };
+    case "not-urgent-not-important": return { importance: 3, urgency: 3 };
+    default: return { importance: 5, urgency: 5 };
+  }
 }
 
 export function TaskEditModal({
@@ -80,7 +88,7 @@ export function TaskEditModal({
   onSave,
   onDelete,
   isNew = false,
-  defaultQuadrant = "urgent-important",
+  defaultQuadrant = "not-urgent-important",
 }: TaskEditModalProps) {
   const [content, setContent] = useState("");
   const [quadrant, setQuadrant] = useState(defaultQuadrant);
@@ -88,9 +96,11 @@ export function TaskEditModal({
   const [deadlineDate, setDeadlineDate] = useState<Date | undefined>(undefined);
   const [deadlineTime, setDeadlineTime] = useState("");
   const [categoryId, setCategoryId] = useState<string>("__none__");
-  const [importance, setImportance] = useState(5);
-  const [urgency, setUrgency] = useState(5);
-  const [useManualQuadrant, setUseManualQuadrant] = useState(false);
+  
+  // AI Priority state
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiRecommendation, setAiRecommendation] = useState<{ quadrant: string; reason: string } | null>(null);
+  const [useAiRecommendation, setUseAiRecommendation] = useState(true);
 
   useEffect(() => {
     if (task) {
@@ -100,9 +110,8 @@ export function TaskEditModal({
       setDeadlineDate(task.deadline_date ? parse(task.deadline_date, "yyyy-MM-dd", new Date()) : undefined);
       setDeadlineTime(task.deadline_time || "");
       setCategoryId(task.category_id || "__none__");
-      setImportance(task.importance ?? 5);
-      setUrgency(task.urgency ?? 5);
-      setUseManualQuadrant(false);
+      setAiRecommendation(null);
+      setUseAiRecommendation(false);
     } else {
       setContent("");
       setQuadrant(defaultQuadrant);
@@ -110,27 +119,61 @@ export function TaskEditModal({
       setDeadlineDate(undefined);
       setDeadlineTime("");
       setCategoryId("__none__");
-      setImportance(5);
-      setUrgency(5);
-      setUseManualQuadrant(false);
+      setAiRecommendation(null);
+      setUseAiRecommendation(true);
     }
   }, [task, open, defaultQuadrant]);
 
-  // Auto-calculate quadrant when importance/urgency changes
-  useEffect(() => {
-    if (!useManualQuadrant) {
-      const autoQuadrant = calculateQuadrant(importance, urgency);
-      setQuadrant(autoQuadrant);
+  // Request AI analysis when content changes (for new tasks)
+  const requestAiAnalysis = async () => {
+    if (!content.trim()) return;
+    
+    setAiLoading(true);
+    try {
+      const categoryName = categories.find(c => c.id === categoryId)?.name;
+      
+      const { data, error } = await supabase.functions.invoke("analyze-task-priority", {
+        body: {
+          title: content,
+          category: categoryName || null,
+          deadline_date: deadlineDate ? format(deadlineDate, "yyyy-MM-dd") : null,
+          deadline_time: deadlineTime || null,
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.quadrant) {
+        setAiRecommendation({
+          quadrant: data.quadrant,
+          reason: data.reason || "AI рекомендация",
+        });
+        if (useAiRecommendation) {
+          setQuadrant(data.quadrant);
+        }
+      }
+    } catch (error) {
+      console.error("AI analysis error:", error);
+    } finally {
+      setAiLoading(false);
     }
-  }, [importance, urgency, useManualQuadrant]);
+  };
+
+  const handleAcceptRecommendation = () => {
+    if (aiRecommendation) {
+      setQuadrant(aiRecommendation.quadrant);
+      setUseAiRecommendation(true);
+    }
+  };
 
   const handleQuadrantChange = (value: string) => {
     setQuadrant(value);
-    setUseManualQuadrant(true);
+    setUseAiRecommendation(false);
   };
 
   const handleSave = () => {
     if (!content.trim()) return;
+    const scores = getScoresForQuadrant(quadrant);
     onSave({
       content: content.trim(),
       quadrant,
@@ -138,13 +181,11 @@ export function TaskEditModal({
       deadline_date: deadlineDate ? format(deadlineDate, "yyyy-MM-dd") : null,
       deadline_time: deadlineDate && deadlineTime ? deadlineTime : null,
       category_id: categoryId === "__none__" ? null : categoryId,
-      importance,
-      urgency,
+      importance: scores.importance,
+      urgency: scores.urgency,
     });
     onOpenChange(false);
   };
-
-  const calculatedQuadrant = getQuadrantLabel(importance, urgency);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -155,7 +196,7 @@ export function TaskEditModal({
         
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label htmlFor="content">Название</Label>
+            <Label htmlFor="content">Название задачи</Label>
             <Input
               id="content"
               value={content}
@@ -181,66 +222,6 @@ export function TaskEditModal({
                       />
                       {cat.name}
                     </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Importance/Urgency Sliders */}
-          <div className="space-y-4 p-3 rounded-lg bg-muted/30 border border-border/50">
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <Label className="text-sm">Важность</Label>
-                <span className="text-sm font-medium px-2 py-0.5 rounded bg-primary/10 text-primary">{importance}</span>
-              </div>
-              <Slider
-                value={[importance]}
-                onValueChange={([val]) => {
-                  setImportance(val);
-                  setUseManualQuadrant(false);
-                }}
-                min={1}
-                max={10}
-                step={1}
-                className="w-full"
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <Label className="text-sm">Срочность</Label>
-                <span className="text-sm font-medium px-2 py-0.5 rounded bg-destructive/10 text-destructive">{urgency}</span>
-              </div>
-              <Slider
-                value={[urgency]}
-                onValueChange={([val]) => {
-                  setUrgency(val);
-                  setUseManualQuadrant(false);
-                }}
-                min={1}
-                max={10}
-                step={1}
-                className="w-full"
-              />
-            </div>
-            
-            <div className="text-center">
-              <span className="text-xs text-muted-foreground">Автоматический квадрант: </span>
-              <span className="text-xs font-medium text-primary">{calculatedQuadrant}</span>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Позиция в матрице (или выбрать вручную)</Label>
-            <Select value={quadrant} onValueChange={handleQuadrantChange}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {quadrantOptions.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -284,6 +265,73 @@ export function TaskEditModal({
                 className="w-[120px]"
               />
             </div>
+          </div>
+
+          {/* AI Priority Section */}
+          <div className="space-y-3 p-3 rounded-lg bg-muted/30 border border-border/50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-primary" />
+                <Label className="text-sm font-medium">AI-ассистент: приоритет задачи</Label>
+              </div>
+              <Button 
+                type="button" 
+                variant="outline" 
+                size="sm"
+                onClick={requestAiAnalysis}
+                disabled={aiLoading || !content.trim()}
+              >
+                {aiLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Анализировать"
+                )}
+              </Button>
+            </div>
+
+            {aiRecommendation && (
+              <div className="space-y-2">
+                <div className="p-2 rounded-md bg-primary/10 border border-primary/20">
+                  <p className="text-sm font-medium text-primary">
+                    Рекомендуемый приоритет: {quadrantLabels[aiRecommendation.quadrant]}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {aiRecommendation.reason}
+                  </p>
+                </div>
+                
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant={useAiRecommendation && quadrant === aiRecommendation.quadrant ? "default" : "outline"}
+                    size="sm"
+                    onClick={handleAcceptRecommendation}
+                    className="flex-1 gap-1"
+                  >
+                    {useAiRecommendation && quadrant === aiRecommendation.quadrant && (
+                      <Check className="w-3 h-3" />
+                    )}
+                    Принять рекомендацию
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label>Выбрать приоритет вручную</Label>
+            <Select value={quadrant} onValueChange={handleQuadrantChange}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {quadrantOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="flex items-center space-x-2">
