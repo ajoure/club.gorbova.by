@@ -19,6 +19,7 @@ import AdminUsers from "./pages/admin/AdminUsers";
 import AdminRoles from "./pages/admin/AdminRoles";
 import AdminAudit from "./pages/admin/AdminAudit";
 import AdminEntitlements from "./pages/admin/AdminEntitlements";
+import AdminContent from "./pages/admin/AdminContent";
 
 const queryClient = new QueryClient();
 
@@ -44,6 +45,7 @@ const App = () => (
             <Route path="/admin/roles" element={<AdminLayout><AdminRoles /></AdminLayout>} />
             <Route path="/admin/audit" element={<AdminLayout><AdminAudit /></AdminLayout>} />
             <Route path="/admin/entitlements" element={<AdminLayout><AdminEntitlements /></AdminLayout>} />
+            <Route path="/admin/content" element={<AdminLayout><AdminContent /></AdminLayout>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

@@ -197,7 +197,7 @@ export function useAdminUsers() {
     }
   };
 
-  const startImpersonation = async (userId: string): Promise<string | null> => {
+  const startImpersonation = async (userId: string): Promise<{ tokenHash: string; email: string } | null> => {
     try {
       const response = await supabase.functions.invoke("users-admin-actions", {
         body: { action: "impersonate_start", targetUserId: userId },
@@ -209,8 +209,13 @@ export function useAdminUsers() {
         return null;
       }
 
-      toast.success("Режим просмотра от имени пользователя активирован");
-      return response.data.token;
+      if (!response.data?.tokenHash || !response.data?.email) {
+        console.error("Missing impersonation data:", response.data);
+        toast.error("Ошибка: неполные данные для входа");
+        return null;
+      }
+
+      return { tokenHash: response.data.tokenHash, email: response.data.email };
     } catch (error) {
       console.error("Impersonation error:", error);
       toast.error("Ошибка входа от имени пользователя");
