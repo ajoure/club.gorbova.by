@@ -14,6 +14,10 @@ import EisenhowerMatrix from "./pages/tools/EisenhowerMatrix";
 import BalanceWheel from "./pages/tools/BalanceWheel";
 import Pricing from "./pages/Pricing";
 import NotFound from "./pages/NotFound";
+import { AdminLayout } from "./components/layout/AdminLayout";
+import AdminUsers from "./pages/admin/AdminUsers";
+import AdminRoles from "./pages/admin/AdminRoles";
+import AdminAudit from "./pages/admin/AdminAudit";
 
 const queryClient = new QueryClient();
 
@@ -34,6 +38,10 @@ const App = () => (
             <Route path="/tools/eisenhower" element={<EisenhowerMatrix />} />
             <Route path="/tools/balance-wheel" element={<BalanceWheel />} />
             <Route path="/pricing" element={<Pricing />} />
+            {/* Admin routes */}
+            <Route path="/admin/users" element={<AdminLayout><AdminUsers /></AdminLayout>} />
+            <Route path="/admin/roles" element={<AdminLayout><AdminRoles /></AdminLayout>} />
+            <Route path="/admin/audit" element={<AdminLayout><AdminAudit /></AdminLayout>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>
