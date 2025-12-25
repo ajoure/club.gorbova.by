@@ -1,12 +1,21 @@
 import { useState, forwardRef } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { LayoutGrid, Plus, X, Loader2, Settings, Trash2, Info, ClipboardList, Expand, BarChart3 } from "lucide-react";
+import { LayoutGrid, Plus, X, Loader2, Trash2, Info, ClipboardList, Expand, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MatrixAnalysisModal } from "@/components/eisenhower/MatrixAnalysisModal";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  SelectGroup,
+  SelectLabel,
+} from "@/components/ui/select";
 import {
   DndContext,
   DragEndEvent,
@@ -25,12 +34,11 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useEisenhowerTasks, EisenhowerTask } from "@/hooks/useEisenhowerTasks";
-import { useTaskCategories } from "@/hooks/useTaskCategories";
 import { TaskEditModal } from "@/components/eisenhower/TaskEditModal";
-import { CategoryManager } from "@/components/eisenhower/CategoryManager";
 import { ClearCompletedDialog } from "@/components/eisenhower/ClearCompletedDialog";
 import { DeleteTaskDialog } from "@/components/eisenhower/DeleteTaskDialog";
 import { format, parse, isBefore, startOfDay } from "date-fns";
+import { SPHERES, getGroupedSpheres, getSphereById } from "@/constants/spheres";
 
 interface Quadrant {
   title: string;
@@ -237,17 +245,17 @@ function DroppableQuadrant({ id, children }: { id: string; children: React.React
 
 export default function EisenhowerMatrix() {
   const { tasks, loading, addTask, updateTask, deleteTask, moveTask, toggleCompleted, clearCompleted } = useEisenhowerTasks();
-  const { categories, canManageCategories, addCategory, deleteCategory } = useTaskCategories();
   
   const [plannedTaskInput, setPlannedTaskInput] = useState("");
   const [activeTask, setActiveTask] = useState<EisenhowerTask | null>(null);
   const [editingTask, setEditingTask] = useState<EisenhowerTask | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [showClearDialog, setShowClearDialog] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [sphereFilter, setSphereFilter] = useState<string | null>(null);
   const [isNewTask, setIsNewTask] = useState(false);
+  
+  const groupedSpheres = getGroupedSpheres();
   
   // Delete confirmation state
   const [taskToDelete, setTaskToDelete] = useState<EisenhowerTask | null>(null);
@@ -333,8 +341,8 @@ export default function EisenhowerMatrix() {
       filtered = filtered.filter(t => t.completed);
     }
     
-    if (categoryFilter) {
-      filtered = filtered.filter(t => t.category_id === categoryFilter);
+    if (sphereFilter) {
+      filtered = filtered.filter(t => t.category_id === sphereFilter);
     }
     
     return filtered;
@@ -398,9 +406,9 @@ export default function EisenhowerMatrix() {
     }
   };
 
-  const getCategoryColor = (categoryId: string | null) => {
-    if (!categoryId) return undefined;
-    return categories.find(c => c.id === categoryId)?.color;
+  const getSphereColor = (sphereId: string | null) => {
+    if (!sphereId) return undefined;
+    return getSphereById(sphereId).color;
   };
 
   if (loading) {
@@ -467,30 +475,30 @@ export default function EisenhowerMatrix() {
               </Button>
             </div>
 
-            <div className="flex gap-1 flex-wrap">
-              <Button 
-                variant={categoryFilter === null ? "secondary" : "ghost"} 
-                size="sm"
-                onClick={() => setCategoryFilter(null)}
-              >
-                Все сферы
-              </Button>
-              {categories.map(cat => (
-                <Button 
-                  key={cat.id}
-                  variant={categoryFilter === cat.id ? "secondary" : "ghost"} 
-                  size="sm"
-                  onClick={() => setCategoryFilter(cat.id)}
-                  className="gap-1"
-                >
-                  <div 
-                    className="w-2 h-2 rounded-full" 
-                    style={{ backgroundColor: cat.color }}
-                  />
-                  {cat.name}
-                </Button>
-              ))}
-            </div>
+            <Select value={sphereFilter || "all"} onValueChange={(v) => setSphereFilter(v === "all" ? null : v)}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Все сферы" />
+              </SelectTrigger>
+              <SelectContent className="max-h-[300px]">
+                <SelectItem value="all">Все сферы</SelectItem>
+                {groupedSpheres.map((group) => (
+                  <SelectGroup key={group.group}>
+                    <SelectLabel className="text-xs text-muted-foreground">{group.group}</SelectLabel>
+                    {group.spheres.map((sphere) => (
+                      <SelectItem key={sphere.id} value={sphere.id}>
+                        <div className="flex items-center gap-2">
+                          <div 
+                            className="w-2 h-2 rounded-full" 
+                            style={{ backgroundColor: sphere.color }}
+                          />
+                          {sphere.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
 
             <div className="flex gap-2 ml-auto">
               <Button 
@@ -511,17 +519,6 @@ export default function EisenhowerMatrix() {
                 >
                   <Trash2 className="w-4 h-4" />
                   Очистить выполненные ({completedCount})
-                </Button>
-              )}
-              {canManageCategories && (
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => setShowCategoryManager(true)}
-                  className="gap-1"
-                >
-                  <Settings className="w-4 h-4" />
-                  Сферы
                 </Button>
               )}
             </div>
@@ -557,7 +554,7 @@ export default function EisenhowerMatrix() {
                       key={task.id}
                       task={task}
                       quadrantColor="hsl(217 91% 60%)"
-                      categoryColor={getCategoryColor(task.category_id)}
+                      categoryColor={getSphereColor(task.category_id)}
                       onRemove={() => handleDeleteTask(task)}
                       onToggleCompleted={() => toggleCompleted(task.id)}
                       onClick={() => {
@@ -661,7 +658,7 @@ export default function EisenhowerMatrix() {
                               key={task.id}
                               task={task}
                               quadrantColor={quadrant.color}
-                              categoryColor={getCategoryColor(task.category_id)}
+                              categoryColor={getSphereColor(task.category_id)}
                               onRemove={() => handleDeleteTask(task)}
                               onToggleCompleted={() => toggleCompleted(task.id)}
                               onClick={() => {
@@ -725,19 +722,11 @@ export default function EisenhowerMatrix() {
             }
           }}
           task={editingTask}
-          categories={categories}
           onSave={handleSaveTask}
           onDelete={handleDeleteFromModal}
           isNew={isNewTask}
         />
 
-        <CategoryManager
-          open={showCategoryManager}
-          onOpenChange={setShowCategoryManager}
-          categories={categories}
-          onAdd={addCategory}
-          onDelete={deleteCategory}
-        />
 
         <ClearCompletedDialog
           open={showClearDialog}

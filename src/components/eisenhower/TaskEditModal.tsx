@@ -16,6 +16,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  SelectGroup,
+  SelectLabel,
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -23,7 +25,7 @@ import { format, parse } from "date-fns";
 import { ru } from "date-fns/locale";
 import { CalendarIcon, Trash2, Sparkles, Loader2, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { TaskCategory } from "@/hooks/useTaskCategories";
+import { SPHERES, getGroupedSpheres, getSphereById } from "@/constants/spheres";
 import { supabase } from "@/integrations/supabase/client";
 
 interface TaskEditModalProps {
@@ -40,7 +42,6 @@ interface TaskEditModalProps {
     importance?: number;
     urgency?: number;
   } | null;
-  categories: TaskCategory[];
   onSave: (updates: {
     content: string;
     quadrant: string | null;
@@ -85,7 +86,6 @@ export function TaskEditModal({
   open,
   onOpenChange,
   task,
-  categories,
   onSave,
   onDelete,
   isNew = false,
@@ -96,12 +96,14 @@ export function TaskEditModal({
   const [completed, setCompleted] = useState(false);
   const [deadlineDate, setDeadlineDate] = useState<Date | undefined>(undefined);
   const [deadlineTime, setDeadlineTime] = useState("");
-  const [categoryId, setCategoryId] = useState<string>("__none__");
+  const [sphereId, setSphereId] = useState<string>("none");
   
   // AI Priority state
   const [aiLoading, setAiLoading] = useState(false);
   const [aiRecommendation, setAiRecommendation] = useState<{ quadrant: string; reason: string } | null>(null);
   const [useAiRecommendation, setUseAiRecommendation] = useState(false);
+
+  const groupedSpheres = getGroupedSpheres();
 
   useEffect(() => {
     if (task) {
@@ -110,7 +112,7 @@ export function TaskEditModal({
       setCompleted(task.completed);
       setDeadlineDate(task.deadline_date ? parse(task.deadline_date, "yyyy-MM-dd", new Date()) : undefined);
       setDeadlineTime(task.deadline_time || "");
-      setCategoryId(task.category_id || "__none__");
+      setSphereId(task.category_id || "none");
       setAiRecommendation(null);
       setUseAiRecommendation(false);
     } else {
@@ -120,7 +122,7 @@ export function TaskEditModal({
       setCompleted(false);
       setDeadlineDate(undefined);
       setDeadlineTime("");
-      setCategoryId("__none__");
+      setSphereId("none");
       setAiRecommendation(null);
       setUseAiRecommendation(false);
     }
@@ -131,12 +133,12 @@ export function TaskEditModal({
     
     setAiLoading(true);
     try {
-      const categoryName = categories.find(c => c.id === categoryId)?.name;
+      const sphere = getSphereById(sphereId);
       
       const { data, error } = await supabase.functions.invoke("analyze-task-priority", {
         body: {
           title: content,
-          category: categoryName || null,
+          category: sphere.name !== "Без категории" ? sphere.name : null,
           deadline_date: deadlineDate ? format(deadlineDate, "yyyy-MM-dd") : null,
           deadline_time: deadlineTime || null,
         },
@@ -186,7 +188,7 @@ export function TaskEditModal({
       completed,
       deadline_date: deadlineDate ? format(deadlineDate, "yyyy-MM-dd") : null,
       deadline_time: deadlineDate && deadlineTime ? deadlineTime : null,
-      category_id: categoryId === "__none__" ? null : categoryId,
+      category_id: sphereId === "none" ? null : sphereId,
       importance: scores.importance,
       urgency: scores.urgency,
     });
@@ -213,22 +215,26 @@ export function TaskEditModal({
 
           <div className="space-y-2">
             <Label>Сфера</Label>
-            <Select value={categoryId} onValueChange={setCategoryId}>
+            <Select value={sphereId} onValueChange={setSphereId}>
               <SelectTrigger>
                 <SelectValue placeholder="Без категории" />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">Без категории</SelectItem>
-                {categories.map((cat) => (
-                  <SelectItem key={cat.id} value={cat.id}>
-                    <div className="flex items-center gap-2">
-                      <div 
-                        className="w-3 h-3 rounded-full" 
-                        style={{ backgroundColor: cat.color }}
-                      />
-                      {cat.name}
-                    </div>
-                  </SelectItem>
+              <SelectContent className="max-h-[300px]">
+                {groupedSpheres.map((group) => (
+                  <SelectGroup key={group.group}>
+                    <SelectLabel className="text-xs text-muted-foreground">{group.group}</SelectLabel>
+                    {group.spheres.map((sphere) => (
+                      <SelectItem key={sphere.id} value={sphere.id}>
+                        <div className="flex items-center gap-2">
+                          <div 
+                            className="w-3 h-3 rounded-full" 
+                            style={{ backgroundColor: sphere.color }}
+                          />
+                          {sphere.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
                 ))}
               </SelectContent>
             </Select>
