@@ -9,6 +9,10 @@ export interface EisenhowerTask {
   quadrant: string;
   source?: string;
   source_task_id?: string | null;
+  completed: boolean;
+  deadline_date: string | null;
+  deadline_time: string | null;
+  category_id: string | null;
 }
 
 type QuadrantType = "urgent-important" | "not-urgent-important" | "urgent-not-important" | "not-urgent-not-important";
@@ -36,7 +40,7 @@ export function useEisenhowerTasks() {
 
     const { data, error } = await supabase
       .from("eisenhower_tasks")
-      .select("id, content, quadrant, source, source_task_id")
+      .select("id, content, quadrant, source, source_task_id, completed, deadline_date, deadline_time, category_id")
       .eq("user_id", user.id)
       .order("created_at", { ascending: true });
 
@@ -52,13 +56,27 @@ export function useEisenhowerTasks() {
     fetchTasks();
   }, [fetchTasks]);
 
-  const addTask = async (content: string, quadrant: QuadrantType) => {
+  const addTask = async (content: string, quadrant: QuadrantType, options?: {
+    completed?: boolean;
+    deadline_date?: string | null;
+    deadline_time?: string | null;
+    category_id?: string | null;
+  }) => {
     if (!user) return null;
 
     const { data, error } = await supabase
       .from("eisenhower_tasks")
-      .insert({ user_id: user.id, content, quadrant, source: "direct" })
-      .select("id, content, quadrant, source, source_task_id")
+      .insert({ 
+        user_id: user.id, 
+        content, 
+        quadrant, 
+        source: "direct",
+        completed: options?.completed ?? false,
+        deadline_date: options?.deadline_date ?? null,
+        deadline_time: options?.deadline_time ?? null,
+        category_id: options?.category_id ?? null,
+      })
+      .select("id, content, quadrant, source, source_task_id, completed, deadline_date, deadline_time, category_id")
       .single();
 
     if (error) {
@@ -74,7 +92,14 @@ export function useEisenhowerTasks() {
     return data;
   };
 
-  const updateTask = async (taskId: string, updates: { content?: string; quadrant?: QuadrantType }) => {
+  const updateTask = async (taskId: string, updates: { 
+    content?: string; 
+    quadrant?: QuadrantType;
+    completed?: boolean;
+    deadline_date?: string | null;
+    deadline_time?: string | null;
+    category_id?: string | null;
+  }) => {
     if (!user) return false;
 
     const task = tasks.find(t => t.id === taskId);
@@ -133,6 +158,41 @@ export function useEisenhowerTasks() {
     return updateTask(taskId, { quadrant: newQuadrant });
   };
 
+  const toggleCompleted = async (taskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return false;
+    return updateTask(taskId, { completed: !task.completed });
+  };
+
+  const clearCompleted = async () => {
+    if (!user) return false;
+
+    const completedTasks = tasks.filter(t => t.completed);
+    if (completedTasks.length === 0) return true;
+
+    const { error } = await supabase
+      .from("eisenhower_tasks")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("completed", true);
+
+    if (error) {
+      toast({
+        title: "Ошибка",
+        description: "Не удалось удалить выполненные задачи",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    setTasks(prev => prev.filter(t => !t.completed));
+    toast({
+      title: "Успешно",
+      description: `Удалено ${completedTasks.length} задач`,
+    });
+    return true;
+  };
+
   return {
     tasks,
     loading,
@@ -140,6 +200,8 @@ export function useEisenhowerTasks() {
     updateTask,
     deleteTask,
     moveTask,
+    toggleCompleted,
+    clearCompleted,
     refetch: fetchTasks,
   };
 }

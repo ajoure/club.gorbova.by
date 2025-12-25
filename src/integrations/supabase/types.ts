@@ -46,8 +46,12 @@ export type Database = {
       }
       eisenhower_tasks: {
         Row: {
+          category_id: string | null
+          completed: boolean
           content: string
           created_at: string
+          deadline_date: string | null
+          deadline_time: string | null
           id: string
           quadrant: string
           source: string | null
@@ -56,8 +60,12 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          category_id?: string | null
+          completed?: boolean
           content: string
           created_at?: string
+          deadline_date?: string | null
+          deadline_time?: string | null
           id?: string
           quadrant: string
           source?: string | null
@@ -66,8 +74,12 @@ export type Database = {
           user_id: string
         }
         Update: {
+          category_id?: string | null
+          completed?: boolean
           content?: string
           created_at?: string
+          deadline_date?: string | null
+          deadline_time?: string | null
           id?: string
           quadrant?: string
           source?: string | null
@@ -76,6 +88,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "eisenhower_tasks_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "task_categories"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "eisenhower_tasks_source_task_id_fkey"
             columns: ["source_task_id"]
@@ -143,6 +162,33 @@ export type Database = {
           is_active?: boolean
           starts_at?: string
           tier?: Database["public"]["Enums"]["subscription_tier"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      task_categories: {
+        Row: {
+          color: string
+          created_at: string
+          id: string
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          id?: string
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          id?: string
+          name?: string
           updated_at?: string
           user_id?: string
         }
