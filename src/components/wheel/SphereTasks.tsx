@@ -1,40 +1,135 @@
 import { useState } from "react";
-import { Plus, Trash2, Loader2, ListTodo } from "lucide-react";
+import { Plus, Loader2, ListTodo, X, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Slider } from "@/components/ui/slider";
-import { Label } from "@/components/ui/label";
 import { useWheelTasks, WheelTask } from "@/hooks/useWheelTasks";
+import { TaskEditModal } from "@/components/eisenhower/TaskEditModal";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface SphereTasksProps {
   sphereKey: string;
   sphereTitle: string;
 }
 
-function getQuadrantLabel(importance: number, urgency: number): string {
-  if (importance >= 6 && urgency >= 6) return "Q1: Срочно и важно";
-  if (importance >= 6 && urgency < 6) return "Q2: Важно, не срочно";
-  if (importance < 6 && urgency >= 6) return "Q3: Срочно, не важно";
-  return "Q4: Не срочно, не важно";
-}
+const quadrantLabels: Record<string, string> = {
+  "urgent-important": "Q1",
+  "not-urgent-important": "Q2",
+  "urgent-not-important": "Q3",
+  "not-urgent-not-important": "Q4",
+  "planned": "Планируемая",
+};
 
 export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
-  const { tasks, loading, addTask, deleteTask, toggleComplete } = useWheelTasks(sphereKey);
+  const { tasks, loading, addTask, deleteTask, toggleComplete, updateTask } = useWheelTasks(sphereKey);
   const [newTaskText, setNewTaskText] = useState("");
-  const [importanceScore, setImportanceScore] = useState(5);
-  const [urgencyScore, setUrgencyScore] = useState(5);
   const [isAdding, setIsAdding] = useState(false);
+  
+  // Task edit modal state
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<WheelTask | null>(null);
+  
+  // Delete confirmation
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
 
   const handleAddTask = async () => {
     if (!newTaskText.trim()) return;
     
     setIsAdding(true);
-    await addTask(newTaskText.trim(), sphereKey, importanceScore, urgencyScore);
+    // Create task without importance/urgency - will go to "planned" status
+    await addTask(newTaskText.trim(), sphereKey);
     setNewTaskText("");
-    setImportanceScore(5);
-    setUrgencyScore(5);
     setIsAdding(false);
+  };
+
+  const handleTaskClick = (task: WheelTask) => {
+    setSelectedTask(task);
+    setEditModalOpen(true);
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent, taskId: string) => {
+    e.stopPropagation();
+    setTaskToDelete(taskId);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (taskToDelete) {
+      await deleteTask(taskToDelete);
+      setTaskToDelete(null);
+    }
+    setDeleteDialogOpen(false);
+  };
+
+  const handleSaveTask = async (updates: {
+    content: string;
+    quadrant: string | null;
+    completed: boolean;
+    deadline_date: string | null;
+    deadline_time: string | null;
+    category_id: string | null;
+    importance: number;
+    urgency: number;
+  }) => {
+    if (!selectedTask) return;
+    
+    await updateTask(selectedTask.id, {
+      content: updates.content,
+      importance_score: updates.importance,
+      urgency_score: updates.urgency,
+      completed: updates.completed,
+    });
+    
+    setEditModalOpen(false);
+    setSelectedTask(null);
+  };
+
+  const handleDeleteFromModal = async () => {
+    if (selectedTask) {
+      await deleteTask(selectedTask.id);
+      setEditModalOpen(false);
+      setSelectedTask(null);
+    }
+  };
+
+  // Map wheel task to format expected by TaskEditModal
+  const getTaskForModal = (task: WheelTask) => {
+    // Determine quadrant from importance/urgency scores
+    let quadrant = "planned";
+    if (task.importance_score >= 6 && task.urgency_score >= 6) quadrant = "urgent-important";
+    else if (task.importance_score >= 6 && task.urgency_score < 6) quadrant = "not-urgent-important";
+    else if (task.importance_score < 6 && task.urgency_score >= 6) quadrant = "urgent-not-important";
+    else if (task.importance_score < 6 && task.urgency_score < 6 && (task.importance_score > 5 || task.urgency_score > 5)) quadrant = "not-urgent-not-important";
+
+    return {
+      id: task.id,
+      content: task.content,
+      quadrant,
+      completed: task.completed,
+      deadline_date: null,
+      deadline_time: null,
+      category_id: null,
+      importance: task.importance_score,
+      urgency: task.urgency_score,
+    };
+  };
+
+  const getQuadrantBadge = (task: WheelTask) => {
+    if (task.importance_score >= 6 && task.urgency_score >= 6) return "Q1";
+    if (task.importance_score >= 6 && task.urgency_score < 6) return "Q2";
+    if (task.importance_score < 6 && task.urgency_score >= 6) return "Q3";
+    if (task.importance_score < 6 && task.urgency_score < 6) return "Q4";
+    return "—";
   };
 
   if (loading) {
@@ -44,8 +139,6 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
       </div>
     );
   }
-
-  const quadrantLabel = getQuadrantLabel(importanceScore, urgencyScore);
 
   return (
     <div className="space-y-4">
@@ -60,11 +153,16 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
           {tasks.map((task, index) => (
             <li 
               key={task.id} 
-              className="flex items-start gap-3 p-2 rounded-lg bg-muted/30 group"
+              className="flex items-start gap-3 p-2 rounded-lg bg-muted/30 group cursor-pointer hover:bg-muted/50 transition-colors"
+              onClick={() => handleTaskClick(task)}
             >
               <Checkbox 
                 checked={task.completed}
-                onCheckedChange={() => toggleComplete(task.id)}
+                onCheckedChange={(e) => {
+                  e.valueOf(); // Prevent propagation
+                  toggleComplete(task.id);
+                }}
+                onClick={(e) => e.stopPropagation()}
                 className="mt-0.5"
               />
               <div className="flex-1 min-w-0">
@@ -72,11 +170,8 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
                   {index + 1}. {task.content}
                 </span>
                 <div className="flex gap-1 mt-1 flex-wrap">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${task.importance_score >= 6 ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'}`}>
-                    Важность: {task.importance_score}
-                  </span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${task.urgency_score >= 6 ? 'bg-destructive/20 text-destructive' : 'bg-muted text-muted-foreground'}`}>
-                    Срочность: {task.urgency_score}
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary">
+                    {getQuadrantBadge(task)}
                   </span>
                 </div>
               </div>
@@ -84,9 +179,9 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
                 variant="ghost"
                 size="icon"
                 className="opacity-0 group-hover:opacity-100 h-6 w-6 text-muted-foreground hover:text-destructive"
-                onClick={() => deleteTask(task.id)}
+                onClick={(e) => handleDeleteClick(e, task.id)}
               >
-                <Trash2 className="w-3 h-3" />
+                <X className="w-3 h-3" />
               </Button>
             </li>
           ))}
@@ -97,72 +192,61 @@ export function SphereTasks({ sphereKey, sphereTitle }: SphereTasksProps) {
         </p>
       )}
 
-      {/* Add new task form */}
+      {/* Add new task form - simplified without sliders */}
       <div className="space-y-3 pt-2 border-t border-border/50">
-        <Input
-          placeholder="Текст задачи..."
-          value={newTaskText}
-          onChange={(e) => setNewTaskText(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleAddTask()}
-          className="text-sm"
-        />
-        
-        <div className="space-y-3">
-          <div className="space-y-2">
-            <div className="flex justify-between items-center">
-              <Label className="text-xs text-muted-foreground">Важность</Label>
-              <span className="text-xs font-medium">{importanceScore}</span>
-            </div>
-            <Slider
-              value={[importanceScore]}
-              onValueChange={([val]) => setImportanceScore(val)}
-              min={1}
-              max={10}
-              step={1}
-              className="w-full"
-            />
-          </div>
-          
-          <div className="space-y-2">
-            <div className="flex justify-between items-center">
-              <Label className="text-xs text-muted-foreground">Срочность</Label>
-              <span className="text-xs font-medium">{urgencyScore}</span>
-            </div>
-            <Slider
-              value={[urgencyScore]}
-              onValueChange={([val]) => setUrgencyScore(val)}
-              min={1}
-              max={10}
-              step={1}
-              className="w-full"
-            />
-          </div>
-          
-          <div className="text-center">
-            <span className="text-xs px-2 py-1 rounded bg-primary/10 text-primary">
-              → {quadrantLabel}
-            </span>
-          </div>
+        <div className="flex gap-2">
+          <Input
+            placeholder="Текст задачи..."
+            value={newTaskText}
+            onChange={(e) => setNewTaskText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAddTask()}
+            className="text-sm flex-1"
+          />
+          <Button 
+            onClick={handleAddTask} 
+            disabled={!newTaskText.trim() || isAdding}
+            size="sm"
+          >
+            {isAdding ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Plus className="w-4 h-4" />
+            )}
+          </Button>
         </div>
-
-        <Button 
-          onClick={handleAddTask} 
-          disabled={!newTaskText.trim() || isAdding}
-          size="sm"
-          className="w-full"
-        >
-          {isAdding ? (
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-          ) : (
-            <Plus className="w-4 h-4 mr-2" />
-          )}
-          Добавить задачу
-        </Button>
         
-        <p className="text-[10px] text-muted-foreground text-center">
-          Задача автоматически появится в Матрице Эйзенхауэра
+        <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <Sparkles className="w-3 h-3" />
+          Откройте задачу для AI-анализа приоритета. Задачи синхронизируются с Матрицей Эйзенхауэра.
         </p>
       </div>
+
+      {/* Task edit modal - reusing from Eisenhower Matrix */}
+      {selectedTask && (
+        <TaskEditModal
+          open={editModalOpen}
+          onOpenChange={setEditModalOpen}
+          task={getTaskForModal(selectedTask)}
+          onSave={handleSaveTask}
+          onDelete={handleDeleteFromModal}
+        />
+      )}
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить задачу?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие нельзя отменить. Задача будет удалена из сферы и Матрицы Эйзенхауэра.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete}>Удалить</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

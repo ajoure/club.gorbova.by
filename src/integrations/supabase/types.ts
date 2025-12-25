@@ -140,6 +140,36 @@ export type Database = {
         }
         Relationships: []
       }
+      sphere_goals: {
+        Row: {
+          completed: boolean
+          content: string
+          created_at: string
+          id: string
+          sphere_key: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          completed?: boolean
+          content: string
+          created_at?: string
+          id?: string
+          sphere_key: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          completed?: boolean
+          content?: string
+          created_at?: string
+          id?: string
+          sphere_key?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       subscriptions: {
         Row: {
           created_at: string

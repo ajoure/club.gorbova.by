@@ -71,26 +71,24 @@ export function useWheelTasks(sphereKey?: string) {
 
   const addTask = async (
     content: string, 
-    sphereKey: string, 
-    importanceScore: number = 5, 
-    urgencyScore: number = 5
+    sphereKey: string
   ) => {
     if (!user) return null;
 
-    // Calculate quadrant and boolean flags from scores
-    const quadrant = calculateQuadrant(importanceScore, urgencyScore);
-    const important = importanceScore >= 6;
-    const urgent = urgencyScore >= 6;
+    // Create task in "planned" status - no importance/urgency scores set yet
+    // AI will analyze and set priority later
+    const defaultImportance = 5;
+    const defaultUrgency = 5;
     
     const { data: eisenhowerTask, error: eisenhowerError } = await supabase
       .from("eisenhower_tasks")
       .insert({ 
         user_id: user.id, 
         content, 
-        quadrant,
+        quadrant: "planned", // Always start as planned
         source: "wheel_balance",
-        importance: importanceScore,
-        urgency: urgencyScore,
+        importance: defaultImportance,
+        urgency: defaultUrgency,
       })
       .select("id")
       .single();
@@ -103,6 +101,9 @@ export function useWheelTasks(sphereKey?: string) {
       });
       return null;
     }
+    
+    const important = false;
+    const urgent = false;
 
     // Then create wheel task with link
     const { data: wheelTask, error: wheelError } = await supabase
@@ -113,8 +114,8 @@ export function useWheelTasks(sphereKey?: string) {
         content, 
         important,
         urgent,
-        importance_score: importanceScore,
-        urgency_score: urgencyScore,
+        importance_score: defaultImportance,
+        urgency_score: defaultUrgency,
         linked_eisenhower_task_id: eisenhowerTask.id
       })
       .select("id, sphere_key, content, important, urgent, importance_score, urgency_score, completed, linked_eisenhower_task_id, created_at")
