@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useBalanceWheel } from "@/hooks/useBalanceWheel";
 import { SphereTasks } from "@/components/wheel/SphereTasks";
+import { SphereGoals } from "@/components/wheel/SphereGoals";
 
 const stages = [
   { 
@@ -576,6 +577,9 @@ export default function BalanceWheel() {
                   ))}
                 </ul>
               </div>
+
+              {/* User Goals Section */}
+              <SphereGoals sphereKey={selectedStage.key} sphereTitle={selectedStage.title} />
 
               {/* User Tasks Section */}
               <SphereTasks sphereKey={selectedStage.key} sphereTitle={selectedStage.title} />
