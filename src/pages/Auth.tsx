@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -21,23 +21,87 @@ const signupSchema = loginSchema.extend({
   phone: z.string().regex(phoneRegex, "Введите номер в формате +48123456789"),
 });
 
-type AuthMode = "login" | "signup" | "forgot";
+const passwordSchema = z.object({
+  password: z.string().min(6, "Пароль должен содержать минимум 6 символов"),
+  confirmPassword: z.string().min(6, "Пароль должен содержать минимум 6 символов"),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: "Пароли не совпадают",
+  path: ["confirmPassword"],
+});
+
+type AuthMode = "login" | "signup" | "forgot" | "update_password";
 
 export default function Auth() {
   const navigate = useNavigate();
-  const { user, signIn, signUp, loading } = useAuth();
+  const [searchParams] = useSearchParams();
+  const { user, session, signIn, signUp, loading } = useAuth();
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Detect recovery flow from URL or session event
   useEffect(() => {
-    if (user) {
+    const modeParam = searchParams.get("mode");
+    
+    // Listen for PASSWORD_RECOVERY event
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setMode("update_password");
+      }
+    });
+
+    // Check if user arrived via recovery link
+    if (modeParam === "reset" && session) {
+      setMode("update_password");
+    }
+
+    return () => subscription.unsubscribe();
+  }, [searchParams, session]);
+
+  useEffect(() => {
+    // Only redirect if user is logged in AND not in password update mode
+    if (user && mode !== "update_password") {
       navigate("/");
     }
-  }, [user, navigate]);
+  }, [user, mode, navigate]);
+
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+
+    const validation = passwordSchema.safeParse({ password, confirmPassword });
+    if (!validation.success) {
+      toast({
+        title: "Ошибка",
+        description: validation.error.errors[0].message,
+        variant: "destructive",
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
+    const { error } = await supabase.auth.updateUser({ password });
+
+    setIsSubmitting(false);
+
+    if (error) {
+      toast({
+        title: "Ошибка",
+        description: error.message,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Пароль обновлён",
+        description: "Ваш пароль успешно изменён",
+      });
+      navigate("/");
+    }
+  };
 
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,24 +118,32 @@ export default function Auth() {
       return;
     }
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth?mode=reset`,
-    });
-
-    setIsSubmitting(false);
-
-    if (error) {
-      toast({
-        title: "Ошибка",
-        description: error.message,
-        variant: "destructive",
+    try {
+      // Call public auth-actions edge function (no auth required)
+      const { data, error } = await supabase.functions.invoke("auth-actions", {
+        body: {
+          action: "reset_password",
+          email: email,
+        },
       });
-    } else {
+
+      if (error) {
+        throw error;
+      }
+
       toast({
         title: "Письмо отправлено",
         description: "Проверьте почту для восстановления пароля",
       });
       setMode("login");
+    } catch (err: any) {
+      toast({
+        title: "Ошибка",
+        description: err?.message || "Не удалось отправить письмо",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -194,16 +266,72 @@ export default function Auth() {
               {mode === "login" && "Добро пожаловать"}
               {mode === "signup" && "Создать аккаунт"}
               {mode === "forgot" && "Восстановление пароля"}
+              {mode === "update_password" && "Новый пароль"}
             </h1>
             <p className="text-muted-foreground mt-2">
               {mode === "login" && "Войдите в свой аккаунт"}
               {mode === "signup" && "Зарегистрируйтесь для начала работы"}
               {mode === "forgot" && "Введите email для получения ссылки"}
+              {mode === "update_password" && "Введите новый пароль для вашего аккаунта"}
             </p>
           </div>
 
-          {/* Forgot Password Form */}
-          {mode === "forgot" ? (
+          {/* Update Password Form */}
+          {mode === "update_password" ? (
+            <form onSubmit={handleUpdatePassword} className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="password" className="text-foreground">
+                  Новый пароль
+                </Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                  <Input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary"
+                    placeholder="••••••••"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword" className="text-foreground">
+                  Подтвердите пароль
+                </Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary"
+                    placeholder="••••••••"
+                    required
+                  />
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <>
+                    Сохранить пароль
+                    <ArrowRight className="ml-2 h-5 w-5" />
+                  </>
+                )}
+              </Button>
+            </form>
+          ) : mode === "forgot" ? (
+            /* Forgot Password Form */
             <form onSubmit={handleForgotPassword} className="space-y-5">
               <div className="space-y-2">
                 <Label htmlFor="email" className="text-foreground">
