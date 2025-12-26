@@ -35,12 +35,14 @@ serve(async (req: Request): Promise<Response> => {
       });
     }
 
-    // Create client with user's JWT to get their ID
-    const supabaseUser = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: { user: actorUser }, error: userError } = await supabaseUser.auth.getUser();
+    // Extract the token from Bearer header
+    const token = authHeader.replace("Bearer ", "");
+    
+    // Create admin client with service role to verify the token
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+    
+    // Get user from the token
+    const { data: { user: actorUser }, error: userError } = await supabaseAdmin.auth.getUser(token);
     if (userError || !actorUser) {
       console.error("Auth error:", userError);
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -51,8 +53,6 @@ serve(async (req: Request): Promise<Response> => {
 
     const actorUserId = actorUser.id;
 
-    // Create admin client with service role
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
     const body: RolesAdminRequest = await req.json();
     const { action, userId, roleCode, roleId, roleName, roleDescription, permissionCodes } = body;
