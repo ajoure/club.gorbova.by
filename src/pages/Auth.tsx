@@ -46,21 +46,21 @@ export default function Auth() {
   // Detect recovery flow from URL or session event
   useEffect(() => {
     const modeParam = searchParams.get("mode");
-    
-    // Listen for PASSWORD_RECOVERY event
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "PASSWORD_RECOVERY") {
+
+    // If the user came from a recovery link, show the new password form immediately
+    if (modeParam === "reset") {
+      setMode("update_password");
+    }
+
+    // Supabase usually emits SIGNED_IN after /auth/v1/verify redirects back
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (modeParam === "reset" && (event === "SIGNED_IN" || event === "PASSWORD_RECOVERY")) {
         setMode("update_password");
       }
     });
 
-    // Check if user arrived via recovery link
-    if (modeParam === "reset" && session) {
-      setMode("update_password");
-    }
-
     return () => subscription.unsubscribe();
-  }, [searchParams, session]);
+  }, [searchParams]);
 
   useEffect(() => {
     // Only redirect if user is logged in AND not in password update mode
@@ -71,6 +71,16 @@ export default function Auth() {
 
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!session) {
+      toast({
+        title: "Сессия не найдена",
+        description: "Откройте ссылку из письма ещё раз — затем появится форма смены пароля.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsSubmitting(true);
 
     const validation = passwordSchema.safeParse({ password, confirmPassword });
@@ -317,7 +327,7 @@ export default function Auth() {
 
               <Button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || !session}
                 className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
               >
                 {isSubmitting ? (
