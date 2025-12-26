@@ -460,21 +460,64 @@ serve(async (req: Request): Promise<Response> => {
         }
 
         // Generate invite link using Supabase Admin API
-        const origin = req.headers.get("origin") || "http://localhost:5173";
-        const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(inviteEmail, {
-          redirectTo: `${origin}/auth`,
+        const origin = req.headers.get("origin") || "https://gorbova.by";
+        const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.generateLink({
+          type: "invite",
+          email: inviteEmail,
+          options: {
+            redirectTo: `${origin}/auth`,
+          },
         });
 
         if (inviteError) {
           console.error("Invite error:", inviteError);
-          return new Response(JSON.stringify({ error: "Failed to send invite" }), {
+          return new Response(JSON.stringify({ error: "Failed to generate invite link" }), {
             status: 500,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
 
+        // Send custom email via our send-email function
+        const inviteLink = `${supabaseUrl}/auth/v1/verify?token=${inviteData.properties?.hashed_token}&type=invite&redirect_to=${encodeURIComponent(origin + "/auth")}`;
+        
+        try {
+          const emailResponse = await fetch(`${supabaseUrl}/functions/v1/send-email`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${supabaseAnonKey}`,
+            },
+            body: JSON.stringify({
+              to: inviteEmail,
+              subject: "Приглашение в систему",
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <h1 style="color: #333;">Добро пожаловать!</h1>
+                  <p>Вас пригласили присоединиться к системе.</p>
+                  <p>Нажмите на кнопку ниже, чтобы принять приглашение и установить пароль:</p>
+                  <a href="${inviteLink}" style="display: inline-block; padding: 12px 24px; background-color: #6366f1; color: white; text-decoration: none; border-radius: 6px; margin: 16px 0;">
+                    Принять приглашение
+                  </a>
+                  <p style="color: #666; font-size: 14px;">Если вы не ожидали это приглашение, просто проигнорируйте это письмо.</p>
+                  <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+                  <p style="color: #999; font-size: 12px;">С уважением,<br>Команда Gorbova.by</p>
+                </div>
+              `,
+              text: `Вас пригласили присоединиться к системе. Перейдите по ссылке: ${inviteLink}`,
+            }),
+          });
+
+          if (!emailResponse.ok) {
+            const emailError = await emailResponse.json();
+            console.error("Email send error:", emailError);
+            // Don't fail the invite, just log
+          }
+        } catch (emailErr) {
+          console.error("Email send exception:", emailErr);
+          // Don't fail the invite, just log
+        }
+
         // If roleCode is provided and not 'user', assign the role after user is created
-        // The user will get the role once they accept the invitation
         if (roleCode && roleCode !== "user" && inviteData.user) {
           const { data: roleData } = await supabaseAdmin
             .from("roles")
