@@ -7,9 +7,10 @@ const corsHeaders = {
 };
 
 interface AdminActionRequest {
-  action: "block" | "unblock" | "delete" | "reset_password" | "force_logout" | "impersonate_start" | "impersonate_stop";
+  action: "block" | "unblock" | "delete" | "restore" | "reset_password" | "force_logout" | "impersonate_start" | "impersonate_stop" | "invite";
   targetUserId?: string;
   email?: string;
+  roleCode?: string;
 }
 
 serve(async (req: Request): Promise<Response> => {
@@ -225,6 +226,41 @@ serve(async (req: Request): Promise<Response> => {
         });
       }
 
+      case "restore": {
+        if (!targetUserId) {
+          return new Response(JSON.stringify({ error: "targetUserId required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        if (!(await hasPermission("users.delete"))) {
+          return new Response(JSON.stringify({ error: "Permission denied" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Restore user - set status back to active
+        const { error: updateError } = await supabaseAdmin
+          .from("profiles")
+          .update({ status: "active" })
+          .eq("user_id", targetUserId);
+
+        if (updateError) {
+          console.error("Restore error:", updateError);
+          return new Response(JSON.stringify({ error: "Failed to restore user" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        await logAction("users.restore", targetUserId);
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       case "reset_password": {
         if (!email) {
           return new Response(JSON.stringify({ error: "email required" }), {
@@ -402,6 +438,60 @@ serve(async (req: Request): Promise<Response> => {
 
         await logAction("impersonate.stop", null);
         return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "invite": {
+        const { action: _, targetUserId: __, email: inviteEmail, roleCode } = await req.json() as AdminActionRequest & { roleCode?: string };
+        
+        if (!inviteEmail) {
+          return new Response(JSON.stringify({ error: "email required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        if (!(await hasPermission("admins.manage"))) {
+          return new Response(JSON.stringify({ error: "Permission denied" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Generate invite link using Supabase Admin API
+        const origin = req.headers.get("origin") || "http://localhost:5173";
+        const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(inviteEmail, {
+          redirectTo: `${origin}/auth`,
+        });
+
+        if (inviteError) {
+          console.error("Invite error:", inviteError);
+          return new Response(JSON.stringify({ error: "Failed to send invite" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // If roleCode is provided and not 'user', assign the role after user is created
+        // The user will get the role once they accept the invitation
+        if (roleCode && roleCode !== "user" && inviteData.user) {
+          const { data: roleData } = await supabaseAdmin
+            .from("roles")
+            .select("id")
+            .eq("code", roleCode)
+            .maybeSingle();
+
+          if (roleData) {
+            await supabaseAdmin.from("user_roles_v2").upsert(
+              { user_id: inviteData.user.id, role_id: roleData.id },
+              { onConflict: "user_id,role_id" }
+            );
+          }
+        }
+
+        await logAction("users.invite", inviteData.user?.id || null, { email: inviteEmail, roleCode });
+        return new Response(JSON.stringify({ success: true, userId: inviteData.user?.id }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }

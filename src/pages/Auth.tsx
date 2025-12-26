@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
-import { Loader2, Mail, Lock, User, ArrowRight, Sparkles, ArrowLeft } from "lucide-react";
+import { Loader2, Mail, Lock, User, ArrowRight, Sparkles, ArrowLeft, Phone } from "lucide-react";
 import { z } from "zod";
+
+const phoneRegex = /^\+[1-9]\d{6,14}$/;
 
 const loginSchema = z.object({
   email: z.string().email("Введите корректный email"),
@@ -16,6 +18,7 @@ const loginSchema = z.object({
 
 const signupSchema = loginSchema.extend({
   fullName: z.string().min(2, "Имя должно содержать минимум 2 символа"),
+  phone: z.string().regex(phoneRegex, "Введите номер в формате +48123456789"),
 });
 
 type AuthMode = "login" | "signup" | "forgot";
@@ -27,6 +30,7 @@ export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -105,7 +109,7 @@ export default function Auth() {
           navigate("/");
         }
       } else if (mode === "signup") {
-        const validation = signupSchema.safeParse({ email, password, fullName });
+        const validation = signupSchema.safeParse({ email, password, fullName, phone });
         if (!validation.success) {
           toast({
             title: "Ошибка валидации",
@@ -116,7 +120,7 @@ export default function Auth() {
           return;
         }
 
-        const { error } = await signUp(email, password, fullName);
+        const { error } = await signUp(email, password, fullName, phone);
         if (error) {
           if (error.message.includes("already registered")) {
             toast({
@@ -248,23 +252,43 @@ export default function Auth() {
               {/* Login/Signup Form */}
               <form onSubmit={handleSubmit} className="space-y-5">
                 {mode === "signup" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="fullName" className="text-foreground">
-                      Полное имя
-                    </Label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                      <Input
-                        id="fullName"
-                        type="text"
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        className="pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary"
-                        placeholder="Иван Иванов"
-                        required={mode === "signup"}
-                      />
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="fullName" className="text-foreground">
+                        Полное имя
+                      </Label>
+                      <div className="relative">
+                        <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                        <Input
+                          id="fullName"
+                          type="text"
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          className="pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary"
+                          placeholder="Иван Иванов"
+                          required
+                        />
+                      </div>
                     </div>
-                  </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="phone" className="text-foreground">
+                        Телефон
+                      </Label>
+                      <div className="relative">
+                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                        <Input
+                          id="phone"
+                          type="tel"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          className="pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary"
+                          placeholder="+48123456789"
+                          required
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">Формат: +код страны номер</p>
+                    </div>
+                  </>
                 )}
 
                 <div className="space-y-2">

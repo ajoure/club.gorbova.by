@@ -155,6 +155,60 @@ export function useAdminUsers() {
     }
   };
 
+  const restoreUser = async (userId: string): Promise<boolean> => {
+    try {
+      const response = await supabase.functions.invoke("users-admin-actions", {
+        body: { action: "restore", targetUserId: userId },
+      });
+
+      if (response.error) {
+        console.error("Restore error:", response.error);
+        toast.error("Ошибка восстановления");
+        return false;
+      }
+
+      toast.success("Пользователь восстановлен");
+      await fetchUsers();
+      return true;
+    } catch (error) {
+      console.error("Restore error:", error);
+      toast.error("Ошибка восстановления");
+      return false;
+    }
+  };
+
+  const assignRole = async (userId: string, roleCode: string): Promise<boolean> => {
+    try {
+      const response = await supabase.functions.invoke("roles-admin", {
+        body: { action: "assign_role", userId, roleCode },
+      });
+
+      if (response.error) {
+        console.error("Assign role error:", response.error);
+        toast.error("Ошибка назначения роли");
+        return false;
+      }
+
+      if (response.data?.error) {
+        const errorMap: Record<string, string> = {
+          "Permission denied": "Нет прав для назначения роли",
+          "Role not found": "Роль не найдена",
+          "User already has this role": "Пользователь уже имеет эту роль",
+        };
+        toast.error(errorMap[response.data.error] || response.data.error);
+        return false;
+      }
+
+      toast.success("Роль назначена");
+      await fetchUsers();
+      return true;
+    } catch (error) {
+      console.error("Assign role error:", error);
+      toast.error("Ошибка назначения роли");
+      return false;
+    }
+  };
+
   const resetPassword = async (email: string, userId?: string): Promise<boolean> => {
     try {
       const response = await supabase.functions.invoke("users-admin-actions", {
@@ -251,6 +305,8 @@ export function useAdminUsers() {
     blockUser,
     unblockUser,
     deleteUser,
+    restoreUser,
+    assignRole,
     resetPassword,
     forceLogout,
     startImpersonation,
