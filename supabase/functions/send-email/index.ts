@@ -1,5 +1,4 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { SmtpClient } from "https://deno.land/x/smtp@v0.7.0/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -13,8 +12,100 @@ interface EmailRequest {
   text?: string;
 }
 
+// Base64 encoding for auth
+function base64Encode(str: string): string {
+  return btoa(str);
+}
+
+// Send email via SMTP using raw socket
+async function sendEmailViaSMTP(to: string, subject: string, html: string, text?: string): Promise<void> {
+  const smtpHost = "smtp.yandex.ru";
+  const smtpPort = 465;
+  const username = "noreply@gorbova.by";
+  const password = Deno.env.get("YANDEX_SMTP_PASSWORD") || "";
+
+  // Connect with TLS
+  const conn = await Deno.connectTls({
+    hostname: smtpHost,
+    port: smtpPort,
+  });
+
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  async function readResponse(): Promise<string> {
+    const buffer = new Uint8Array(4096);
+    const bytesRead = await conn.read(buffer);
+    if (bytesRead === null) throw new Error("Connection closed");
+    return decoder.decode(buffer.subarray(0, bytesRead));
+  }
+
+  async function sendCommand(cmd: string): Promise<string> {
+    console.log(`SMTP > ${cmd.replace(/AUTH LOGIN.*/, 'AUTH LOGIN [hidden]')}`);
+    await conn.write(encoder.encode(cmd + "\r\n"));
+    const response = await readResponse();
+    console.log(`SMTP < ${response.trim()}`);
+    return response;
+  }
+
+  try {
+    // Read greeting
+    const greeting = await readResponse();
+    console.log(`SMTP < ${greeting.trim()}`);
+
+    // EHLO
+    await sendCommand(`EHLO gorbova.by`);
+
+    // AUTH LOGIN
+    await sendCommand(`AUTH LOGIN`);
+    await sendCommand(base64Encode(username));
+    await sendCommand(base64Encode(password));
+
+    // MAIL FROM
+    await sendCommand(`MAIL FROM:<${username}>`);
+
+    // RCPT TO
+    await sendCommand(`RCPT TO:<${to}>`);
+
+    // DATA
+    await sendCommand(`DATA`);
+
+    // Construct email with MIME
+    const boundary = `boundary_${Date.now()}`;
+    const emailContent = [
+      `From: "Gorbova.by" <${username}>`,
+      `To: ${to}`,
+      `Subject: =?UTF-8?B?${base64Encode(subject)}?=`,
+      `MIME-Version: 1.0`,
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      ``,
+      `--${boundary}`,
+      `Content-Type: text/plain; charset=UTF-8`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      base64Encode(text || ""),
+      ``,
+      `--${boundary}`,
+      `Content-Type: text/html; charset=UTF-8`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      base64Encode(html),
+      ``,
+      `--${boundary}--`,
+      `.`,
+    ].join("\r\n");
+
+    await sendCommand(emailContent);
+
+    // QUIT
+    await sendCommand(`QUIT`);
+
+  } finally {
+    conn.close();
+  }
+}
+
 const handler = async (req: Request): Promise<Response> => {
-  // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -24,24 +115,7 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`Sending email to: ${to}, subject: ${subject}`);
 
-    const client = new SmtpClient();
-
-    await client.connectTLS({
-      hostname: "smtp.yandex.ru",
-      port: 465,
-      username: "noreply@gorbova.by",
-      password: Deno.env.get("YANDEX_SMTP_PASSWORD") || "",
-    });
-
-    await client.send({
-      from: "noreply@gorbova.by",
-      to: to,
-      subject: subject,
-      content: text || "",
-      html: html,
-    });
-
-    await client.close();
+    await sendEmailViaSMTP(to, subject, html, text);
 
     console.log("Email sent successfully to:", to);
 
