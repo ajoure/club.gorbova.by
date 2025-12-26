@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { encode } from "https://deno.land/std@0.190.0/encoding/base64.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,96 +13,151 @@ interface EmailRequest {
   text?: string;
 }
 
-// Base64 encoding for auth
-function base64Encode(str: string): string {
-  return btoa(str);
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+function b64Utf8(value: string): string {
+  return encode(encoder.encode(value).buffer);
 }
 
-// Send email via SMTP using raw socket
-async function sendEmailViaSMTP(to: string, subject: string, html: string, text?: string): Promise<void> {
+function wrapBase64(value: string, lineLength = 76): string {
+  // SMTP base64 is commonly wrapped at 76 chars per RFC 2045
+  const lines: string[] = [];
+  for (let i = 0; i < value.length; i += lineLength) lines.push(value.slice(i, i + lineLength));
+  return lines.join("\r\n");
+}
+
+function parseSmtpCode(response: string): number {
+  const m = response.match(/^(\d{3})/m);
+  return m ? Number(m[1]) : 0;
+}
+
+async function sendEmailViaSMTP(params: {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}): Promise<void> {
   const smtpHost = "smtp.yandex.ru";
   const smtpPort = 465;
   const username = "noreply@gorbova.by";
   const password = Deno.env.get("YANDEX_SMTP_PASSWORD") || "";
 
-  // Connect with TLS
-  const conn = await Deno.connectTls({
-    hostname: smtpHost,
-    port: smtpPort,
-  });
-
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-
-  async function readResponse(): Promise<string> {
-    const buffer = new Uint8Array(4096);
-    const bytesRead = await conn.read(buffer);
-    if (bytesRead === null) throw new Error("Connection closed");
-    return decoder.decode(buffer.subarray(0, bytesRead));
+  if (!password) {
+    throw new Error("YANDEX_SMTP_PASSWORD is not set");
   }
 
-  async function sendCommand(cmd: string): Promise<string> {
-    console.log(`SMTP > ${cmd.replace(/AUTH LOGIN.*/, 'AUTH LOGIN [hidden]')}`);
+  const conn = await Deno.connectTls({ hostname: smtpHost, port: smtpPort });
+
+  async function readResponse(): Promise<string> {
+    // Read until we see a line break (good enough for SMTP replies here)
+    let out = "";
+    const buf = new Uint8Array(4096);
+    while (!out.includes("\n")) {
+      const n = await conn.read(buf);
+      if (n === null) break;
+      out += decoder.decode(buf.subarray(0, n));
+      if (n < buf.length) break;
+    }
+    return out;
+  }
+
+  async function sendCommand(cmd: string, expectCodes?: number[]): Promise<string> {
+    const safeCmd = cmd.startsWith("AUTH") ? "AUTH [hidden]" : cmd;
+    console.log(`SMTP > ${safeCmd}`);
+
     await conn.write(encoder.encode(cmd + "\r\n"));
     const response = await readResponse();
     console.log(`SMTP < ${response.trim()}`);
+
+    if (expectCodes && expectCodes.length) {
+      const code = parseSmtpCode(response);
+      if (!expectCodes.includes(code)) {
+        throw new Error(`SMTP unexpected response ${code}: ${response.trim()}`);
+      }
+    }
+
     return response;
   }
 
   try {
-    // Read greeting
     const greeting = await readResponse();
     console.log(`SMTP < ${greeting.trim()}`);
+    const greetCode = parseSmtpCode(greeting);
+    if (greetCode !== 220) {
+      throw new Error(`SMTP greeting failed: ${greeting.trim()}`);
+    }
 
-    // EHLO
-    await sendCommand(`EHLO gorbova.by`);
+    await sendCommand("EHLO gorbova.by", [250]);
 
-    // AUTH LOGIN
-    await sendCommand(`AUTH LOGIN`);
-    await sendCommand(base64Encode(username));
-    await sendCommand(base64Encode(password));
+    // AUTH LOGIN (Yandex supports LOGIN)
+    await sendCommand("AUTH LOGIN", [334]);
+    await sendCommand(b64Utf8(username), [334]);
 
-    // MAIL FROM
-    await sendCommand(`MAIL FROM:<${username}>`);
+    const passResp = await sendCommand(b64Utf8(password));
+    const passCode = parseSmtpCode(passResp);
+    if (passCode !== 235) {
+      // Most common: 535 invalid credentials (needs app password)
+      throw new Error(
+        `SMTP authentication failed (${passCode}). Check Yandex 360 mailbox SMTP/app password for ${username}.`,
+      );
+    }
 
-    // RCPT TO
-    await sendCommand(`RCPT TO:<${to}>`);
+    await sendCommand(`MAIL FROM:<${username}>`, [250]);
+    await sendCommand(`RCPT TO:<${params.to}>`, [250, 251]);
+    await sendCommand("DATA", [354]);
 
-    // DATA
-    await sendCommand(`DATA`);
+    const boundary = `boundary_${crypto.randomUUID()}`;
+    const subjectEncoded = `=?UTF-8?B?${b64Utf8(params.subject)}?=`;
 
-    // Construct email with MIME
-    const boundary = `boundary_${Date.now()}`;
-    const emailContent = [
+    const textPart = wrapBase64(b64Utf8(params.text || ""));
+    const htmlPart = wrapBase64(b64Utf8(params.html));
+
+    const dataLines = [
       `From: "Gorbova.by" <${username}>`,
-      `To: ${to}`,
-      `Subject: =?UTF-8?B?${base64Encode(subject)}?=`,
+      `To: ${params.to}`,
+      `Subject: ${subjectEncoded}`,
       `MIME-Version: 1.0`,
       `Content-Type: multipart/alternative; boundary="${boundary}"`,
-      ``,
+      "",
       `--${boundary}`,
       `Content-Type: text/plain; charset=UTF-8`,
       `Content-Transfer-Encoding: base64`,
-      ``,
-      base64Encode(text || ""),
-      ``,
+      "",
+      textPart,
+      "",
       `--${boundary}`,
       `Content-Type: text/html; charset=UTF-8`,
       `Content-Transfer-Encoding: base64`,
-      ``,
-      base64Encode(html),
-      ``,
+      "",
+      htmlPart,
+      "",
       `--${boundary}--`,
-      `.`,
+      "",
+      ".",
     ].join("\r\n");
 
-    await sendCommand(emailContent);
+    // DATA must end with <CRLF>.<CRLF>
+    await conn.write(encoder.encode(dataLines + "\r\n"));
+    const dataResp = await readResponse();
+    console.log(`SMTP < ${dataResp.trim()}`);
+    const dataCode = parseSmtpCode(dataResp);
+    if (dataCode !== 250) {
+      throw new Error(`SMTP DATA not accepted (${dataCode}): ${dataResp.trim()}`);
+    }
 
     // QUIT
-    await sendCommand(`QUIT`);
-
+    try {
+      await sendCommand("QUIT");
+    } catch {
+      // ignore
+    }
   } finally {
-    conn.close();
+    try {
+      conn.close();
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -115,26 +171,18 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`Sending email to: ${to}, subject: ${subject}`);
 
-    await sendEmailViaSMTP(to, subject, html, text);
+    await sendEmailViaSMTP({ to, subject, html, text });
 
-    console.log("Email sent successfully to:", to);
-
-    return new Response(
-      JSON.stringify({ success: true, message: "Email sent successfully" }),
-      {
-        status: 200,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      }
-    );
+    return new Response(JSON.stringify({ success: true, message: "Email sent successfully" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    });
   } catch (error: any) {
     console.error("Error sending email:", error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      }
-    );
+    return new Response(JSON.stringify({ error: error?.message || "Unknown error" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    });
   }
 };
 
