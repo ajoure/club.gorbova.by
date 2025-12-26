@@ -25,11 +25,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchUserRole = async (userId: string) => {
     try {
       const { data, error } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", userId)
-        .order("role")
-        .limit(1);
+        .from("user_roles_v2")
+        .select("role_id, roles(code)")
+        .eq("user_id", userId);
 
       if (error) {
         console.error("Error fetching role:", error);
@@ -37,7 +35,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (data && data.length > 0) {
-        return data[0].role as AppRole;
+        // Check for super_admin first, then admin
+        const roleCodes = data.map((r: any) => r.roles?.code).filter(Boolean);
+        if (roleCodes.includes("super_admin")) {
+          return "superadmin" as AppRole;
+        }
+        if (roleCodes.includes("admin")) {
+          return "admin" as AppRole;
+        }
       }
       return "user" as AppRole;
     } catch (err) {
