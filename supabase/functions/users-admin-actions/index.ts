@@ -289,12 +289,65 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        const { error: resetError } = await supabaseAdmin.auth.resetPasswordForEmail(email, {
-          redirectTo: `${req.headers.get("origin") || supabaseUrl}/auth?mode=reset`,
+        // Generate a password reset link (not send via built-in email)
+        const origin = req.headers.get("origin") || "https://gorbova.by";
+        const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+          type: "recovery",
+          email: email,
+          options: {
+            redirectTo: `${origin}/auth?mode=reset`,
+          },
         });
 
-        if (resetError) {
-          console.error("Reset password error:", resetError);
+        if (linkError || !linkData?.properties?.hashed_token) {
+          console.error("Generate reset link error:", linkError);
+          return new Response(JSON.stringify({ error: "Failed to generate reset link" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Build the reset link
+        const resetLink = `${supabaseUrl}/auth/v1/verify?token=${linkData.properties.hashed_token}&type=recovery&redirect_to=${encodeURIComponent(origin + "/auth?mode=reset")}`;
+
+        // Send custom email via our send-email function
+        try {
+          const emailResponse = await fetch(`${supabaseUrl}/functions/v1/send-email`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${supabaseAnonKey}`,
+            },
+            body: JSON.stringify({
+              to: email,
+              subject: "Сброс пароля",
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <h1 style="color: #333;">Сброс пароля</h1>
+                  <p>Вы запросили сброс пароля для вашего аккаунта.</p>
+                  <p>Нажмите на кнопку ниже, чтобы установить новый пароль:</p>
+                  <a href="${resetLink}" style="display: inline-block; padding: 12px 24px; background-color: #6366f1; color: white; text-decoration: none; border-radius: 6px; margin: 16px 0;">
+                    Сбросить пароль
+                  </a>
+                  <p style="color: #666; font-size: 14px;">Если вы не запрашивали сброс пароля, просто проигнорируйте это письмо.</p>
+                  <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+                  <p style="color: #999; font-size: 12px;">С уважением,<br>Команда Gorbova.by</p>
+                </div>
+              `,
+              text: `Вы запросили сброс пароля. Перейдите по ссылке: ${resetLink}`,
+            }),
+          });
+
+          if (!emailResponse.ok) {
+            const emailError = await emailResponse.json();
+            console.error("Email send error:", emailError);
+            return new Response(JSON.stringify({ error: "Failed to send reset email" }), {
+              status: 500,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        } catch (emailErr) {
+          console.error("Email send exception:", emailErr);
           return new Response(JSON.stringify({ error: "Failed to send reset email" }), {
             status: 500,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
