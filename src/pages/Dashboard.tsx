@@ -1,6 +1,7 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { 
   Calculator, 
   Briefcase, 
@@ -59,17 +60,31 @@ const leaderTools = [
 ];
 
 export default function Dashboard() {
-  const { user, role } = useAuth();
+  const { user } = useAuth();
+  const { userRoles, hasAdminAccess } = usePermissions();
 
-  const getRoleLabel = () => {
-    switch (role) {
-      case "superadmin":
-        return "Супер Администратор";
-      case "admin":
-        return "Администратор";
-      default:
-        return "Пользователь";
+  // Get effective role for display (single role model)
+  const getEffectiveRole = () => {
+    const priority = ["super_admin", "admin", "editor", "support", "staff"];
+    for (const code of priority) {
+      const role = userRoles.find((r) => r.code === code);
+      if (role) return role;
     }
+    return null; // Regular user - no role to display
+  };
+
+  const effectiveRole = getEffectiveRole();
+  const isStaff = effectiveRole !== null; // Has any privileged role
+
+  const getRoleDisplayName = (roleCode: string) => {
+    const displayNames: Record<string, string> = {
+      super_admin: "Супер-администратор",
+      admin: "Администратор",
+      editor: "Редактор",
+      support: "Поддержка",
+      staff: "Сотрудник",
+    };
+    return displayNames[roleCode] || roleCode;
   };
 
   return (
@@ -80,9 +95,12 @@ export default function Dashboard() {
           <h1 className="text-3xl font-bold text-foreground mb-2">
             Добро пожаловать, {user?.user_metadata?.full_name || "Пользователь"}!
           </h1>
-          <p className="text-muted-foreground">
-            Ваша роль: <span className="text-primary font-medium">{getRoleLabel()}</span>
-          </p>
+          {/* Only show role for staff members */}
+          {isStaff && effectiveRole && (
+            <p className="text-muted-foreground">
+              Ваша роль: <span className="text-primary font-medium">{getRoleDisplayName(effectiveRole.code)}</span>
+            </p>
+          )}
         </div>
 
         {/* Quick links grid */}

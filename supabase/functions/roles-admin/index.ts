@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 interface RolesAdminRequest {
-  action: "assign_role" | "remove_role" | "create_role" | "set_role_permissions";
+  action: "assign_role" | "remove_role" | "create_role" | "set_role_permissions" | "delete_role";
   userId?: string;
   roleCode?: string;
   roleId?: string;
@@ -24,12 +24,9 @@ serve(async (req: Request): Promise<Response> => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 
     // Get the JWT from the request
     const authHeader = req.headers.get("authorization") ?? req.headers.get("Authorization");
-
-    // Expect: "Bearer <jwt>"
     const match = authHeader?.match(/^Bearer\s+(.+)$/i);
     const token = match?.[1]?.trim();
 
@@ -40,7 +37,7 @@ serve(async (req: Request): Promise<Response> => {
       });
     }
 
-    // Create admin client with service role to verify the token
+    // Create admin client with service role
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
       auth: {
         persistSession: false,
@@ -65,12 +62,11 @@ serve(async (req: Request): Promise<Response> => {
 
     const actorUserId = actorUser.id;
 
-
     const body: RolesAdminRequest = await req.json();
     const { action, userId, roleCode, roleId, roleName, roleDescription, permissionCodes } = body;
     console.log(`Action: ${action}, Actor: ${actorUserId}`);
 
-    // Helper function to check permission
+    // Helper functions
     const hasPermission = async (permissionCode: string): Promise<boolean> => {
       const { data, error } = await supabaseAdmin.rpc("has_permission", {
         _user_id: actorUserId,
@@ -83,7 +79,6 @@ serve(async (req: Request): Promise<Response> => {
       return data === true;
     };
 
-    // Helper function to check if target is super_admin
     const isTargetSuperAdmin = async (targetUserId: string): Promise<boolean> => {
       const { data, error } = await supabaseAdmin.rpc("is_super_admin", {
         _user_id: targetUserId,
@@ -95,12 +90,10 @@ serve(async (req: Request): Promise<Response> => {
       return data === true;
     };
 
-    // Helper function to check if actor is super_admin
     const isActorSuperAdmin = async (): Promise<boolean> => {
       return await isTargetSuperAdmin(actorUserId);
     };
 
-    // Helper function to log action
     const logAction = async (actionType: string, targetId: string | null, meta: Record<string, unknown> = {}) => {
       await supabaseAdmin.from("audit_logs").insert({
         actor_user_id: actorUserId,
@@ -148,20 +141,32 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Use upsert to handle case where user already has this role
+        // SINGLE ROLE MODEL: Delete ALL existing roles for this user first
+        const { error: deleteError } = await supabaseAdmin
+          .from("user_roles_v2")
+          .delete()
+          .eq("user_id", userId);
+
+        if (deleteError) {
+          console.error("Delete existing roles error:", deleteError);
+          // Continue anyway - we want to assign the new role
+        }
+
+        // If assigning "user" role, don't insert anything - user with no roles = regular user
+        if (roleCode === "user") {
+          await logAction("roles.assign", userId, { roleCode, previousRolesRemoved: true });
+          return new Response(JSON.stringify({ success: true, message: "User role set (no explicit role needed)" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Insert the new role
         const { error: insertError } = await supabaseAdmin
           .from("user_roles_v2")
-          .upsert({ user_id: userId, role_id: role.id }, { onConflict: 'user_id,role_id', ignoreDuplicates: true });
+          .insert({ user_id: userId, role_id: role.id });
 
         if (insertError) {
           console.error("Assign role error:", insertError);
-          // Check for unique constraint violation
-          if (insertError.code === '23505') {
-            return new Response(JSON.stringify({ error: "User already has this role" }), {
-              status: 409,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
           return new Response(JSON.stringify({ error: "Failed to assign role" }), {
             status: 500,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -189,7 +194,7 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Prevent removing super_admin from others unless actor is super_admin
+        // Prevent removing super_admin unless actor is super_admin
         if (roleCode === "super_admin" && !(await isActorSuperAdmin())) {
           return new Response(JSON.stringify({ error: "Only super admin can remove super admin role" }), {
             status: 403,
@@ -211,11 +216,11 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
+        // SINGLE ROLE MODEL: Just delete all roles - user becomes regular "user"
         const { error: deleteError } = await supabaseAdmin
           .from("user_roles_v2")
           .delete()
-          .eq("user_id", userId)
-          .eq("role_id", role.id);
+          .eq("user_id", userId);
 
         if (deleteError) {
           console.error("Remove role error:", deleteError);
@@ -295,7 +300,6 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Prevent modifying super_admin permissions unless actor is super_admin
         if (role.code === "super_admin" && !(await isActorSuperAdmin())) {
           return new Response(JSON.stringify({ error: "Cannot modify super admin permissions" }), {
             status: 403,
@@ -303,7 +307,7 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Delete existing permissions for this role
+        // Delete existing permissions
         await supabaseAdmin
           .from("role_permissions")
           .delete()
@@ -344,6 +348,87 @@ serve(async (req: Request): Promise<Response> => {
         }
 
         await logAction("roles.set_permissions", null, { roleId, permissionCodes });
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "delete_role": {
+        if (!roleId) {
+          return new Response(JSON.stringify({ error: "roleId required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        if (!(await hasPermission("roles.manage"))) {
+          return new Response(JSON.stringify({ error: "Permission denied" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get role to check if it's super_admin or user
+        const { data: role, error: roleError } = await supabaseAdmin
+          .from("roles")
+          .select("code")
+          .eq("id", roleId)
+          .single();
+
+        if (roleError || !role) {
+          return new Response(JSON.stringify({ error: "Role not found" }), {
+            status: 404,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Prevent deleting super_admin or user roles
+        if (role.code === "super_admin" || role.code === "user") {
+          return new Response(JSON.stringify({ error: "Cannot delete system role" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Check if role is assigned to any users
+        const { data: assignments, error: assignError } = await supabaseAdmin
+          .from("user_roles_v2")
+          .select("id")
+          .eq("role_id", roleId)
+          .limit(1);
+
+        if (assignError) {
+          console.error("Check role assignments error:", assignError);
+        }
+
+        if (assignments && assignments.length > 0) {
+          return new Response(JSON.stringify({ error: "Role is assigned to users. Remove role from all users first." }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Delete role permissions first
+        await supabaseAdmin
+          .from("role_permissions")
+          .delete()
+          .eq("role_id", roleId);
+
+        // Delete role
+        const { error: deleteError } = await supabaseAdmin
+          .from("roles")
+          .delete()
+          .eq("id", roleId);
+
+        if (deleteError) {
+          console.error("Delete role error:", deleteError);
+          return new Response(JSON.stringify({ error: "Failed to delete role" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        await logAction("roles.delete", null, { roleId, roleCode: role.code });
         return new Response(JSON.stringify({ success: true }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });

@@ -6,6 +6,8 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -29,20 +31,48 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Shield, UserPlus, X } from "lucide-react";
+import { Loader2, Shield, UserPlus, Plus } from "lucide-react";
+import { RoleBadge } from "@/components/admin/RoleBadge";
+import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
 
 export default function AdminRoles() {
-  const { roles, allPermissions, loading, assignRole, removeRole, setRolePermissions } = useAdminRoles();
+  const { roles, allPermissions, loading, assignRole, removeRole, setRolePermissions, createRole, refetch } = useAdminRoles();
   const { users, refetch: refetchUsers } = useAdminUsers();
   const { hasPermission, isSuperAdmin } = usePermissions();
 
   const [editingRole, setEditingRole] = useState<string | null>(null);
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
-  const [assignDialog, setAssignDialog] = useState<{ open: boolean; userId: string }>({ open: false, userId: "" });
+  const [assignDialog, setAssignDialog] = useState<{ open: boolean; userId: string; email: string }>({ open: false, userId: "", email: "" });
   const [selectedRole, setSelectedRole] = useState("");
 
+  const [removeRoleDialog, setRemoveRoleDialog] = useState<{
+    open: boolean;
+    userId: string;
+    email: string;
+    roleCode: string;
+    roleName: string;
+  }>({ open: false, userId: "", email: "", roleCode: "", roleName: "" });
+
+  const [createRoleDialog, setCreateRoleDialog] = useState(false);
+  const [newRoleCode, setNewRoleCode] = useState("");
+  const [newRoleName, setNewRoleName] = useState("");
+  const [newRoleDescription, setNewRoleDescription] = useState("");
+
+  // Get effective role for a user (single role model)
+  const getEffectiveRole = (userRoles: { code: string; name: string }[]) => {
+    const priority = ["super_admin", "admin", "editor", "support", "staff"];
+    for (const code of priority) {
+      const role = userRoles.find(r => r.code === code);
+      if (role) return role;
+    }
+    return null;
+  };
+
   // Staff = users with non-user roles
-  const staffUsers = users.filter((u) => u.roles.some((r) => r.code !== "user"));
+  const staffUsers = users.filter((u) => {
+    const effectiveRole = getEffectiveRole(u.roles);
+    return effectiveRole !== null;
+  });
 
   const handleEditPermissions = (roleId: string) => {
     const role = roles.find((r) => r.id === roleId);
@@ -63,14 +93,27 @@ export default function AdminRoles() {
     if (assignDialog.userId && selectedRole) {
       await assignRole(assignDialog.userId, selectedRole);
       await refetchUsers();
-      setAssignDialog({ open: false, userId: "" });
+      setAssignDialog({ open: false, userId: "", email: "" });
       setSelectedRole("");
     }
   };
 
-  const handleRemoveRole = async (userId: string, roleCode: string) => {
-    await removeRole(userId, roleCode);
-    await refetchUsers();
+  const handleRemoveRoleConfirm = async () => {
+    if (removeRoleDialog.userId && removeRoleDialog.roleCode) {
+      await removeRole(removeRoleDialog.userId, removeRoleDialog.roleCode);
+      await refetchUsers();
+      setRemoveRoleDialog({ open: false, userId: "", email: "", roleCode: "", roleName: "" });
+    }
+  };
+
+  const handleCreateRole = async () => {
+    if (newRoleCode && newRoleName) {
+      await createRole(newRoleCode, newRoleName, newRoleDescription);
+      setCreateRoleDialog(false);
+      setNewRoleCode("");
+      setNewRoleName("");
+      setNewRoleDescription("");
+    }
   };
 
   const groupedPermissions = allPermissions.reduce((acc, perm) => {
@@ -104,49 +147,53 @@ export default function AdminRoles() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Сотрудник</TableHead>
-                  <TableHead>Роли</TableHead>
+                  <TableHead>Роль</TableHead>
                   <TableHead className="w-[100px]"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {staffUsers.map((user) => (
-                  <TableRow key={user.user_id}>
-                    <TableCell>
-                      <div>
-                        <div className="font-medium">{user.full_name || "—"}</div>
-                        <div className="text-sm text-muted-foreground">{user.email}</div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {user.roles.filter((r) => r.code !== "user").map((role) => (
-                          <Badge key={role.code} variant="secondary" className="flex items-center gap-1">
-                            {role.name}
-                            {hasPermission("admins.manage") && (role.code !== "super_admin" || isSuperAdmin()) && (
-                              <button
-                                onClick={() => handleRemoveRole(user.user_id, role.code)}
-                                className="hover:text-destructive"
-                              >
-                                <X className="w-3 h-3" />
-                              </button>
-                            )}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {hasPermission("admins.manage") && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setAssignDialog({ open: true, userId: user.user_id })}
-                        >
-                          <UserPlus className="w-4 h-4" />
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {staffUsers.map((user) => {
+                  const effectiveRole = getEffectiveRole(user.roles);
+                  if (!effectiveRole) return null;
+
+                  const canRemove = hasPermission("admins.manage") && 
+                    (effectiveRole.code !== "super_admin" || isSuperAdmin());
+
+                  return (
+                    <TableRow key={user.user_id}>
+                      <TableCell>
+                        <div>
+                          <div className="font-medium">{user.full_name || "—"}</div>
+                          <div className="text-sm text-muted-foreground">{user.email}</div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <RoleBadge
+                          role={effectiveRole}
+                          canRemove={canRemove}
+                          onRemove={canRemove ? () => setRemoveRoleDialog({
+                            open: true,
+                            userId: user.user_id,
+                            email: user.email || "",
+                            roleCode: effectiveRole.code,
+                            roleName: effectiveRole.name
+                          }) : undefined}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {hasPermission("admins.manage") && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setAssignDialog({ open: true, userId: user.user_id, email: user.email || "" })}
+                          >
+                            <UserPlus className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
                 {staffUsers.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
@@ -160,6 +207,14 @@ export default function AdminRoles() {
         </TabsContent>
 
         <TabsContent value="roles" className="mt-4">
+          <div className="flex justify-end mb-4">
+            {hasPermission("roles.manage") && (
+              <Button onClick={() => setCreateRoleDialog(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Создать роль
+              </Button>
+            )}
+          </div>
           <GlassCard>
             <Table>
               <TableHeader>
@@ -254,6 +309,12 @@ export default function AdminRoles() {
           <DialogHeader>
             <DialogTitle>Назначить роль</DialogTitle>
           </DialogHeader>
+          <p className="text-sm text-muted-foreground mb-2">
+            Сотрудник: {assignDialog.email}
+          </p>
+          <p className="text-xs text-muted-foreground mb-4">
+            Текущая роль будет заменена на новую.
+          </p>
           <Select value={selectedRole} onValueChange={setSelectedRole}>
             <SelectTrigger>
               <SelectValue placeholder="Выберите роль" />
@@ -269,8 +330,59 @@ export default function AdminRoles() {
             </SelectContent>
           </Select>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAssignDialog({ open: false, userId: "" })}>Отмена</Button>
+            <Button variant="outline" onClick={() => setAssignDialog({ open: false, userId: "", email: "" })}>Отмена</Button>
             <Button onClick={handleAssignRole} disabled={!selectedRole}>Назначить</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove Role Dialog */}
+      <RemoveRoleDialog
+        open={removeRoleDialog.open}
+        onOpenChange={(open) => setRemoveRoleDialog({ ...removeRoleDialog, open })}
+        onConfirm={handleRemoveRoleConfirm}
+        roleName={removeRoleDialog.roleName}
+        userEmail={removeRoleDialog.email}
+      />
+
+      {/* Create Role Dialog */}
+      <Dialog open={createRoleDialog} onOpenChange={setCreateRoleDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Создать новую роль</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="role-code">Код роли</Label>
+              <Input
+                id="role-code"
+                placeholder="например: moderator"
+                value={newRoleCode}
+                onChange={(e) => setNewRoleCode(e.target.value.toLowerCase().replace(/\s/g, "_"))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="role-name">Название</Label>
+              <Input
+                id="role-name"
+                placeholder="например: Модератор"
+                value={newRoleName}
+                onChange={(e) => setNewRoleName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="role-description">Описание (опционально)</Label>
+              <Input
+                id="role-description"
+                placeholder="Описание роли"
+                value={newRoleDescription}
+                onChange={(e) => setNewRoleDescription(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateRoleDialog(false)}>Отмена</Button>
+            <Button onClick={handleCreateRole} disabled={!newRoleCode || !newRoleName}>Создать</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

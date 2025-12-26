@@ -9,7 +9,6 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -50,6 +49,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { 
   Search, 
   MoreHorizontal, 
@@ -65,13 +65,16 @@ import {
   UserPlus,
   Shield
 } from "lucide-react";
+import { RoleBadge } from "@/components/admin/RoleBadge";
+import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
+import { InviteUserDialog } from "@/components/admin/InviteUserDialog";
 
 type StatusFilter = "all" | "active" | "deleted" | "blocked";
-type RoleFilter = "all" | "user" | "admin" | "super_admin";
+type RoleFilter = "all" | "user" | "admin" | "super_admin" | "staff" | "editor" | "support";
 
 export default function AdminUsers() {
-  const { users, loading, blockUser, unblockUser, deleteUser, restoreUser, resetPassword, forceLogout, startImpersonation, assignRole, refetch } = useAdminUsers();
-  const { roles } = useAdminRoles();
+  const { users, loading, blockUser, unblockUser, deleteUser, restoreUser, resetPassword, forceLogout, startImpersonation, refetch } = useAdminUsers();
+  const { roles, removeRole } = useAdminRoles();
   const { hasPermission, isSuperAdmin } = usePermissions();
   const navigate = useNavigate();
   
@@ -93,6 +96,28 @@ export default function AdminUsers() {
   }>({ open: false, userId: "", email: "" });
   const [selectedRole, setSelectedRole] = useState("");
 
+  const [removeRoleDialog, setRemoveRoleDialog] = useState<{
+    open: boolean;
+    userId: string;
+    email: string;
+    roleCode: string;
+    roleName: string;
+  }>({ open: false, userId: "", email: "", roleCode: "", roleName: "" });
+
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+
+  // Get effective role for a user (single role model)
+  const getEffectiveRole = (userRoles: { code: string; name: string }[]) => {
+    // Priority: super_admin > admin > editor > support > staff > user
+    const priority = ["super_admin", "admin", "editor", "support", "staff"];
+    for (const code of priority) {
+      const role = userRoles.find(r => r.code === code);
+      if (role) return role;
+    }
+    // If no privileged roles, treat as "user"
+    return { code: "user", name: "Пользователь" };
+  };
+
   const filteredUsers = useMemo(() => {
     return users.filter((u) => {
       // Search filter
@@ -106,8 +131,13 @@ export default function AdminUsers() {
       // Role filter
       let matchesRole = true;
       if (roleFilter !== "all") {
-        const userRoleCodes = u.roles.map(r => r.code);
-        matchesRole = userRoleCodes.includes(roleFilter);
+        if (roleFilter === "user") {
+          // "user" means no privileged roles
+          matchesRole = u.roles.length === 0 || u.roles.every(r => r.code === "user");
+        } else {
+          const userRoleCodes = u.roles.map(r => r.code);
+          matchesRole = userRoleCodes.includes(roleFilter);
+        }
       }
       
       return matchesSearch && matchesStatus && matchesRole;
@@ -136,6 +166,12 @@ export default function AdminUsers() {
         await forceLogout(userId);
         break;
       case "impersonate":
+        // Store current admin token before impersonating
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.access_token) {
+          localStorage.setItem("admin_token", sessionData.session.access_token);
+        }
+        
         const impersonationData = await startImpersonation(userId);
         if (impersonationData) {
           const { error } = await supabase.auth.verifyOtp({
@@ -144,6 +180,7 @@ export default function AdminUsers() {
           });
           if (error) {
             console.error("Impersonation OTP error:", error);
+            localStorage.removeItem("admin_token");
           } else {
             navigate("/?impersonating=true");
             window.location.reload();
@@ -156,10 +193,26 @@ export default function AdminUsers() {
 
   const handleAssignRole = async () => {
     if (assignRoleDialog.userId && selectedRole) {
-      await assignRole(assignRoleDialog.userId, selectedRole);
-      await refetch();
+      const { assignRole } = await import("@/hooks/useAdminRoles").then(m => ({ assignRole: useAdminRoles().assignRole }));
+      // Use the roles-admin function which now enforces single role
+      const response = await supabase.functions.invoke("roles-admin", {
+        body: { action: "assign_role", userId: assignRoleDialog.userId, roleCode: selectedRole },
+      });
+      
+      if (!response.error && !response.data?.error) {
+        await refetch();
+      }
+      
       setAssignRoleDialog({ open: false, userId: "", email: "" });
       setSelectedRole("");
+    }
+  };
+
+  const handleRemoveRoleConfirm = async () => {
+    if (removeRoleDialog.userId && removeRoleDialog.roleCode) {
+      await removeRole(removeRoleDialog.userId, removeRoleDialog.roleCode);
+      await refetch();
+      setRemoveRoleDialog({ open: false, userId: "", email: "", roleCode: "", roleName: "" });
     }
   };
 
@@ -201,14 +254,22 @@ export default function AdminUsers() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Клиенты</h1>
-        <div className="relative w-64">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Поиск по имени или email..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
+        <div className="flex items-center gap-4">
+          {hasPermission("admins.manage") && (
+            <Button onClick={() => setInviteDialogOpen(true)}>
+              <UserPlus className="w-4 h-4 mr-2" />
+              Добавить пользователя
+            </Button>
+          )}
+          <div className="relative w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Поиск по имени или email..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
         </div>
       </div>
 
@@ -230,6 +291,9 @@ export default function AdminUsers() {
           <SelectContent>
             <SelectItem value="all">Все роли</SelectItem>
             <SelectItem value="user">Пользователь</SelectItem>
+            <SelectItem value="staff">Сотрудник</SelectItem>
+            <SelectItem value="support">Поддержка</SelectItem>
+            <SelectItem value="editor">Редактор</SelectItem>
             <SelectItem value="admin">Администратор</SelectItem>
             <SelectItem value="super_admin">Супер-администратор</SelectItem>
           </SelectContent>
@@ -246,7 +310,7 @@ export default function AdminUsers() {
             <TableRow>
               <TableHead>Пользователь</TableHead>
               <TableHead>Статус</TableHead>
-              <TableHead>Роли</TableHead>
+              <TableHead>Роль</TableHead>
               <TableHead>Регистрация</TableHead>
               <TableHead>Последний визит</TableHead>
               <TableHead className="w-[50px]"></TableHead>
@@ -260,109 +324,115 @@ export default function AdminUsers() {
                 </TableCell>
               </TableRow>
             ) : (
-              filteredUsers.map((user) => (
-                <TableRow key={user.user_id}>
-                  <TableCell>
-                    <div>
-                      <div className="font-medium">{user.full_name || "—"}</div>
-                      <div className="text-sm text-muted-foreground">{user.email}</div>
-                    </div>
-                  </TableCell>
-                  <TableCell>{getStatusBadge(user.status)}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {user.roles.length > 0 ? (
-                        user.roles.map((role) => (
-                          <Badge key={role.code} variant="outline" className="text-xs">
-                            {role.name}
-                          </Badge>
-                        ))
-                      ) : (
-                        <Badge variant="outline" className="text-xs">
-                          Пользователь
-                        </Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {format(new Date(user.created_at), "dd MMM yyyy", { locale: ru })}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {user.last_seen_at
-                      ? format(new Date(user.last_seen_at), "dd MMM yyyy HH:mm", { locale: ru })
-                      : "—"}
-                  </TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {/* For active/blocked users */}
-                        {user.status !== "deleted" && (
-                          <>
-                            {hasPermission("admins.manage") && (
-                              <DropdownMenuItem onClick={() => setAssignRoleDialog({ open: true, userId: user.user_id, email: user.email || "" })}>
-                                <Shield className="w-4 h-4 mr-2" />Назначить роль
-                              </DropdownMenuItem>
-                            )}
-                            {hasPermission("users.block") && user.status === "active" && (
-                              <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "block", userId: user.user_id, email: user.email || "" })}>
-                                <Ban className="w-4 h-4 mr-2" />Заблокировать
-                              </DropdownMenuItem>
-                            )}
-                            {hasPermission("users.block") && user.status === "blocked" && (
-                              <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "unblock", userId: user.user_id, email: user.email || "" })}>
-                                <UserCheck className="w-4 h-4 mr-2" />Разблокировать
-                              </DropdownMenuItem>
-                            )}
-                            {hasPermission("users.reset_password") && user.email && (
-                              <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "reset_password", userId: user.user_id, email: user.email || "" })}>
-                                <Key className="w-4 h-4 mr-2" />Сбросить пароль
-                              </DropdownMenuItem>
-                            )}
-                            {hasPermission("users.block") && (
-                              <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "force_logout", userId: user.user_id, email: user.email || "" })}>
-                                <LogOut className="w-4 h-4 mr-2" />Принудительный выход
-                              </DropdownMenuItem>
-                            )}
-                            {hasPermission("users.impersonate") && (
-                              <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "impersonate", userId: user.user_id, email: user.email || "" })}>
-                                <UserCheck className="w-4 h-4 mr-2" />Войти как пользователь
-                              </DropdownMenuItem>
-                            )}
-                            {hasPermission("users.delete") && (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem className="text-destructive" onClick={() => setConfirmDialog({ open: true, action: "delete", userId: user.user_id, email: user.email || "" })}>
-                                  <Trash2 className="w-4 h-4 mr-2" />Удалить
+              filteredUsers.map((user) => {
+                const effectiveRole = getEffectiveRole(user.roles);
+                const isPrivilegedRole = effectiveRole.code !== "user";
+                const canRemoveRole = hasPermission("admins.manage") && 
+                  isPrivilegedRole && 
+                  (effectiveRole.code !== "super_admin" || isSuperAdmin());
+
+                return (
+                  <TableRow key={user.user_id}>
+                    <TableCell>
+                      <div>
+                        <div className="font-medium">{user.full_name || "—"}</div>
+                        <div className="text-sm text-muted-foreground">{user.email}</div>
+                      </div>
+                    </TableCell>
+                    <TableCell>{getStatusBadge(user.status)}</TableCell>
+                    <TableCell>
+                      <RoleBadge
+                        role={effectiveRole}
+                        canRemove={canRemoveRole}
+                        onRemove={canRemoveRole ? () => setRemoveRoleDialog({
+                          open: true,
+                          userId: user.user_id,
+                          email: user.email || "",
+                          roleCode: effectiveRole.code,
+                          roleName: effectiveRole.name
+                        }) : undefined}
+                      />
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {format(new Date(user.created_at), "dd MMM yyyy", { locale: ru })}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {user.last_seen_at
+                        ? format(new Date(user.last_seen_at), "dd MMM yyyy HH:mm", { locale: ru })
+                        : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreHorizontal className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {/* For active/blocked users */}
+                          {user.status !== "deleted" && (
+                            <>
+                              {hasPermission("admins.manage") && (
+                                <DropdownMenuItem onClick={() => setAssignRoleDialog({ open: true, userId: user.user_id, email: user.email || "" })}>
+                                  <Shield className="w-4 h-4 mr-2" />Назначить роль
                                 </DropdownMenuItem>
-                              </>
-                            )}
-                          </>
-                        )}
-                        {/* For deleted users */}
-                        {user.status === "deleted" && (
-                          <>
-                            {hasPermission("users.delete") && (
-                              <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "restore", userId: user.user_id, email: user.email || "" })}>
-                                <RotateCcw className="w-4 h-4 mr-2" />Восстановить
-                              </DropdownMenuItem>
-                            )}
-                            {hasPermission("users.reset_password") && user.email && (
-                              <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "reset_password", userId: user.user_id, email: user.email || "" })}>
-                                <Key className="w-4 h-4 mr-2" />Сбросить пароль
-                              </DropdownMenuItem>
-                            )}
-                          </>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
+                              )}
+                              {hasPermission("users.block") && user.status === "active" && (
+                                <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "block", userId: user.user_id, email: user.email || "" })}>
+                                  <Ban className="w-4 h-4 mr-2" />Заблокировать
+                                </DropdownMenuItem>
+                              )}
+                              {hasPermission("users.block") && user.status === "blocked" && (
+                                <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "unblock", userId: user.user_id, email: user.email || "" })}>
+                                  <UserCheck className="w-4 h-4 mr-2" />Разблокировать
+                                </DropdownMenuItem>
+                              )}
+                              {hasPermission("users.reset_password") && user.email && (
+                                <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "reset_password", userId: user.user_id, email: user.email || "" })}>
+                                  <Key className="w-4 h-4 mr-2" />Сбросить пароль
+                                </DropdownMenuItem>
+                              )}
+                              {hasPermission("users.block") && (
+                                <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "force_logout", userId: user.user_id, email: user.email || "" })}>
+                                  <LogOut className="w-4 h-4 mr-2" />Принудительный выход
+                                </DropdownMenuItem>
+                              )}
+                              {hasPermission("users.impersonate") && (
+                                <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "impersonate", userId: user.user_id, email: user.email || "" })}>
+                                  <UserCheck className="w-4 h-4 mr-2" />Войти как пользователь
+                                </DropdownMenuItem>
+                              )}
+                              {hasPermission("users.delete") && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem className="text-destructive" onClick={() => setConfirmDialog({ open: true, action: "delete", userId: user.user_id, email: user.email || "" })}>
+                                    <Trash2 className="w-4 h-4 mr-2" />Удалить
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                            </>
+                          )}
+                          {/* For deleted users */}
+                          {user.status === "deleted" && (
+                            <>
+                              {hasPermission("users.delete") && (
+                                <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "restore", userId: user.user_id, email: user.email || "" })}>
+                                  <RotateCcw className="w-4 h-4 mr-2" />Восстановить
+                                </DropdownMenuItem>
+                              )}
+                              {hasPermission("users.reset_password") && user.email && (
+                                <DropdownMenuItem onClick={() => setConfirmDialog({ open: true, action: "reset_password", userId: user.user_id, email: user.email || "" })}>
+                                  <Key className="w-4 h-4 mr-2" />Сбросить пароль
+                                </DropdownMenuItem>
+                              )}
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
@@ -392,6 +462,8 @@ export default function AdminUsers() {
           </DialogHeader>
           <p className="text-sm text-muted-foreground mb-4">
             Пользователь: {assignRoleDialog.email}
+            <br />
+            <span className="text-xs">Текущая роль будет заменена на новую.</span>
           </p>
           <Select value={selectedRole} onValueChange={setSelectedRole}>
             <SelectTrigger>
@@ -413,6 +485,23 @@ export default function AdminUsers() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Remove Role Dialog */}
+      <RemoveRoleDialog
+        open={removeRoleDialog.open}
+        onOpenChange={(open) => setRemoveRoleDialog({ ...removeRoleDialog, open })}
+        onConfirm={handleRemoveRoleConfirm}
+        roleName={removeRoleDialog.roleName}
+        userEmail={removeRoleDialog.email}
+      />
+
+      {/* Invite User Dialog */}
+      <InviteUserDialog
+        open={inviteDialogOpen}
+        onOpenChange={setInviteDialogOpen}
+        roles={roles}
+        onSuccess={refetch}
+      />
     </div>
   );
 }
