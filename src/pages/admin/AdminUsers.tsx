@@ -176,11 +176,17 @@ export default function AdminUsers() {
                 <TableCell>{getStatusBadge(user.status)}</TableCell>
                 <TableCell>
                   <div className="flex flex-wrap gap-1">
-                    {user.roles.map((role) => (
-                      <Badge key={role.code} variant="outline" className="text-xs">
-                        {role.name}
+                    {user.roles.length > 0 ? (
+                      user.roles.map((role) => (
+                        <Badge key={role.code} variant="outline" className="text-xs">
+                          {role.name}
+                        </Badge>
+                      ))
+                    ) : (
+                      <Badge variant="outline" className="text-xs">
+                        Пользователь
                       </Badge>
-                    ))}
+                    )}
                   </div>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">

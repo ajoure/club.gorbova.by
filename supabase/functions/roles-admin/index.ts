@@ -148,12 +148,20 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
+        // Use upsert to handle case where user already has this role
         const { error: insertError } = await supabaseAdmin
           .from("user_roles_v2")
-          .insert({ user_id: userId, role_id: role.id });
+          .upsert({ user_id: userId, role_id: role.id }, { onConflict: 'user_id,role_id', ignoreDuplicates: true });
 
         if (insertError) {
           console.error("Assign role error:", insertError);
+          // Check for unique constraint violation
+          if (insertError.code === '23505') {
+            return new Response(JSON.stringify({ error: "User already has this role" }), {
+              status: 409,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
           return new Response(JSON.stringify({ error: "Failed to assign role" }), {
             status: 500,
             headers: { ...corsHeaders, "Content-Type": "application/json" },

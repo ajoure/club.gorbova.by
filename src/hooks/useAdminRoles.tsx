@@ -108,7 +108,22 @@ export function useAdminRoles() {
 
       if (response.error) {
         console.error("Assign role error:", response.error);
-        toast.error("Ошибка назначения роли");
+        const errorMessage = response.error.message || "Ошибка назначения роли";
+        toast.error(errorMessage);
+        return false;
+      }
+
+      // Check for application-level errors in the response data
+      if (response.data?.error) {
+        console.error("Assign role error:", response.data.error);
+        const errorMap: Record<string, string> = {
+          "Permission denied": "Нет прав для назначения роли",
+          "Role not found": "Роль не найдена",
+          "User already has this role": "Пользователь уже имеет эту роль",
+          "Unauthorized": "Не авторизован",
+          "Only super admin can assign super admin role": "Только супер-администратор может назначать эту роль",
+        };
+        toast.error(errorMap[response.data.error] || response.data.error);
         return false;
       }
 
@@ -129,7 +144,21 @@ export function useAdminRoles() {
 
       if (response.error) {
         console.error("Remove role error:", response.error);
-        toast.error("Ошибка удаления роли");
+        const errorMessage = response.error.message || "Ошибка удаления роли";
+        toast.error(errorMessage);
+        return false;
+      }
+
+      // Check for application-level errors
+      if (response.data?.error) {
+        console.error("Remove role error:", response.data.error);
+        const errorMap: Record<string, string> = {
+          "Permission denied": "Нет прав для удаления роли",
+          "Role not found": "Роль не найдена",
+          "Unauthorized": "Не авторизован",
+          "Only super admin can remove super admin role": "Только супер-администратор может удалять эту роль",
+        };
+        toast.error(errorMap[response.data.error] || response.data.error);
         return false;
       }
 
