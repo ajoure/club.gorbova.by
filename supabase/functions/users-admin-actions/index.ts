@@ -1,7 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { jwtVerify, createRemoteJWKSet } from "https://deno.land/x/jose@v5.2.0/index.ts";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -47,31 +45,35 @@ serve(async (req: Request): Promise<Response> => {
       },
     });
 
-    // Verify JWT and get user ID
-    let actorUserId: string;
-    try {
-      const JWKS = createRemoteJWKSet(
-        new URL(`${supabaseUrl}/auth/v1/keys`),
-        {
-          headers: {
-            apikey: supabaseAnonKey,
-            authorization: `Bearer ${supabaseAnonKey}`,
-          },
-        }
-      );
-      const { payload } = await jwtVerify(token, JWKS);
-      actorUserId = payload.sub as string;
-      
-      if (!actorUserId) {
-        throw new Error("No user ID in token");
-      }
-    } catch (jwtError) {
-      console.error("JWT verification error:", jwtError);
+    // Verify JWT by asking the auth service for the current user
+    // (standard pattern for edge functions)
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+
+    const {
+      data: { user: actorUser },
+      error: userError,
+    } = await supabaseAuth.auth.getUser();
+
+    if (userError || !actorUser) {
+      console.error("Auth error:", userError);
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    const actorUserId = actorUser.id;
 
     const { action, targetUserId, email }: AdminActionRequest = await req.json();
     console.log(`Action: ${action}, Actor: ${actorUserId}, Target: ${targetUserId || email}`);
