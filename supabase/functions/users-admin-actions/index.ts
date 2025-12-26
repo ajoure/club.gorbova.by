@@ -50,7 +50,15 @@ serve(async (req: Request): Promise<Response> => {
     // Verify JWT and get user ID
     let actorUserId: string;
     try {
-      const JWKS = createRemoteJWKSet(new URL(`${supabaseUrl}/auth/v1/keys`));
+      const JWKS = createRemoteJWKSet(
+        new URL(`${supabaseUrl}/auth/v1/keys`),
+        {
+          headers: {
+            apikey: supabaseAnonKey,
+            authorization: `Bearer ${supabaseAnonKey}`,
+          },
+        }
+      );
       const { payload } = await jwtVerify(token, JWKS);
       actorUserId = payload.sub as string;
       
