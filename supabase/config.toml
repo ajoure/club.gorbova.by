@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.auth-actions]
 verify_jwt = false
+
+[functions.mns-response-generator]
+verify_jwt = false

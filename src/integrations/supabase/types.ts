@@ -236,6 +236,48 @@ export type Database = {
         }
         Relationships: []
       }
+      mns_response_documents: {
+        Row: {
+          created_at: string
+          id: string
+          organization_name: string | null
+          original_request: string
+          request_date: string | null
+          request_number: string | null
+          request_type: string
+          response_text: string
+          tax_authority: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          organization_name?: string | null
+          original_request: string
+          request_date?: string | null
+          request_number?: string | null
+          request_type?: string
+          response_text: string
+          tax_authority?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          organization_name?: string | null
+          original_request?: string
+          request_date?: string | null
+          request_number?: string | null
+          request_type?: string
+          response_text?: string
+          tax_authority?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       permissions: {
         Row: {
           category: string | null
