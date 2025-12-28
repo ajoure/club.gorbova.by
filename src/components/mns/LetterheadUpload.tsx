@@ -1,6 +1,6 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Upload, X, Image as ImageIcon } from "lucide-react";
+import { X, FileText, Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const LETTERHEAD_STORAGE_KEY = "mns_letterhead";
@@ -9,6 +9,7 @@ export interface LetterheadData {
   base64: string;
   filename: string;
   mimeType: string;
+  type: "image" | "word" | "pdf" | "other";
 }
 
 export function useLetterhead() {
@@ -29,6 +30,20 @@ export function useLetterhead() {
   return { letterhead, saveLetterhead };
 }
 
+function getFileType(file: File): LetterheadData["type"] {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type === "application/pdf") return "pdf";
+  if (
+    file.type === "application/msword" ||
+    file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) return "word";
+  return "other";
+}
+
+function getFileIcon(type: LetterheadData["type"]) {
+  return <FileText className="h-6 w-6 text-primary" />;
+}
+
 interface LetterheadUploadProps {
   letterhead: LetterheadData | null;
   onLetterheadChange: (data: LetterheadData | null) => void;
@@ -37,31 +52,21 @@ interface LetterheadUploadProps {
 export function LetterheadUpload({ letterhead, onLetterheadChange }: LetterheadUploadProps) {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Accept any image format
-    if (!file.type.startsWith("image/")) {
-      toast({
-        title: "Неподдерживаемый формат",
-        description: "Загрузите изображение (PNG, JPG, WEBP и др.)",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Check size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
+  const processFile = useCallback(async (file: File) => {
+    // Check size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
       toast({
         title: "Файл слишком большой",
-        description: "Максимальный размер файла — 5 МБ",
+        description: "Максимальный размер файла — 10 МБ",
         variant: "destructive",
       });
       return;
     }
 
+    const fileType = getFileType(file);
+    
     const reader = new FileReader();
     reader.onload = (event) => {
       const base64 = event.target?.result as string;
@@ -69,6 +74,7 @@ export function LetterheadUpload({ letterhead, onLetterheadChange }: LetterheadU
         base64,
         filename: file.name,
         mimeType: file.type,
+        type: fileType,
       });
       toast({
         title: "Бланк загружен",
@@ -76,18 +82,24 @@ export function LetterheadUpload({ letterhead, onLetterheadChange }: LetterheadU
       });
     };
     reader.readAsDataURL(file);
-
-    // Reset input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
   }, [onLetterheadChange, toast]);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processFile(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, [processFile]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) processFile(file);
+  }, [processFile]);
 
   const handleRemove = useCallback(() => {
     onLetterheadChange(null);
-    toast({
-      title: "Бланк удалён",
-    });
+    toast({ title: "Бланк удалён" });
   }, [onLetterheadChange, toast]);
 
   return (
@@ -95,26 +107,30 @@ export function LetterheadUpload({ letterhead, onLetterheadChange }: LetterheadU
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,.pdf,.doc,.docx"
         onChange={handleFileSelect}
         className="hidden"
       />
       
       {letterhead ? (
         <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-muted/50">
-          <div className="w-16 h-16 rounded border border-border overflow-hidden bg-background flex items-center justify-center">
-            <img 
-              src={letterhead.base64} 
-              alt="Фирменный бланк" 
-              className="w-full h-full object-contain"
-            />
+          <div className="w-12 h-12 rounded border border-border overflow-hidden bg-background flex items-center justify-center">
+            {letterhead.type === "image" ? (
+              <img 
+                src={letterhead.base64} 
+                alt="Фирменный бланк" 
+                className="w-full h-full object-contain"
+              />
+            ) : (
+              getFileIcon(letterhead.type)
+            )}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-foreground truncate">
               {letterhead.filename}
             </p>
             <p className="text-xs text-muted-foreground">
-              Фирменный бланк
+              {letterhead.type === "word" ? "Будет использован как шаблон" : "Фирменный бланк"}
             </p>
           </div>
           <Button
@@ -127,18 +143,29 @@ export function LetterheadUpload({ letterhead, onLetterheadChange }: LetterheadU
           </Button>
         </div>
       ) : (
-        <Button
-          variant="outline"
+        <div
+          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
-          className="w-full gap-2 h-auto py-3"
+          className={`
+            border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors
+            ${isDragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}
+          `}
         >
-          <ImageIcon className="h-4 w-4" />
-          Загрузить фирменный бланк
-        </Button>
+          <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+          <p className="text-sm font-medium text-foreground">
+            Загрузить фирменный бланк
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Word, PDF или изображение
+          </p>
+        </div>
       )}
       
       <p className="text-xs text-muted-foreground">
-        Изображение будет добавлено в шапку документа при экспорте в DOCX
+        Word-документ будет использован как шаблон, в который вставится ответ. 
+        Изображение или PDF добавятся в шапку документа.
       </p>
     </div>
   );
