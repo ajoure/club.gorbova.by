@@ -1,7 +1,41 @@
-import { Document, Paragraph, TextRun, AlignmentType, Packer } from "docx";
+import { Document, Paragraph, TextRun, AlignmentType, Packer, ImageRun, Header } from "docx";
 import { saveAs } from "file-saver";
 
-export async function exportToDocx(content: string, filename: string = "response.docx") {
+interface LetterheadData {
+  base64: string;
+  filename: string;
+  mimeType: string;
+}
+
+async function base64ToArrayBuffer(base64: string): Promise<ArrayBuffer> {
+  // Remove data URL prefix if present
+  const base64Data = base64.includes(",") ? base64.split(",")[1] : base64;
+  const binaryString = atob(base64Data);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+async function getImageDimensions(base64: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      resolve({ width: img.width, height: img.height });
+    };
+    img.onerror = () => {
+      resolve({ width: 600, height: 100 }); // Default dimensions
+    };
+    img.src = base64;
+  });
+}
+
+export async function exportToDocx(
+  content: string, 
+  filename: string = "response.docx",
+  letterhead?: LetterheadData | null
+) {
   const lines = content.split("\n");
   const paragraphs: Paragraph[] = [];
 
@@ -37,19 +71,64 @@ export async function exportToDocx(content: string, filename: string = "response
     );
   });
 
+  // Create header with letterhead if provided
+  let defaultHeader: Header | undefined;
+  
+  if (letterhead) {
+    try {
+      const imageBuffer = await base64ToArrayBuffer(letterhead.base64);
+      const dimensions = await getImageDimensions(letterhead.base64);
+      
+      // Calculate scaled dimensions (max width ~600px for A4)
+      const maxWidth = 600;
+      let width = dimensions.width;
+      let height = dimensions.height;
+      
+      if (width > maxWidth) {
+        const ratio = maxWidth / width;
+        width = maxWidth;
+        height = Math.round(height * ratio);
+      }
+      
+      defaultHeader = new Header({
+        children: [
+          new Paragraph({
+            children: [
+              new ImageRun({
+                data: imageBuffer,
+                transformation: {
+                  width,
+                  height,
+                },
+                type: "png", // docx library handles conversion
+              }),
+            ],
+            alignment: AlignmentType.CENTER,
+            spacing: {
+              after: 200,
+            },
+          }),
+        ],
+      });
+    } catch (error) {
+      console.error("Failed to add letterhead:", error);
+    }
+  }
+
   const doc = new Document({
     sections: [
       {
         properties: {
           page: {
             margin: {
-              top: 1134, // 2cm
+              top: letterhead ? 567 : 1134, // 1cm if letterhead, 2cm otherwise
               right: 850, // 1.5cm
               bottom: 1134,
               left: 1701, // 3cm
             },
           },
         },
+        headers: defaultHeader ? { default: defaultHeader } : undefined,
         children: paragraphs,
       },
     ],
