@@ -5,20 +5,20 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { 
   FileText, 
-  Upload, 
-  Image, 
   Sparkles, 
   Copy, 
   Save, 
   Loader2, 
   ArrowLeft,
   Send,
-  X
+  Download
 } from "lucide-react";
 import { useMnsDocuments } from "@/hooks/useMnsDocuments";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { FileDropZone, UploadedFile } from "@/components/mns/FileDropZone";
+import { exportToDocx, exportToPdf } from "@/utils/exportDocument";
 
 interface Message {
   role: "user" | "assistant";
@@ -31,64 +31,75 @@ export default function MnsResponseService() {
   const { generateResponse, saveDocument, isGenerating } = useMnsDocuments();
   
   const [inputText, setInputText] = useState("");
-  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [finalResponse, setFinalResponse] = useState<string | null>(null);
   const [requestType, setRequestType] = useState<string>("unknown");
   const [originalRequest, setOriginalRequest] = useState<string>("");
   
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.type === "application/pdf") {
-      // For PDF, we'll read as text (basic extraction)
-      // In production, you'd use a proper PDF parser
-      toast({
-        title: "PDF загружен",
-        description: "Пожалуйста, скопируйте текст из PDF и вставьте в поле ввода",
-      });
-    } else {
-      toast({
-        title: "Неподдерживаемый формат",
-        description: "Используйте текст или изображение",
-        variant: "destructive",
-      });
-    }
+  const handlePasteOnTextarea = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData.items);
+    const hasFiles = items.some(item => item.kind === "file");
     
-    if (e.target) e.target.value = "";
-  }, [toast]);
-
-  const handleImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith("image/")) {
-      toast({
-        title: "Неподдерживаемый формат",
-        description: "Загрузите изображение (JPG, PNG)",
-        variant: "destructive",
+    if (hasFiles) {
+      // Let FileDropZone handle files
+      const filesToAdd: File[] = [];
+      items.forEach(item => {
+        if (item.kind === "file") {
+          const file = item.getAsFile();
+          if (file) filesToAdd.push(file);
+        }
       });
-      return;
+      
+      if (filesToAdd.length > 0) {
+        e.preventDefault();
+        // Process files manually since we're intercepting
+        filesToAdd.forEach(async (file) => {
+          const fileType = getFileType(file);
+          if (fileType === "other") return;
+          
+          const uploadedFile: UploadedFile = {
+            id: crypto.randomUUID(),
+            file,
+            type: fileType,
+          };
+          
+          if (fileType === "image") {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              uploadedFile.preview = event.target?.result as string;
+              setUploadedFiles(prev => [...prev, uploadedFile]);
+            };
+            reader.readAsDataURL(file);
+          } else {
+            setUploadedFiles(prev => [...prev, uploadedFile]);
+          }
+        });
+      }
     }
+  }, []);
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setUploadedImage(event.target?.result as string);
+  const getFileType = (file: File): UploadedFile["type"] => {
+    const typeMap: Record<string, UploadedFile["type"]> = {
+      "image/jpeg": "image",
+      "image/png": "image",
+      "image/webp": "image",
+      "application/pdf": "pdf",
+      "application/msword": "word",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "word",
+      "application/vnd.ms-excel": "excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "excel",
     };
-    reader.readAsDataURL(file);
-    
-    if (e.target) e.target.value = "";
-  }, [toast]);
+    return typeMap[file.type] || "other";
+  };
 
   const handleSubmit = useCallback(async () => {
-    if (!inputText.trim() && !uploadedImage) {
+    if (!inputText.trim() && uploadedFiles.length === 0) {
       toast({
         title: "Ошибка",
-        description: "Введите текст запроса или загрузите изображение",
+        description: "Введите текст запроса или загрузите файл",
         variant: "destructive",
       });
       return;
@@ -111,9 +122,17 @@ export default function MnsResponseService() {
       content: m.content,
     }));
 
+    // Get first image for AI if available
+    const imageFile = uploadedFiles.find(f => f.type === "image");
+    let imageBase64: string | undefined;
+    
+    if (messages.length === 0 && imageFile?.preview) {
+      imageBase64 = imageFile.preview;
+    }
+
     const result = await generateResponse({
       requestText: messages.length === 0 ? inputText : undefined,
-      imageBase64: messages.length === 0 ? uploadedImage || undefined : undefined,
+      imageBase64: messages.length === 0 ? imageBase64 : undefined,
       conversationHistory: messages.length > 0 ? conversationHistory : undefined,
     });
 
@@ -127,11 +146,11 @@ export default function MnsResponseService() {
       }
     }
     
-    // Clear image after first submission
-    if (uploadedImage) {
-      setUploadedImage(null);
+    // Clear files after first submission
+    if (uploadedFiles.length > 0) {
+      setUploadedFiles([]);
     }
-  }, [inputText, uploadedImage, messages, generateResponse, toast]);
+  }, [inputText, uploadedFiles, messages, generateResponse, toast]);
 
   const handleCopy = useCallback(async () => {
     if (!finalResponse) return;
@@ -161,9 +180,41 @@ export default function MnsResponseService() {
     });
   }, [finalResponse, originalRequest, requestType, saveDocument]);
 
+  const handleExportDocx = useCallback(async () => {
+    if (!finalResponse) return;
+    
+    try {
+      await exportToDocx(finalResponse, `ответ_мнс_${new Date().toISOString().split("T")[0]}.docx`);
+      toast({
+        title: "Экспорт завершён",
+        description: "Файл DOCX сохранён",
+      });
+    } catch (error) {
+      toast({
+        title: "Ошибка экспорта",
+        description: error instanceof Error ? error.message : "Не удалось экспортировать",
+        variant: "destructive",
+      });
+    }
+  }, [finalResponse, toast]);
+
+  const handleExportPdf = useCallback(async () => {
+    if (!finalResponse) return;
+    
+    try {
+      await exportToPdf(finalResponse, `ответ_мнс_${new Date().toISOString().split("T")[0]}.pdf`);
+    } catch (error) {
+      toast({
+        title: "Ошибка экспорта",
+        description: error instanceof Error ? error.message : "Не удалось экспортировать",
+        variant: "destructive",
+      });
+    }
+  }, [finalResponse, toast]);
+
   const handleReset = useCallback(() => {
     setInputText("");
-    setUploadedImage(null);
+    setUploadedFiles([]);
     setMessages([]);
     setFinalResponse(null);
     setRequestType("unknown");
@@ -233,72 +284,29 @@ export default function MnsResponseService() {
 
             {/* Input Area */}
             <div className="space-y-4">
+              {/* File Drop Zone (only show on first message) */}
+              {messages.length === 0 && (
+                <FileDropZone
+                  files={uploadedFiles}
+                  onFilesChange={setUploadedFiles}
+                  disabled={isGenerating}
+                  maxFiles={5}
+                  maxSizeMB={10}
+                />
+              )}
+
               <Textarea
-                placeholder="Вставьте текст запроса МНС или опишите его содержание..."
+                ref={textareaRef}
+                placeholder="Вставьте текст запроса МНС или опишите его содержание... (Ctrl+V для вставки скриншотов)"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
+                onPaste={handlePasteOnTextarea}
                 className="min-h-[120px] resize-none"
                 disabled={isGenerating}
               />
 
-              {/* Uploaded Image Preview */}
-              {uploadedImage && (
-                <div className="relative inline-block">
-                  <img
-                    src={uploadedImage}
-                    alt="Загруженное изображение"
-                    className="max-h-32 rounded-lg border border-border"
-                  />
-                  <Button
-                    variant="destructive"
-                    size="icon"
-                    className="absolute -top-2 -right-2 h-6 w-6"
-                    onClick={() => setUploadedImage(null)}
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
-              )}
-
               {/* Actions */}
-              <div className="flex flex-wrap gap-3">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                />
-                <input
-                  ref={imageInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleImageUpload}
-                />
-
-                <Button
-                  variant="outline"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isGenerating || messages.length > 0}
-                  className="gap-2"
-                >
-                  <Upload className="h-4 w-4" />
-                  Загрузить PDF
-                </Button>
-
-                <Button
-                  variant="outline"
-                  onClick={() => imageInputRef.current?.click()}
-                  disabled={isGenerating || messages.length > 0}
-                  className="gap-2"
-                >
-                  <Image className="h-4 w-4" />
-                  Загрузить изображение
-                </Button>
-
-                <div className="flex-1" />
-
+              <div className="flex flex-wrap gap-3 justify-end">
                 {messages.length > 0 && (
                   <Button variant="outline" onClick={handleReset} disabled={isGenerating}>
                     Начать заново
@@ -307,7 +315,7 @@ export default function MnsResponseService() {
 
                 <Button
                   onClick={handleSubmit}
-                  disabled={isGenerating || (!inputText.trim() && !uploadedImage)}
+                  disabled={isGenerating || (!inputText.trim() && uploadedFiles.length === 0)}
                   className="gap-2 bg-gradient-to-r from-primary to-accent hover:opacity-90"
                 >
                   {isGenerating ? (
@@ -333,15 +341,23 @@ export default function MnsResponseService() {
         ) : (
           /* Result View */
           <GlassCard className="p-6">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h3 className="font-semibold text-foreground flex items-center gap-2">
                 <FileText className="h-5 w-5" />
                 Готовый ответ
               </h3>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" onClick={handleCopy} className="gap-2">
                   <Copy className="h-4 w-4" />
-                  Скопировать текст
+                  Скопировать
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleExportDocx} className="gap-2">
+                  <Download className="h-4 w-4" />
+                  DOCX
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleExportPdf} className="gap-2">
+                  <Download className="h-4 w-4" />
+                  PDF
                 </Button>
                 <Button 
                   variant="outline" 
@@ -355,7 +371,7 @@ export default function MnsResponseService() {
                   ) : (
                     <Save className="h-4 w-4" />
                   )}
-                  Сохранить в историю
+                  Сохранить
                 </Button>
               </div>
             </div>
