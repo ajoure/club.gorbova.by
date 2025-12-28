@@ -21,6 +21,8 @@ import AdminRoles from "./pages/admin/AdminRoles";
 import AdminAudit from "./pages/admin/AdminAudit";
 import AdminEntitlements from "./pages/admin/AdminEntitlements";
 import AdminContent from "./pages/admin/AdminContent";
+import MnsResponseService from "./pages/audits/MnsResponseService";
+import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
 
 const queryClient = new QueryClient();
 
@@ -39,6 +41,8 @@ const App = () => (
               <Route path="/accountant" element={<Accountant />} />
               <Route path="/business" element={<Business />} />
               <Route path="/audits" element={<Audits />} />
+              <Route path="/audits/mns-response" element={<MnsResponseService />} />
+              <Route path="/audits/mns-history" element={<MnsDocumentHistory />} />
               <Route path="/self-development" element={<SelfDevelopment />} />
               <Route path="/tools/eisenhower" element={<EisenhowerMatrix />} />
               <Route path="/tools/balance-wheel" element={<BalanceWheel />} />
