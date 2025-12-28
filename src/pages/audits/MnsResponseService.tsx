@@ -20,7 +20,8 @@ import { useNavigate } from "react-router-dom";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { FileDropZone, UploadedFile } from "@/components/mns/FileDropZone";
 import { exportToDocx, exportToPdf } from "@/utils/exportDocument";
-import { LetterheadUpload, useLetterhead } from "@/components/mns/LetterheadUpload";
+import { LetterheadSettings } from "@/components/mns/LetterheadSettings";
+import { useLetterheadProcessor } from "@/hooks/useLetterheadProcessor";
 import {
   Collapsible,
   CollapsibleContent,
@@ -44,8 +45,9 @@ export default function MnsResponseService() {
   const [requestType, setRequestType] = useState<string>("unknown");
   const [originalRequest, setOriginalRequest] = useState<string>("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [letterheadEnabled, setLetterheadEnabled] = useState(true);
   
-  const { letterhead, saveLetterhead } = useLetterhead();
+  const { processedLetterhead } = useLetterheadProcessor();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handlePasteOnTextarea = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -196,11 +198,12 @@ export default function MnsResponseService() {
       await exportToDocx(
         finalResponse, 
         `ответ_мнс_${new Date().toISOString().split("T")[0]}.docx`,
-        letterhead
+        processedLetterhead,
+        letterheadEnabled
       );
       toast({
         title: "Экспорт завершён",
-        description: letterhead ? "Файл DOCX с бланком сохранён" : "Файл DOCX сохранён",
+        description: processedLetterhead && letterheadEnabled ? "Файл DOCX с бланком сохранён" : "Файл DOCX сохранён",
       });
     } catch (error) {
       toast({
@@ -209,7 +212,7 @@ export default function MnsResponseService() {
         variant: "destructive",
       });
     }
-  }, [finalResponse, letterhead, toast]);
+  }, [finalResponse, processedLetterhead, letterheadEnabled, toast]);
 
   const handleExportPdf = useCallback(async () => {
     if (!finalResponse) return;
@@ -272,12 +275,9 @@ export default function MnsResponseService() {
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-4">
               <GlassCard className="p-4">
-                <h4 className="text-sm font-medium text-foreground mb-3">
-                  Фирменный бланк для DOCX
-                </h4>
-                <LetterheadUpload 
-                  letterhead={letterhead} 
-                  onLetterheadChange={saveLetterhead} 
+                <LetterheadSettings 
+                  enabled={letterheadEnabled} 
+                  onEnabledChange={setLetterheadEnabled} 
                 />
               </GlassCard>
             </CollapsibleContent>
