@@ -365,7 +365,7 @@ export default function MnsResponseService() {
                   ) : (
                     <>
                       <Sparkles className="h-4 w-4" />
-                      Проанализировать запрос AI-ассистентом
+                      Проанализировать gorbovAI
                     </>
                   )}
                 </Button>
