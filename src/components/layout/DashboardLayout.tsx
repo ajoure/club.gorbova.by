@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
+import { DashboardBreadcrumbs } from "./DashboardBreadcrumbs";
 import { Loader2, Menu } from "lucide-react";
 
 interface DashboardLayoutProps {
@@ -28,6 +29,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <SidebarTrigger className="mr-4">
               <Menu className="h-5 w-5" />
             </SidebarTrigger>
+            <DashboardBreadcrumbs />
             <div className="flex-1" />
           </header>
           <main className="flex-1 p-6 bg-gradient-to-br from-background via-muted/30 to-background">

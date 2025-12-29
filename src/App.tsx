@@ -16,6 +16,9 @@ import SelfDevelopment from "./pages/SelfDevelopment";
 import EisenhowerMatrix from "./pages/tools/EisenhowerMatrix";
 import BalanceWheel from "./pages/tools/BalanceWheel";
 import Pricing from "./pages/Pricing";
+import OrderPayment from "./pages/OrderPayment";
+import Offer from "./pages/Offer";
+import Privacy from "./pages/Privacy";
 import NotFound from "./pages/NotFound";
 import { AdminLayout } from "./components/layout/AdminLayout";
 import AdminUsers from "./pages/admin/AdminUsers";
@@ -42,6 +45,9 @@ const App = () => (
               <Route path="/" element={<Landing />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/pricing" element={<Pricing />} />
+              <Route path="/order-payment" element={<OrderPayment />} />
+              <Route path="/offer" element={<Offer />} />
+              <Route path="/privacy" element={<Privacy />} />
               
               {/* Protected routes */}
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
