@@ -44,10 +44,14 @@ serve(async (req) => {
         accountName = accountName.replace(/\.getcourse\.ru$/i, "");
 
         try {
-          // Test GetCourse API by getting account info
-          const testParams = btoa(JSON.stringify({ system: { refresh_if_exists: 0 } }));
+          // Test GetCourse API by getting user count with a filter
+          // GetCourse API requires at least one filter for the users endpoint
+          const testParams = btoa(JSON.stringify({ 
+            status: "active" // Required filter - get count of active users
+          }));
           const apiUrl = `https://${accountName}.getcourse.ru/pl/api/account/users`;
           console.log("GetCourse API URL:", apiUrl);
+          console.log("GetCourse params:", { status: "active" });
           
           const response = await fetch(apiUrl, {
             method: "POST",
@@ -60,7 +64,9 @@ serve(async (req) => {
 
           if (data.success === true || data.result?.success === true) {
             success = true;
-            responseData = { account: accountName, users_count: data.result?.count };
+            responseData = { account: accountName, users_count: data.result?.count || 0 };
+          } else if (data.error_code === "invalid_key" || data.result?.error_code === "invalid_key") {
+            errorMessage = "Неверный секретный ключ API GetCourse";
           } else {
             errorMessage = data.error_message || data.result?.error_message || "Неизвестная ошибка GetCourse API";
           }
