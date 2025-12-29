@@ -54,6 +54,67 @@ serve(async (req) => {
           received_at: new Date().toISOString(),
         },
       });
+
+      // Get instance config for auto-sync
+      const { data: instance } = await supabase
+        .from("integration_instances")
+        .select("*")
+        .eq("id", instanceId)
+        .single();
+
+      if (instance) {
+        // Get sync settings
+        const { data: syncSettings } = await supabase
+          .from("integration_sync_settings")
+          .select("*")
+          .eq("instance_id", instanceId)
+          .eq("is_enabled", true);
+
+        // Trigger auto-sync based on action
+        const action = body.action as string;
+        let entityToSync: string | null = null;
+
+        switch (action) {
+          case "user_added":
+          case "user_updated":
+            entityToSync = "users";
+            break;
+          case "deal_created":
+          case "deal_updated":
+          case "deal_payed":
+            entityToSync = "orders";
+            break;
+          case "payment_received":
+            entityToSync = "payments";
+            break;
+        }
+
+        // Check if this entity is configured for sync
+        const shouldSync = syncSettings?.some(s => 
+          s.entity_type === entityToSync && 
+          (s.direction === "import" || s.direction === "bidirectional")
+        );
+
+        if (shouldSync && entityToSync) {
+          console.log(`Auto-syncing ${entityToSync} due to webhook action: ${action}`);
+          
+          // Log sync start
+          await supabase.from("integration_sync_logs").insert({
+            instance_id: instanceId,
+            entity_type: entityToSync,
+            direction: "import",
+            result: "success",
+            payload_meta: {
+              trigger: "webhook",
+              action,
+              object_id: body.user_id || body.deal_id || body.payment_id,
+            },
+          });
+
+          // In a real implementation, you would process the webhook data here
+          // For now, we log the event for manual review
+        }
+      }
     }
 
     // Process GetCourse events
@@ -62,22 +123,31 @@ serve(async (req) => {
     switch (action) {
       case "user_added":
       case "user_updated": {
-        console.log("User event:", body);
-        // Handle user creation/update
+        console.log("User event:", {
+          user_id: body.user_id,
+          email: body.email,
+          name: body.name,
+        });
         break;
       }
 
       case "deal_created":
       case "deal_updated":
       case "deal_payed": {
-        console.log("Deal event:", body);
-        // Handle deal/order events
+        console.log("Deal event:", {
+          deal_id: body.deal_id,
+          status: body.status,
+          cost: body.cost,
+        });
         break;
       }
 
       case "payment_received": {
-        console.log("Payment event:", body);
-        // Handle payment notifications
+        console.log("Payment event:", {
+          payment_id: body.payment_id,
+          amount: body.amount,
+          deal_id: body.deal_id,
+        });
         break;
       }
 

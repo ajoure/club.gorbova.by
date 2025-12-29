@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +16,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -47,6 +48,7 @@ import {
   CalendarIcon,
   Filter,
   Save,
+  Loader2,
 } from "lucide-react";
 import { IntegrationInstance } from "@/hooks/useIntegrations";
 import {
@@ -101,6 +103,11 @@ const PAYMENT_TYPES = [
   { value: "online", label: "Онлайн-платёж" },
 ];
 
+interface GetCourseGroup {
+  id: number;
+  name: string;
+}
+
 interface Props {
   instance: IntegrationInstance | null;
   open: boolean;
@@ -112,12 +119,51 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
   const [selectedEntity, setSelectedEntity] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [savingMapping, setSavingMapping] = useState(false);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [availableGroups, setAvailableGroups] = useState<GetCourseGroup[]>([]);
   const mappingRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const { data: syncSettings = [], refetch: refetchSettings } = useSyncSettings(instance?.id ?? null);
   const { data: fieldMappings = [], refetch: refetchMappings } = useFieldMappings(instance?.id ?? null, selectedEntity ?? undefined);
   const { data: syncLogs = [], refetch: refetchLogs } = useSyncLogs(instance?.id ?? null);
   const { upsertSyncSetting, upsertFieldMapping, clearSyncLogs } = useSyncMutations();
+
+  // Fetch GetCourse groups when dialog opens
+  useEffect(() => {
+    if (open && instance?.provider === 'getcourse') {
+      fetchGetCourseGroups();
+    }
+  }, [open, instance]);
+
+  const fetchGetCourseGroups = async () => {
+    if (!instance) return;
+    
+    setLoadingGroups(true);
+    try {
+      const config = instance.config as Record<string, unknown>;
+      const accountName = config?.account_name as string;
+      const secretKey = config?.secret_key as string;
+      
+      if (!accountName || !secretKey) return;
+
+      // Call healthcheck to get groups
+      const { data, error } = await supabase.functions.invoke('integration-healthcheck', {
+        body: {
+          instance_id: instance.id,
+          provider: 'getcourse',
+          config: instance.config,
+        },
+      });
+
+      if (!error && data?.success && data?.data?.groups) {
+        setAvailableGroups(data.data.groups);
+      }
+    } catch (err) {
+      console.error('Error fetching groups:', err);
+    } finally {
+      setLoadingGroups(false);
+    }
+  };
 
   if (!instance) return null;
 
@@ -165,6 +211,21 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
       filters: { ...currentFilters, ...filters },
     });
     refetchSettings();
+  };
+
+  const handleGroupToggle = async (entityType: string, groupId: number, checked: boolean) => {
+    const currentSetting = getSettingForEntity(entityType);
+    const currentFilters = (currentSetting?.filters || {}) as Record<string, unknown>;
+    const currentGroups = (currentFilters.group_ids || []) as number[];
+    
+    let newGroups: number[];
+    if (checked) {
+      newGroups = [...currentGroups, groupId];
+    } else {
+      newGroups = currentGroups.filter(id => id !== groupId);
+    }
+    
+    await handleFilterChange(entityType, { group_ids: newGroups });
   };
 
   const handleSaveMapping = async () => {
@@ -241,10 +302,11 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
   const renderGetCourseFilters = (entityType: string) => {
     const setting = getSettingForEntity(entityType);
     const filters = (setting?.filters || {}) as Record<string, unknown>;
+    const selectedGroupIds = (filters.group_ids || []) as number[];
 
     return (
-      <div className="mt-4 p-4 rounded-xl bg-muted/30 backdrop-blur-sm border border-border/50 space-y-4">
-        <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+      <div className="mt-4 p-4 rounded-2xl bg-gradient-to-br from-primary/5 to-accent/5 border border-primary/10 space-y-4">
+        <div className="flex items-center gap-2 text-sm font-medium text-primary">
           <Filter className="h-4 w-4" />
           Фильтры синхронизации
         </div>
@@ -255,12 +317,16 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
             <Label className="text-xs text-muted-foreground">Дата от</Label>
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="w-full justify-start text-left font-normal bg-background/50 backdrop-blur-sm">
-                  <CalendarIcon className="mr-2 h-4 w-4" />
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="w-full justify-start text-left font-normal bg-background/80 backdrop-blur-sm border-border/50 hover:bg-background hover:border-primary/30"
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4 text-primary/60" />
                   {filters.created_from ? format(new Date(filters.created_from as string), "dd.MM.yyyy") : "Выбрать"}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-auto p-0 pointer-events-auto" align="start">
+              <PopoverContent className="w-auto p-0 pointer-events-auto bg-background/95 backdrop-blur-xl border-border/50" align="start">
                 <Calendar
                   mode="single"
                   selected={filters.created_from ? new Date(filters.created_from as string) : undefined}
@@ -275,12 +341,16 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
             <Label className="text-xs text-muted-foreground">Дата до</Label>
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="w-full justify-start text-left font-normal bg-background/50 backdrop-blur-sm">
-                  <CalendarIcon className="mr-2 h-4 w-4" />
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="w-full justify-start text-left font-normal bg-background/80 backdrop-blur-sm border-border/50 hover:bg-background hover:border-primary/30"
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4 text-primary/60" />
                   {filters.created_to ? format(new Date(filters.created_to as string), "dd.MM.yyyy") : "Выбрать"}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-auto p-0 pointer-events-auto" align="start">
+              <PopoverContent className="w-auto p-0 pointer-events-auto bg-background/95 backdrop-blur-xl border-border/50" align="start">
                 <Calendar
                   mode="single"
                   selected={filters.created_to ? new Date(filters.created_to as string) : undefined}
@@ -293,6 +363,43 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
           </div>
         </div>
 
+        {/* Groups filter for users */}
+        {entityType === 'users' && (
+          <div className="space-y-3">
+            <Label className="text-xs text-muted-foreground">Группы GetCourse</Label>
+            {loadingGroups ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Загрузка групп...
+              </div>
+            ) : availableGroups.length > 0 ? (
+              <div className="grid grid-cols-2 gap-2 max-h-[150px] overflow-y-auto p-2 rounded-xl bg-background/50 border border-border/30">
+                {availableGroups.map((group) => (
+                  <label
+                    key={group.id}
+                    className="flex items-center gap-2 p-2 rounded-lg hover:bg-primary/5 cursor-pointer transition-colors"
+                  >
+                    <Checkbox
+                      checked={selectedGroupIds.includes(group.id)}
+                      onCheckedChange={(checked) => handleGroupToggle(entityType, group.id, !!checked)}
+                    />
+                    <span className="text-sm truncate">{group.name}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground py-2">
+                Нет доступных групп или не удалось загрузить
+              </div>
+            )}
+            {selectedGroupIds.length > 0 && (
+              <div className="text-xs text-primary">
+                Выбрано групп: {selectedGroupIds.length}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Order status filter */}
         {entityType === 'orders' && (
           <div className="space-y-2">
@@ -301,10 +408,10 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
               value={(filters.status as string) || ''}
               onValueChange={(val) => handleFilterChange(entityType, { status: val || undefined })}
             >
-              <SelectTrigger className="bg-background/50 backdrop-blur-sm">
+              <SelectTrigger className="bg-background/80 backdrop-blur-sm border-border/50">
                 <SelectValue placeholder="Все статусы" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="bg-background/95 backdrop-blur-xl border-border/50">
                 <SelectItem value="">Все статусы</SelectItem>
                 {ORDER_STATUSES.map((s) => (
                   <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
@@ -322,10 +429,10 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
               value={(filters.payment_type as string) || ''}
               onValueChange={(val) => handleFilterChange(entityType, { payment_type: val || undefined })}
             >
-              <SelectTrigger className="bg-background/50 backdrop-blur-sm">
+              <SelectTrigger className="bg-background/80 backdrop-blur-sm border-border/50">
                 <SelectValue placeholder="Все типы" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="bg-background/95 backdrop-blur-xl border-border/50">
                 <SelectItem value="">Все типы</SelectItem>
                 {PAYMENT_TYPES.map((t) => (
                   <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
@@ -335,7 +442,7 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
           </div>
         )}
 
-        {/* Groups filter - could add group selector when groups are fetched */}
+        {/* Groups filter - info text */}
         {entityType === 'groups' && (
           <div className="text-xs text-muted-foreground">
             Все группы будут синхронизированы
@@ -347,28 +454,28 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[85vh] bg-background/95 backdrop-blur-xl border-border/50 shadow-2xl">
+      <DialogContent className="max-w-3xl max-h-[85vh] bg-gradient-to-br from-background via-background to-primary/5 backdrop-blur-xl border-primary/20 shadow-2xl shadow-primary/10">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Settings2 className="h-4 w-4 text-primary" />
+          <DialogTitle className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center shadow-lg shadow-primary/20">
+              <Settings2 className="h-5 w-5 text-primary" />
             </div>
-            Настройки синхронизации
+            <div>
+              <span className="text-lg">Настройки синхронизации</span>
+              <p className="text-sm font-normal text-muted-foreground">{instance.alias}</p>
+            </div>
           </DialogTitle>
-          <DialogDescription className="text-muted-foreground">
-            {instance.alias} • Настройте сущности, маппинг полей и фильтры
-          </DialogDescription>
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3 bg-muted/50 backdrop-blur-sm p-1 rounded-xl">
-            <TabsTrigger value="entities" className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm">
+          <TabsList className="grid w-full grid-cols-3 bg-gradient-to-r from-muted/50 to-muted/30 backdrop-blur-sm p-1.5 rounded-2xl border border-border/30">
+            <TabsTrigger value="entities" className="rounded-xl data-[state=active]:bg-background data-[state=active]:shadow-md data-[state=active]:shadow-primary/10 transition-all">
               Сущности
             </TabsTrigger>
-            <TabsTrigger value="mapping" disabled={!selectedEntity} className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm">
+            <TabsTrigger value="mapping" disabled={!selectedEntity} className="rounded-xl data-[state=active]:bg-background data-[state=active]:shadow-md data-[state=active]:shadow-primary/10 transition-all">
               Маппинг полей
             </TabsTrigger>
-            <TabsTrigger value="logs" className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm">
+            <TabsTrigger value="logs" className="rounded-xl data-[state=active]:bg-background data-[state=active]:shadow-md data-[state=active]:shadow-primary/10 transition-all">
               Журнал
             </TabsTrigger>
           </TabsList>
@@ -388,29 +495,31 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
                       key={entity.id}
                       className={cn(
                         "rounded-2xl p-5 space-y-4 transition-all duration-300",
-                        "bg-card/50 backdrop-blur-sm border shadow-sm",
+                        "border shadow-lg",
                         isEnabled 
-                          ? "border-primary/30 bg-primary/5 shadow-primary/5" 
-                          : "border-border/50 hover:border-border"
+                          ? "bg-gradient-to-br from-primary/10 via-background to-accent/5 border-primary/30 shadow-primary/10" 
+                          : "bg-gradient-to-br from-card/80 to-card/50 border-border/50 hover:border-border shadow-sm"
                       )}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <div className={cn(
-                            "h-10 w-10 rounded-xl flex items-center justify-center transition-colors",
-                            isEnabled ? "bg-primary/10" : "bg-muted"
+                            "h-12 w-12 rounded-2xl flex items-center justify-center transition-all shadow-lg",
+                            isEnabled 
+                              ? "bg-gradient-to-br from-primary/20 to-primary/10 shadow-primary/20" 
+                              : "bg-gradient-to-br from-muted to-muted/50 shadow-sm"
                           )}>
                             <Icon className={cn(
-                              "h-5 w-5 transition-colors",
+                              "h-6 w-6 transition-colors",
                               isEnabled ? "text-primary" : "text-muted-foreground"
                             )} />
                           </div>
                           <div>
-                            <span className="font-medium">{entity.label}</span>
+                            <span className="font-semibold">{entity.label}</span>
                             {isEnabled && (
-                              <Badge variant="secondary" className="ml-2 text-xs bg-primary/10 text-primary border-0">
+                              <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-primary/10 text-primary border border-primary/20">
                                 {DIRECTION_OPTIONS.find((d) => d.value === direction)?.label}
-                              </Badge>
+                              </span>
                             )}
                           </div>
                         </div>
@@ -418,7 +527,7 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="text-muted-foreground hover:text-foreground"
+                            className="text-muted-foreground hover:text-primary hover:bg-primary/10"
                             onClick={() => {
                               setSelectedEntity(entity.id);
                               setActiveTab("mapping");
@@ -435,9 +544,9 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
 
                       {isEnabled && (
                         <>
-                          <div className="grid gap-4 md:grid-cols-2 pl-13">
+                          <div className="grid gap-4 md:grid-cols-2 pl-15">
                             <div className="space-y-3">
-                              <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                              <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                                 Направление
                               </Label>
                               <RadioGroup
@@ -446,17 +555,17 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
                                 className="flex flex-col gap-2"
                               >
                                 {DIRECTION_OPTIONS.map((opt) => (
-                                  <div key={opt.value} className="flex items-center gap-2">
+                                  <div key={opt.value} className="flex items-center gap-2 p-2 rounded-xl hover:bg-primary/5 transition-colors">
                                     <RadioGroupItem 
                                       value={opt.value} 
                                       id={`${entity.id}-${opt.value}`}
-                                      className="border-muted-foreground/30"
+                                      className="border-primary/30"
                                     />
                                     <Label
                                       htmlFor={`${entity.id}-${opt.value}`}
                                       className="flex items-center gap-2 cursor-pointer text-sm"
                                     >
-                                      <opt.icon className="h-4 w-4 text-muted-foreground" />
+                                      <opt.icon className="h-4 w-4 text-primary/60" />
                                       <span>{opt.label}</span>
                                     </Label>
                                   </div>
@@ -465,17 +574,17 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
                             </div>
 
                             <div className="space-y-3">
-                              <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                              <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                                 Стратегия конфликтов
                               </Label>
                               <Select
                                 value={conflictStrategy}
                                 onValueChange={(val) => handleConflictStrategyChange(entity.id, val)}
                               >
-                                <SelectTrigger className="bg-background/50 backdrop-blur-sm">
+                                <SelectTrigger className="bg-background/80 backdrop-blur-sm border-border/50 hover:border-primary/30">
                                   <SelectValue />
                                 </SelectTrigger>
-                                <SelectContent>
+                                <SelectContent className="bg-background/95 backdrop-blur-xl border-border/50">
                                   {CONFLICT_STRATEGIES.map((s) => (
                                     <SelectItem key={s.value} value={s.value}>
                                       {s.label}
@@ -496,12 +605,12 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
               </div>
             </ScrollArea>
 
-            <div className="flex justify-between mt-4 pt-4 border-t border-border/50">
+            <div className="flex justify-between mt-4 pt-4 border-t border-border/30">
               <Button 
                 variant="outline" 
                 onClick={handleSyncNow} 
                 disabled={syncing}
-                className="bg-background/50 backdrop-blur-sm hover:bg-primary/10 hover:text-primary hover:border-primary/30"
+                className="bg-gradient-to-r from-primary/10 to-accent/10 border-primary/20 hover:border-primary/40 hover:from-primary/20 hover:to-accent/20 text-primary shadow-lg shadow-primary/10"
               >
                 <RefreshCw className={cn("h-4 w-4 mr-2", syncing && "animate-spin")} />
                 {syncing ? "Синхронизация..." : "Синхронизировать сейчас"}
@@ -514,19 +623,20 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-xl bg-primary/10 flex items-center justify-center">
+                    <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center shadow-lg shadow-primary/20">
                       {(() => {
                         const Icon = ENTITY_ICONS[selectedEntity] || Users;
-                        return <Icon className="h-4 w-4 text-primary" />;
+                        return <Icon className="h-5 w-5 text-primary" />;
                       })()}
                     </div>
-                    <h4 className="font-medium">
+                    <h4 className="font-semibold">
                       Маппинг полей: {entities.find((e) => e.id === selectedEntity)?.label}
                     </h4>
                   </div>
                   <Button
                     variant="ghost"
                     size="sm"
+                    className="hover:bg-primary/10 hover:text-primary"
                     onClick={() => {
                       setSelectedEntity(null);
                       setActiveTab("entities");
@@ -537,44 +647,44 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
                 </div>
 
                 <ScrollArea className="h-[320px]">
-                  <div className="rounded-xl border border-border/50 bg-card/30 backdrop-blur-sm overflow-hidden">
+                  <div className="rounded-2xl border border-primary/20 bg-gradient-to-br from-card/80 to-card/50 overflow-hidden shadow-lg">
                     <Table>
                       <TableHeader>
-                        <TableRow className="bg-muted/30 hover:bg-muted/30">
-                          <TableHead className="font-medium">Поле проекта</TableHead>
-                          <TableHead className="font-medium">Тип</TableHead>
-                          <TableHead className="font-medium">Поле внешней системы</TableHead>
-                          <TableHead className="w-[80px] font-medium">Ключ</TableHead>
+                        <TableRow className="bg-gradient-to-r from-muted/50 to-muted/30 hover:from-muted/50 border-b border-primary/10">
+                          <TableHead className="font-semibold">Поле проекта</TableHead>
+                          <TableHead className="font-semibold">Тип</TableHead>
+                          <TableHead className="font-semibold">Поле внешней системы</TableHead>
+                          <TableHead className="w-[80px] font-semibold">Ключ</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {(PROJECT_FIELDS[selectedEntity] || []).map((field) => {
                           const mapping = fieldMappings.find((m) => m.project_field === field.key);
                           return (
-                            <TableRow key={field.key} className="hover:bg-muted/20">
+                            <TableRow key={field.key} className="hover:bg-primary/5 border-b border-border/30">
                               <TableCell className="font-medium">
                                 {field.label}
                                 {field.required && <span className="text-destructive ml-1">*</span>}
                               </TableCell>
                               <TableCell>
-                                <Badge variant="outline" className="text-xs bg-background/50">
+                                <span className="px-2 py-0.5 text-xs rounded-full bg-muted text-muted-foreground border border-border/50">
                                   {field.type}
-                                </Badge>
+                                </span>
                               </TableCell>
                               <TableCell>
                                 <Input
                                   ref={(el) => { mappingRefs.current[field.key] = el; }}
                                   type="text"
-                                  className="h-8 text-sm bg-background/50 backdrop-blur-sm border-border/50"
+                                  className="h-8 text-sm bg-background/80 backdrop-blur-sm border-border/50 focus:border-primary/50"
                                   placeholder="Название поля в системе"
                                   defaultValue={mapping?.external_field || ""}
                                 />
                               </TableCell>
                               <TableCell>
                                 {field.key === "email" && (
-                                  <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20 border">
+                                  <span className="px-2 py-0.5 text-xs rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20">
                                     Ключ
-                                  </Badge>
+                                  </span>
                                 )}
                               </TableCell>
                             </TableRow>
@@ -585,18 +695,18 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
                   </div>
                 </ScrollArea>
 
-                <div className="flex justify-end gap-2 pt-4 border-t border-border/50">
+                <div className="flex justify-end gap-2 pt-4 border-t border-border/30">
                   <Button 
                     variant="outline" 
                     onClick={handleResetMapping}
-                    className="bg-background/50 backdrop-blur-sm"
+                    className="bg-background/80 border-border/50 hover:border-destructive/50 hover:text-destructive"
                   >
                     Сбросить
                   </Button>
                   <Button 
                     onClick={handleSaveMapping}
                     disabled={savingMapping}
-                    className="bg-primary hover:bg-primary/90"
+                    className="bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-lg shadow-primary/20"
                   >
                     <Save className="h-4 w-4 mr-2" />
                     {savingMapping ? "Сохранение..." : "Сохранить маппинг"}
@@ -609,12 +719,12 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
           <TabsContent value="logs" className="mt-4">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h4 className="font-medium">Журнал синхронизации</h4>
+                <h4 className="font-semibold">Журнал синхронизации</h4>
                 <Button 
                   variant="ghost" 
                   size="sm" 
                   onClick={handleClearLogs}
-                  className="text-muted-foreground hover:text-destructive"
+                  className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                 >
                   <Trash2 className="h-4 w-4 mr-2" />
                   Очистить
@@ -623,56 +733,59 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
 
               <ScrollArea className="h-[350px]">
                 {syncLogs.length === 0 ? (
-                  <div className="text-center py-12 text-muted-foreground">
-                    <RefreshCw className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                    <p>Нет записей в журнале</p>
-                    <p className="text-sm mt-1">Запустите синхронизацию для создания записей</p>
+                  <div className="text-center py-16">
+                    <div className="h-16 w-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center">
+                      <RefreshCw className="h-8 w-8 text-muted-foreground/30" />
+                    </div>
+                    <p className="text-muted-foreground font-medium">Нет записей в журнале</p>
+                    <p className="text-sm text-muted-foreground/60 mt-1">Запустите синхронизацию для создания записей</p>
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-border/50 bg-card/30 backdrop-blur-sm overflow-hidden">
+                  <div className="rounded-2xl border border-primary/20 bg-gradient-to-br from-card/80 to-card/50 overflow-hidden shadow-lg">
                     <Table>
                       <TableHeader>
-                        <TableRow className="bg-muted/30 hover:bg-muted/30">
-                          <TableHead className="font-medium">Дата</TableHead>
-                          <TableHead className="font-medium">Сущность</TableHead>
-                          <TableHead className="font-medium">Направление</TableHead>
-                          <TableHead className="font-medium">Результат</TableHead>
-                          <TableHead className="font-medium">Детали</TableHead>
+                        <TableRow className="bg-gradient-to-r from-muted/50 to-muted/30 hover:from-muted/50 border-b border-primary/10">
+                          <TableHead className="font-semibold">Дата</TableHead>
+                          <TableHead className="font-semibold">Сущность</TableHead>
+                          <TableHead className="font-semibold">Направление</TableHead>
+                          <TableHead className="font-semibold">Результат</TableHead>
+                          <TableHead className="font-semibold">Детали</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {syncLogs.map((log) => (
-                          <TableRow key={log.id} className="hover:bg-muted/20">
+                          <TableRow key={log.id} className="hover:bg-primary/5 border-b border-border/30">
                             <TableCell className="text-sm text-muted-foreground">
                               {format(new Date(log.created_at), "dd.MM.yy HH:mm", { locale: ru })}
                             </TableCell>
                             <TableCell className="capitalize">{log.entity_type}</TableCell>
                             <TableCell>
                               <div className={cn(
-                                "h-6 w-6 rounded-lg flex items-center justify-center",
-                                log.direction === "import" ? "bg-blue-500/10" : "bg-green-500/10"
+                                "h-7 w-7 rounded-xl flex items-center justify-center",
+                                log.direction === "import" 
+                                  ? "bg-gradient-to-br from-blue-500/20 to-blue-500/10" 
+                                  : "bg-gradient-to-br from-green-500/20 to-green-500/10"
                               )}>
                                 {log.direction === "import" ? (
-                                  <ArrowDownToLine className="h-3 w-3 text-blue-500" />
+                                  <ArrowDownToLine className="h-4 w-4 text-blue-500" />
                                 ) : (
-                                  <ArrowUpFromLine className="h-3 w-3 text-green-500" />
+                                  <ArrowUpFromLine className="h-4 w-4 text-green-500" />
                                 )}
                               </div>
                             </TableCell>
                             <TableCell>
-                              <Badge
-                                variant={log.result === "success" ? "default" : "destructive"}
+                              <span
                                 className={cn(
-                                  "border",
+                                  "px-2 py-0.5 text-xs rounded-full border",
                                   log.result === "success" 
                                     ? "bg-green-500/10 text-green-600 border-green-500/20" 
                                     : log.result === "skipped"
                                     ? "bg-amber-500/10 text-amber-600 border-amber-500/20"
-                                    : ""
+                                    : "bg-destructive/10 text-destructive border-destructive/20"
                                 )}
                               >
                                 {log.result === "success" ? "OK" : log.result === "skipped" ? "Пропущено" : "Ошибка"}
-                              </Badge>
+                              </span>
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                               {log.error_message || log.object_id || "—"}
