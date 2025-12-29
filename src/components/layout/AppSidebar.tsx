@@ -54,7 +54,11 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const handleSignOut = async () => {
     await signOut();
-    navigate("/auth");
+    navigate("/");
+  };
+
+  const handleLogoClick = () => {
+    navigate("/");
   };
   const getRoleLabel = () => {
     switch (role) {
@@ -78,7 +82,11 @@ export function AppSidebar() {
     background: "var(--gradient-sidebar)"
   }}>
       <SidebarHeader className="p-4">
-        <div className="flex items-center gap-3">
+        <button 
+          onClick={handleLogoClick}
+          className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity focus:outline-none focus:ring-2 focus:ring-primary rounded-xl w-full text-left"
+          aria-label="Перейти на главную страницу"
+        >
           <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0">
             <img src={logoImage} alt="Leader Hub" className="w-full h-full object-cover" />
           </div>
@@ -86,7 +94,7 @@ export function AppSidebar() {
               <h1 className="font-bold text-lg text-sidebar-foreground">БУКВА ЗАКОНА</h1>
               <p className="text-xs text-sidebar-foreground/60">клуб по законодательству</p>
             </div>}
-        </div>
+        </button>
       </SidebarHeader>
 
       <SidebarContent className="px-2">

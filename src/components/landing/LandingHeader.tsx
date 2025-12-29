@@ -28,6 +28,11 @@ export function LandingHeader() {
     navigate("/dashboard");
   };
 
+  const handleLogoClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   return (
     <header
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
@@ -43,13 +48,17 @@ export function LandingHeader() {
       }}
     >
       <div className="container mx-auto px-4 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-3">
+        <a 
+          href="#" 
+          onClick={handleLogoClick} 
+          className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
+        >
           <img src={logoImage} alt="Буква Закона" className="h-10 w-auto" />
           <div className="hidden sm:block">
             <span className="text-lg font-bold text-foreground">БУКВА ЗАКОНА</span>
             <span className="block text-xs text-muted-foreground">Клуб по законодательству</span>
           </div>
-        </Link>
+        </a>
 
         {/* Desktop Navigation */}
         <nav className="hidden md:flex items-center gap-6">

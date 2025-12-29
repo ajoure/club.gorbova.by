@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ImpersonationBar } from "@/components/layout/ImpersonationBar";
+import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
@@ -37,24 +38,29 @@ const App = () => (
           <ImpersonationBar />
           <div className="impersonation-offset">
             <Routes>
+              {/* Public routes */}
               <Route path="/" element={<Landing />} />
-              <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/auth" element={<Auth />} />
-              <Route path="/accountant" element={<Accountant />} />
-              <Route path="/business" element={<Business />} />
-              <Route path="/audits" element={<Audits />} />
-              <Route path="/audits/mns-response" element={<MnsResponseService />} />
-              <Route path="/audits/mns-history" element={<MnsDocumentHistory />} />
-              <Route path="/self-development" element={<SelfDevelopment />} />
-              <Route path="/tools/eisenhower" element={<EisenhowerMatrix />} />
-              <Route path="/tools/balance-wheel" element={<BalanceWheel />} />
               <Route path="/pricing" element={<Pricing />} />
+              
+              {/* Protected routes */}
+              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/accountant" element={<ProtectedRoute><Accountant /></ProtectedRoute>} />
+              <Route path="/business" element={<ProtectedRoute><Business /></ProtectedRoute>} />
+              <Route path="/audits" element={<ProtectedRoute><Audits /></ProtectedRoute>} />
+              <Route path="/audits/mns-response" element={<ProtectedRoute><MnsResponseService /></ProtectedRoute>} />
+              <Route path="/audits/mns-history" element={<ProtectedRoute><MnsDocumentHistory /></ProtectedRoute>} />
+              <Route path="/self-development" element={<ProtectedRoute><SelfDevelopment /></ProtectedRoute>} />
+              <Route path="/tools/eisenhower" element={<ProtectedRoute><EisenhowerMatrix /></ProtectedRoute>} />
+              <Route path="/tools/balance-wheel" element={<ProtectedRoute><BalanceWheel /></ProtectedRoute>} />
+              
               {/* Admin routes */}
-              <Route path="/admin/users" element={<AdminLayout><AdminUsers /></AdminLayout>} />
-              <Route path="/admin/roles" element={<AdminLayout><AdminRoles /></AdminLayout>} />
-              <Route path="/admin/audit" element={<AdminLayout><AdminAudit /></AdminLayout>} />
-              <Route path="/admin/entitlements" element={<AdminLayout><AdminEntitlements /></AdminLayout>} />
-              <Route path="/admin/content" element={<AdminLayout><AdminContent /></AdminLayout>} />
+              <Route path="/admin/users" element={<ProtectedRoute><AdminLayout><AdminUsers /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/roles" element={<ProtectedRoute><AdminLayout><AdminRoles /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/audit" element={<ProtectedRoute><AdminLayout><AdminAudit /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/content" element={<ProtectedRoute><AdminLayout><AdminContent /></AdminLayout></ProtectedRoute>} />
+              
               <Route path="*" element={<NotFound />} />
             </Routes>
           </div>
