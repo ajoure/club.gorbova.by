@@ -70,6 +70,9 @@ export function LandingFooter() {
               <Link to="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">
                 Политика конфиденциальности
               </Link>
+              <Link to="/contacts" className="text-muted-foreground hover:text-foreground transition-colors">
+                Контакты
+              </Link>
             </nav>
           </div>
         </div>

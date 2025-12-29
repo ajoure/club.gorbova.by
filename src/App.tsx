@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ImpersonationBar } from "@/components/layout/ImpersonationBar";
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
+import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
@@ -19,6 +20,7 @@ import Pricing from "./pages/Pricing";
 import OrderPayment from "./pages/OrderPayment";
 import Offer from "./pages/Offer";
 import Privacy from "./pages/Privacy";
+import Contacts from "./pages/Contacts";
 import NotFound from "./pages/NotFound";
 import { AdminLayout } from "./components/layout/AdminLayout";
 import AdminUsers from "./pages/admin/AdminUsers";
@@ -38,6 +40,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
+          <ScrollToTop />
           <ImpersonationBar />
           <div className="impersonation-offset">
             <Routes>
@@ -48,6 +51,7 @@ const App = () => (
               <Route path="/order-payment" element={<OrderPayment />} />
               <Route path="/offer" element={<Offer />} />
               <Route path="/privacy" element={<Privacy />} />
+              <Route path="/contacts" element={<Contacts />} />
               
               {/* Protected routes */}
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
