@@ -28,6 +28,7 @@ import {
   FileText,
   ShoppingCart,
   CreditCard,
+  Copy,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -66,6 +67,10 @@ export function AdminSidebar() {
     adminMenuItems.push({ title: "Доступы", url: "/admin/entitlements", icon: Package });
     adminMenuItems.push({ title: "Продукты", url: "/admin/products", icon: ShoppingCart });
     adminMenuItems.push({ title: "Платежи", url: "/admin/payments", icon: CreditCard });
+  }
+
+  if (hasAnyPermission(["users.view", "users.update"])) {
+    adminMenuItems.push({ title: "Дубли", url: "/admin/duplicates", icon: Copy });
   }
 
   if (hasAnyPermission(["content.view", "content.edit", "content.publish"])) {

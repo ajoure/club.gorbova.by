@@ -71,6 +71,45 @@ export type Database = {
         }
         Relationships: []
       }
+      client_duplicates: {
+        Row: {
+          case_id: string
+          created_at: string | null
+          id: string
+          is_master: boolean | null
+          profile_id: string
+        }
+        Insert: {
+          case_id: string
+          created_at?: string | null
+          id?: string
+          is_master?: boolean | null
+          profile_id: string
+        }
+        Update: {
+          case_id?: string
+          created_at?: string | null
+          id?: string
+          is_master?: boolean | null
+          profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_duplicates_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "duplicate_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_duplicates_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_requests: {
         Row: {
           consent: boolean
@@ -145,6 +184,53 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      duplicate_cases: {
+        Row: {
+          created_at: string | null
+          id: string
+          master_profile_id: string | null
+          notes: string | null
+          phone: string
+          profile_count: number | null
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          master_profile_id?: string | null
+          notes?: string | null
+          phone: string
+          profile_count?: number | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          master_profile_id?: string | null
+          notes?: string | null
+          phone?: string
+          profile_count?: number | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "duplicate_cases_master_profile_id_fkey"
+            columns: ["master_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       eisenhower_tasks: {
         Row: {
@@ -275,6 +361,58 @@ export type Database = {
         }
         Relationships: []
       }
+      merge_history: {
+        Row: {
+          case_id: string | null
+          created_at: string | null
+          id: string
+          master_profile_id: string | null
+          merged_by: string | null
+          merged_data: Json | null
+          merged_profile_id: string | null
+        }
+        Insert: {
+          case_id?: string | null
+          created_at?: string | null
+          id?: string
+          master_profile_id?: string | null
+          merged_by?: string | null
+          merged_data?: Json | null
+          merged_profile_id?: string | null
+        }
+        Update: {
+          case_id?: string | null
+          created_at?: string | null
+          id?: string
+          master_profile_id?: string | null
+          merged_by?: string | null
+          merged_data?: Json | null
+          merged_profile_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "merge_history_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "duplicate_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "merge_history_master_profile_id_fkey"
+            columns: ["master_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "merge_history_merged_profile_id_fkey"
+            columns: ["merged_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       mns_response_documents: {
         Row: {
           created_at: string
@@ -326,10 +464,12 @@ export type Database = {
           currency: string
           customer_email: string | null
           customer_ip: string | null
+          duplicate_reason: string | null
           error_message: string | null
           id: string
           meta: Json | null
           payment_method: string | null
+          possible_duplicate: boolean | null
           product_id: string | null
           status: string
           updated_at: string
@@ -343,10 +483,12 @@ export type Database = {
           currency?: string
           customer_email?: string | null
           customer_ip?: string | null
+          duplicate_reason?: string | null
           error_message?: string | null
           id?: string
           meta?: Json | null
           payment_method?: string | null
+          possible_duplicate?: boolean | null
           product_id?: string | null
           status?: string
           updated_at?: string
@@ -360,10 +502,12 @@ export type Database = {
           currency?: string
           customer_email?: string | null
           customer_ip?: string | null
+          duplicate_reason?: string | null
           error_message?: string | null
           id?: string
           meta?: Json | null
           payment_method?: string | null
+          possible_duplicate?: boolean | null
           product_id?: string | null
           status?: string
           updated_at?: string
@@ -479,11 +623,16 @@ export type Database = {
         Row: {
           avatar_url: string | null
           created_at: string
+          duplicate_flag: string | null
+          duplicate_group_id: string | null
           email: string | null
           full_name: string | null
           id: string
+          is_archived: boolean | null
           last_seen_at: string | null
+          merged_to_profile_id: string | null
           phone: string | null
+          primary_in_group: boolean | null
           status: string
           updated_at: string
           user_id: string
@@ -491,11 +640,16 @@ export type Database = {
         Insert: {
           avatar_url?: string | null
           created_at?: string
+          duplicate_flag?: string | null
+          duplicate_group_id?: string | null
           email?: string | null
           full_name?: string | null
           id?: string
+          is_archived?: boolean | null
           last_seen_at?: string | null
+          merged_to_profile_id?: string | null
           phone?: string | null
+          primary_in_group?: boolean | null
           status?: string
           updated_at?: string
           user_id: string
@@ -503,11 +657,16 @@ export type Database = {
         Update: {
           avatar_url?: string | null
           created_at?: string
+          duplicate_flag?: string | null
+          duplicate_group_id?: string | null
           email?: string | null
           full_name?: string | null
           id?: string
+          is_archived?: boolean | null
           last_seen_at?: string | null
+          merged_to_profile_id?: string | null
           phone?: string | null
+          primary_in_group?: boolean | null
           status?: string
           updated_at?: string
           user_id?: string
