@@ -46,28 +46,36 @@ function parseSmtpCode(response: string): number {
 }
 
 async function getEmailAccount(supabase: any, accountId?: string): Promise<EmailAccount | null> {
-  let query = supabase.from("email_accounts").select("*").eq("is_active", true);
-  
   if (accountId) {
-    query = query.eq("id", accountId);
-  } else {
-    query = query.eq("is_default", true);
-  }
-  
-  const { data, error } = await query.limit(1).single();
-  
-  if (error || !data) {
-    // Fallback to any active account
-    const { data: fallback } = await supabase
+    const { data, error } = await supabase
       .from("email_accounts")
       .select("*")
       .eq("is_active", true)
-      .limit(1)
-      .single();
-    return fallback;
+      .eq("id", accountId)
+      .maybeSingle();
+    
+    if (!error && data) return data;
   }
   
-  return data;
+  // Try default account
+  const { data: defaultAccount } = await supabase
+    .from("email_accounts")
+    .select("*")
+    .eq("is_active", true)
+    .eq("is_default", true)
+    .maybeSingle();
+  
+  if (defaultAccount) return defaultAccount;
+  
+  // Fallback to any active account
+  const { data: fallback } = await supabase
+    .from("email_accounts")
+    .select("*")
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+  
+  return fallback;
 }
 
 async function sendEmailViaSMTP(params: {
