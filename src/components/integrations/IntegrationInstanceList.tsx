@@ -36,6 +36,7 @@ import {
   XCircle,
   Clock,
   Mail,
+  ArrowLeftRight,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -48,6 +49,7 @@ interface IntegrationInstanceListProps {
   onEdit: (instance: IntegrationInstance) => void;
   onViewLogs: (instance: IntegrationInstance) => void;
   onHealthCheck: (instance: IntegrationInstance) => void;
+  onSyncSettings?: (instance: IntegrationInstance) => void;
   isLoading?: boolean;
 }
 
@@ -56,6 +58,7 @@ export function IntegrationInstanceList({
   onEdit,
   onViewLogs,
   onHealthCheck,
+  onSyncSettings,
   isLoading,
 }: IntegrationInstanceListProps) {
   const { deleteInstance } = useIntegrationMutations();
@@ -185,6 +188,12 @@ export function IntegrationInstanceList({
                       >
                         <Mail className="h-4 w-4 mr-2" />
                         {sendingTestEmail === instance.id ? "Отправка..." : "Тестовое письмо"}
+                      </DropdownMenuItem>
+                    )}
+                    {instance.category === "crm" && onSyncSettings && (
+                      <DropdownMenuItem onClick={() => onSyncSettings(instance)}>
+                        <ArrowLeftRight className="h-4 w-4 mr-2" />
+                        Настройки обмена
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuItem onClick={() => onEdit(instance)}>
