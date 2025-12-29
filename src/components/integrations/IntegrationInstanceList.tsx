@@ -30,6 +30,7 @@ import {
   Mail,
   ArrowLeftRight,
   Zap,
+  Link,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -37,6 +38,7 @@ import { IntegrationInstance, useIntegrationMutations } from "@/hooks/useIntegra
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { WebhookUrlDisplay } from "./WebhookUrlDisplay";
 
 interface IntegrationInstanceListProps {
   instances: IntegrationInstance[];
@@ -57,27 +59,28 @@ export function IntegrationInstanceList({
   const { deleteInstance } = useIntegrationMutations();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [sendingTestEmail, setSendingTestEmail] = useState<string | null>(null);
+  const [expandedWebhook, setExpandedWebhook] = useState<string | null>(null);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "connected":
         return (
-          <Badge className="bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-600 border border-green-500/30 gap-1.5 shadow-sm shadow-green-500/10">
-            <CheckCircle className="h-3.5 w-3.5" />
+          <Badge variant="secondary" className="bg-green-100 text-green-700 border-green-200 gap-1">
+            <CheckCircle className="h-3 w-3" />
             Подключено
           </Badge>
         );
       case "error":
         return (
-          <Badge className="bg-gradient-to-r from-destructive/20 to-red-500/20 text-destructive border border-destructive/30 gap-1.5 shadow-sm shadow-destructive/10 animate-pulse">
-            <XCircle className="h-3.5 w-3.5" />
+          <Badge variant="destructive" className="gap-1">
+            <XCircle className="h-3 w-3" />
             Ошибка
           </Badge>
         );
       default:
         return (
-          <Badge className="bg-gradient-to-r from-muted/50 to-muted/30 text-muted-foreground border border-border/50 gap-1.5">
-            <Clock className="h-3.5 w-3.5" />
+          <Badge variant="secondary" className="gap-1">
+            <Clock className="h-3 w-3" />
             Отключено
           </Badge>
         );
@@ -124,15 +127,18 @@ export function IntegrationInstanceList({
     }
   };
 
+  const supportsWebhook = (provider: string) => 
+    ["amocrm", "getcourse", "bepaid"].includes(provider);
+
   if (instances.length === 0) {
     return (
-      <div className="text-center py-16">
-        <div className="h-20 w-20 mx-auto mb-6 rounded-3xl bg-gradient-to-br from-muted/50 to-muted/30 flex items-center justify-center shadow-lg">
-          <Zap className="h-10 w-10 text-muted-foreground/30" />
+      <div className="text-center py-12">
+        <div className="h-16 w-16 mx-auto mb-4 rounded-2xl bg-muted/50 flex items-center justify-center">
+          <Zap className="h-8 w-8 text-muted-foreground/50" />
         </div>
-        <p className="font-semibold text-lg text-foreground">Нет подключений</p>
-        <p className="text-sm text-muted-foreground mt-2 max-w-[250px] mx-auto">
-          Добавьте первое подключение для начала работы с интеграцией
+        <p className="font-medium text-foreground">Нет подключений</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Добавьте первое подключение для начала работы
         </p>
       </div>
     );
@@ -140,52 +146,47 @@ export function IntegrationInstanceList({
 
   return (
     <>
-      <div className="space-y-4">
-        {instances.map((instance, index) => (
+      <div className="space-y-3">
+        {instances.map((instance) => (
           <div 
             key={instance.id}
             className={cn(
-              "rounded-3xl p-5 transition-all duration-500",
-              "bg-gradient-to-br from-card via-card/95 to-transparent",
-              "border-2 shadow-lg",
-              "hover:shadow-xl hover:-translate-y-1",
+              "rounded-xl p-4 transition-all duration-200",
+              "bg-card border",
+              "hover:shadow-sm",
               instance.status === "error" 
-                ? "border-destructive/30 shadow-destructive/5 hover:border-destructive/50" 
+                ? "border-destructive/50" 
                 : instance.status === "connected"
-                ? "border-green-500/20 shadow-green-500/5 hover:border-green-500/40"
-                : "border-border/40 hover:border-primary/40"
+                ? "border-green-500/30"
+                : "border-border"
             )}
-            style={{
-              animationDelay: `${index * 100}ms`,
-            }}
           >
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
                 <div className={cn(
-                  "relative h-12 w-12 rounded-2xl flex items-center justify-center transition-all duration-300",
-                  "shadow-lg",
+                  "h-10 w-10 rounded-lg flex items-center justify-center",
                   instance.status === "connected" 
-                    ? "bg-gradient-to-br from-green-500/20 to-emerald-500/10 shadow-green-500/10" 
+                    ? "bg-green-100" 
                     : instance.status === "error"
-                    ? "bg-gradient-to-br from-destructive/20 to-red-500/10 shadow-destructive/10"
-                    : "bg-gradient-to-br from-muted to-muted/50 shadow-sm"
+                    ? "bg-destructive/10"
+                    : "bg-muted"
                 )}>
                   <div className={cn(
-                    "h-4 w-4 rounded-full transition-all duration-500",
+                    "h-3 w-3 rounded-full",
                     instance.status === "connected" 
-                      ? "bg-gradient-to-br from-green-400 to-green-600 shadow-lg shadow-green-500/50" 
+                      ? "bg-green-500" 
                       : instance.status === "error"
-                      ? "bg-gradient-to-br from-red-400 to-red-600 shadow-lg shadow-red-500/50 animate-pulse"
+                      ? "bg-destructive animate-pulse"
                       : "bg-muted-foreground/30"
                   )} />
                 </div>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-3">
-                    <span className="font-bold text-foreground">{instance.alias}</span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-foreground">{instance.alias}</span>
                     {getStatusBadge(instance.status)}
                   </div>
                   {instance.error_message && (
-                    <p className="text-xs text-destructive font-medium max-w-[350px] truncate">
+                    <p className="text-xs text-destructive max-w-[300px] truncate">
                       {instance.error_message}
                     </p>
                   )}
@@ -197,67 +198,87 @@ export function IntegrationInstanceList({
                 </div>
               </div>
 
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-10 w-10 rounded-xl hover:bg-primary/10">
-                    <MoreHorizontal className="h-5 w-5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-52 bg-card/98 backdrop-blur-xl border-2 border-border/50 rounded-2xl shadow-2xl p-2">
-                  <DropdownMenuItem onClick={() => onHealthCheck(instance)} className="gap-3 rounded-xl py-2.5 cursor-pointer">
-                    <RefreshCw className="h-4 w-4 text-primary" />
-                    <span>Проверить</span>
-                  </DropdownMenuItem>
-                  {instance.category === "email" && (
-                    <DropdownMenuItem 
-                      onClick={() => handleSendTestEmail(instance)}
-                      disabled={sendingTestEmail === instance.id}
-                      className="gap-3 rounded-xl py-2.5 cursor-pointer"
-                    >
-                      <Mail className="h-4 w-4 text-primary" />
-                      <span>{sendingTestEmail === instance.id ? "Отправка..." : "Тестовое письмо"}</span>
-                    </DropdownMenuItem>
-                  )}
-                  {instance.category === "crm" && onSyncSettings && (
-                    <DropdownMenuItem onClick={() => onSyncSettings(instance)} className="gap-3 rounded-xl py-2.5 cursor-pointer">
-                      <ArrowLeftRight className="h-4 w-4 text-primary" />
-                      <span>Настройки обмена</span>
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem onClick={() => onEdit(instance)} className="gap-3 rounded-xl py-2.5 cursor-pointer">
-                    <Settings className="h-4 w-4 text-primary" />
-                    <span>Настройки</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onViewLogs(instance)} className="gap-3 rounded-xl py-2.5 cursor-pointer">
-                    <FileText className="h-4 w-4 text-primary" />
-                    <span>Логи</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator className="my-2" />
-                  <DropdownMenuItem
-                    onClick={() => setDeleteId(instance.id)}
-                    className="gap-3 rounded-xl py-2.5 cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
+              <div className="flex items-center gap-2">
+                {supportsWebhook(instance.provider) && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setExpandedWebhook(expandedWebhook === instance.id ? null : instance.id)}
+                    title="Показать Webhook URL"
                   >
-                    <Trash2 className="h-4 w-4" />
-                    <span>Удалить</span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    <Link className="h-4 w-4" />
+                  </Button>
+                )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuItem onClick={() => onHealthCheck(instance)} className="gap-2 cursor-pointer">
+                      <RefreshCw className="h-4 w-4" />
+                      <span>Проверить</span>
+                    </DropdownMenuItem>
+                    {instance.category === "email" && (
+                      <DropdownMenuItem 
+                        onClick={() => handleSendTestEmail(instance)}
+                        disabled={sendingTestEmail === instance.id}
+                        className="gap-2 cursor-pointer"
+                      >
+                        <Mail className="h-4 w-4" />
+                        <span>{sendingTestEmail === instance.id ? "Отправка..." : "Тестовое письмо"}</span>
+                      </DropdownMenuItem>
+                    )}
+                    {instance.category === "crm" && onSyncSettings && (
+                      <DropdownMenuItem onClick={() => onSyncSettings(instance)} className="gap-2 cursor-pointer">
+                        <ArrowLeftRight className="h-4 w-4" />
+                        <span>Настройки обмена</span>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onClick={() => onEdit(instance)} className="gap-2 cursor-pointer">
+                      <Settings className="h-4 w-4" />
+                      <span>Настройки</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onViewLogs(instance)} className="gap-2 cursor-pointer">
+                      <FileText className="h-4 w-4" />
+                      <span>Логи</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setDeleteId(instance.id)}
+                      className="gap-2 cursor-pointer text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      <span>Удалить</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
+
+            {/* Webhook URL section */}
+            {expandedWebhook === instance.id && supportsWebhook(instance.provider) && (
+              <div className="mt-4 pt-4 border-t border-border">
+                <WebhookUrlDisplay instanceId={instance.id} provider={instance.provider} />
+              </div>
+            )}
           </div>
         ))}
       </div>
 
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
-        <AlertDialogContent className="bg-card/98 backdrop-blur-xl border-2 border-border/50 rounded-3xl shadow-2xl">
+        <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-xl">Удалить подключение?</AlertDialogTitle>
-            <AlertDialogDescription className="text-muted-foreground">
-              Это действие нельзя отменить. Подключение и все связанные настройки будут удалены безвозвратно.
+            <AlertDialogTitle>Удалить подключение?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие нельзя отменить. Подключение и все связанные настройки будут удалены.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="gap-3">
-            <AlertDialogCancel className="rounded-xl border-2">Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-gradient-to-r from-destructive to-red-600 rounded-xl shadow-lg shadow-destructive/30">
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               Удалить
             </AlertDialogAction>
           </AlertDialogFooter>
