@@ -32,7 +32,7 @@ serve(async (req) => {
 
     switch (provider) {
       case "getcourse": {
-        const accountName = config.account_name as string;
+        let accountName = (config.account_name as string || "").trim();
         const secretKey = config.secret_key as string;
 
         if (!accountName || !secretKey) {
@@ -40,17 +40,20 @@ serve(async (req) => {
           break;
         }
 
+        // Clean account name - remove .getcourse.ru suffix if user added it
+        accountName = accountName.replace(/\.getcourse\.ru$/i, "");
+
         try {
           // Test GetCourse API by getting account info
           const testParams = btoa(JSON.stringify({ system: { refresh_if_exists: 0 } }));
-          const response = await fetch(
-            `https://${accountName}.getcourse.ru/pl/api/account/users`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/x-www-form-urlencoded" },
-              body: `action=count&key=${secretKey}&params=${testParams}`,
-            }
-          );
+          const apiUrl = `https://${accountName}.getcourse.ru/pl/api/account/users`;
+          console.log("GetCourse API URL:", apiUrl);
+          
+          const response = await fetch(apiUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: `action=count&key=${secretKey}&params=${testParams}`,
+          });
 
           const data = await response.json();
           console.log("GetCourse response:", JSON.stringify(data));
