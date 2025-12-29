@@ -46,7 +46,32 @@ function parseSmtpCode(response: string): number {
 }
 
 async function getEmailAccount(supabase: any, accountId?: string): Promise<EmailAccount | null> {
+  // First try integration_instances for email category
   if (accountId) {
+    // Try integration_instances first
+    const { data: integration } = await supabase
+      .from("integration_instances")
+      .select("*")
+      .eq("id", accountId)
+      .eq("category", "email")
+      .maybeSingle();
+    
+    if (integration?.config) {
+      const config = integration.config as Record<string, unknown>;
+      return {
+        id: integration.id,
+        email: config.email as string || config.from_email as string || "",
+        smtp_host: config.smtp_host as string || "",
+        smtp_port: config.smtp_port as number || 465,
+        smtp_password: config.smtp_password as string || "",
+        smtp_encryption: config.smtp_encryption as string || "SSL",
+        from_name: config.from_name as string || integration.alias,
+        from_email: config.from_email as string || config.email as string || "",
+        is_default: integration.is_default,
+      };
+    }
+
+    // Then try email_accounts
     const { data, error } = await supabase
       .from("email_accounts")
       .select("*")
@@ -57,7 +82,30 @@ async function getEmailAccount(supabase: any, accountId?: string): Promise<Email
     if (!error && data) return data;
   }
   
-  // Try default account
+  // Try default integration_instances for email
+  const { data: defaultIntegration } = await supabase
+    .from("integration_instances")
+    .select("*")
+    .eq("category", "email")
+    .eq("is_default", true)
+    .maybeSingle();
+  
+  if (defaultIntegration?.config) {
+    const config = defaultIntegration.config as Record<string, unknown>;
+    return {
+      id: defaultIntegration.id,
+      email: config.email as string || config.from_email as string || "",
+      smtp_host: config.smtp_host as string || "",
+      smtp_port: config.smtp_port as number || 465,
+      smtp_password: config.smtp_password as string || "",
+      smtp_encryption: config.smtp_encryption as string || "SSL",
+      from_name: config.from_name as string || defaultIntegration.alias,
+      from_email: config.from_email as string || config.email as string || "",
+      is_default: true,
+    };
+  }
+  
+  // Try default email_accounts
   const { data: defaultAccount } = await supabase
     .from("email_accounts")
     .select("*")
@@ -67,7 +115,29 @@ async function getEmailAccount(supabase: any, accountId?: string): Promise<Email
   
   if (defaultAccount) return defaultAccount;
   
-  // Fallback to any active account
+  // Fallback to any integration or email_accounts
+  const { data: anyIntegration } = await supabase
+    .from("integration_instances")
+    .select("*")
+    .eq("category", "email")
+    .limit(1)
+    .maybeSingle();
+  
+  if (anyIntegration?.config) {
+    const config = anyIntegration.config as Record<string, unknown>;
+    return {
+      id: anyIntegration.id,
+      email: config.email as string || config.from_email as string || "",
+      smtp_host: config.smtp_host as string || "",
+      smtp_port: config.smtp_port as number || 465,
+      smtp_password: config.smtp_password as string || "",
+      smtp_encryption: config.smtp_encryption as string || "SSL",
+      from_name: config.from_name as string || anyIntegration.alias,
+      from_email: config.from_email as string || config.email as string || "",
+      is_default: false,
+    };
+  }
+  
   const { data: fallback } = await supabase
     .from("email_accounts")
     .select("*")
