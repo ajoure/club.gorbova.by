@@ -29,27 +29,39 @@ interface AmoCRMDeal {
   };
 }
 
+function normalizeAmoCRMSubdomain(raw: string): string {
+  const trimmed = raw.trim();
+
+  // If a full amoCRM URL/host was provided, extract the subdomain from it.
+  // Example: "https://ajoure.amocrm.ru" -> "ajoure"
+  const match = trimmed.match(/([a-z0-9-]+)\.amocrm\.(ru|com)/i);
+  if (match?.[1]) return match[1].toLowerCase();
+
+  // Handle malformed protocol like "https//ajoure.amocrm.ru" (missing colon)
+  const withoutProto = trimmed
+    .replace(/^https?:\/\//i, '')
+    .replace(/^https?\/\//i, '');
+
+  const host = withoutProto.split('/')[0];
+  return host.split('.')[0].toLowerCase();
+}
+
 async function makeAmoCRMRequest(
   endpoint: string,
   method: string = 'GET',
   body?: object
 ): Promise<Response> {
   const accessToken = Deno.env.get('AMOCRM_ACCESS_TOKEN');
-  let subdomain = Deno.env.get('AMOCRM_SUBDOMAIN') || '';
+  const subdomainRaw = Deno.env.get('AMOCRM_SUBDOMAIN') || '';
+  const subdomain = normalizeAmoCRMSubdomain(subdomainRaw);
 
   if (!accessToken || !subdomain) {
     throw new Error('AmoCRM credentials not configured');
   }
 
-  // Clean subdomain - extract just the subdomain part if full URL was provided
-  subdomain = subdomain
-    .replace(/^https?:\/\//, '') // Remove protocol
-    .replace(/\.amocrm\.(ru|com).*$/, '') // Remove domain suffix
-    .replace(/\/$/, '') // Remove trailing slash
-    .trim();
-
   const url = `https://${subdomain}.amocrm.ru/api/v4${endpoint}`;
   console.log(`Making AmoCRM request: ${method} ${url}`);
+
 
   const options: RequestInit = {
     method,
@@ -273,7 +285,35 @@ Deno.serve(async (req) => {
     }
 
     const url = new URL(req.url);
-    const action = url.searchParams.get('action');
+    let action = url.searchParams.get('action') || undefined;
+
+    let jsonBody: any | null = null;
+
+    // Backwards compatibility: allow passing { action: "..." } in JSON body
+    // (supabase.functions.invoke can't reliably add query params)
+    if (!action && req.method !== 'GET') {
+      try {
+        jsonBody = await req.json();
+        if (typeof jsonBody?.action === 'string') {
+          action = jsonBody.action;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const getPayload = async (): Promise<Record<string, any>> => {
+      if (jsonBody === null) {
+        jsonBody = await req.json();
+      }
+
+      if (jsonBody && typeof jsonBody === 'object' && 'action' in jsonBody) {
+        const { action: _ignored, ...rest } = jsonBody as Record<string, any>;
+        return rest;
+      }
+
+      return (jsonBody ?? {}) as Record<string, any>;
+    };
 
     switch (action) {
       case 'get-fields': {
@@ -293,8 +333,8 @@ Deno.serve(async (req) => {
       }
 
       case 'create-contact': {
-        const body = await req.json();
-        const { name, email, phone } = body;
+        const payload = await getPayload();
+        const { name, email, phone } = payload;
 
         if (!email) {
           return new Response(
@@ -311,8 +351,8 @@ Deno.serve(async (req) => {
       }
 
       case 'create-deal': {
-        const body = await req.json();
-        const { name, price, contactId, customFields } = body;
+        const payload = await getPayload();
+        const { name, price, contactId, customFields } = payload;
 
         if (!name) {
           return new Response(

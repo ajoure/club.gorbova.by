@@ -7,13 +7,27 @@ const corsHeaders = {
 };
 
 // AmoCRM integration helpers
+function normalizeAmoCRMSubdomain(raw: string): string {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/([a-z0-9-]+)\.amocrm\.(ru|com)/i);
+  if (match?.[1]) return match[1].toLowerCase();
+
+  const withoutProto = trimmed
+    .replace(/^https?:\/\//i, '')
+    .replace(/^https?\/\//i, '');
+
+  const host = withoutProto.split('/')[0];
+  return host.split('.')[0].toLowerCase();
+}
+
 async function createAmoCRMContact(
   name: string,
   email: string,
   phone?: string
 ): Promise<number | null> {
   const accessToken = Deno.env.get('AMOCRM_ACCESS_TOKEN');
-  const subdomain = Deno.env.get('AMOCRM_SUBDOMAIN');
+  const subdomainRaw = Deno.env.get('AMOCRM_SUBDOMAIN');
+  const subdomain = subdomainRaw ? normalizeAmoCRMSubdomain(subdomainRaw) : null;
 
   if (!accessToken || !subdomain) {
     console.log('AmoCRM not configured, skipping contact creation');
@@ -89,7 +103,8 @@ async function createAmoCRMDeal(
   meta?: Record<string, any>
 ): Promise<number | null> {
   const accessToken = Deno.env.get('AMOCRM_ACCESS_TOKEN');
-  const subdomain = Deno.env.get('AMOCRM_SUBDOMAIN');
+  const subdomainRaw = Deno.env.get('AMOCRM_SUBDOMAIN');
+  const subdomain = subdomainRaw ? normalizeAmoCRMSubdomain(subdomainRaw) : null;
 
   if (!accessToken || !subdomain) {
     console.log('AmoCRM not configured, skipping deal creation');
@@ -134,6 +149,7 @@ async function createAmoCRMDeal(
 
   return null;
 }
+
 
 Deno.serve(async (req) => {
   // Handle CORS preflight
