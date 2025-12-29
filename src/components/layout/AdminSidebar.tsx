@@ -30,9 +30,8 @@ import {
   Package,
   FileText,
   ShoppingCart,
-  CreditCard,
+  Plug,
   Copy,
-  Link2,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -76,6 +75,9 @@ export function AdminSidebar() {
   const hasContentPermission = hasAnyPermission(["content.view", "content.edit", "content.publish"]);
   const hasAuditPermission = hasPermission("audit.view");
 
+  const isIntegrationsActive = location.pathname.startsWith("/admin/integrations");
+  const isClientsActive = location.pathname === "/admin/users" || location.pathname.startsWith("/admin/users/");
+
   return (
     <Sidebar
       collapsible="icon"
@@ -111,56 +113,35 @@ export function AdminSidebar() {
             <SidebarMenu>
               {/* Клиенты */}
               {hasClientsPermission && (
-                <>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={location.pathname === "/admin/users"}
-                      tooltip={collapsed ? "Клиенты" : undefined}
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isClientsActive}
+                    tooltip={collapsed ? "Клиенты" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/users"
+                      end
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
                     >
-                      <NavLink
-                        to="/admin/users"
-                        end
-                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
-                        activeClassName="bg-sidebar-accent text-sidebar-primary"
-                      >
-                        <Users className="h-5 w-5 shrink-0" />
-                        {!collapsed && <span>Клиенты</span>}
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  
-                  {/* Дубли - подпункт клиентов */}
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={location.pathname === "/admin/duplicates"}
-                      tooltip={collapsed ? "Дубли" : undefined}
-                    >
-                      <NavLink
-                        to="/admin/duplicates"
-                        end
-                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent ml-4"
-                        activeClassName="bg-sidebar-accent text-sidebar-primary"
-                      >
-                        <Copy className="h-4 w-4 shrink-0" />
-                        {!collapsed && (
-                          <>
-                            <span className="flex-1">Дубли</span>
-                            {duplicateCount && duplicateCount > 0 && (
-                              <Badge 
-                                variant="destructive" 
-                                className="h-5 min-w-5 px-1.5 text-xs"
-                              >
-                                {duplicateCount}
-                              </Badge>
-                            )}
-                          </>
-                        )}
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </>
+                      <Users className="h-5 w-5 shrink-0" />
+                      {!collapsed && (
+                        <>
+                          <span className="flex-1">Клиенты</span>
+                          {duplicateCount && duplicateCount > 0 && (
+                            <Badge 
+                              variant="destructive" 
+                              className="h-5 min-w-5 px-1.5 text-xs"
+                            >
+                              {duplicateCount}
+                            </Badge>
+                          )}
+                        </>
+                      )}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               )}
 
               {/* Сотрудники и роли */}
@@ -184,7 +165,7 @@ export function AdminSidebar() {
                 </SidebarMenuItem>
               )}
 
-              {/* Доступы, Продукты, Платежи */}
+              {/* Доступы, Продукты */}
               {hasEntitlementsPermission && (
                 <>
                   <SidebarMenuItem>
@@ -221,37 +202,21 @@ export function AdminSidebar() {
                       </NavLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
+                  
+                  {/* Интеграции */}
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       asChild
-                      isActive={location.pathname === "/admin/payments"}
-                      tooltip={collapsed ? "Платежи" : undefined}
+                      isActive={isIntegrationsActive}
+                      tooltip={collapsed ? "Интеграции" : undefined}
                     >
                       <NavLink
-                        to="/admin/payments"
-                        end
+                        to="/admin/integrations/crm"
                         className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
                         activeClassName="bg-sidebar-accent text-sidebar-primary"
                       >
-                        <CreditCard className="h-5 w-5 shrink-0" />
-                        {!collapsed && <span>Платежи</span>}
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={location.pathname === "/admin/amocrm"}
-                      tooltip={collapsed ? "amoCRM" : undefined}
-                    >
-                      <NavLink
-                        to="/admin/amocrm"
-                        end
-                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
-                        activeClassName="bg-sidebar-accent text-sidebar-primary"
-                      >
-                        <Link2 className="h-5 w-5 shrink-0" />
-                        {!collapsed && <span>amoCRM</span>}
+                        <Plug className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span>Интеграции</span>}
                       </NavLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

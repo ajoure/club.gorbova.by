@@ -31,7 +31,11 @@ interface Pipeline {
   }>;
 }
 
-export default function AdminAmoCRM() {
+interface AdminAmoCRMProps {
+  embedded?: boolean;
+}
+
+export default function AdminAmoCRM({ embedded }: AdminAmoCRMProps = {}) {
   const queryClient = useQueryClient();
   const [testingConnection, setTestingConnection] = useState(false);
 
@@ -151,12 +155,14 @@ export default function AdminAmoCRM() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Интеграция amoCRM</h1>
-        <p className="text-muted-foreground">
-          Настройка синхронизации данных с amoCRM
-        </p>
-      </div>
+      {!embedded && (
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Интеграция amoCRM</h1>
+          <p className="text-muted-foreground">
+            Настройка синхронизации данных с amoCRM
+          </p>
+        </div>
+      )}
 
       {/* Connection Status */}
       <Card>

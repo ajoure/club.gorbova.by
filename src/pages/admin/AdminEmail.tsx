@@ -1,0 +1,851 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { GlassCard } from "@/components/ui/GlassCard";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { toast } from "sonner";
+import {
+  Plus,
+  Mail,
+  Edit2,
+  Trash2,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  Send,
+  Eye,
+  Loader2,
+  Server,
+} from "lucide-react";
+
+interface EmailAccount {
+  id: string;
+  email: string;
+  display_name: string | null;
+  provider: string;
+  smtp_host: string | null;
+  smtp_port: number | null;
+  smtp_encryption: string | null;
+  smtp_username: string | null;
+  smtp_password: string | null;
+  from_name: string | null;
+  from_email: string | null;
+  reply_to: string | null;
+  is_default: boolean;
+  is_active: boolean;
+  use_for: string[];
+  created_at: string;
+}
+
+interface EmailTemplate {
+  id: string;
+  code: string;
+  name: string;
+  subject: string;
+  body_html: string;
+  variables: string[];
+  is_active: boolean;
+  created_at: string;
+}
+
+const USE_FOR_OPTIONS = [
+  { value: "system", label: "Системные уведомления" },
+  { value: "password", label: "Пароли" },
+  { value: "receipts", label: "Чеки" },
+  { value: "support", label: "Поддержка" },
+];
+
+export default function AdminEmail() {
+  const queryClient = useQueryClient();
+  const [accountDialog, setAccountDialog] = useState<{
+    open: boolean;
+    account: Partial<EmailAccount> | null;
+  }>({ open: false, account: null });
+  
+  const [templateDialog, setTemplateDialog] = useState<{
+    open: boolean;
+    template: EmailTemplate | null;
+  }>({ open: false, template: null });
+  
+  const [previewDialog, setPreviewDialog] = useState<{
+    open: boolean;
+    html: string;
+    subject: string;
+  }>({ open: false, html: "", subject: "" });
+  
+  const [testingSend, setTestingSend] = useState<string | null>(null);
+
+  // Fetch email accounts
+  const { data: accounts = [], isLoading: loadingAccounts } = useQuery({
+    queryKey: ["email-accounts"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("email_accounts")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data as EmailAccount[];
+    },
+  });
+
+  // Fetch email templates
+  const { data: templates = [], isLoading: loadingTemplates } = useQuery({
+    queryKey: ["email-templates"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("email_templates")
+        .select("*")
+        .order("name", { ascending: true });
+      if (error) throw error;
+      return data as EmailTemplate[];
+    },
+  });
+
+  // Save account mutation
+  const saveAccountMutation = useMutation({
+    mutationFn: async (account: Partial<EmailAccount>) => {
+      if (account.id) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { id, created_at, ...updateData } = account;
+        const { error } = await supabase
+          .from("email_accounts")
+          .update(updateData as Record<string, unknown>)
+          .eq("id", account.id);
+        if (error) throw error;
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { id: _id, created_at: _createdAt, ...insertData } = account;
+        if (!insertData.email) throw new Error("Email обязателен");
+        const insertPayload = {
+          email: insertData.email,
+          display_name: insertData.display_name || null,
+          provider: insertData.provider || "smtp",
+          smtp_host: insertData.smtp_host || null,
+          smtp_port: insertData.smtp_port || 465,
+          smtp_encryption: insertData.smtp_encryption || "SSL",
+          smtp_username: insertData.smtp_username || null,
+          smtp_password: insertData.smtp_password || null,
+          from_name: insertData.from_name || null,
+          from_email: insertData.from_email || null,
+          reply_to: insertData.reply_to || null,
+          is_default: insertData.is_default ?? false,
+          is_active: insertData.is_active ?? true,
+        };
+        const { error } = await supabase.from("email_accounts").insert([insertPayload]);
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["email-accounts"] });
+      setAccountDialog({ open: false, account: null });
+      toast.success("Почтовый ящик сохранен");
+    },
+    onError: (error: Error) => {
+      toast.error(`Ошибка: ${error.message}`);
+    },
+  });
+
+  // Delete account mutation
+  const deleteAccountMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("email_accounts").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["email-accounts"] });
+      toast.success("Почтовый ящик удален");
+    },
+    onError: (error: Error) => {
+      toast.error(`Ошибка: ${error.message}`);
+    },
+  });
+
+  // Save template mutation
+  const saveTemplateMutation = useMutation({
+    mutationFn: async (template: Partial<EmailTemplate>) => {
+      const { error } = await supabase
+        .from("email_templates")
+        .update({
+          subject: template.subject,
+          body_html: template.body_html,
+          is_active: template.is_active,
+        })
+        .eq("id", template.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["email-templates"] });
+      setTemplateDialog({ open: false, template: null });
+      toast.success("Шаблон сохранен");
+    },
+    onError: (error: Error) => {
+      toast.error(`Ошибка: ${error.message}`);
+    },
+  });
+
+  // Test send mutation
+  const testSendMutation = useMutation({
+    mutationFn: async (accountId: string) => {
+      const account = accounts.find((a) => a.id === accountId);
+      if (!account) throw new Error("Аккаунт не найден");
+      
+      const { data: userData } = await supabase.auth.getUser();
+      if (!userData.user?.email) throw new Error("Email пользователя не найден");
+
+      const { data, error } = await supabase.functions.invoke("send-email", {
+        body: {
+          to: userData.user.email,
+          subject: "Тестовое письмо",
+          html: `<h1>Тестовое письмо</h1><p>Это тестовое письмо от ${account.from_name || account.email}</p>`,
+          accountId: accountId,
+        },
+      });
+      
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Тестовое письмо отправлено");
+    },
+    onError: (error: Error) => {
+      toast.error(`Ошибка отправки: ${error.message}`);
+    },
+    onSettled: () => {
+      setTestingSend(null);
+    },
+  });
+
+  const handleTestSend = (accountId: string) => {
+    setTestingSend(accountId);
+    testSendMutation.mutate(accountId);
+  };
+
+  const getStatusBadge = (isActive: boolean) => {
+    if (isActive) {
+      return (
+        <Badge variant="default" className="bg-green-500/20 text-green-400 border-green-500/30">
+          <CheckCircle className="w-3 h-3 mr-1" />
+          Активен
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="secondary">
+        <XCircle className="w-3 h-3 mr-1" />
+        Отключен
+      </Badge>
+    );
+  };
+
+  const handlePreview = (template: EmailTemplate) => {
+    // Replace variables with example values
+    let html = template.body_html;
+    let subject = template.subject;
+    
+    const exampleValues: Record<string, string> = {
+      name: "Иван Иванов",
+      email: "ivan@example.com",
+      tempPassword: "TempPass123!",
+      loginLink: "https://example.com/auth",
+      resetLink: "https://example.com/reset",
+      appName: "Gorbova Club",
+      orderId: "ORD-12345",
+      amount: "99.00",
+      currency: "BYN",
+      productName: "Подписка Pro",
+      roleName: "Администратор",
+    };
+    
+    template.variables.forEach((v) => {
+      const value = exampleValues[v] || `{${v}}`;
+      html = html.replace(new RegExp(`{{${v}}}`, "g"), value);
+      subject = subject.replace(new RegExp(`{{${v}}}`, "g"), value);
+    });
+    
+    setPreviewDialog({ open: true, html, subject });
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Email Accounts Section */}
+      <GlassCard>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Server className="w-5 h-5 text-primary" />
+            <h2 className="text-lg font-semibold">Почтовые ящики</h2>
+          </div>
+          <Button
+            onClick={() =>
+              setAccountDialog({
+                open: true,
+                account: {
+                  provider: "smtp",
+                  smtp_port: 465,
+                  smtp_encryption: "SSL",
+                  is_active: true,
+                  is_default: false,
+                  use_for: [],
+                },
+              })
+            }
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Добавить ящик
+          </Button>
+        </div>
+
+        {loadingAccounts ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-6 h-6 animate-spin" />
+          </div>
+        ) : accounts.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <Mail className="w-12 h-12 mx-auto mb-2 opacity-50" />
+            <p>Нет подключенных почтовых ящиков</p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Email</TableHead>
+                <TableHead>Провайдер</TableHead>
+                <TableHead>Статус</TableHead>
+                <TableHead>Используется для</TableHead>
+                <TableHead>По умолчанию</TableHead>
+                <TableHead className="w-[120px]"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {accounts.map((account) => (
+                <TableRow key={account.id}>
+                  <TableCell>
+                    <div>
+                      <div className="font-medium">{account.email}</div>
+                      {account.from_name && (
+                        <div className="text-sm text-muted-foreground">
+                          {account.from_name}
+                        </div>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">
+                      {account.provider === "smtp" ? "SMTP" : account.provider}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{getStatusBadge(account.is_active)}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {account.use_for?.map((u) => (
+                        <Badge key={u} variant="secondary" className="text-xs">
+                          {USE_FOR_OPTIONS.find((o) => o.value === u)?.label || u}
+                        </Badge>
+                      ))}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {account.is_default && (
+                      <Badge className="bg-primary/20 text-primary border-primary/30">
+                        По умолчанию
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleTestSend(account.id)}
+                        disabled={testingSend === account.id}
+                      >
+                        {testingSend === account.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setAccountDialog({ open: true, account })}
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => deleteAccountMutation.mutate(account.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
+
+      {/* Email Templates Section */}
+      <GlassCard>
+        <div className="flex items-center gap-2 mb-4">
+          <Mail className="w-5 h-5 text-primary" />
+          <h2 className="text-lg font-semibold">Шаблоны писем</h2>
+        </div>
+
+        {loadingTemplates ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-6 h-6 animate-spin" />
+          </div>
+        ) : templates.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <AlertCircle className="w-12 h-12 mx-auto mb-2 opacity-50" />
+            <p>Нет шаблонов писем</p>
+          </div>
+        ) : (
+          <Accordion type="single" collapsible className="w-full">
+            {templates.map((template) => (
+              <AccordionItem key={template.id} value={template.id}>
+                <AccordionTrigger className="hover:no-underline">
+                  <div className="flex items-center gap-3 text-left">
+                    <div className="flex-1">
+                      <div className="font-medium">{template.name}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {template.code}
+                      </div>
+                    </div>
+                    {getStatusBadge(template.is_active)}
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent>
+                  <div className="space-y-4 pt-2">
+                    <div>
+                      <Label className="text-muted-foreground">Тема письма</Label>
+                      <p className="mt-1">{template.subject}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Переменные</Label>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {template.variables.map((v) => (
+                          <code key={v} className="px-2 py-0.5 bg-muted rounded text-xs">
+                            {`{{${v}}}`}
+                          </code>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handlePreview(template)}
+                      >
+                        <Eye className="w-4 h-4 mr-2" />
+                        Превью
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setTemplateDialog({ open: true, template })
+                        }
+                      >
+                        <Edit2 className="w-4 h-4 mr-2" />
+                        Редактировать
+                      </Button>
+                    </div>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
+        )}
+      </GlassCard>
+
+      {/* Account Dialog */}
+      <Dialog
+        open={accountDialog.open}
+        onOpenChange={(open) =>
+          !open && setAccountDialog({ open: false, account: null })
+        }
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {accountDialog.account?.id
+                ? "Редактировать почтовый ящик"
+                : "Добавить почтовый ящик"}
+            </DialogTitle>
+          </DialogHeader>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (accountDialog.account) {
+                saveAccountMutation.mutate(accountDialog.account);
+              }
+            }}
+            className="space-y-4"
+          >
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Email (логин)</Label>
+                <Input
+                  required
+                  type="email"
+                  value={accountDialog.account?.email || ""}
+                  onChange={(e) =>
+                    setAccountDialog((prev) => ({
+                      ...prev,
+                      account: { ...prev.account, email: e.target.value },
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Провайдер</Label>
+                <Select
+                  value={accountDialog.account?.provider || "smtp"}
+                  onValueChange={(value) =>
+                    setAccountDialog((prev) => ({
+                      ...prev,
+                      account: { ...prev.account, provider: value },
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="smtp">SMTP</SelectItem>
+                    <SelectItem value="yandex">Yandex</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2 col-span-2">
+                <Label>SMTP Host</Label>
+                <Input
+                  value={accountDialog.account?.smtp_host || ""}
+                  onChange={(e) =>
+                    setAccountDialog((prev) => ({
+                      ...prev,
+                      account: { ...prev.account, smtp_host: e.target.value },
+                    }))
+                  }
+                  placeholder="smtp.yandex.ru"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Port</Label>
+                <Input
+                  type="number"
+                  value={accountDialog.account?.smtp_port || 465}
+                  onChange={(e) =>
+                    setAccountDialog((prev) => ({
+                      ...prev,
+                      account: {
+                        ...prev.account,
+                        smtp_port: parseInt(e.target.value) || 465,
+                      },
+                    }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Encryption</Label>
+                <Select
+                  value={accountDialog.account?.smtp_encryption || "SSL"}
+                  onValueChange={(value) =>
+                    setAccountDialog((prev) => ({
+                      ...prev,
+                      account: { ...prev.account, smtp_encryption: value },
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SSL">SSL</SelectItem>
+                    <SelectItem value="TLS">TLS</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>SMTP Username</Label>
+                <Input
+                  value={accountDialog.account?.smtp_username || ""}
+                  onChange={(e) =>
+                    setAccountDialog((prev) => ({
+                      ...prev,
+                      account: { ...prev.account, smtp_username: e.target.value },
+                    }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>SMTP Password / App Password</Label>
+              <Input
+                type="password"
+                value={accountDialog.account?.smtp_password || ""}
+                onChange={(e) =>
+                  setAccountDialog((prev) => ({
+                    ...prev,
+                    account: { ...prev.account, smtp_password: e.target.value },
+                  }))
+                }
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>From Name</Label>
+                <Input
+                  value={accountDialog.account?.from_name || ""}
+                  onChange={(e) =>
+                    setAccountDialog((prev) => ({
+                      ...prev,
+                      account: { ...prev.account, from_name: e.target.value },
+                    }))
+                  }
+                  placeholder="Gorbova Club"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Reply-To (опционально)</Label>
+                <Input
+                  type="email"
+                  value={accountDialog.account?.reply_to || ""}
+                  onChange={(e) =>
+                    setAccountDialog((prev) => ({
+                      ...prev,
+                      account: { ...prev.account, reply_to: e.target.value },
+                    }))
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={accountDialog.account?.is_active ?? true}
+                  onCheckedChange={(checked) =>
+                    setAccountDialog((prev) => ({
+                      ...prev,
+                      account: { ...prev.account, is_active: checked },
+                    }))
+                  }
+                />
+                <Label>Активен</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={accountDialog.account?.is_default ?? false}
+                  onCheckedChange={(checked) =>
+                    setAccountDialog((prev) => ({
+                      ...prev,
+                      account: { ...prev.account, is_default: checked },
+                    }))
+                  }
+                />
+                <Label>По умолчанию</Label>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAccountDialog({ open: false, account: null })}
+              >
+                Отмена
+              </Button>
+              <Button type="submit" disabled={saveAccountMutation.isPending}>
+                {saveAccountMutation.isPending && (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                )}
+                Сохранить
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Template Edit Dialog */}
+      <Dialog
+        open={templateDialog.open}
+        onOpenChange={(open) =>
+          !open && setTemplateDialog({ open: false, template: null })
+        }
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Редактировать шаблон: {templateDialog.template?.name}</DialogTitle>
+          </DialogHeader>
+
+          {templateDialog.template && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (templateDialog.template) {
+                  saveTemplateMutation.mutate(templateDialog.template);
+                }
+              }}
+              className="space-y-4"
+            >
+              <div className="space-y-2">
+                <Label>Тема письма</Label>
+                <Input
+                  value={templateDialog.template.subject}
+                  onChange={(e) =>
+                    setTemplateDialog((prev) => ({
+                      ...prev,
+                      template: prev.template
+                        ? { ...prev.template, subject: e.target.value }
+                        : null,
+                    }))
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Доступные переменные</Label>
+                <div className="flex flex-wrap gap-1">
+                  {templateDialog.template.variables.map((v) => (
+                    <code
+                      key={v}
+                      className="px-2 py-0.5 bg-muted rounded text-xs cursor-pointer hover:bg-muted/80"
+                      onClick={() => {
+                        // Copy to clipboard
+                        navigator.clipboard.writeText(`{{${v}}}`);
+                        toast.success(`Скопировано: {{${v}}}`);
+                      }}
+                    >
+                      {`{{${v}}}`}
+                    </code>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Тело письма (HTML)</Label>
+                <Textarea
+                  rows={12}
+                  className="font-mono text-sm"
+                  value={templateDialog.template.body_html}
+                  onChange={(e) =>
+                    setTemplateDialog((prev) => ({
+                      ...prev,
+                      template: prev.template
+                        ? { ...prev.template, body_html: e.target.value }
+                        : null,
+                    }))
+                  }
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={templateDialog.template.is_active}
+                  onCheckedChange={(checked) =>
+                    setTemplateDialog((prev) => ({
+                      ...prev,
+                      template: prev.template
+                        ? { ...prev.template, is_active: checked }
+                        : null,
+                    }))
+                  }
+                />
+                <Label>Активен</Label>
+              </div>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handlePreview(templateDialog.template!)}
+                >
+                  <Eye className="w-4 h-4 mr-2" />
+                  Превью
+                </Button>
+                <Button type="submit" disabled={saveTemplateMutation.isPending}>
+                  {saveTemplateMutation.isPending && (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  )}
+                  Сохранить
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Preview Dialog */}
+      <Dialog
+        open={previewDialog.open}
+        onOpenChange={(open) =>
+          !open && setPreviewDialog({ open: false, html: "", subject: "" })
+        }
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle>Превью письма</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-muted-foreground">Тема:</Label>
+              <p className="font-medium">{previewDialog.subject}</p>
+            </div>
+            <div className="border rounded-lg p-4 bg-white text-black max-h-[400px] overflow-y-auto">
+              <div dangerouslySetInnerHTML={{ __html: previewDialog.html }} />
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

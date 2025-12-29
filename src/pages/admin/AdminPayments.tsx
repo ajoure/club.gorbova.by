@@ -63,7 +63,11 @@ const defaultFilters: OrderFiltersType = {
   paymentMethod: "",
 };
 
-export default function AdminPayments() {
+interface AdminPaymentsProps {
+  embedded?: boolean;
+}
+
+export default function AdminPayments({ embedded }: AdminPaymentsProps = {}) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -265,10 +269,12 @@ export default function AdminPayments() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Платежи</h1>
-        <p className="text-muted-foreground">Настройки bePaid и история заказов</p>
-      </div>
+      {!embedded && (
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Платежи</h1>
+          <p className="text-muted-foreground">Настройки bePaid и история заказов</p>
+        </div>
+      )}
 
       {/* Instructions */}
       <Card>
