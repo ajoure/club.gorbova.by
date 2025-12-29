@@ -6,6 +6,135 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// AmoCRM integration helpers
+async function createAmoCRMContact(
+  name: string,
+  email: string,
+  phone?: string
+): Promise<number | null> {
+  const accessToken = Deno.env.get('AMOCRM_ACCESS_TOKEN');
+  const subdomain = Deno.env.get('AMOCRM_SUBDOMAIN');
+
+  if (!accessToken || !subdomain) {
+    console.log('AmoCRM not configured, skipping contact creation');
+    return null;
+  }
+
+  try {
+    // First search for existing contact
+    const searchResponse = await fetch(
+      `https://${subdomain}.amocrm.ru/api/v4/contacts?query=${encodeURIComponent(email)}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    if (searchResponse.ok) {
+      const searchData = await searchResponse.json();
+      if (searchData._embedded?.contacts?.length > 0) {
+        console.log('AmoCRM contact already exists:', searchData._embedded.contacts[0].id);
+        return searchData._embedded.contacts[0].id;
+      }
+    }
+
+    // Create new contact
+    const contact = {
+      name: name || email.split('@')[0],
+      custom_fields_values: [
+        { field_id: 413855, values: [{ value: email }] }, // Email field
+      ],
+    };
+
+    if (phone) {
+      contact.custom_fields_values.push({
+        field_id: 413853,
+        values: [{ value: phone }],
+      });
+    }
+
+    const createResponse = await fetch(
+      `https://${subdomain}.amocrm.ru/api/v4/contacts`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify([contact]),
+      }
+    );
+
+    if (createResponse.ok) {
+      const data = await createResponse.json();
+      const contactId = data._embedded?.contacts?.[0]?.id;
+      console.log('AmoCRM contact created:', contactId);
+      return contactId;
+    } else {
+      console.error('Failed to create AmoCRM contact:', await createResponse.text());
+    }
+  } catch (error) {
+    console.error('AmoCRM contact creation error:', error);
+  }
+
+  return null;
+}
+
+async function createAmoCRMDeal(
+  name: string,
+  price: number,
+  contactId?: number | null,
+  meta?: Record<string, any>
+): Promise<number | null> {
+  const accessToken = Deno.env.get('AMOCRM_ACCESS_TOKEN');
+  const subdomain = Deno.env.get('AMOCRM_SUBDOMAIN');
+
+  if (!accessToken || !subdomain) {
+    console.log('AmoCRM not configured, skipping deal creation');
+    return null;
+  }
+
+  try {
+    const deal: any = {
+      name,
+      price,
+    };
+
+    if (contactId) {
+      deal._embedded = {
+        contacts: [{ id: contactId }],
+      };
+    }
+
+    const response = await fetch(
+      `https://${subdomain}.amocrm.ru/api/v4/leads`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify([deal]),
+      }
+    );
+
+    if (response.ok) {
+      const data = await response.json();
+      const dealId = data._embedded?.leads?.[0]?.id;
+      console.log('AmoCRM deal created:', dealId);
+      return dealId;
+    } else {
+      console.error('Failed to create AmoCRM deal:', await response.text());
+    }
+  } catch (error) {
+    console.error('AmoCRM deal creation error:', error);
+  }
+
+  return null;
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -177,6 +306,28 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Create contact and deal in AmoCRM
+      const customerName = meta.customer_first_name 
+        ? `${meta.customer_first_name} ${meta.customer_last_name || ''}`.trim()
+        : order.customer_email?.split('@')[0] || 'Клиент';
+      
+      const amoCRMContactId = await createAmoCRMContact(
+        customerName,
+        order.customer_email || '',
+        meta.customer_phone
+      );
+
+      const amoCRMDealId = await createAmoCRMDeal(
+        `Оплата: ${product?.name || 'Подписка'}`,
+        order.amount / 100, // Convert from kopecks to rubles
+        amoCRMContactId,
+        {
+          order_id: orderId,
+          product: product?.name,
+          subscription_tier: product?.tier,
+        }
+      );
+
       // Log the action
       await supabase
         .from('audit_logs')
@@ -190,6 +341,8 @@ Deno.serve(async (req) => {
             currency: order.currency,
             bepaid_uid: transactionUid,
             product_name: product?.name,
+            amocrm_contact_id: amoCRMContactId,
+            amocrm_deal_id: amoCRMDealId,
           },
         });
 
