@@ -235,7 +235,7 @@ export default function AdminDuplicates() {
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             Дубли контактов
             {duplicateCount && duplicateCount > 0 && (
-              <Badge variant="destructive">{duplicateCount}</Badge>
+              <Badge variant="destructive" className="ml-1">{duplicateCount}</Badge>
             )}
           </h1>
           <p className="text-muted-foreground">

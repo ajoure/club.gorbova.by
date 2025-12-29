@@ -271,10 +271,11 @@ export default function AdminUsers() {
             className="relative"
           >
             <Copy className="w-4 h-4 mr-2" />
-            Дубли{duplicateCount && duplicateCount > 0 && (
+            Дубли
+            {duplicateCount !== undefined && duplicateCount > 0 && (
               <Badge 
                 variant="destructive" 
-                className="ml-1 h-5 min-w-5 px-1.5 text-xs"
+                className="ml-2 h-5 min-w-5 px-1.5 text-xs"
               >
                 {duplicateCount}
               </Badge>
