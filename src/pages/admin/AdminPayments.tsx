@@ -8,8 +8,9 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { toast } from "sonner";
-import { CreditCard, Settings, ShoppingCart, CheckCircle, XCircle, Clock } from "lucide-react";
+import { CreditCard, Settings, ShoppingCart, CheckCircle, XCircle, Clock, HelpCircle, BookOpen } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
@@ -140,6 +141,71 @@ export default function AdminPayments() {
         <h1 className="text-2xl font-bold text-foreground">Платежи</h1>
         <p className="text-muted-foreground">Настройки bePaid и история заказов</p>
       </div>
+
+      {/* Instructions */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BookOpen className="h-5 w-5" />
+            Инструкция по настройке платежей
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Accordion type="single" collapsible className="w-full">
+            <AccordionItem value="quick-start">
+              <AccordionTrigger>Быстрый старт</AccordionTrigger>
+              <AccordionContent className="text-sm text-muted-foreground space-y-2">
+                <p><strong>1.</strong> Убедитесь, что ID магазина указан верно (14588)</p>
+                <p><strong>2.</strong> Перейдите в раздел «Продукты» и создайте товары для продажи</p>
+                <p><strong>3.</strong> На странице тарифов появится кнопка «Оплатить»</p>
+                <p><strong>4.</strong> После оплаты пользователю автоматически предоставляется доступ</p>
+              </AccordionContent>
+            </AccordionItem>
+            
+            <AccordionItem value="test-mode">
+              <AccordionTrigger>Тестовый режим</AccordionTrigger>
+              <AccordionContent className="text-sm text-muted-foreground space-y-2">
+                <p>Включите тестовый режим для проверки интеграции без реальных платежей.</p>
+                <p>В тестовом режиме используйте тестовые карты bePaid:</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  <li>Успешная оплата: 4200000000000000</li>
+                  <li>Отклонённая оплата: 4111111111111111</li>
+                  <li>CVV: любые 3 цифры, срок: любой будущий</li>
+                </ul>
+              </AccordionContent>
+            </AccordionItem>
+            
+            <AccordionItem value="webhook">
+              <AccordionTrigger>Настройка вебхука</AccordionTrigger>
+              <AccordionContent className="text-sm text-muted-foreground space-y-2">
+                <p>Вебхук уже настроен автоматически. bePaid отправляет уведомления на:</p>
+                <code className="block bg-muted p-2 rounded text-xs mt-2">
+                  https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/bepaid-webhook
+                </code>
+                <p className="mt-2">После успешной оплаты система автоматически:</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  <li>Обновляет статус заказа</li>
+                  <li>Активирует подписку пользователя</li>
+                  <li>Создаёт запись в журнале аудита</li>
+                </ul>
+              </AccordionContent>
+            </AccordionItem>
+            
+            <AccordionItem value="products">
+              <AccordionTrigger>Управление продуктами</AccordionTrigger>
+              <AccordionContent className="text-sm text-muted-foreground space-y-2">
+                <p>В разделе «Продукты» вы можете:</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  <li>Создавать новые продукты (подписки, разовые покупки, вебинары)</li>
+                  <li>Устанавливать цены и сроки действия</li>
+                  <li>Связывать продукты с тарифами подписки (pro, premium)</li>
+                  <li>Включать/отключать продукты для продажи</li>
+                </ul>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </CardContent>
+      </Card>
 
       {/* Payment Settings */}
       <Card>
