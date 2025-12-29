@@ -187,12 +187,31 @@ async function sendEmailViaSMTP(params: {
 }): Promise<void> {
   const { account } = params;
   
-  const smtpHost = account.smtp_host || "smtp.yandex.ru";
-  const smtpPort = account.smtp_port || 465;
+  let smtpHost = account.smtp_host;
+  let smtpPort = account.smtp_port || 465;
   const username = account.email;
   let password = account.smtp_password;
   const fromName = account.from_name || "Gorbova.by";
   const fromEmail = account.from_email || account.email;
+
+  // Auto-detect SMTP settings if not provided
+  if (!smtpHost) {
+    const domain = username.split("@")[1]?.toLowerCase();
+    const smtpSettings: Record<string, { host: string; port: number }> = {
+      "yandex.ru": { host: "smtp.yandex.ru", port: 465 },
+      "yandex.com": { host: "smtp.yandex.ru", port: 465 },
+      "ya.ru": { host: "smtp.yandex.ru", port: 465 },
+      "gmail.com": { host: "smtp.gmail.com", port: 465 },
+      "mail.ru": { host: "smtp.mail.ru", port: 465 },
+      "outlook.com": { host: "smtp-mail.outlook.com", port: 587 },
+      "hotmail.com": { host: "smtp-mail.outlook.com", port: 587 },
+    };
+    
+    const detected = smtpSettings[domain] || { host: "smtp.yandex.ru", port: 465 };
+    smtpHost = detected.host;
+    smtpPort = detected.port;
+    console.log(`Auto-detected SMTP settings for ${domain}: ${smtpHost}:${smtpPort}`);
+  }
 
   // Fallback for Yandex SMTP: use backend secret if password isn't stored in DB config
   if (!password && smtpHost.includes("yandex")) {
@@ -201,7 +220,7 @@ async function sendEmailViaSMTP(params: {
   }
 
   if (!password) {
-    throw new Error(`SMTP password not set for account ${username}`);
+    throw new Error(`SMTP password not set for account ${username}. Please configure the SMTP password in integration settings.`);
   }
 
   console.log(`Sending via SMTP: ${smtpHost}:${smtpPort} as ${username}`);

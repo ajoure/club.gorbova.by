@@ -73,20 +73,22 @@ export function AddIntegrationDialog({
   };
 
   const handleFieldChange = (key: string, value: string | boolean) => {
-    setFormData((prev) => ({ ...prev, [key]: value }));
-
-    // Auto-detect SMTP settings for email
-    if (key === "email" && selectedProvider?.id === "smtp" && typeof value === "string") {
-      const settings = getSmtpSettings(value);
-      if (settings) {
-        setFormData((prev) => ({
-          ...prev,
-          [key]: value,
-          smtp_host: settings.host,
-          smtp_port: String(settings.port),
-        }));
+    setFormData((prev) => {
+      const newData = { ...prev, [key]: value };
+      
+      // Auto-detect SMTP settings for email
+      if (key === "email" && selectedProvider?.id === "smtp" && typeof value === "string") {
+        const settings = getSmtpSettings(value);
+        if (settings) {
+          newData.smtp_host = settings.host;
+          newData.smtp_port = String(settings.port);
+          newData.smtp_encryption = settings.encryption;
+          newData.from_email = value;
+        }
       }
-    }
+      
+      return newData;
+    });
   };
 
   const handleSubmit = async () => {

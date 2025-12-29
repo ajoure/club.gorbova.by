@@ -83,17 +83,22 @@ export const PROJECT_FIELDS: Record<string, { key: string; label: string; type: 
     { key: "email", label: "Email", type: "email", required: true },
     { key: "full_name", label: "Полное имя", type: "text" },
     { key: "phone", label: "Телефон", type: "text" },
+    { key: "avatar_url", label: "Фото", type: "text" },
   ],
   deals: [
-    { key: "name", label: "Название", type: "text", required: true },
+    { key: "name", label: "Название сделки", type: "text", required: true },
     { key: "amount", label: "Сумма", type: "number" },
     { key: "status", label: "Статус", type: "select" },
+    { key: "responsible_user", label: "Ответственный", type: "text" },
+    { key: "product_id", label: "ID продукта", type: "text" },
   ],
   groups: [
     { key: "name", label: "Название", type: "text", required: true },
   ],
   companies: [
-    { key: "name", label: "Название", type: "text", required: true },
+    { key: "name", label: "Название компании", type: "text", required: true },
+    { key: "phone", label: "Телефон", type: "text" },
+    { key: "email", label: "Email", type: "email" },
   ],
 };
 
