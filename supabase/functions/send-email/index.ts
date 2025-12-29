@@ -70,8 +70,8 @@ async function getEmailAccount(supabase: any, accountId?: string): Promise<Email
     if (integration?.config) {
       const config = integration.config as Record<string, unknown>;
       const email = config.email as string || config.from_email as string || "";
-      // If password not in config, try to find it in email_accounts
-      let password = config.smtp_password as string || "";
+      // Check both password field names (smtp_password and password)
+      let password = config.smtp_password as string || config.password as string || "";
       if (!password && email) {
         password = await findPasswordByEmail(email) || "";
       }
@@ -111,7 +111,7 @@ async function getEmailAccount(supabase: any, accountId?: string): Promise<Email
   if (defaultIntegration?.config) {
     const config = defaultIntegration.config as Record<string, unknown>;
     const email = config.email as string || config.from_email as string || "";
-    let password = config.smtp_password as string || "";
+    let password = config.smtp_password as string || config.password as string || "";
     if (!password && email) {
       password = await findPasswordByEmail(email) || "";
     }
@@ -150,7 +150,7 @@ async function getEmailAccount(supabase: any, accountId?: string): Promise<Email
   if (anyIntegration?.config) {
     const config = anyIntegration.config as Record<string, unknown>;
     const email = config.email as string || config.from_email as string || "";
-    let password = config.smtp_password as string || "";
+    let password = config.smtp_password as string || config.password as string || "";
     if (!password && email) {
       password = await findPasswordByEmail(email) || "";
     }

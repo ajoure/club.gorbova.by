@@ -95,9 +95,11 @@ export const PROVIDERS: ProviderConfig[] = [
     description: "SMTP-сервер для отправки почты",
     fields: [
       { key: "email", label: "Email", type: "email", required: true, autoDetect: true },
-      { key: "password", label: "Пароль", type: "password", required: true },
+      { key: "smtp_password", label: "Пароль SMTP", type: "password", required: true },
       { key: "smtp_host", label: "SMTP Host", type: "text", placeholder: "smtp.yandex.ru" },
       { key: "smtp_port", label: "SMTP Port", type: "text", placeholder: "465" },
+      { key: "from_name", label: "Имя отправителя", type: "text", placeholder: "Gorbova Club" },
+      { key: "from_email", label: "Email отправителя", type: "email", placeholder: "noreply@gorbova.by" },
     ],
   },
 ];
