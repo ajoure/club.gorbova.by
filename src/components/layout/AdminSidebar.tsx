@@ -32,6 +32,7 @@ import {
   ShoppingCart,
   CreditCard,
   Copy,
+  Link2,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -234,6 +235,23 @@ export function AdminSidebar() {
                       >
                         <CreditCard className="h-5 w-5 shrink-0" />
                         {!collapsed && <span>Платежи</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === "/admin/amocrm"}
+                      tooltip={collapsed ? "amoCRM" : undefined}
+                    >
+                      <NavLink
+                        to="/admin/amocrm"
+                        end
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                        activeClassName="bg-sidebar-accent text-sidebar-primary"
+                      >
+                        <Link2 className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span>amoCRM</span>}
                       </NavLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

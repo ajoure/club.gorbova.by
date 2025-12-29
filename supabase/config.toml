@@ -29,3 +29,9 @@ verify_jwt = false
 
 [functions.detect-duplicates]
 verify_jwt = false
+
+[functions.amocrm-sync]
+verify_jwt = false
+
+[functions.amocrm-webhook]
+verify_jwt = false
