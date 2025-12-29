@@ -5,22 +5,59 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Menu, X } from "lucide-react";
 import logoImage from "@/assets/logo.png";
 
+const NAV_SECTIONS = [
+  { id: "benefits", label: "Преимущества" },
+  { id: "content", label: "Наполнение" },
+  { id: "pricing", label: "Тарифы" },
+  { id: "faq", label: "FAQ" },
+];
+
 export function LandingHeader() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const [activeSection, setActiveSection] = useState<string | null>(null);
 
   const isHomePage = location.pathname === "/";
 
+  // Animation on mount
+  useEffect(() => {
+    const timer = setTimeout(() => setIsVisible(true), 100);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Track scroll position and active section
   useEffect(() => {
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 20);
+
+      // Track active section only on homepage
+      if (isHomePage) {
+        const sections = NAV_SECTIONS.map(s => ({
+          id: s.id,
+          element: document.getElementById(s.id),
+        })).filter(s => s.element);
+
+        const scrollPosition = window.scrollY + 150;
+
+        for (let i = sections.length - 1; i >= 0; i--) {
+          const section = sections[i];
+          if (section.element && section.element.offsetTop <= scrollPosition) {
+            setActiveSection(section.id);
+            return;
+          }
+        }
+        setActiveSection(null);
+      }
     };
+
     window.addEventListener("scroll", handleScroll);
+    handleScroll(); // Initial check
     return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
+  }, [isHomePage]);
 
   // Handle scrolling to anchor after navigation
   useEffect(() => {
@@ -59,10 +96,14 @@ export function LandingHeader() {
 
   return (
     <header
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
         isScrolled
           ? "py-3 border-b border-border/50"
           : "py-4"
+      } ${
+        isVisible
+          ? "opacity-100 translate-y-0"
+          : "opacity-0 -translate-y-4"
       }`}
       style={{
         background: isScrolled
@@ -85,37 +126,30 @@ export function LandingHeader() {
 
         {/* Desktop Navigation */}
         <nav className="hidden md:flex items-center gap-6">
-          <a 
-            href="#benefits"
-            onClick={(e) => handleAnchorClick(e, "#benefits")}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Преимущества
-          </a>
-          <a 
-            href="#content"
-            onClick={(e) => handleAnchorClick(e, "#content")}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Наполнение
-          </a>
-          <a 
-            href="#pricing"
-            onClick={(e) => handleAnchorClick(e, "#pricing")}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Тарифы
-          </a>
-          <a 
-            href="#faq"
-            onClick={(e) => handleAnchorClick(e, "#faq")}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            FAQ
-          </a>
+          {NAV_SECTIONS.map((section) => (
+            <a
+              key={section.id}
+              href={`#${section.id}`}
+              onClick={(e) => handleAnchorClick(e, `#${section.id}`)}
+              className={`text-sm transition-colors relative ${
+                activeSection === section.id && isHomePage
+                  ? "text-primary font-medium"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {section.label}
+              {activeSection === section.id && isHomePage && (
+                <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-primary rounded-full animate-scale-in" />
+              )}
+            </a>
+          ))}
           <Link 
             to="/contacts"
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+            className={`text-sm transition-colors ${
+              location.pathname === "/contacts"
+                ? "text-primary font-medium"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
           >
             Контакты
           </Link>
@@ -148,44 +182,34 @@ export function LandingHeader() {
       {/* Mobile Menu */}
       {mobileMenuOpen && (
         <div
-          className="md:hidden absolute top-full left-0 right-0 border-b border-border/50 py-4"
+          className="md:hidden absolute top-full left-0 right-0 border-b border-border/50 py-4 animate-fade-in"
           style={{
             background: "linear-gradient(135deg, hsl(var(--card) / 0.98), hsl(var(--card) / 0.95))",
             backdropFilter: "blur(20px)",
           }}
         >
           <nav className="container mx-auto px-4 flex flex-col gap-4">
-            <a
-              href="#benefits"
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
-              onClick={(e) => handleAnchorClick(e, "#benefits")}
-            >
-              Преимущества
-            </a>
-            <a
-              href="#content"
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
-              onClick={(e) => handleAnchorClick(e, "#content")}
-            >
-              Наполнение
-            </a>
-            <a
-              href="#pricing"
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
-              onClick={(e) => handleAnchorClick(e, "#pricing")}
-            >
-              Тарифы
-            </a>
-            <a
-              href="#faq"
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
-              onClick={(e) => handleAnchorClick(e, "#faq")}
-            >
-              FAQ
-            </a>
+            {NAV_SECTIONS.map((section) => (
+              <a
+                key={section.id}
+                href={`#${section.id}`}
+                className={`text-sm transition-colors py-2 ${
+                  activeSection === section.id && isHomePage
+                    ? "text-primary font-medium"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={(e) => handleAnchorClick(e, `#${section.id}`)}
+              >
+                {section.label}
+              </a>
+            ))}
             <Link
               to="/contacts"
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
+              className={`text-sm transition-colors py-2 ${
+                location.pathname === "/contacts"
+                  ? "text-primary font-medium"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
               onClick={() => setMobileMenuOpen(false)}
             >
               Контакты
