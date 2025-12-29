@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,10 +10,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
-import { CreditCard, Settings, ShoppingCart, CheckCircle, XCircle, Clock, HelpCircle, BookOpen } from "lucide-react";
+import { 
+  CreditCard, Settings, ShoppingCart, CheckCircle, XCircle, Clock, 
+  BookOpen, AlertTriangle, UserX, Link2, ExternalLink 
+} from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { OrderFilters, OrderFilters as OrderFiltersType } from "@/components/admin/OrderFilters";
 
 interface PaymentSetting {
   id: string;
@@ -31,14 +37,68 @@ interface Order {
   payment_method: string | null;
   customer_email: string | null;
   created_at: string;
+  possible_duplicate: boolean;
+  duplicate_reason: string | null;
+  product_id: string | null;
   products: {
     name: string;
   } | null;
 }
 
+interface Profile {
+  id: string;
+  user_id: string;
+  email: string | null;
+  full_name: string | null;
+}
+
+const defaultFilters: OrderFiltersType = {
+  statuses: [],
+  dateFrom: undefined,
+  dateTo: undefined,
+  email: "",
+  productId: "",
+  amountMin: "",
+  amountMax: "",
+  paymentMethod: "",
+};
+
 export default function AdminPayments() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [editingSettings, setEditingSettings] = useState<Record<string, string>>({});
+  
+  // Initialize filters from URL
+  const [filters, setFilters] = useState<OrderFiltersType>(() => {
+    const statuses = searchParams.get("statuses")?.split(",").filter(Boolean) || [];
+    const dateFrom = searchParams.get("dateFrom") ? new Date(searchParams.get("dateFrom")!) : undefined;
+    const dateTo = searchParams.get("dateTo") ? new Date(searchParams.get("dateTo")!) : undefined;
+    return {
+      statuses,
+      dateFrom,
+      dateTo,
+      email: searchParams.get("email") || "",
+      productId: searchParams.get("productId") || "",
+      amountMin: searchParams.get("amountMin") || "",
+      amountMax: searchParams.get("amountMax") || "",
+      paymentMethod: searchParams.get("paymentMethod") || "",
+    };
+  });
+
+  // Sync filters to URL
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (filters.statuses.length) params.set("statuses", filters.statuses.join(","));
+    if (filters.dateFrom) params.set("dateFrom", filters.dateFrom.toISOString());
+    if (filters.dateTo) params.set("dateTo", filters.dateTo.toISOString());
+    if (filters.email) params.set("email", filters.email);
+    if (filters.productId) params.set("productId", filters.productId);
+    if (filters.amountMin) params.set("amountMin", filters.amountMin);
+    if (filters.amountMax) params.set("amountMax", filters.amountMax);
+    if (filters.paymentMethod) params.set("paymentMethod", filters.paymentMethod);
+    setSearchParams(params, { replace: true });
+  }, [filters, setSearchParams]);
 
   const { data: settings, isLoading: settingsLoading } = useQuery({
     queryKey: ["payment-settings"],
@@ -53,17 +113,70 @@ export default function AdminPayments() {
     },
   });
 
-  const { data: orders, isLoading: ordersLoading } = useQuery({
-    queryKey: ["admin-orders"],
+  const { data: products } = useQuery({
+    queryKey: ["products-list"],
     queryFn: async () => {
       const { data, error } = await supabase
+        .from("products")
+        .select("id, name")
+        .order("name");
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const { data: orders, isLoading: ordersLoading } = useQuery({
+    queryKey: ["admin-orders", filters],
+    queryFn: async () => {
+      let query = supabase
         .from("orders")
         .select("*, products(name)")
         .order("created_at", { ascending: false })
-        .limit(50);
+        .limit(200);
+
+      // Apply filters
+      if (filters.statuses.length > 0) {
+        query = query.in("status", filters.statuses);
+      }
+      if (filters.dateFrom) {
+        query = query.gte("created_at", filters.dateFrom.toISOString());
+      }
+      if (filters.dateTo) {
+        const endDate = new Date(filters.dateTo);
+        endDate.setHours(23, 59, 59, 999);
+        query = query.lte("created_at", endDate.toISOString());
+      }
+      if (filters.email) {
+        query = query.ilike("customer_email", filters.email);
+      }
+      if (filters.productId) {
+        query = query.eq("product_id", filters.productId);
+      }
+      if (filters.amountMin) {
+        query = query.gte("amount", parseInt(filters.amountMin) * 100);
+      }
+      if (filters.amountMax) {
+        query = query.lte("amount", parseInt(filters.amountMax) * 100);
+      }
+      if (filters.paymentMethod) {
+        query = query.eq("payment_method", filters.paymentMethod);
+      }
       
+      const { data, error } = await query;
       if (error) throw error;
       return data as Order[];
+    },
+  });
+
+  // Fetch profiles for linking
+  const { data: profiles } = useQuery({
+    queryKey: ["profiles-lookup"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, user_id, email, full_name");
+      if (error) throw error;
+      return data as Profile[];
     },
   });
 
@@ -117,6 +230,7 @@ export default function AdminPayments() {
       pending: { variant: "outline", icon: Clock },
       processing: { variant: "secondary", icon: Clock },
       failed: { variant: "destructive", icon: XCircle },
+      refunded: { variant: "outline", icon: XCircle },
     };
     const { variant, icon: Icon } = variants[status] || { variant: "outline" as const, icon: Clock };
     
@@ -126,13 +240,27 @@ export default function AdminPayments() {
         {status === "completed" ? "Оплачен" :
          status === "pending" ? "Ожидает" :
          status === "processing" ? "Обработка" :
-         status === "failed" ? "Ошибка" : status}
+         status === "failed" ? "Ошибка" :
+         status === "refunded" ? "Возврат" : status}
       </Badge>
     );
   };
 
   const formatPrice = (amount: number, currency: string) => {
     return `${(amount / 100).toFixed(2)} ${currency}`;
+  };
+
+  // Find profile by email (strict match)
+  const findProfileByEmail = (email: string | null): Profile | undefined => {
+    if (!email || !profiles) return undefined;
+    return profiles.find(p => p.email?.toLowerCase() === email.toLowerCase());
+  };
+
+  const handleEmailClick = (order: Order) => {
+    const profile = findProfileByEmail(order.customer_email);
+    if (profile) {
+      navigate(`/admin/users?search=${encodeURIComponent(order.customer_email || "")}`);
+    }
   };
 
   return (
@@ -291,45 +419,114 @@ export default function AdminPayments() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {/* Filters */}
+          <OrderFilters
+            filters={filters}
+            onFiltersChange={setFilters}
+            products={products || []}
+            totalCount={orders?.length || 0}
+          />
+
           {ordersLoading ? (
             <div className="text-center py-8 text-muted-foreground">Загрузка...</div>
           ) : orders && orders.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Дата</TableHead>
-                  <TableHead>Продукт</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Сумма</TableHead>
-                  <TableHead>Способ</TableHead>
-                  <TableHead>Статус</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {orders.map((order) => (
-                  <TableRow key={order.id}>
-                    <TableCell className="text-sm">
-                      {format(new Date(order.created_at), "dd MMM yyyy, HH:mm", { locale: ru })}
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      {order.products?.name || "—"}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {order.customer_email || "—"}
-                    </TableCell>
-                    <TableCell>{formatPrice(order.amount, order.currency)}</TableCell>
-                    <TableCell className="text-sm">
-                      {order.payment_method || "—"}
-                    </TableCell>
-                    <TableCell>{getStatusBadge(order.status)}</TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Дата</TableHead>
+                    <TableHead>Продукт</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Сумма</TableHead>
+                    <TableHead>Способ</TableHead>
+                    <TableHead>Статус</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {orders.map((order) => {
+                    const profile = findProfileByEmail(order.customer_email);
+                    const isLinked = !!profile;
+                    
+                    return (
+                      <TableRow key={order.id}>
+                        <TableCell className="text-sm">
+                          {format(new Date(order.created_at), "dd MMM yyyy, HH:mm", { locale: ru })}
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          {order.products?.name || "—"}
+                        </TableCell>
+                        <TableCell>
+                          <TooltipProvider>
+                            <div className="flex items-center gap-2">
+                              {order.customer_email ? (
+                                isLinked ? (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <button
+                                        onClick={() => handleEmailClick(order)}
+                                        className="text-sm text-primary hover:underline cursor-pointer flex items-center gap-1"
+                                      >
+                                        {order.customer_email}
+                                        <ExternalLink className="h-3 w-3" />
+                                      </button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      Перейти к клиенту: {profile?.full_name || order.customer_email}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm text-muted-foreground">{order.customer_email}</span>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Badge variant="outline" className="gap-1 text-xs">
+                                          <UserX className="h-3 w-3" />
+                                          Не привязан
+                                        </Badge>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        Клиент не найден в системе
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </div>
+                                )
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                              
+                              {order.possible_duplicate && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="destructive" className="gap-1 text-xs">
+                                      <AlertTriangle className="h-3 w-3" />
+                                      Дубль
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {order.duplicate_reason || "Возможный дубликат контакта"}
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                            </div>
+                          </TooltipProvider>
+                        </TableCell>
+                        <TableCell>{formatPrice(order.amount, order.currency)}</TableCell>
+                        <TableCell className="text-sm">
+                          {order.payment_method || "—"}
+                        </TableCell>
+                        <TableCell>{getStatusBadge(order.status)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               <CreditCard className="h-12 w-12 mx-auto mb-2 opacity-50" />
-              Заказов пока нет
+              {filters.email || filters.statuses.length > 0 || filters.productId
+                ? "Заказы не найдены по заданным фильтрам"
+                : "Заказов пока нет"}
             </div>
           )}
         </CardContent>
