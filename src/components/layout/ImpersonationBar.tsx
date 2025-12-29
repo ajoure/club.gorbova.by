@@ -99,24 +99,28 @@ export function ImpersonationBar() {
   }
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 bg-amber-500/90 text-amber-950 py-2 px-4 shadow-md backdrop-blur-sm">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <User className="w-4 h-4" />
-          <span className="font-medium">
-            Вы вошли как: <span className="font-bold">{impersonatedEmail || "пользователь"}</span>
-          </span>
+    <>
+      {/* Spacer to push content down */}
+      <div className="h-10" />
+      <div className="fixed top-0 left-0 right-0 z-[60] bg-amber-500 text-amber-950 py-2 px-4 shadow-md">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <User className="w-4 h-4" />
+            <span className="font-medium">
+              Вы вошли как: <span className="font-bold">{impersonatedEmail || "пользователь"}</span>
+            </span>
+          </div>
+          <Button 
+            onClick={handleReturnToAdmin}
+            variant="outline" 
+            size="sm"
+            className="bg-white/20 border-amber-700 text-amber-950 hover:bg-white/30"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Вернуться в аккаунт администратора
+          </Button>
         </div>
-        <Button 
-          onClick={handleReturnToAdmin}
-          variant="outline" 
-          size="sm"
-          className="bg-white/20 border-amber-700 text-amber-950 hover:bg-white/30"
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Вернуться в аккаунт администратора
-        </Button>
       </div>
-    </div>
+    </>
   );
 }

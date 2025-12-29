@@ -16,6 +16,67 @@ interface RolesAdminRequest {
   permissionCodes?: string[];
 }
 
+async function sendRoleChangeEmail(
+  supabaseUrl: string,
+  anonKey: string,
+  userEmail: string,
+  roleName: string,
+  isAssign: boolean
+): Promise<void> {
+  try {
+
+    const subject = isAssign
+      ? `Вам назначена роль: ${roleName}`
+      : `Роль удалена: ${roleName}`;
+
+    const html = isAssign
+      ? `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #1a56db;">Уведомление об изменении роли</h2>
+          <p>Здравствуйте!</p>
+          <p>Вам была назначена новая роль: <strong>${roleName}</strong></p>
+          <p>Это изменение вступает в силу немедленно. Если у вас есть вопросы, свяжитесь с администратором.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #666; font-size: 12px;">С уважением,<br>Команда Буква Закона</p>
+        </div>
+      `
+      : `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #1a56db;">Уведомление об изменении роли</h2>
+          <p>Здравствуйте!</p>
+          <p>Ваша роль <strong>${roleName}</strong> была удалена.</p>
+          <p>Это изменение вступает в силу немедленно. Если у вас есть вопросы, свяжитесь с администратором.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #666; font-size: 12px;">С уважением,<br>Команда Буква Закона</p>
+        </div>
+      `;
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/send-email`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${anonKey}`,
+      },
+      body: JSON.stringify({
+        to: userEmail,
+        subject,
+        html,
+        text: isAssign
+          ? `Вам была назначена новая роль: ${roleName}`
+          : `Ваша роль ${roleName} была удалена.`,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("Failed to send role change email:", await response.text());
+    } else {
+      console.log(`Role change email sent to ${userEmail}`);
+    }
+  } catch (error) {
+    console.error("Error sending role change email:", error);
+  }
+}
+
 serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -103,6 +164,28 @@ serve(async (req: Request): Promise<Response> => {
       });
     };
 
+    const getUserEmail = async (targetUserId: string): Promise<string | null> => {
+      const { data, error } = await supabaseAdmin
+        .from("profiles")
+        .select("email")
+        .eq("user_id", targetUserId)
+        .single();
+      if (error || !data?.email) {
+        console.error("Failed to get user email:", error);
+        return null;
+      }
+      return data.email;
+    };
+
+    const getRoleName = async (code: string): Promise<string> => {
+      const { data } = await supabaseAdmin
+        .from("roles")
+        .select("name")
+        .eq("code", code)
+        .single();
+      return data?.name || code;
+    };
+
     switch (action) {
       case "assign_role": {
         if (!userId || !roleCode) {
@@ -174,6 +257,14 @@ serve(async (req: Request): Promise<Response> => {
         }
 
         await logAction("roles.assign", userId, { roleCode });
+
+        // Send email notification
+        const userEmail = await getUserEmail(userId);
+        if (userEmail) {
+          const roleDisplayName = await getRoleName(roleCode);
+          await sendRoleChangeEmail(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY") || "", userEmail, roleDisplayName, true);
+        }
+
         return new Response(JSON.stringify({ success: true }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
@@ -231,6 +322,14 @@ serve(async (req: Request): Promise<Response> => {
         }
 
         await logAction("roles.remove", userId, { roleCode });
+
+        // Send email notification
+        const userEmail = await getUserEmail(userId);
+        if (userEmail) {
+          const roleDisplayName = await getRoleName(roleCode);
+          await sendRoleChangeEmail(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY") || "", userEmail, roleDisplayName, false);
+        }
+
         return new Response(JSON.stringify({ success: true }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
