@@ -457,6 +457,56 @@ export type Database = {
         }
         Relationships: []
       }
+      integration_field_mappings: {
+        Row: {
+          created_at: string
+          entity_type: string
+          external_field: string
+          field_type: string | null
+          id: string
+          instance_id: string
+          is_key_field: boolean | null
+          is_required: boolean | null
+          project_field: string
+          transform_rules: Json | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          entity_type: string
+          external_field: string
+          field_type?: string | null
+          id?: string
+          instance_id: string
+          is_key_field?: boolean | null
+          is_required?: boolean | null
+          project_field: string
+          transform_rules?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          entity_type?: string
+          external_field?: string
+          field_type?: string | null
+          id?: string
+          instance_id?: string
+          is_key_field?: boolean | null
+          is_required?: boolean | null
+          project_field?: string
+          transform_rules?: Json | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_field_mappings_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "integration_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integration_instances: {
         Row: {
           alias: string
@@ -530,6 +580,100 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "integration_logs_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "integration_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      integration_sync_logs: {
+        Row: {
+          created_at: string
+          direction: string
+          entity_type: string
+          error_message: string | null
+          id: string
+          instance_id: string
+          object_id: string | null
+          object_type: string | null
+          payload_meta: Json | null
+          result: string
+        }
+        Insert: {
+          created_at?: string
+          direction: string
+          entity_type: string
+          error_message?: string | null
+          id?: string
+          instance_id: string
+          object_id?: string | null
+          object_type?: string | null
+          payload_meta?: Json | null
+          result: string
+        }
+        Update: {
+          created_at?: string
+          direction?: string
+          entity_type?: string
+          error_message?: string | null
+          id?: string
+          instance_id?: string
+          object_id?: string | null
+          object_type?: string | null
+          payload_meta?: Json | null
+          result?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_sync_logs_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "integration_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      integration_sync_settings: {
+        Row: {
+          conflict_strategy: string | null
+          created_at: string
+          direction: string
+          entity_type: string
+          filters: Json | null
+          id: string
+          instance_id: string
+          is_enabled: boolean
+          last_sync_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          conflict_strategy?: string | null
+          created_at?: string
+          direction?: string
+          entity_type: string
+          filters?: Json | null
+          id?: string
+          instance_id: string
+          is_enabled?: boolean
+          last_sync_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          conflict_strategy?: string | null
+          created_at?: string
+          direction?: string
+          entity_type?: string
+          filters?: Json | null
+          id?: string
+          instance_id?: string
+          is_enabled?: boolean
+          last_sync_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_sync_settings_instance_id_fkey"
             columns: ["instance_id"]
             isOneToOne: false
             referencedRelation: "integration_instances"

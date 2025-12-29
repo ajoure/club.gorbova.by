@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,6 +17,7 @@ import { IntegrationInstanceList } from "@/components/integrations/IntegrationIn
 import { AddIntegrationDialog } from "@/components/integrations/AddIntegrationDialog";
 import { EditIntegrationDialog } from "@/components/integrations/EditIntegrationDialog";
 import { IntegrationLogsSheet } from "@/components/integrations/IntegrationLogsSheet";
+import { IntegrationSyncSettingsDialog } from "@/components/integrations/IntegrationSyncSettingsDialog";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
@@ -38,6 +39,7 @@ export default function AdminIntegrations() {
   const [addDialogProvider, setAddDialogProvider] = useState<string | undefined>();
   const [editInstance, setEditInstance] = useState<IntegrationInstance | null>(null);
   const [logsInstance, setLogsInstance] = useState<IntegrationInstance | null>(null);
+  const [syncSettingsInstance, setSyncSettingsInstance] = useState<IntegrationInstance | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
 
   // Determine active tab from URL
@@ -196,6 +198,7 @@ export default function AdminIntegrations() {
                     onEdit={setEditInstance}
                     onViewLogs={setLogsInstance}
                     onHealthCheck={handleHealthCheck}
+                    onSyncSettings={setSyncSettingsInstance}
                   />
                 )}
               </CardContent>
@@ -220,6 +223,7 @@ export default function AdminIntegrations() {
                     onEdit={setEditInstance}
                     onViewLogs={setLogsInstance}
                     onHealthCheck={handleHealthCheck}
+                    onSyncSettings={setSyncSettingsInstance}
                   />
                 )}
               </CardContent>
@@ -246,6 +250,12 @@ export default function AdminIntegrations() {
         instance={logsInstance}
         open={!!logsInstance}
         onOpenChange={(open) => !open && setLogsInstance(null)}
+      />
+
+      <IntegrationSyncSettingsDialog
+        instance={syncSettingsInstance}
+        open={!!syncSettingsInstance}
+        onOpenChange={(open) => !open && setSyncSettingsInstance(null)}
       />
     </div>
   );
