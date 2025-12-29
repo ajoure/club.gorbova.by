@@ -29,6 +29,7 @@ import {
   Clock,
   Mail,
   ArrowLeftRight,
+  Zap,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -61,22 +62,22 @@ export function IntegrationInstanceList({
     switch (status) {
       case "connected":
         return (
-          <Badge className="bg-green-500/10 text-green-600 border border-green-500/20 gap-1.5">
-            <CheckCircle className="h-3 w-3" />
+          <Badge className="bg-gradient-to-r from-green-500/20 to-emerald-500/20 text-green-600 border border-green-500/30 gap-1.5 shadow-sm shadow-green-500/10">
+            <CheckCircle className="h-3.5 w-3.5" />
             Подключено
           </Badge>
         );
       case "error":
         return (
-          <Badge variant="destructive" className="gap-1.5">
-            <XCircle className="h-3 w-3" />
+          <Badge className="bg-gradient-to-r from-destructive/20 to-red-500/20 text-destructive border border-destructive/30 gap-1.5 shadow-sm shadow-destructive/10 animate-pulse">
+            <XCircle className="h-3.5 w-3.5" />
             Ошибка
           </Badge>
         );
       default:
         return (
-          <Badge variant="secondary" className="bg-muted/50 text-muted-foreground border border-border/50 gap-1.5">
-            <Clock className="h-3 w-3" />
+          <Badge className="bg-gradient-to-r from-muted/50 to-muted/30 text-muted-foreground border border-border/50 gap-1.5">
+            <Clock className="h-3.5 w-3.5" />
             Отключено
           </Badge>
         );
@@ -125,112 +126,119 @@ export function IntegrationInstanceList({
 
   if (instances.length === 0) {
     return (
-      <div className="text-center py-12 text-muted-foreground">
-        <div className="h-16 w-16 mx-auto mb-4 rounded-2xl bg-muted/30 flex items-center justify-center">
-          <Settings className="h-8 w-8 opacity-30" />
+      <div className="text-center py-16">
+        <div className="h-20 w-20 mx-auto mb-6 rounded-3xl bg-gradient-to-br from-muted/50 to-muted/30 flex items-center justify-center shadow-lg">
+          <Zap className="h-10 w-10 text-muted-foreground/30" />
         </div>
-        <p className="font-medium">Нет подключений</p>
-        <p className="text-sm mt-1">Добавьте первое подключение для начала работы</p>
+        <p className="font-semibold text-lg text-foreground">Нет подключений</p>
+        <p className="text-sm text-muted-foreground mt-2 max-w-[250px] mx-auto">
+          Добавьте первое подключение для начала работы с интеграцией
+        </p>
       </div>
     );
   }
 
   return (
     <>
-      <div className="space-y-3">
-        {instances.map((instance) => (
+      <div className="space-y-4">
+        {instances.map((instance, index) => (
           <div 
             key={instance.id}
             className={cn(
-              "rounded-2xl p-4 transition-all duration-300",
-              "bg-card/50 backdrop-blur-sm border shadow-sm",
-              "hover:shadow-md hover:bg-card/80",
+              "rounded-3xl p-5 transition-all duration-500",
+              "bg-gradient-to-br from-card via-card/95 to-transparent",
+              "border-2 shadow-lg",
+              "hover:shadow-xl hover:-translate-y-1",
               instance.status === "error" 
-                ? "border-destructive/30" 
+                ? "border-destructive/30 shadow-destructive/5 hover:border-destructive/50" 
                 : instance.status === "connected"
-                ? "border-green-500/20"
-                : "border-border/50"
+                ? "border-green-500/20 shadow-green-500/5 hover:border-green-500/40"
+                : "border-border/40 hover:border-primary/40"
             )}
+            style={{
+              animationDelay: `${index * 100}ms`,
+            }}
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className={cn(
-                  "h-10 w-10 rounded-xl flex items-center justify-center",
+                  "relative h-12 w-12 rounded-2xl flex items-center justify-center transition-all duration-300",
+                  "shadow-lg",
                   instance.status === "connected" 
-                    ? "bg-green-500/10" 
+                    ? "bg-gradient-to-br from-green-500/20 to-emerald-500/10 shadow-green-500/10" 
                     : instance.status === "error"
-                    ? "bg-destructive/10"
-                    : "bg-muted"
+                    ? "bg-gradient-to-br from-destructive/20 to-red-500/10 shadow-destructive/10"
+                    : "bg-gradient-to-br from-muted to-muted/50 shadow-sm"
                 )}>
                   <div className={cn(
-                    "h-3 w-3 rounded-full",
+                    "h-4 w-4 rounded-full transition-all duration-500",
                     instance.status === "connected" 
-                      ? "bg-green-500" 
+                      ? "bg-gradient-to-br from-green-400 to-green-600 shadow-lg shadow-green-500/50" 
                       : instance.status === "error"
-                      ? "bg-destructive animate-pulse"
+                      ? "bg-gradient-to-br from-red-400 to-red-600 shadow-lg shadow-red-500/50 animate-pulse"
                       : "bg-muted-foreground/30"
                   )} />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{instance.alias}</span>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold text-foreground">{instance.alias}</span>
                     {getStatusBadge(instance.status)}
                   </div>
                   {instance.error_message && (
-                    <p className="text-xs text-destructive mt-1 max-w-[300px] truncate">
+                    <p className="text-xs text-destructive font-medium max-w-[350px] truncate">
                       {instance.error_message}
                     </p>
                   )}
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <p className="text-xs text-muted-foreground">
                     {instance.last_check_at
                       ? `Проверено ${format(new Date(instance.last_check_at), "dd MMM, HH:mm", { locale: ru })}`
-                      : "Не проверялось"}
+                      : "Ещё не проверялось"}
                   </p>
                 </div>
               </div>
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl">
-                    <MoreHorizontal className="h-4 w-4" />
+                  <Button variant="ghost" size="icon" className="h-10 w-10 rounded-xl hover:bg-primary/10">
+                    <MoreHorizontal className="h-5 w-5" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48 bg-card/95 backdrop-blur-xl border-border/50">
-                  <DropdownMenuItem onClick={() => onHealthCheck(instance)} className="gap-2">
-                    <RefreshCw className="h-4 w-4" />
-                    Проверить
+                <DropdownMenuContent align="end" className="w-52 bg-card/98 backdrop-blur-xl border-2 border-border/50 rounded-2xl shadow-2xl p-2">
+                  <DropdownMenuItem onClick={() => onHealthCheck(instance)} className="gap-3 rounded-xl py-2.5 cursor-pointer">
+                    <RefreshCw className="h-4 w-4 text-primary" />
+                    <span>Проверить</span>
                   </DropdownMenuItem>
                   {instance.category === "email" && (
                     <DropdownMenuItem 
                       onClick={() => handleSendTestEmail(instance)}
                       disabled={sendingTestEmail === instance.id}
-                      className="gap-2"
+                      className="gap-3 rounded-xl py-2.5 cursor-pointer"
                     >
-                      <Mail className="h-4 w-4" />
-                      {sendingTestEmail === instance.id ? "Отправка..." : "Тестовое письмо"}
+                      <Mail className="h-4 w-4 text-primary" />
+                      <span>{sendingTestEmail === instance.id ? "Отправка..." : "Тестовое письмо"}</span>
                     </DropdownMenuItem>
                   )}
                   {instance.category === "crm" && onSyncSettings && (
-                    <DropdownMenuItem onClick={() => onSyncSettings(instance)} className="gap-2">
-                      <ArrowLeftRight className="h-4 w-4" />
-                      Настройки обмена
+                    <DropdownMenuItem onClick={() => onSyncSettings(instance)} className="gap-3 rounded-xl py-2.5 cursor-pointer">
+                      <ArrowLeftRight className="h-4 w-4 text-primary" />
+                      <span>Настройки обмена</span>
                     </DropdownMenuItem>
                   )}
-                  <DropdownMenuItem onClick={() => onEdit(instance)} className="gap-2">
-                    <Settings className="h-4 w-4" />
-                    Настройки
+                  <DropdownMenuItem onClick={() => onEdit(instance)} className="gap-3 rounded-xl py-2.5 cursor-pointer">
+                    <Settings className="h-4 w-4 text-primary" />
+                    <span>Настройки</span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onViewLogs(instance)} className="gap-2">
-                    <FileText className="h-4 w-4" />
-                    Логи
+                  <DropdownMenuItem onClick={() => onViewLogs(instance)} className="gap-3 rounded-xl py-2.5 cursor-pointer">
+                    <FileText className="h-4 w-4 text-primary" />
+                    <span>Логи</span>
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator />
+                  <DropdownMenuSeparator className="my-2" />
                   <DropdownMenuItem
                     onClick={() => setDeleteId(instance.id)}
-                    className="text-destructive focus:text-destructive gap-2"
+                    className="gap-3 rounded-xl py-2.5 cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
                   >
                     <Trash2 className="h-4 w-4" />
-                    Удалить
+                    <span>Удалить</span>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -240,16 +248,16 @@ export function IntegrationInstanceList({
       </div>
 
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
-        <AlertDialogContent className="bg-card/95 backdrop-blur-xl border-border/50">
+        <AlertDialogContent className="bg-card/98 backdrop-blur-xl border-2 border-border/50 rounded-3xl shadow-2xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить подключение?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Это действие нельзя отменить. Подключение и все связанные настройки будут удалены.
+            <AlertDialogTitle className="text-xl">Удалить подключение?</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              Это действие нельзя отменить. Подключение и все связанные настройки будут удалены безвозвратно.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-xl">Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground rounded-xl">
+          <AlertDialogFooter className="gap-3">
+            <AlertDialogCancel className="rounded-xl border-2">Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-gradient-to-r from-destructive to-red-600 rounded-xl shadow-lg shadow-destructive/30">
               Удалить
             </AlertDialogAction>
           </AlertDialogFooter>
