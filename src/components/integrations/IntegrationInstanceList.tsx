@@ -14,6 +14,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -35,10 +36,13 @@ import {
   CheckCircle,
   XCircle,
   Clock,
+  Mail,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { IntegrationInstance, useIntegrationMutations } from "@/hooks/useIntegrations";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface IntegrationInstanceListProps {
   instances: IntegrationInstance[];
@@ -57,6 +61,7 @@ export function IntegrationInstanceList({
 }: IntegrationInstanceListProps) {
   const { setDefault, deleteInstance } = useIntegrationMutations();
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [sendingTestEmail, setSendingTestEmail] = useState<string | null>(null);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -92,6 +97,39 @@ export function IntegrationInstanceList({
     if (deleteId) {
       deleteInstance.mutate(deleteId);
       setDeleteId(null);
+    }
+  };
+
+  const handleSendTestEmail = async (instance: IntegrationInstance) => {
+    setSendingTestEmail(instance.id);
+    
+    try {
+      const config = instance.config as Record<string, unknown> | null;
+      const recipientEmail = config?.email as string || config?.from_email as string;
+      
+      if (!recipientEmail) {
+        toast.error("Email не указан в настройках интеграции");
+        return;
+      }
+
+      const { error } = await supabase.functions.invoke("send-email", {
+        body: {
+          to: recipientEmail,
+          subject: "Тестовое письмо",
+          html: `<p>Это тестовое письмо отправлено для проверки почтовой интеграции <strong>${instance.alias}</strong>.</p>
+                 <p>Время отправки: ${new Date().toLocaleString("ru-RU")}</p>`,
+          account_id: instance.id,
+        },
+      });
+
+      if (error) throw error;
+      
+      toast.success(`Тестовое письмо отправлено на ${recipientEmail}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Неизвестная ошибка";
+      toast.error(`Ошибка отправки: ${message}`);
+    } finally {
+      setSendingTestEmail(null);
     }
   };
 
@@ -154,6 +192,15 @@ export function IntegrationInstanceList({
                       <RefreshCw className="h-4 w-4 mr-2" />
                       Проверить
                     </DropdownMenuItem>
+                    {instance.category === "email" && (
+                      <DropdownMenuItem 
+                        onClick={() => handleSendTestEmail(instance)}
+                        disabled={sendingTestEmail === instance.id}
+                      >
+                        <Mail className="h-4 w-4 mr-2" />
+                        {sendingTestEmail === instance.id ? "Отправка..." : "Тестовое письмо"}
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem onClick={() => onEdit(instance)}>
                       <Settings className="h-4 w-4 mr-2" />
                       Настройки
@@ -162,6 +209,7 @@ export function IntegrationInstanceList({
                       <FileText className="h-4 w-4 mr-2" />
                       Логи
                     </DropdownMenuItem>
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() => setDeleteId(instance.id)}
                       className="text-destructive"

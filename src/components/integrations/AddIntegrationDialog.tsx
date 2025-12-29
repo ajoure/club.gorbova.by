@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -39,14 +39,28 @@ export function AddIntegrationDialog({
   preselectedProvider,
 }: AddIntegrationDialogProps) {
   const { createInstance } = useIntegrationMutations();
-  const [step, setStep] = useState<"provider" | "config">(preselectedProvider ? "config" : "provider");
-  const [selectedProvider, setSelectedProvider] = useState<ProviderConfig | null>(
-    preselectedProvider ? PROVIDERS.find((p) => p.id === preselectedProvider) || null : null
-  );
+  const [step, setStep] = useState<"provider" | "config">("provider");
+  const [selectedProvider, setSelectedProvider] = useState<ProviderConfig | null>(null);
   const [formData, setFormData] = useState<Record<string, string | boolean>>({
     alias: "",
     is_default: false,
   });
+
+  // Reset form state when dialog opens
+  useEffect(() => {
+    if (open) {
+      if (preselectedProvider) {
+        const provider = PROVIDERS.find((p) => p.id === preselectedProvider);
+        setSelectedProvider(provider || null);
+        setStep("config");
+        setFormData({ alias: provider?.name || "", is_default: false });
+      } else {
+        setSelectedProvider(null);
+        setStep("provider");
+        setFormData({ alias: "", is_default: false });
+      }
+    }
+  }, [open, preselectedProvider]);
 
   const availableProviders = category
     ? PROVIDERS.filter((p) => p.category === category)
