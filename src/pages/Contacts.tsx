@@ -56,7 +56,7 @@ export default function Contacts() {
     setIsSubmitting(true);
 
     try {
-      const { error } = await supabase.from("contact_requests").insert({
+      const { error } = await (supabase.from("contact_requests") as any).insert({
         name: formData.name.trim(),
         email: formData.email.trim(),
         phone: formData.phone.trim() || null,
