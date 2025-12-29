@@ -1,16 +1,14 @@
-import { forwardRef, ReactNode, CSSProperties } from "react";
+import { forwardRef, ReactNode, CSSProperties, HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
-interface GlassCardProps {
+interface GlassCardProps extends HTMLAttributes<HTMLDivElement> {
   children: ReactNode;
   className?: string;
   hover?: boolean;
-  onClick?: () => void;
-  style?: CSSProperties;
 }
 
-export const GlassCard = forwardRef<HTMLDivElement, GlassCardProps>(
-  ({ children, className, hover = false, onClick, style }, ref) => {
+const GlassCard = forwardRef<HTMLDivElement, GlassCardProps>(
+  ({ children, className, hover = false, onClick, style, ...props }, ref) => {
     return (
       <div
         ref={ref}
@@ -26,6 +24,7 @@ export const GlassCard = forwardRef<HTMLDivElement, GlassCardProps>(
           backdropFilter: "blur(20px)",
           ...style,
         }}
+        {...props}
       >
         {children}
       </div>
@@ -34,3 +33,5 @@ export const GlassCard = forwardRef<HTMLDivElement, GlassCardProps>(
 );
 
 GlassCard.displayName = "GlassCard";
+
+export { GlassCard };
