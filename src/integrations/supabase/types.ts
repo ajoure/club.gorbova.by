@@ -457,6 +457,86 @@ export type Database = {
         }
         Relationships: []
       }
+      integration_instances: {
+        Row: {
+          alias: string
+          category: string
+          config: Json | null
+          created_at: string
+          error_message: string | null
+          id: string
+          is_default: boolean
+          last_check_at: string | null
+          provider: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          alias: string
+          category: string
+          config?: Json | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          is_default?: boolean
+          last_check_at?: string | null
+          provider: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          alias?: string
+          category?: string
+          config?: Json | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          is_default?: boolean
+          last_check_at?: string | null
+          provider?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      integration_logs: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          event_type: string
+          id: string
+          instance_id: string
+          payload_meta: Json | null
+          result: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          event_type: string
+          id?: string
+          instance_id: string
+          payload_meta?: Json | null
+          result: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          event_type?: string
+          id?: string
+          instance_id?: string
+          payload_meta?: Json | null
+          result?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_logs_instance_id_fkey"
+            columns: ["instance_id"]
+            isOneToOne: false
+            referencedRelation: "integration_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       merge_history: {
         Row: {
           case_id: string | null
