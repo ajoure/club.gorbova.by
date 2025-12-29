@@ -9,7 +9,6 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,7 +58,7 @@ export function IntegrationInstanceList({
   onHealthCheck,
   isLoading,
 }: IntegrationInstanceListProps) {
-  const { setDefault, deleteInstance } = useIntegrationMutations();
+  const { deleteInstance } = useIntegrationMutations();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [sendingTestEmail, setSendingTestEmail] = useState<string | null>(null);
 
@@ -87,10 +86,6 @@ export function IntegrationInstanceList({
           </Badge>
         );
     }
-  };
-
-  const handleSetDefault = (id: string) => {
-    setDefault.mutate(id);
   };
 
   const handleDelete = () => {
@@ -146,7 +141,6 @@ export function IntegrationInstanceList({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-12">По умолч.</TableHead>
             <TableHead>Название</TableHead>
             <TableHead>Статус</TableHead>
             <TableHead>Последняя проверка</TableHead>
@@ -156,14 +150,6 @@ export function IntegrationInstanceList({
         <TableBody>
           {instances.map((instance) => (
             <TableRow key={instance.id}>
-              <TableCell>
-                <RadioGroup
-                  value={instances.find((i) => i.is_default)?.id || ""}
-                  onValueChange={() => handleSetDefault(instance.id)}
-                >
-                  <RadioGroupItem value={instance.id} />
-                </RadioGroup>
-              </TableCell>
               <TableCell>
                 <div>
                   <span className="font-medium">{instance.alias}</span>
