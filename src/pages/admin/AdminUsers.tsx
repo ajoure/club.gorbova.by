@@ -74,7 +74,7 @@ type RoleFilter = "all" | "user" | "admin" | "super_admin" | "staff" | "editor" 
 
 export default function AdminUsers() {
   const { users, loading, blockUser, unblockUser, deleteUser, restoreUser, resetPassword, forceLogout, startImpersonation, refetch } = useAdminUsers();
-  const { roles, removeRole } = useAdminRoles();
+  const { roles, assignRole, removeRole } = useAdminRoles();
   const { hasPermission, isSuperAdmin } = usePermissions();
   const navigate = useNavigate();
   
@@ -193,16 +193,10 @@ export default function AdminUsers() {
 
   const handleAssignRole = async () => {
     if (assignRoleDialog.userId && selectedRole) {
-      const { assignRole } = await import("@/hooks/useAdminRoles").then(m => ({ assignRole: useAdminRoles().assignRole }));
-      // Use the roles-admin function which now enforces single role
-      const response = await supabase.functions.invoke("roles-admin", {
-        body: { action: "assign_role", userId: assignRoleDialog.userId, roleCode: selectedRole },
-      });
-      
-      if (!response.error && !response.data?.error) {
+      const success = await assignRole(assignRoleDialog.userId, selectedRole);
+      if (success) {
         await refetch();
       }
-      
       setAssignRoleDialog({ open: false, userId: "", email: "" });
       setSelectedRole("");
     }
