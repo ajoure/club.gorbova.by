@@ -5,10 +5,12 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShoppingBag, Receipt, CheckCircle, XCircle, Clock, CreditCard } from "lucide-react";
+import { ShoppingBag, Receipt, CheckCircle, XCircle, Clock, CreditCard, Download, FileText } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { toast } from "sonner";
 
 interface Order {
   id: string;
@@ -139,6 +141,68 @@ export default function Purchases() {
     return names[code] || code;
   };
 
+  const downloadReceipt = (order: Order) => {
+    const priceFormatted = formatPrice(order.amount, order.currency);
+    const dateFormatted = formatDate(order.created_at);
+    
+    const receiptContent = `
+═══════════════════════════════════════════════════════════════
+                         КВИТАНЦИЯ ОБ ОПЛАТЕ
+                           Gorbova Club
+═══════════════════════════════════════════════════════════════
+
+Номер заказа:        ${order.id}
+ID транзакции:       ${order.bepaid_uid || "—"}
+Дата и время:        ${dateFormatted}
+
+───────────────────────────────────────────────────────────────
+                           ДЕТАЛИ ЗАКАЗА
+───────────────────────────────────────────────────────────────
+
+Продукт:             ${order.products?.name || "Подписка"}
+Тип:                 ${order.products?.product_type === "subscription" ? "Подписка" : 
+                       order.products?.product_type === "webinar" ? "Вебинар" : "Разовая покупка"}
+
+───────────────────────────────────────────────────────────────
+                         ИНФОРМАЦИЯ ОБ ОПЛАТЕ
+───────────────────────────────────────────────────────────────
+
+Способ оплаты:       ${order.payment_method || "Банковская карта"}
+Статус:              ${order.status === "completed" ? "Оплачено" : order.status}
+Email покупателя:    ${order.customer_email || "—"}
+
+───────────────────────────────────────────────────────────────
+                              ИТОГО
+───────────────────────────────────────────────────────────────
+
+                    СУММА: ${priceFormatted}
+
+═══════════════════════════════════════════════════════════════
+
+Исполнитель: ЗАО "АЖУР инкам"
+УНП: 193405000
+Адрес: 220035, г. Минск, ул. Панфилова, 2, офис 49Л
+Email: info@ajoure.by
+
+Данный документ сформирован автоматически и является 
+подтверждением оплаты.
+
+═══════════════════════════════════════════════════════════════
+`;
+
+    const blob = new Blob([receiptContent], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `receipt_${order.id.slice(0, 8)}_${format(new Date(order.created_at), "yyyyMMdd")}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    toast.success("Квитанция скачана");
+  };
+
   const activeEntitlements = entitlements?.filter(e => {
     const isExpired = e.expires_at && new Date(e.expires_at) < new Date();
     return e.status === "active" && !isExpired;
@@ -231,7 +295,7 @@ export default function Purchases() {
                     <TableHead>Сумма</TableHead>
                     <TableHead>Способ оплаты</TableHead>
                     <TableHead>Статус</TableHead>
-                    <TableHead className="text-right">ID транзакции</TableHead>
+                    <TableHead className="text-right">Действия</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -257,8 +321,18 @@ export default function Purchases() {
                         )}
                       </TableCell>
                       <TableCell>{getStatusBadge(order.status)}</TableCell>
-                      <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                        {order.bepaid_uid || order.id.slice(0, 8)}
+                      <TableCell className="text-right">
+                        {order.status === "completed" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => downloadReceipt(order)}
+                            className="gap-1"
+                          >
+                            <Download className="h-4 w-4" />
+                            <span className="hidden sm:inline">Чек</span>
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

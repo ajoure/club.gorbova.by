@@ -33,6 +33,7 @@ import AdminPayments from "./pages/admin/AdminPayments";
 import MnsResponseService from "./pages/audits/MnsResponseService";
 import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
 import Purchases from "./pages/Purchases";
+import Pay from "./pages/Pay";
 
 const queryClient = new QueryClient();
 
@@ -53,6 +54,7 @@ const App = () => (
               <Route path="/pricing" element={<Pricing />} />
               <Route path="/order-payment" element={<OrderPayment />} />
               <Route path="/offer" element={<Offer />} />
+              <Route path="/pay" element={<Pay />} />
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/contacts" element={<Contacts />} />
               

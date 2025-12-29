@@ -343,7 +343,7 @@ export default function AdminProducts() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => {
-                                  const url = `${window.location.origin}/offer?product=${product.id}`;
+                                  const url = `${window.location.origin}/pay?product=${product.id}`;
                                   navigator.clipboard.writeText(url);
                                   toast.success("Ссылка скопирована");
                                 }}

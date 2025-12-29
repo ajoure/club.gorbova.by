@@ -6,11 +6,15 @@ import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGrou
 import { NavLink } from "@/components/NavLink";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings } from "lucide-react";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag } from "lucide-react";
 const mainMenuItems = [{
   title: "Обзор",
   url: "/dashboard",
   icon: LayoutGrid
+}, {
+  title: "Мои покупки",
+  url: "/purchases",
+  icon: ShoppingBag
 }, {
   title: "Бухгалтер",
   url: "/accountant",
