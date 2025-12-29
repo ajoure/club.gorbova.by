@@ -1,4 +1,3 @@
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Link2, CreditCard, Mail, GraduationCap, LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -31,42 +30,54 @@ export function IntegrationProviderCard({
   const Icon = iconMap[provider.icon] || Link2;
 
   return (
-    <Card
+    <div
       className={cn(
-        "cursor-pointer transition-all hover:shadow-md hover:border-primary/50",
-        hasErrors && "border-destructive/50"
+        "group cursor-pointer rounded-2xl p-5 transition-all duration-300",
+        "bg-card/50 backdrop-blur-xl border shadow-lg",
+        "hover:shadow-xl hover:-translate-y-1 hover:bg-card/80",
+        hasErrors 
+          ? "border-destructive/30 hover:border-destructive/50" 
+          : "border-border/50 hover:border-primary/30"
       )}
       onClick={onClick}
     >
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Icon className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <h3 className="font-medium">{provider.name}</h3>
-              {provider.description && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {provider.description}
-                </p>
-              )}
-            </div>
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-4">
+          <div className={cn(
+            "h-12 w-12 rounded-2xl flex items-center justify-center transition-all duration-300",
+            "bg-gradient-to-br from-primary/10 to-primary/5",
+            "group-hover:from-primary/20 group-hover:to-primary/10 group-hover:shadow-lg group-hover:shadow-primary/10"
+          )}>
+            <Icon className="h-6 w-6 text-primary transition-transform group-hover:scale-110" />
           </div>
-          <div className="flex items-center gap-2">
-            {instanceCount > 0 && (
-              <Badge variant="secondary" className="text-xs">
-                {instanceCount}
-              </Badge>
-            )}
-            {hasErrors && (
-              <Badge variant="destructive" className="text-xs">
-                Ошибка
-              </Badge>
+          <div>
+            <h3 className="font-semibold text-foreground">{provider.name}</h3>
+            {provider.description && (
+              <p className="text-sm text-muted-foreground mt-0.5 max-w-[200px]">
+                {provider.description}
+              </p>
             )}
           </div>
         </div>
-      </CardContent>
-    </Card>
+        <div className="flex items-center gap-2">
+          {instanceCount > 0 && (
+            <Badge 
+              variant="secondary" 
+              className="text-xs bg-primary/10 text-primary border-0 px-2.5 py-0.5"
+            >
+              {instanceCount}
+            </Badge>
+          )}
+          {hasErrors && (
+            <Badge 
+              variant="destructive" 
+              className="text-xs animate-pulse"
+            >
+              Ошибка
+            </Badge>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
