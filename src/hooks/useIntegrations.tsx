@@ -59,7 +59,10 @@ export const PROVIDERS: ProviderConfig[] = [
     description: "CRM для продаж и маркетинга",
     fields: [
       { key: "subdomain", label: "Субдомен", type: "text", required: true, placeholder: "mycompany" },
-      { key: "access_token", label: "Access Token", type: "password", required: true },
+      { key: "integration_id", label: "ID интеграции", type: "text", required: true, placeholder: "feeb6cbd-8571-4db5-bbf6-4d112d213c8b" },
+      { key: "secret_key", label: "Секретный ключ", type: "text", required: true },
+      { key: "long_term_token", label: "Долгосрочный токен", type: "text", required: false },
+      { key: "auth_code", label: "Код авторизации (действителен 20 минут)", type: "text", required: false },
     ],
   },
   {
@@ -69,8 +72,8 @@ export const PROVIDERS: ProviderConfig[] = [
     category: "crm",
     description: "Платформа для онлайн-школ",
     fields: [
-      { key: "account_name", label: "Имя аккаунта", type: "text", required: true, placeholder: "myschool" },
-      { key: "secret_key", label: "Секретный ключ API", type: "password", required: true },
+      { key: "account_name", label: "Имя аккаунта", type: "text", required: true, placeholder: "myschool (без .getcourse.ru)" },
+      { key: "secret_key", label: "Секретный ключ API", type: "text", required: true },
     ],
   },
   {
@@ -81,7 +84,7 @@ export const PROVIDERS: ProviderConfig[] = [
     description: "Платежный шлюз bePaid",
     fields: [
       { key: "shop_id", label: "ID магазина", type: "text", required: true },
-      { key: "secret_key", label: "Секретный ключ", type: "password", required: true },
+      { key: "secret_key", label: "Секретный ключ", type: "text", required: true },
       { key: "test_mode", label: "Тестовый режим", type: "checkbox" },
       { key: "success_url", label: "URL успешной оплаты", type: "url", placeholder: "/dashboard?payment=success" },
       { key: "fail_url", label: "URL неудачной оплаты", type: "url", placeholder: "/pricing?payment=failed" },
