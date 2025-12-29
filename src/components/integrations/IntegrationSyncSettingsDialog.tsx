@@ -49,6 +49,7 @@ import {
   Filter,
   Save,
   Loader2,
+  Activity,
 } from "lucide-react";
 import { IntegrationInstance } from "@/hooks/useIntegrations";
 import {
@@ -65,6 +66,8 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
+import { AmoCRMFieldMappingInfo } from "./AmoCRMFieldMappingInfo";
+import { WebhookMonitoringPanel } from "./WebhookMonitoringPanel";
 
 const ENTITY_ICONS: Record<string, React.ElementType> = {
   users: Users,
@@ -468,14 +471,18 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3 bg-gradient-to-r from-muted/50 to-muted/30 backdrop-blur-sm p-1.5 rounded-2xl border border-border/30">
-            <TabsTrigger value="entities" className="rounded-xl data-[state=active]:bg-background data-[state=active]:shadow-md data-[state=active]:shadow-primary/10 transition-all">
+          <TabsList className="grid w-full grid-cols-4 bg-muted/50 p-1 rounded-xl">
+            <TabsTrigger value="entities" className="rounded-lg text-xs">
               Сущности
             </TabsTrigger>
-            <TabsTrigger value="mapping" disabled={!selectedEntity} className="rounded-xl data-[state=active]:bg-background data-[state=active]:shadow-md data-[state=active]:shadow-primary/10 transition-all">
-              Маппинг полей
+            <TabsTrigger value="mapping" disabled={!selectedEntity} className="rounded-lg text-xs">
+              Маппинг
             </TabsTrigger>
-            <TabsTrigger value="logs" className="rounded-xl data-[state=active]:bg-background data-[state=active]:shadow-md data-[state=active]:shadow-primary/10 transition-all">
+            <TabsTrigger value="webhooks" className="rounded-lg text-xs">
+              <Activity className="h-3 w-3 mr-1" />
+              Вебхуки
+            </TabsTrigger>
+            <TabsTrigger value="logs" className="rounded-lg text-xs">
               Журнал
             </TabsTrigger>
           </TabsList>
@@ -623,7 +630,7 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center shadow-lg shadow-primary/20">
+                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
                       {(() => {
                         const Icon = ENTITY_ICONS[selectedEntity] || Users;
                         return <Icon className="h-5 w-5 text-primary" />;
@@ -636,7 +643,6 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="hover:bg-primary/10 hover:text-primary"
                     onClick={() => {
                       setSelectedEntity(null);
                       setActiveTab("entities");
@@ -646,45 +652,50 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
                   </Button>
                 </div>
 
-                <ScrollArea className="h-[320px]">
-                  <div className="rounded-2xl border border-primary/20 bg-gradient-to-br from-card/80 to-card/50 overflow-hidden shadow-lg">
+                {/* amoCRM field hints */}
+                {instance.provider === 'amocrm' && (
+                  <AmoCRMFieldMappingInfo entityType={selectedEntity} />
+                )}
+
+                <ScrollArea className="h-[280px]">
+                  <div className="rounded-xl border bg-card overflow-hidden">
                     <Table>
                       <TableHeader>
-                        <TableRow className="bg-gradient-to-r from-muted/50 to-muted/30 hover:from-muted/50 border-b border-primary/10">
-                          <TableHead className="font-semibold">Поле проекта</TableHead>
-                          <TableHead className="font-semibold">Тип</TableHead>
-                          <TableHead className="font-semibold">Поле внешней системы</TableHead>
-                          <TableHead className="w-[80px] font-semibold">Ключ</TableHead>
+                        <TableRow className="bg-muted/50">
+                          <TableHead className="font-medium">Поле проекта</TableHead>
+                          <TableHead className="font-medium">Тип</TableHead>
+                          <TableHead className="font-medium">Поле {instance.provider === 'amocrm' ? 'amoCRM' : 'внешней системы'}</TableHead>
+                          <TableHead className="w-[60px]">Ключ</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {(PROJECT_FIELDS[selectedEntity] || []).map((field) => {
                           const mapping = fieldMappings.find((m) => m.project_field === field.key);
                           return (
-                            <TableRow key={field.key} className="hover:bg-primary/5 border-b border-border/30">
+                            <TableRow key={field.key}>
                               <TableCell className="font-medium">
                                 {field.label}
                                 {field.required && <span className="text-destructive ml-1">*</span>}
                               </TableCell>
                               <TableCell>
-                                <span className="px-2 py-0.5 text-xs rounded-full bg-muted text-muted-foreground border border-border/50">
+                                <Badge variant="secondary" className="text-xs">
                                   {field.type}
-                                </span>
+                                </Badge>
                               </TableCell>
                               <TableCell>
                                 <Input
                                   ref={(el) => { mappingRefs.current[field.key] = el; }}
                                   type="text"
-                                  className="h-8 text-sm bg-background/80 backdrop-blur-sm border-border/50 focus:border-primary/50"
-                                  placeholder="Название поля в системе"
+                                  className="h-8 text-sm"
+                                  placeholder={instance.provider === 'amocrm' ? 'name, cf_XXXXXX...' : 'Название поля'}
                                   defaultValue={mapping?.external_field || ""}
                                 />
                               </TableCell>
                               <TableCell>
                                 {field.key === "email" && (
-                                  <span className="px-2 py-0.5 text-xs rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                                  <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
                                     Ключ
-                                  </span>
+                                  </Badge>
                                 )}
                               </TableCell>
                             </TableRow>
@@ -695,25 +706,21 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
                   </div>
                 </ScrollArea>
 
-                <div className="flex justify-end gap-2 pt-4 border-t border-border/30">
-                  <Button 
-                    variant="outline" 
-                    onClick={handleResetMapping}
-                    className="bg-background/80 border-border/50 hover:border-destructive/50 hover:text-destructive"
-                  >
+                <div className="flex justify-end gap-2 pt-4 border-t">
+                  <Button variant="outline" onClick={handleResetMapping}>
                     Сбросить
                   </Button>
-                  <Button 
-                    onClick={handleSaveMapping}
-                    disabled={savingMapping}
-                    className="bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-lg shadow-primary/20"
-                  >
+                  <Button onClick={handleSaveMapping} disabled={savingMapping}>
                     <Save className="h-4 w-4 mr-2" />
                     {savingMapping ? "Сохранение..." : "Сохранить маппинг"}
                   </Button>
                 </div>
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="webhooks" className="mt-4">
+            <WebhookMonitoringPanel instanceId={instance.id} />
           </TabsContent>
 
           <TabsContent value="logs" className="mt-4">

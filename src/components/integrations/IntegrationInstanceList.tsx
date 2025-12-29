@@ -106,7 +106,9 @@ export function IntegrationInstanceList({
         return;
       }
 
-      const { error } = await supabase.functions.invoke("send-email", {
+      console.log(`Sending test email to ${recipientEmail} via instance ${instance.id}`);
+      
+      const { data, error } = await supabase.functions.invoke("send-email", {
         body: {
           to: recipientEmail,
           subject: "Тестовое письмо",
@@ -116,10 +118,23 @@ export function IntegrationInstanceList({
         },
       });
 
-      if (error) throw error;
+      console.log("Send email response:", data, error);
+
+      if (error) {
+        console.error("Send email error:", error);
+        toast.error(`Ошибка отправки: ${error.message}`);
+        return;
+      }
+      
+      if (data?.error) {
+        console.error("Send email data error:", data.error);
+        toast.error(`Ошибка отправки: ${data.error}`);
+        return;
+      }
       
       toast.success(`Тестовое письмо отправлено на ${recipientEmail}`);
     } catch (err: unknown) {
+      console.error("Send email exception:", err);
       const message = err instanceof Error ? err.message : "Неизвестная ошибка";
       toast.error(`Ошибка отправки: ${message}`);
     } finally {
