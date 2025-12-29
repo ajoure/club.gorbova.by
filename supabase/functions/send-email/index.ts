@@ -46,6 +46,17 @@ function parseSmtpCode(response: string): number {
 }
 
 async function getEmailAccount(supabase: any, accountId?: string): Promise<EmailAccount | null> {
+  // Helper to find password from email_accounts by email
+  async function findPasswordByEmail(email: string): Promise<string | null> {
+    const { data } = await supabase
+      .from("email_accounts")
+      .select("smtp_password")
+      .eq("email", email)
+      .eq("is_active", true)
+      .maybeSingle();
+    return data?.smtp_password || null;
+  }
+
   // First try integration_instances for email category
   if (accountId) {
     // Try integration_instances first
@@ -58,15 +69,22 @@ async function getEmailAccount(supabase: any, accountId?: string): Promise<Email
     
     if (integration?.config) {
       const config = integration.config as Record<string, unknown>;
+      const email = config.email as string || config.from_email as string || "";
+      // If password not in config, try to find it in email_accounts
+      let password = config.smtp_password as string || "";
+      if (!password && email) {
+        password = await findPasswordByEmail(email) || "";
+      }
+      
       return {
         id: integration.id,
-        email: config.email as string || config.from_email as string || "",
+        email,
         smtp_host: config.smtp_host as string || "",
-        smtp_port: config.smtp_port as number || 465,
-        smtp_password: config.smtp_password as string || "",
+        smtp_port: Number(config.smtp_port) || 465,
+        smtp_password: password,
         smtp_encryption: config.smtp_encryption as string || "SSL",
         from_name: config.from_name as string || integration.alias,
-        from_email: config.from_email as string || config.email as string || "",
+        from_email: config.from_email as string || email,
         is_default: integration.is_default,
       };
     }
@@ -92,15 +110,21 @@ async function getEmailAccount(supabase: any, accountId?: string): Promise<Email
   
   if (defaultIntegration?.config) {
     const config = defaultIntegration.config as Record<string, unknown>;
+    const email = config.email as string || config.from_email as string || "";
+    let password = config.smtp_password as string || "";
+    if (!password && email) {
+      password = await findPasswordByEmail(email) || "";
+    }
+    
     return {
       id: defaultIntegration.id,
-      email: config.email as string || config.from_email as string || "",
+      email,
       smtp_host: config.smtp_host as string || "",
-      smtp_port: config.smtp_port as number || 465,
-      smtp_password: config.smtp_password as string || "",
+      smtp_port: Number(config.smtp_port) || 465,
+      smtp_password: password,
       smtp_encryption: config.smtp_encryption as string || "SSL",
       from_name: config.from_name as string || defaultIntegration.alias,
-      from_email: config.from_email as string || config.email as string || "",
+      from_email: config.from_email as string || email,
       is_default: true,
     };
   }
@@ -125,15 +149,21 @@ async function getEmailAccount(supabase: any, accountId?: string): Promise<Email
   
   if (anyIntegration?.config) {
     const config = anyIntegration.config as Record<string, unknown>;
+    const email = config.email as string || config.from_email as string || "";
+    let password = config.smtp_password as string || "";
+    if (!password && email) {
+      password = await findPasswordByEmail(email) || "";
+    }
+    
     return {
       id: anyIntegration.id,
-      email: config.email as string || config.from_email as string || "",
+      email,
       smtp_host: config.smtp_host as string || "",
-      smtp_port: config.smtp_port as number || 465,
-      smtp_password: config.smtp_password as string || "",
+      smtp_port: Number(config.smtp_port) || 465,
+      smtp_password: password,
       smtp_encryption: config.smtp_encryption as string || "SSL",
       from_name: config.from_name as string || anyIntegration.alias,
-      from_email: config.from_email as string || config.email as string || "",
+      from_email: config.from_email as string || email,
       is_default: false,
     };
   }
