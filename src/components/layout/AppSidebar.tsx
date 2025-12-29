@@ -9,7 +9,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings } from "lucide-react";
 const mainMenuItems = [{
   title: "Обзор",
-  url: "/",
+  url: "/dashboard",
   icon: LayoutGrid
 }, {
   title: "Бухгалтер",
