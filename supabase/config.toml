@@ -23,3 +23,6 @@ verify_jwt = false
 
 [functions.bepaid-webhook]
 verify_jwt = false
+
+[functions.merge-clients]
+verify_jwt = false
