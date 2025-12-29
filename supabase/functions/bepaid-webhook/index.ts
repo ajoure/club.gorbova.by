@@ -103,6 +103,31 @@ Deno.serve(async (req) => {
       const product = order.products;
       const meta = order.meta as Record<string, any> || {};
       
+      // Detect duplicates by phone if phone is available
+      if (meta.customer_phone) {
+        try {
+          const duplicateResult = await supabase.functions.invoke('detect-duplicates', {
+            body: {
+              phone: meta.customer_phone,
+              email: order.customer_email,
+            },
+          });
+          
+          if (duplicateResult.data?.isDuplicate) {
+            console.log(`Duplicate detected for order ${orderId}, case: ${duplicateResult.data.caseId}`);
+            await supabase
+              .from('orders')
+              .update({
+                possible_duplicate: true,
+                duplicate_reason: `Дубль по телефону: ${duplicateResult.data.duplicates?.length || 0} профилей`,
+              })
+              .eq('id', orderId);
+          }
+        } catch (dupError) {
+          console.error('Error detecting duplicates:', dupError);
+        }
+      }
+      
       if (product) {
         console.log(`Granting entitlement for product: ${product.name}`);
 

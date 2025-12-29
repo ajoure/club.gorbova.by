@@ -26,3 +26,6 @@ verify_jwt = false
 
 [functions.merge-clients]
 verify_jwt = false
+
+[functions.detect-duplicates]
+verify_jwt = false

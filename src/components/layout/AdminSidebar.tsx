@@ -1,6 +1,8 @@
 import { useLocation, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { supabase } from "@/integrations/supabase/client";
 import {
   Sidebar,
   SidebarContent,
@@ -16,6 +18,7 @@ import {
 } from "@/components/ui/sidebar";
 import { NavLink } from "@/components/NavLink";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Users,
@@ -39,6 +42,20 @@ export function AdminSidebar() {
   const { hasPermission, hasAnyPermission } = usePermissions();
   const collapsed = state === "collapsed";
 
+  // Fetch duplicate count
+  const { data: duplicateCount } = useQuery({
+    queryKey: ["duplicate-count-sidebar"],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("duplicate_cases")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "new");
+      if (error) return 0;
+      return count || 0;
+    },
+    refetchInterval: 60000, // Refresh every minute
+  });
+
   const handleSignOut = async () => {
     await signOut();
     navigate("/auth");
@@ -53,7 +70,12 @@ export function AdminSidebar() {
   };
 
   // Build menu items based on permissions
-  const adminMenuItems = [];
+  const adminMenuItems: Array<{ 
+    title: string; 
+    url: string; 
+    icon: typeof Users; 
+    badge?: number;
+  }> = [];
 
   if (hasAnyPermission(["users.view", "users.update", "users.block", "users.delete"])) {
     adminMenuItems.push({ title: "Клиенты", url: "/admin/users", icon: Users });
@@ -70,7 +92,12 @@ export function AdminSidebar() {
   }
 
   if (hasAnyPermission(["users.view", "users.update"])) {
-    adminMenuItems.push({ title: "Дубли", url: "/admin/duplicates", icon: Copy });
+    adminMenuItems.push({ 
+      title: "Дубли", 
+      url: "/admin/duplicates", 
+      icon: Copy,
+      badge: duplicateCount || undefined,
+    });
   }
 
   if (hasAnyPermission(["content.view", "content.edit", "content.publish"])) {
@@ -128,7 +155,20 @@ export function AdminSidebar() {
                       activeClassName="bg-sidebar-accent text-sidebar-primary"
                     >
                       <item.icon className="h-5 w-5 shrink-0" />
-                      {!collapsed && <span>{item.title}</span>}
+                      {!collapsed && (
+                        <span className="flex-1">{item.title}</span>
+                      )}
+                      {!collapsed && item.badge && item.badge > 0 && (
+                        <Badge 
+                          variant="destructive" 
+                          className="h-5 min-w-5 px-1.5 text-xs"
+                        >
+                          {item.badge}
+                        </Badge>
+                      )}
+                      {collapsed && item.badge && item.badge > 0 && (
+                        <span className="absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full" />
+                      )}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
