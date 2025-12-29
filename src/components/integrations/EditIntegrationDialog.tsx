@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -22,6 +23,7 @@ import {
   IntegrationInstance,
   useIntegrationMutations,
 } from "@/hooks/useIntegrations";
+import { WebhookUrlDisplay } from "./WebhookUrlDisplay";
 
 interface EditIntegrationDialogProps {
   instance: IntegrationInstance | null;
@@ -146,6 +148,14 @@ export function EditIntegrationDialog({
             />
             <Label htmlFor="is_default">Подключение по умолчанию</Label>
           </div>
+
+          {/* Webhook URL section for supported providers */}
+          {["amocrm", "bepaid", "getcourse"].includes(instance.provider) && (
+            <>
+              <Separator className="my-4" />
+              <WebhookUrlDisplay instanceId={instance.id} provider={instance.provider} />
+            </>
+          )}
 
           <div className="flex justify-end gap-2 pt-4">
             <Button variant="outline" onClick={() => onOpenChange(false)}>

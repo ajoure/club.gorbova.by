@@ -35,3 +35,9 @@ verify_jwt = false
 
 [functions.amocrm-webhook]
 verify_jwt = false
+
+[functions.integration-healthcheck]
+verify_jwt = false
+
+[functions.getcourse-webhook]
+verify_jwt = false

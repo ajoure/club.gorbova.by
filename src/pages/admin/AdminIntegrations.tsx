@@ -71,58 +71,28 @@ export default function AdminIntegrations() {
     toast.info(`Проверка подключения ${instance.alias}...`);
 
     try {
-      let success = false;
-      let errorMessage: string | null = null;
-
-      // Provider-specific health checks
-      if (instance.provider === "amocrm") {
-        const { error } = await supabase.functions.invoke("amocrm-sync", {
-          body: { action: "test" },
-        });
-        if (error) {
-          errorMessage = error.message;
-        } else {
-          success = true;
-        }
-      } else if (instance.provider === "smtp") {
-        // For SMTP, we'd need a test email function
-        success = true; // Placeholder
-      } else if (instance.provider === "bepaid") {
-        // For bePaid, check if credentials are valid
-        success = true; // Placeholder
-      } else if (instance.provider === "getcourse") {
-        // GetCourse API test
-        success = true; // Placeholder
-      }
-
-      // Update instance status
-      await supabase
-        .from("integration_instances")
-        .update({
-          status: success ? "connected" : "error",
-          last_check_at: new Date().toISOString(),
-          error_message: errorMessage,
-        })
-        .eq("id", instance.id);
-
-      // Add log
-      await supabase.from("integration_logs").insert({
-        instance_id: instance.id,
-        event_type: "healthcheck",
-        result: success ? "success" : "error",
-        error_message: errorMessage,
-        payload_meta: {},
+      const { data, error } = await supabase.functions.invoke("integration-healthcheck", {
+        body: {
+          provider: instance.provider,
+          instance_id: instance.id,
+          config: instance.config,
+        },
       });
 
       queryClient.invalidateQueries({ queryKey: ["integration-instances"] });
       queryClient.invalidateQueries({ queryKey: ["integration-logs", instance.id] });
 
-      if (success) {
+      if (error) {
+        toast.error(`Ошибка проверки: ${error.message}`);
+        return;
+      }
+
+      if (data?.success) {
         toast.success(`Подключение ${instance.alias} работает`);
       } else {
-        toast.error(`Ошибка подключения: ${errorMessage}`);
+        toast.error(`Ошибка подключения: ${data?.error || "Неизвестная ошибка"}`);
       }
-    } catch (error) {
+    } catch (err) {
       toast.error("Ошибка при проверке");
     }
   };
