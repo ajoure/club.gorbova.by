@@ -190,9 +190,15 @@ async function sendEmailViaSMTP(params: {
   const smtpHost = account.smtp_host || "smtp.yandex.ru";
   const smtpPort = account.smtp_port || 465;
   const username = account.email;
-  const password = account.smtp_password;
+  let password = account.smtp_password;
   const fromName = account.from_name || "Gorbova.by";
   const fromEmail = account.from_email || account.email;
+
+  // Fallback for Yandex SMTP: use backend secret if password isn't stored in DB config
+  if (!password && smtpHost.includes("yandex")) {
+    const envPass = Deno.env.get("YANDEX_SMTP_PASSWORD") || "";
+    if (envPass) password = envPass;
+  }
 
   if (!password) {
     throw new Error(`SMTP password not set for account ${username}`);
