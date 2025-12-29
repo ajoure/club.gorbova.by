@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { Menu, X } from "lucide-react";
@@ -8,8 +8,11 @@ import logoImage from "@/assets/logo.png";
 export function LandingHeader() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const isHomePage = location.pathname === "/";
 
   useEffect(() => {
     const handleScroll = () => {
@@ -28,9 +31,15 @@ export function LandingHeader() {
     navigate("/dashboard");
   };
 
-  const handleLogoClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  const handleAnchorClick = (e: React.MouseEvent<HTMLAnchorElement>, anchor: string) => {
+    if (isHomePage) {
+      e.preventDefault();
+      const element = document.querySelector(anchor);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth" });
+      }
+    }
+    setMobileMenuOpen(false);
   };
 
   return (
@@ -48,9 +57,8 @@ export function LandingHeader() {
       }}
     >
       <div className="container mx-auto px-4 flex items-center justify-between">
-        <a 
-          href="#" 
-          onClick={handleLogoClick} 
+        <Link 
+          to="/" 
           className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
         >
           <img src={logoImage} alt="Буква Закона" className="h-10 w-auto" />
@@ -58,20 +66,36 @@ export function LandingHeader() {
             <span className="text-lg font-bold text-foreground">БУКВА ЗАКОНА</span>
             <span className="block text-xs text-muted-foreground">Клуб по законодательству</span>
           </div>
-        </a>
+        </Link>
 
         {/* Desktop Navigation */}
         <nav className="hidden md:flex items-center gap-6">
-          <a href="#benefits" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <a 
+            href={isHomePage ? "#benefits" : "/#benefits"} 
+            onClick={(e) => handleAnchorClick(e, "#benefits")}
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
             Преимущества
           </a>
-          <a href="#content" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <a 
+            href={isHomePage ? "#content" : "/#content"} 
+            onClick={(e) => handleAnchorClick(e, "#content")}
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
             Наполнение
           </a>
-          <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <a 
+            href={isHomePage ? "#pricing" : "/#pricing"} 
+            onClick={(e) => handleAnchorClick(e, "#pricing")}
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
             Тарифы
           </a>
-          <a href="#faq" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <a 
+            href={isHomePage ? "#faq" : "/#faq"} 
+            onClick={(e) => handleAnchorClick(e, "#faq")}
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
             FAQ
           </a>
         </nav>
@@ -111,30 +135,30 @@ export function LandingHeader() {
         >
           <nav className="container mx-auto px-4 flex flex-col gap-4">
             <a
-              href="#benefits"
+              href={isHomePage ? "#benefits" : "/#benefits"}
               className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
-              onClick={() => setMobileMenuOpen(false)}
+              onClick={(e) => handleAnchorClick(e, "#benefits")}
             >
               Преимущества
             </a>
             <a
-              href="#content"
+              href={isHomePage ? "#content" : "/#content"}
               className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
-              onClick={() => setMobileMenuOpen(false)}
+              onClick={(e) => handleAnchorClick(e, "#content")}
             >
               Наполнение
             </a>
             <a
-              href="#pricing"
+              href={isHomePage ? "#pricing" : "/#pricing"}
               className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
-              onClick={() => setMobileMenuOpen(false)}
+              onClick={(e) => handleAnchorClick(e, "#pricing")}
             >
               Тарифы
             </a>
             <a
-              href="#faq"
+              href={isHomePage ? "#faq" : "/#faq"}
               className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2"
-              onClick={() => setMobileMenuOpen(false)}
+              onClick={(e) => handleAnchorClick(e, "#faq")}
             >
               FAQ
             </a>
