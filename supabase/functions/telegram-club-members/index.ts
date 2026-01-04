@@ -99,18 +99,19 @@ async function kickMember(botToken: string, chatId: number, userId: number): Pro
   }
 }
 
-// Calculate access status: 'ok' | 'expired' | 'no_access'
+// Calculate access status: 'ok' | 'expired' | 'no_access' | 'removed'
 // Access is granted ONLY through:
 // 1. Active telegram_access record (from purchases/orders)
 // 2. Active telegram_manual_access record (admin-granted)
 // 3. Active telegram_access_grants record (from invites, orders, etc.)
-// NOTE: System admins do NOT automatically get access to clubs
+//
+// If access was explicitly revoked (state_chat/state_channel = 'revoked'), treat as 'removed'
 function calculateAccessStatus(
   userId: string | undefined,
   accessRecords: Map<string, any>,
   manualAccessMap: Map<string, any>,
   grantsMap: Map<string, any>,
-): 'ok' | 'expired' | 'no_access' {
+): 'ok' | 'expired' | 'no_access' | 'removed' {
   if (!userId) {
     return 'no_access';
   }
@@ -121,6 +122,11 @@ function calculateAccessStatus(
   // Check telegram_access
   const access = accessRecords.get(userId);
   if (access) {
+    // Explicit revoke wins over any unexpired active_until
+    if (access.state_chat === 'revoked' || access.state_channel === 'revoked') {
+      return 'removed';
+    }
+
     const activeUntil = access.active_until ? new Date(access.active_until) : null;
     if (!activeUntil || activeUntil > now) {
       return 'ok';
@@ -301,6 +307,13 @@ Deno.serve(async (req) => {
         .eq('club_id', club_id);
       const grantsMap = new Map(accessGrants?.map(a => [a.user_id, a]) || []);
 
+      // Existing member rows (to preserve removal status and last known presence)
+      const { data: existingMembers } = await supabase
+        .from('telegram_club_members')
+        .select('telegram_user_id, in_chat, in_channel, access_status')
+        .eq('club_id', club_id);
+      const existingMembersMap = new Map(existingMembers?.map(m => [m.telegram_user_id, m]) || []);
+
       // Build members list from ALL linked profiles
       const membersToUpsert: any[] = [];
       let countActive = 0;
@@ -311,22 +324,40 @@ Deno.serve(async (req) => {
         if (!profile.telegram_user_id) continue;
 
         const nameParts = (profile.full_name || '').split(' ');
-        const accessStatus = calculateAccessStatus(
+
+        const calculatedStatus = calculateAccessStatus(
           profile.user_id,
           accessMap,
           manualAccessMap,
           grantsMap,
         );
 
+        // Preserve explicit removals unless user got access again
+        const existing = existingMembersMap.get(profile.telegram_user_id);
+        const accessStatus =
+          existing?.access_status === 'removed' && calculatedStatus !== 'ok'
+            ? 'removed'
+            : calculatedStatus;
+
         // Track counts
         if (accessStatus === 'ok') countActive++;
         else if (accessStatus === 'expired') countExpired++;
         else countNoAccess++;
 
-        // Get presence info from access records (we can't check Telegram API for regular members)
-        const access = accessMap.get(profile.user_id);
-        const inChat = access?.state_chat === 'member' || access?.state_chat === 'active';
-        const inChannel = access?.state_channel === 'member' || access?.state_channel === 'active';
+        // Presence info: preserve last known values; otherwise infer from telegram_access.state_*
+        const access = profile.user_id ? accessMap.get(profile.user_id) : null;
+
+        const inferPresence = (state: string | null | undefined): boolean | null => {
+          if (state === 'member' || state === 'active') return true;
+          if (state === 'revoked') return false;
+          return null;
+        };
+
+        const inferredChat = inferPresence(access?.state_chat);
+        const inferredChannel = inferPresence(access?.state_channel);
+
+        const inChat = (existing?.in_chat ?? inferredChat);
+        const inChannel = (existing?.in_channel ?? inferredChannel);
 
         membersToUpsert.push({
           club_id: club_id,
@@ -337,8 +368,8 @@ Deno.serve(async (req) => {
           profile_id: profile.id,
           link_status: 'linked',
           access_status: accessStatus,
-          in_chat: inChat || false,
-          in_channel: inChannel || false,
+          in_chat: inChat,
+          in_channel: inChannel,
           last_synced_at: new Date().toISOString(),
         });
       }
@@ -549,7 +580,7 @@ Deno.serve(async (req) => {
         .from('telegram_club_members')
         .select('*', { count: 'exact', head: true })
         .eq('club_id', club_id)
-        .eq('access_status', 'no_access')
+        .in('access_status', ['no_access', 'expired'])
         .or('in_chat.eq.true,in_channel.eq.true');
 
       await supabase
@@ -574,7 +605,7 @@ Deno.serve(async (req) => {
         .from('telegram_club_members')
         .select('*')
         .eq('club_id', club_id)
-        .eq('access_status', 'no_access')
+        .in('access_status', ['no_access', 'expired'])
         .or('in_chat.eq.true,in_channel.eq.true');
 
       return new Response(JSON.stringify({

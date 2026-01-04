@@ -129,11 +129,8 @@ export default function TelegramClubMembers() {
       all: members.length,
       clients: members.filter(m => m.link_status === 'linked').length,
       with_access: members.filter(m => m.access_status === 'ok').length,
-      // "Нарушители" = users in chat/channel but without legal access
-      violators: members.filter(m => 
-        (m.access_status !== 'ok' && m.access_status !== 'removed') && 
-        (m.in_chat || m.in_channel)
-      ).length,
+      // "Нарушители" = users without access (excluding already removed)
+      violators: members.filter(m => m.access_status !== 'ok' && m.access_status !== 'removed').length,
       // "Удалённые" = users who were removed
       removed: members.filter(m => m.access_status === 'removed').length,
     };
@@ -166,8 +163,8 @@ export default function TelegramClubMembers() {
         case 'with_access':
           return member.access_status === 'ok';
         case 'violators':
-          // "Нарушители" = users in chat/channel but without legal access (excluding already removed)
-          return (member.access_status !== 'ok' && member.access_status !== 'removed') && (member.in_chat || member.in_channel);
+          // "Нарушители" = users without access (excluding already removed)
+          return member.access_status !== 'ok' && member.access_status !== 'removed';
         case 'removed':
           return member.access_status === 'removed';
         default:
