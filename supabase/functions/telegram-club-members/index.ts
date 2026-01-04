@@ -241,6 +241,22 @@ Deno.serve(async (req) => {
 
       const accessMap = new Map(accessRecords?.map(a => [a.user_id, a]) || []);
 
+      // Get admin/super_admin user IDs from user_roles_v2
+      const { data: adminRoles } = await supabase
+        .from('user_roles_v2')
+        .select('user_id, roles!inner(code)')
+        .in('roles.code', ['admin', 'super_admin']);
+      
+      const adminUserIds = new Set(adminRoles?.map(r => r.user_id) || []);
+
+      // Also check legacy user_roles for admin/superadmin
+      const { data: legacyAdmins } = await supabase
+        .from('user_roles')
+        .select('user_id')
+        .in('role', ['admin', 'superadmin']);
+      
+      legacyAdmins?.forEach(r => adminUserIds.add(r.user_id));
+
       // Upsert members
       let violatorsCount = 0;
       const membersToUpsert = [];
@@ -248,14 +264,23 @@ Deno.serve(async (req) => {
       for (const [tgUserId, member] of allMembers) {
         const profile = profileMap.get(tgUserId);
         const access = profile ? accessMap.get(profile.user_id) : null;
+        const isAdmin = profile ? adminUserIds.has(profile.user_id) : false;
         
         let accessStatus = 'no_access';
-        if (profile && access) {
+        
+        // Admins always have access
+        if (isAdmin) {
+          accessStatus = 'ok';
+        } else if (profile && access) {
           const isActive = access.active_until ? new Date(access.active_until) > new Date() : true;
           accessStatus = isActive ? 'ok' : 'expired';
         } else if (!profile) {
+          // Not linked to any profile - violator
           accessStatus = 'no_access';
           violatorsCount++;
+        } else {
+          // Has profile but no access record and not admin
+          accessStatus = 'no_access';
         }
 
         membersToUpsert.push({
