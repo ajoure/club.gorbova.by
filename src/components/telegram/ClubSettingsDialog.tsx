@@ -22,6 +22,8 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Switch } from '@/components/ui/switch';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Table,
   TableBody,
@@ -37,7 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2, Trash2, Users, Settings, CheckCircle, XCircle, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Loader2, Trash2, Users, Settings, CheckCircle, XCircle, AlertTriangle, RefreshCw, ShieldCheck, Info } from 'lucide-react';
 import { 
   TelegramClub, 
   TelegramBot,
@@ -47,6 +49,8 @@ import {
   useSyncClubMembers,
 } from '@/hooks/useTelegramIntegration';
 import { HelpLabel } from '@/components/help/HelpComponents';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 interface ClubSettingsDialogProps {
   club: TelegramClub | null;
@@ -63,30 +67,45 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [activeTab, setActiveTab] = useState('settings');
   const [membersView, setMembersView] = useState<'all' | 'clients'>('all');
+  const [testingBot, setTestingBot] = useState(false);
+  const [botTestResult, setBotTestResult] = useState<any>(null);
+  
   const [formData, setFormData] = useState({
     club_name: '',
     bot_id: '',
+    chat_id: '',
+    channel_id: '',
     chat_invite_link: '',
     channel_invite_link: '',
     access_mode: 'AUTO_WITH_FALLBACK',
     revoke_mode: 'KICK_ONLY',
     subscription_duration_days: 30,
+    join_request_mode: false,
+    autokick_no_access: false,
+    auto_resync_enabled: true,
+    auto_resync_interval_minutes: 60,
   });
 
-  // Update form when club changes - useEffect
   useEffect(() => {
     if (club) {
       setFormData({
         club_name: club.club_name,
         bot_id: club.bot_id,
+        chat_id: club.chat_id?.toString() || '',
+        channel_id: club.channel_id?.toString() || '',
         chat_invite_link: club.chat_invite_link || '',
         channel_invite_link: club.channel_invite_link || '',
         access_mode: club.access_mode,
         revoke_mode: club.revoke_mode,
         subscription_duration_days: club.subscription_duration_days,
+        join_request_mode: (club as any).join_request_mode || false,
+        autokick_no_access: (club as any).autokick_no_access || false,
+        auto_resync_enabled: (club as any).auto_resync_enabled ?? true,
+        auto_resync_interval_minutes: (club as any).auto_resync_interval_minutes || 60,
       });
       setActiveTab('settings');
       setMembersView('all');
+      setBotTestResult(null);
     }
   }, [club?.id, club?.updated_at]);
 
@@ -95,8 +114,20 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
     
     await updateClub.mutateAsync({
       id: club.id,
-      ...formData,
-    });
+      club_name: formData.club_name,
+      bot_id: formData.bot_id,
+      chat_id: formData.chat_id ? parseInt(formData.chat_id) : null,
+      channel_id: formData.channel_id ? parseInt(formData.channel_id) : null,
+      chat_invite_link: formData.chat_invite_link,
+      channel_invite_link: formData.channel_invite_link,
+      access_mode: formData.access_mode,
+      revoke_mode: formData.revoke_mode,
+      subscription_duration_days: formData.subscription_duration_days,
+      join_request_mode: formData.join_request_mode,
+      autokick_no_access: formData.autokick_no_access,
+      auto_resync_enabled: formData.auto_resync_enabled,
+      auto_resync_interval_minutes: formData.auto_resync_interval_minutes,
+    } as any);
     onClose();
   };
 
@@ -111,6 +142,32 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
   const handleSync = async () => {
     if (!club) return;
     await syncMembers.mutateAsync(club.id);
+    toast.success('Данные обновлены');
+  };
+
+  const handleTestBot = async () => {
+    if (!club) return;
+    setTestingBot(true);
+    setBotTestResult(null);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('telegram-bot-actions', {
+        body: {
+          action: 'check_chat_rights',
+          bot_id: club.bot_id,
+          chat_id: formData.chat_id ? parseInt(formData.chat_id) : null,
+          channel_id: formData.channel_id ? parseInt(formData.channel_id) : null,
+        },
+      });
+      
+      if (error) throw error;
+      setBotTestResult(data);
+    } catch (e) {
+      console.error('Bot test error:', e);
+      setBotTestResult({ error: 'Ошибка проверки' });
+    }
+    
+    setTestingBot(false);
   };
 
   const activeBots = bots.filter(b => b.status === 'active');
@@ -150,7 +207,7 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
   return (
     <>
       <Dialog open={!!club} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent className="max-w-2xl max-h-[85vh]">
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Настройки клуба</DialogTitle>
             <DialogDescription>
@@ -159,10 +216,14 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
           </DialogHeader>
 
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="settings" className="gap-2">
                 <Settings className="h-4 w-4" />
                 Настройки
+              </TabsTrigger>
+              <TabsTrigger value="access" className="gap-2">
+                <ShieldCheck className="h-4 w-4" />
+                Доступ
               </TabsTrigger>
               <TabsTrigger value="members" className="gap-2">
                 <Users className="h-4 w-4" />
@@ -175,6 +236,7 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
               </TabsTrigger>
             </TabsList>
 
+            {/* Settings Tab */}
             <TabsContent value="settings" className="space-y-4 mt-4">
               <div>
                 <Label htmlFor="club_name">Название клуба</Label>
@@ -204,6 +266,27 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
                 </Select>
               </div>
 
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="chat_id">Chat ID (группа)</Label>
+                  <Input
+                    id="chat_id"
+                    placeholder="-100..."
+                    value={formData.chat_id}
+                    onChange={(e) => setFormData({ ...formData, chat_id: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="channel_id">Channel ID (канал)</Label>
+                  <Input
+                    id="channel_id"
+                    placeholder="-100..."
+                    value={formData.channel_id}
+                    onChange={(e) => setFormData({ ...formData, channel_id: e.target.value })}
+                  />
+                </div>
+              </div>
+
               <div>
                 <Label htmlFor="chat_invite_link">Инвайт-ссылка на чат</Label>
                 <Input
@@ -225,25 +308,6 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
               </div>
 
               <div>
-                <HelpLabel helpKey="telegram.access_mode" htmlFor="access_mode">
-                  Режим доступа
-                </HelpLabel>
-                <Select
-                  value={formData.access_mode}
-                  onValueChange={(value) => setFormData({ ...formData, access_mode: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="AUTO_ADD">Автодобавление</SelectItem>
-                    <SelectItem value="INVITE_ONLY">Только ссылки</SelectItem>
-                    <SelectItem value="AUTO_WITH_FALLBACK">Авто + ссылки (fallback)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
                 <Label htmlFor="subscription_duration_days">Длительность подписки (дней)</Label>
                 <Input
                   id="subscription_duration_days"
@@ -255,6 +319,164 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
                   })}
                 />
               </div>
+
+              {/* Bot diagnostics */}
+              <div className="border rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>Диагностика бота</Label>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={handleTestBot}
+                    disabled={testingBot || !formData.chat_id}
+                  >
+                    {testingBot ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                    )}
+                    Проверить права
+                  </Button>
+                </div>
+                {botTestResult && (
+                  <div className="text-sm space-y-1">
+                    {botTestResult.error ? (
+                      <p className="text-destructive">{botTestResult.error}</p>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2">
+                          {botTestResult.chat?.is_admin ? (
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                          ) : (
+                            <XCircle className="h-4 w-4 text-destructive" />
+                          )}
+                          <span>Бот админ в чате: {botTestResult.chat?.is_admin ? 'Да' : 'Нет'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {botTestResult.chat?.can_restrict_members ? (
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                          ) : (
+                            <XCircle className="h-4 w-4 text-destructive" />
+                          )}
+                          <span>Может кикать: {botTestResult.chat?.can_restrict_members ? 'Да' : 'Нет'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {botTestResult.chat?.can_invite_users ? (
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                          ) : (
+                            <XCircle className="h-4 w-4 text-destructive" />
+                          )}
+                          <span>Может приглашать: {botTestResult.chat?.can_invite_users ? 'Да' : 'Нет'}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+
+            {/* Access Control Tab */}
+            <TabsContent value="access" className="space-y-4 mt-4">
+              <div>
+                <HelpLabel helpKey="telegram.access_mode" htmlFor="access_mode">
+                  Режим доступа
+                </HelpLabel>
+                <Select
+                  value={formData.access_mode}
+                  onValueChange={(value) => setFormData({ ...formData, access_mode: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="AUTO_ADD">Автодобавление (join requests)</SelectItem>
+                    <SelectItem value="INVITE_ONLY">Только ссылки</SelectItem>
+                    <SelectItem value="AUTO_WITH_FALLBACK">Авто + ссылки (рекомендуется)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Join Request Mode */}
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="space-y-1">
+                  <Label htmlFor="join_request_mode" className="font-medium">
+                    Режим заявок (Join Request Mode)
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Пользователи подают заявку на вступление, бот автоматически одобряет/отклоняет
+                  </p>
+                </div>
+                <Switch
+                  id="join_request_mode"
+                  checked={formData.join_request_mode}
+                  onCheckedChange={(checked) => setFormData({ ...formData, join_request_mode: checked })}
+                />
+              </div>
+
+              {formData.join_request_mode && (
+                <Alert>
+                  <Info className="h-4 w-4" />
+                  <AlertDescription>
+                    Включите в Telegram настройку "Approve new members" в чате/канале и дайте боту права на approve/decline заявок.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* Autokick */}
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="space-y-1">
+                  <Label htmlFor="autokick_no_access" className="font-medium">
+                    Автокик пользователей без доступа
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Автоматически удалять из чата и канала при истечении/отзыве доступа
+                  </p>
+                </div>
+                <Switch
+                  id="autokick_no_access"
+                  checked={formData.autokick_no_access}
+                  onCheckedChange={(checked) => setFormData({ ...formData, autokick_no_access: checked })}
+                />
+              </div>
+
+              {/* Auto Resync */}
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="space-y-1">
+                  <Label htmlFor="auto_resync_enabled" className="font-medium">
+                    Автосверка статусов
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Периодическая проверка статусов участников через getChatMember
+                  </p>
+                </div>
+                <Switch
+                  id="auto_resync_enabled"
+                  checked={formData.auto_resync_enabled}
+                  onCheckedChange={(checked) => setFormData({ ...formData, auto_resync_enabled: checked })}
+                />
+              </div>
+
+              {formData.auto_resync_enabled && (
+                <div>
+                  <Label htmlFor="auto_resync_interval">Интервал автосверки (минут)</Label>
+                  <Select
+                    value={formData.auto_resync_interval_minutes.toString()}
+                    onValueChange={(value) => setFormData({ ...formData, auto_resync_interval_minutes: parseInt(value) })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="30">30 минут</SelectItem>
+                      <SelectItem value="60">1 час</SelectItem>
+                      <SelectItem value="120">2 часа</SelectItem>
+                      <SelectItem value="360">6 часов</SelectItem>
+                      <SelectItem value="720">12 часов</SelectItem>
+                      <SelectItem value="1440">24 часа</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               <div className="flex flex-col sm:flex-row gap-2 pt-4 border-t">
                 <Button 
@@ -278,6 +500,7 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
               </div>
             </TabsContent>
 
+            {/* Members Tab */}
             <TabsContent value="members" className="mt-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                 <div className="flex items-center gap-3">
@@ -316,7 +539,7 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
               <div className="flex flex-wrap gap-3 mb-3 text-sm text-muted-foreground">
                 <span>Всего: {clubMembers.length}</span>
                 <span>Клиенты: {clientsInClub.length}</span>
-                <span className="text-green-600">Должны иметь доступ: {clientsInClub.filter(m => m.access_status === 'ok').length}</span>
+                <span className="text-green-600">С доступом: {clientsInClub.filter(m => m.access_status === 'ok').length}</span>
                 <span className="text-red-600">Без доступа: {clientsInClub.filter(m => m.access_status !== 'ok').length}</span>
               </div>
 
@@ -333,67 +556,56 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
                         <TableHead>Клиент</TableHead>
                         <TableHead>Чат</TableHead>
                         <TableHead>Канал</TableHead>
-                        <TableHead>Должен иметь доступ</TableHead>
                         <TableHead>Статус</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {displayedMembers.map((member) => {
-                        const shouldHaveAccess = !!member.profiles && member.access_status === 'ok';
-                        return (
-                          <TableRow 
-                            key={member.id}
-                            className={member.access_status === 'no_access' ? 'bg-destructive/5' : ''}
-                          >
-                            <TableCell>
-                              <div className="font-medium">
-                                {member.telegram_first_name} {member.telegram_last_name}
+                      {displayedMembers.map((member) => (
+                        <TableRow 
+                          key={member.id}
+                          className={member.access_status === 'no_access' ? 'bg-destructive/5' : ''}
+                        >
+                          <TableCell>
+                            <div className="font-medium">
+                              {member.telegram_first_name} {member.telegram_last_name}
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                              {member.telegram_username ? `@${member.telegram_username}` : `ID: ${member.telegram_user_id}`}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {member.profiles ? (
+                              <div>
+                                <div className="text-sm">{member.profiles.full_name || member.profiles.email}</div>
+                                <div className="text-xs text-muted-foreground">{member.profiles.phone}</div>
                               </div>
-                              <div className="text-sm text-muted-foreground">
-                                {member.telegram_username ? `@${member.telegram_username}` : `ID: ${member.telegram_user_id}`}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              {member.profiles ? (
-                                <div>
-                                  <div className="text-sm">{member.profiles.full_name || member.profiles.email}</div>
-                                  <div className="text-xs text-muted-foreground">{member.profiles.phone}</div>
-                                </div>
-                              ) : (
-                                <span className="text-muted-foreground text-sm">Не привязан</span>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {member.in_chat ? (
-                                <CheckCircle className="h-4 w-4 text-green-500" />
-                              ) : (
-                                <XCircle className="h-4 w-4 text-muted-foreground" />
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {member.in_channel ? (
-                                <CheckCircle className="h-4 w-4 text-green-500" />
-                              ) : (
-                                <XCircle className="h-4 w-4 text-muted-foreground" />
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {shouldHaveAccess ? (
-                                <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/20">
-                                  Должен
-                                </Badge>
-                              ) : (
-                                <Badge variant="outline" className="bg-red-500/10 text-red-600 border-red-500/20">
-                                  Не должен
-                                </Badge>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {getAccessStatusBadge(member.access_status)}
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
+                            ) : (
+                              <span className="text-muted-foreground text-sm">Не привязан</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {member.in_chat === true ? (
+                              <CheckCircle className="h-4 w-4 text-green-500" />
+                            ) : member.in_chat === false ? (
+                              <XCircle className="h-4 w-4 text-muted-foreground" />
+                            ) : (
+                              <span className="text-muted-foreground">?</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {member.in_channel === true ? (
+                              <CheckCircle className="h-4 w-4 text-green-500" />
+                            ) : member.in_channel === false ? (
+                              <XCircle className="h-4 w-4 text-muted-foreground" />
+                            ) : (
+                              <span className="text-muted-foreground">?</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {getAccessStatusBadge(member.access_status)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
                     </TableBody>
                   </Table>
                 ) : (
@@ -404,18 +616,6 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
                   </div>
                 )}
               </ScrollArea>
-
-              {members && members.length > 0 && (
-                <div className="flex gap-4 mt-4 text-sm text-muted-foreground">
-                  <span>Всего: {members.length}</span>
-                  <span className="text-green-600">
-                    С доступом: {members.filter(m => m.access_status === 'ok').length}
-                  </span>
-                  <span className="text-red-600">
-                    Нарушители: {members.filter(m => m.access_status === 'no_access').length}
-                  </span>
-                </div>
-              )}
             </TabsContent>
           </Tabs>
         </DialogContent>

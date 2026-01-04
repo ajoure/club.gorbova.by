@@ -73,6 +73,8 @@ import {
   Calendar,
   BarChart3,
   ChevronDown,
+  Send,
+  ShieldCheck,
 } from 'lucide-react';
 import { 
   useTelegramClubs, 
@@ -110,18 +112,6 @@ export default function TelegramClubMembers() {
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [showKickDialog, setShowKickDialog] = useState(false);
   const [selectedMember, setSelectedMember] = useState<TelegramClubMember | null>(null);
-  const [lastSyncInfo, setLastSyncInfo] = useState<{ 
-    chat_total_count?: number; 
-    channel_total_count?: number; 
-    chat_warning?: string; 
-    channel_warning?: string; 
-    members_count?: number;
-    active_count?: number;
-    expired_count?: number;
-    no_access_count?: number;
-    violators_count?: number;
-  } | null>(null);
-  const [showSyncReport, setShowSyncReport] = useState(false);
   
   // Mass selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -134,6 +124,16 @@ export default function TelegramClubMembers() {
   const [massRevokeReason, setMassRevokeReason] = useState('');
   const [massActionLoading, setMassActionLoading] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  
+  // Status check state
+  const [checkingStatuses, setCheckingStatuses] = useState(false);
+  const [checkProgress, setCheckProgress] = useState({ current: 0, total: 0 });
+  
+  // Send message state
+  const [showSendMessageDialog, setShowSendMessageDialog] = useState(false);
+  const [messageTarget, setMessageTarget] = useState<TelegramClubMember | null>(null);
+  const [messageText, setMessageText] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
 
   // Calculate counts for tabs
   const counts = useMemo(() => {
@@ -143,9 +143,7 @@ export default function TelegramClubMembers() {
       all: members.length,
       clients: members.filter(m => m.link_status === 'linked').length,
       with_access: members.filter(m => m.access_status === 'ok').length,
-      // "Нарушители" = users without access (excluding already removed)
       violators: members.filter(m => m.access_status !== 'ok' && m.access_status !== 'removed').length,
-      // "Удалённые" = users who were removed
       removed: members.filter(m => m.access_status === 'removed').length,
     };
   }, [members]);
@@ -155,7 +153,6 @@ export default function TelegramClubMembers() {
     if (!members) return [];
     
     return members.filter(member => {
-      // Search filter
       if (search) {
         const searchLower = search.toLowerCase();
         const matchesSearch = 
@@ -170,14 +167,12 @@ export default function TelegramClubMembers() {
         if (!matchesSearch) return false;
       }
 
-      // Tab filter
       switch (activeTab) {
         case 'clients':
           return member.link_status === 'linked';
         case 'with_access':
           return member.access_status === 'ok';
         case 'violators':
-          // "Нарушители" = users without access (excluding already removed)
           return member.access_status !== 'ok' && member.access_status !== 'removed';
         case 'removed':
           return member.access_status === 'removed';
@@ -217,6 +212,81 @@ export default function TelegramClubMembers() {
     if (!clubId) return;
     kickViolators.mutate({ clubId });
     setShowKickDialog(false);
+  };
+
+  // Sync without modal
+  const handleSync = () => {
+    if (!clubId) return;
+    syncMembers.mutate(clubId, {
+      onSuccess: () => {
+        toast.success('Данные обновлены');
+        refetch();
+      },
+      onError: () => {
+        toast.error('Ошибка синхронизации');
+      }
+    });
+  };
+
+  // Check statuses via getChatMember for selected members
+  const handleCheckStatuses = async () => {
+    if (!clubId || selectedIds.size === 0) return;
+    setCheckingStatuses(true);
+    setCheckProgress({ current: 0, total: selectedIds.size });
+    
+    try {
+      const memberIds = Array.from(selectedIds);
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: {
+          action: 'check_status',
+          club_id: clubId,
+          member_ids: memberIds,
+        },
+      });
+
+      if (error) throw error;
+      toast.success(`Проверено: ${data.checked_count} пользователей`);
+      refetch();
+    } catch (e) {
+      console.error('Check status error:', e);
+      toast.error('Ошибка проверки статусов');
+    }
+    
+    setCheckingStatuses(false);
+    setCheckProgress({ current: 0, total: 0 });
+  };
+
+  // Send message to member
+  const handleSendMessage = async () => {
+    if (!clubId || !messageTarget || !messageText.trim()) return;
+    setSendingMessage(true);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: {
+          action: 'send_message',
+          club_id: clubId,
+          telegram_user_id: messageTarget.telegram_user_id,
+          message: messageText,
+        },
+      });
+
+      if (error) throw error;
+      
+      if (data.success) {
+        toast.success('Сообщение отправлено');
+      } else {
+        toast.error(data.error || 'Не удалось отправить');
+      }
+    } catch (e) {
+      console.error('Send message error:', e);
+      toast.error('Ошибка отправки сообщения');
+    }
+    
+    setSendingMessage(false);
+    setShowSendMessageDialog(false);
+    setMessageText('');
+    setMessageTarget(null);
   };
 
   // Mass selection handlers
@@ -265,20 +335,6 @@ export default function TelegramClubMembers() {
           validUntil,
           comment: massGrantComment || 'Массовая выдача доступа',
         });
-        
-        // Log the action
-        await supabase.from('telegram_logs').insert({
-          user_id: member.profiles.user_id,
-          club_id: clubId,
-          action: 'MASS_GRANT',
-          status: 'ok',
-          target: member.telegram_username || String(member.telegram_user_id),
-          meta: { 
-            granted_by: currentUser?.id,
-            days: massGrantDays, 
-            comment: massGrantComment,
-          },
-        });
         successCount++;
       } catch (e) {
         errorCount++;
@@ -296,7 +352,7 @@ export default function TelegramClubMembers() {
     if (errorCount > 0) toast.error(`Ошибки: ${errorCount}`);
   };
 
-  // Mass revoke access - works with both linked users and violators
+  // Mass revoke access - works with any selected members (even with unknown status)
   const handleMassRevoke = async () => {
     if (!clubId || selectedIds.size === 0) return;
     setMassActionLoading(true);
@@ -304,10 +360,9 @@ export default function TelegramClubMembers() {
     let successCount = 0;
     let errorCount = 0;
 
-    // Get selected members (may or may not be linked)
-    const selectedMembers = filteredMembers.filter(m => selectedIds.has(m.id));
+    const selectedMembersList = filteredMembers.filter(m => selectedIds.has(m.id));
 
-    for (const member of selectedMembers) {
+    for (const member of selectedMembersList) {
       try {
         await revokeAccess.mutateAsync({
           userId: member.profiles?.user_id,
@@ -333,7 +388,7 @@ export default function TelegramClubMembers() {
     if (errorCount > 0) toast.error(`Ошибки: ${errorCount}`);
   };
 
-  // Mass mark as removed (without kicking from Telegram)
+  // Mass mark as removed
   const handleMassMarkRemoved = async () => {
     if (!clubId || selectedIds.size === 0) return;
     setMassActionLoading(true);
@@ -361,7 +416,7 @@ export default function TelegramClubMembers() {
     refetch();
   };
 
-  // Mass kick only members actually present in chat/channel
+  // Mass kick only members actually present
   const handleMassKickPresent = async () => {
     if (!clubId || selectedIds.size === 0) return;
     setMassActionLoading(true);
@@ -432,6 +487,45 @@ export default function TelegramClubMembers() {
           </Badge>
         );
     }
+  };
+
+  // Telegram status display with tooltip
+  const getTelegramStatus = (inChat: boolean | null, inChannel: boolean | null, lastCheck: any) => {
+    const getIcon = (status: boolean | null) => {
+      if (status === true) return <CheckCircle className="h-4 w-4 text-green-600" />;
+      if (status === false) return <XCircle className="h-4 w-4 text-destructive" />;
+      return <HelpCircle className="h-4 w-4 text-muted-foreground" />;
+    };
+
+    const getTooltip = (status: boolean | null, type: string) => {
+      if (status === true) return `В ${type}`;
+      if (status === false) return `Не в ${type}`;
+      return `Статус ${type} неизвестен`;
+    };
+
+    const lastCheckInfo = lastCheck ? 
+      `Проверено: ${format(new Date(lastCheck), 'dd.MM.yy HH:mm', { locale: ru })}` : 
+      'Не проверялось';
+
+    return (
+      <div className="flex items-center justify-center gap-1">
+        <Tooltip>
+          <TooltipTrigger>{getIcon(inChat)}</TooltipTrigger>
+          <TooltipContent>
+            <p>{getTooltip(inChat, 'чате')}</p>
+            <p className="text-xs text-muted-foreground">{lastCheckInfo}</p>
+          </TooltipContent>
+        </Tooltip>
+        <span className="text-muted-foreground">/</span>
+        <Tooltip>
+          <TooltipTrigger>{getIcon(inChannel)}</TooltipTrigger>
+          <TooltipContent>
+            <p>{getTooltip(inChannel, 'канале')}</p>
+            <p className="text-xs text-muted-foreground">{lastCheckInfo}</p>
+          </TooltipContent>
+        </Tooltip>
+      </div>
+    );
   };
 
   if (!club) {
@@ -573,15 +667,7 @@ export default function TelegramClubMembers() {
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
-                  onClick={() =>
-                    clubId &&
-                    syncMembers.mutate(clubId, {
-                      onSuccess: (data: any) => {
-                        setLastSyncInfo(data);
-                        setShowSyncReport(true);
-                      },
-                    })
-                  }
+                  onClick={handleSync}
                   disabled={syncMembers.isPending}
                 >
                   {syncMembers.isPending ? (
@@ -628,6 +714,25 @@ export default function TelegramClubMembers() {
                 >
                   Снять выбор
                 </Button>
+                {/* Check statuses button */}
+                <Button 
+                  size="sm" 
+                  variant="secondary"
+                  onClick={handleCheckStatuses}
+                  disabled={checkingStatuses}
+                >
+                  {checkingStatuses ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                      {checkProgress.current}/{checkProgress.total}
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="h-4 w-4 mr-1" />
+                      Проверить статусы
+                    </>
+                  )}
+                </Button>
                 {selectedLinkedMembers.length > 0 && (
                   <>
                     <Button 
@@ -637,16 +742,17 @@ export default function TelegramClubMembers() {
                       <Plus className="h-4 w-4 mr-1" />
                       Выдать доступ
                     </Button>
-                    <Button 
-                      size="sm" 
-                      variant="destructive"
-                      onClick={() => setShowMassRevokeDialog(true)}
-                    >
-                      <MinusCircle className="h-4 w-4 mr-1" />
-                      Отозвать доступ
-                    </Button>
                   </>
                 )}
+                {/* Revoke works for any selected */}
+                <Button 
+                  size="sm" 
+                  variant="destructive"
+                  onClick={() => setShowMassRevokeDialog(true)}
+                >
+                  <MinusCircle className="h-4 w-4 mr-1" />
+                  Отозвать доступ ({selectedIds.size})
+                </Button>
                 <Button 
                   size="sm" 
                   variant="secondary"
@@ -669,22 +775,14 @@ export default function TelegramClubMembers() {
             )}
           </CardHeader>
           <CardContent>
-            {(lastSyncInfo?.chat_warning || lastSyncInfo?.channel_warning) && (
-              <Alert className="mb-4">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Ограничение Telegram Bot API</AlertTitle>
-                <AlertDescription>
-                  Telegram Bot API не позволяет получить полный список участников чата/канала.
-                  Поэтому список «Участники» формируется по привязкам Telegram в системе.
-                  <div className="mt-2 text-sm text-muted-foreground">
-                    Привязано в системе: {counts.all} пользователей. 
-                    Telegram показывает: чат ~{club.members_count_chat || 0}, канал ~{club.members_count_channel || 0}.
-                    <br />
-                    Поля «В чате/В канале» могут иметь состояние "unknown", если мы не можем проверить факт присутствия.
-                  </div>
-                </AlertDescription>
-              </Alert>
-            )}
+            <Alert className="mb-4">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Ограничение Telegram Bot API</AlertTitle>
+              <AlertDescription>
+                Telegram Bot API не позволяет получить полный список участников чата/канала.
+                Список формируется по привязкам Telegram в системе. Используйте «Проверить статусы» для актуализации.
+              </AlertDescription>
+            </Alert>
 
             {isLoading ? (
               <div className="flex items-center justify-center py-8">
@@ -712,8 +810,8 @@ export default function TelegramClubMembers() {
                           </div>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>Статус присутствия в чате/канале.</p>
-                          <p className="text-muted-foreground">Определяется при синхронизации или действиях выдачи/отзыва.</p>
+                          <p>Чат / Канал (getChatMember)</p>
+                          <p className="text-xs text-muted-foreground">Выберите участников и нажмите «Проверить статусы»</p>
                         </TooltipContent>
                       </Tooltip>
                     </TableHead>
@@ -764,37 +862,7 @@ export default function TelegramClubMembers() {
                         {getAccessStatusBadge(member.access_status, member.link_status)}
                       </TableCell>
                       <TableCell className="text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <Tooltip>
-                            <TooltipTrigger>
-                              {member.in_chat === true ? (
-                                <CheckCircle className="h-4 w-4 text-green-600" />
-                              ) : member.in_chat === false ? (
-                                <XCircle className="h-4 w-4 text-destructive" />
-                              ) : (
-                                <HelpCircle className="h-4 w-4 text-muted-foreground" />
-                              )}
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              {member.in_chat === true ? 'В чате' : member.in_chat === false ? 'Не в чате' : 'Неизвестно'}
-                            </TooltipContent>
-                          </Tooltip>
-                          <span className="text-muted-foreground">/</span>
-                          <Tooltip>
-                            <TooltipTrigger>
-                              {member.in_channel === true ? (
-                                <CheckCircle className="h-4 w-4 text-green-600" />
-                              ) : member.in_channel === false ? (
-                                <XCircle className="h-4 w-4 text-destructive" />
-                              ) : (
-                                <HelpCircle className="h-4 w-4 text-muted-foreground" />
-                              )}
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              {member.in_channel === true ? 'В канале' : member.in_channel === false ? 'Не в канале' : 'Неизвестно'}
-                            </TooltipContent>
-                          </Tooltip>
-                        </div>
+                        {getTelegramStatus(member.in_chat, member.in_channel, member.last_synced_at)}
                       </TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
@@ -810,11 +878,15 @@ export default function TelegramClubMembers() {
                               <Eye className="h-4 w-4 mr-2" />
                               Подробнее
                             </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => {
+                              setMessageTarget(member);
+                              setShowSendMessageDialog(true);
+                            }}>
+                              <Send className="h-4 w-4 mr-2" />
+                              Написать в Telegram
+                            </DropdownMenuItem>
                             {member.profiles && member.access_status !== 'ok' && (
-                              <DropdownMenuItem onClick={() => {
-                                setSelectedMember(member);
-                                // Will open grant dialog from drawer
-                              }}>
+                              <DropdownMenuItem onClick={() => setSelectedMember(member)}>
                                 <Plus className="h-4 w-4 mr-2" />
                                 Выдать доступ
                               </DropdownMenuItem>
@@ -826,7 +898,17 @@ export default function TelegramClubMembers() {
                                   Продлить доступ
                                 </DropdownMenuItem>
                                 <DropdownMenuItem 
-                                  onClick={() => setSelectedMember(member)}
+                                  onClick={() => {
+                                    revokeAccess.mutate({
+                                      userId: member.profiles?.user_id,
+                                      telegramUserId: member.telegram_user_id,
+                                      clubId: clubId!,
+                                      reason: 'Ручной отзыв',
+                                      isManual: true,
+                                    }, {
+                                      onSuccess: () => refetch()
+                                    });
+                                  }}
                                   className="text-destructive"
                                 >
                                   <MinusCircle className="h-4 w-4 mr-2" />
@@ -834,19 +916,24 @@ export default function TelegramClubMembers() {
                                 </DropdownMenuItem>
                               </>
                             )}
-                            {(member.access_status === 'no_access' || member.access_status === 'removed') && 
-                             (member.in_chat || member.in_channel) && (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem 
-                                  onClick={() => clubId && kickViolators.mutate({ clubId, memberIds: [member.id] })}
-                                  className="text-destructive"
-                                >
-                                  <Ban className="h-4 w-4 mr-2" />
-                                  Удалить из чата/канала
-                                </DropdownMenuItem>
-                              </>
-                            )}
+                            {/* Kick by ID regardless of status */}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              onClick={() => {
+                                revokeAccess.mutate({
+                                  telegramUserId: member.telegram_user_id,
+                                  clubId: clubId!,
+                                  reason: 'Ручное удаление',
+                                  isManual: true,
+                                }, {
+                                  onSuccess: () => refetch()
+                                });
+                              }}
+                              className="text-destructive"
+                            >
+                              <Ban className="h-4 w-4 mr-2" />
+                              Удалить из чата/канала
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -942,12 +1029,13 @@ export default function TelegramClubMembers() {
             <DialogHeader>
               <DialogTitle className="text-destructive">Массовый отзыв доступа</DialogTitle>
               <DialogDescription>
-                Отозвать доступ у {selectedLinkedMembers.length} пользователей
+                Отозвать доступ и удалить из чата/канала у {selectedIds.size} пользователей.
+                Работает даже если статус в Telegram неизвестен.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="mass-reason">Причина отзыва *</Label>
+                <Label htmlFor="mass-reason">Причина отзыва</Label>
                 <Textarea
                   id="mass-reason"
                   placeholder="Укажите причину массового отзыва..."
@@ -964,10 +1052,10 @@ export default function TelegramClubMembers() {
               <Button 
                 variant="destructive" 
                 onClick={handleMassRevoke} 
-                disabled={massActionLoading || !massRevokeReason.trim()}
+                disabled={massActionLoading}
               >
                 {massActionLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                Отозвать доступ ({selectedLinkedMembers.length})
+                Отозвать доступ ({selectedIds.size})
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1017,52 +1105,75 @@ export default function TelegramClubMembers() {
           </AlertDialogContent>
         </AlertDialog>
 
-        {/* Sync Report Dialog */}
-        <Dialog open={showSyncReport} onOpenChange={setShowSyncReport}>
+        {/* Send Message Dialog */}
+        <Dialog open={showSendMessageDialog} onOpenChange={setShowSendMessageDialog}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Результат синхронизации</DialogTitle>
+              <DialogTitle>Отправить сообщение</DialogTitle>
               <DialogDescription>
-                Статистика участников после обновления
+                {messageTarget && (
+                  <>Получатель: {messageTarget.telegram_first_name} {messageTarget.telegram_last_name} 
+                  ({messageTarget.telegram_username ? `@${messageTarget.telegram_username}` : `ID: ${messageTarget.telegram_user_id}`})</>
+                )}
               </DialogDescription>
             </DialogHeader>
-            {lastSyncInfo && (
-              <div className="space-y-4 py-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-3 bg-green-500/10 rounded-lg">
-                    <div className="text-sm text-muted-foreground">С доступом (ok)</div>
-                    <div className="text-2xl font-bold text-green-600">{lastSyncInfo.active_count || 0}</div>
-                  </div>
-                  <div className="p-3 bg-yellow-500/10 rounded-lg">
-                    <div className="text-sm text-muted-foreground">Истёк (expired)</div>
-                    <div className="text-2xl font-bold text-yellow-600">{lastSyncInfo.expired_count || 0}</div>
-                  </div>
-                  <div className="p-3 bg-destructive/10 rounded-lg">
-                    <div className="text-sm text-muted-foreground">Без доступа (no_access)</div>
-                    <div className="text-2xl font-bold text-destructive">{lastSyncInfo.no_access_count || 0}</div>
-                  </div>
-                  <div className="p-3 bg-orange-500/10 rounded-lg">
-                    <div className="text-sm text-muted-foreground">Нарушители</div>
-                    <div className="text-2xl font-bold text-orange-600">{lastSyncInfo.violators_count || 0}</div>
-                  </div>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Шаблоны</Label>
+                <div className="flex flex-wrap gap-2">
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    onClick={() => setMessageText('Напоминаем о необходимости продлить подписку для сохранения доступа к клубу.')}
+                  >
+                    Продление
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    onClick={() => setMessageText('К сожалению, оплата не прошла. Пожалуйста, попробуйте ещё раз или свяжитесь с поддержкой.')}
+                  >
+                    Ошибка оплаты
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    onClick={() => setMessageText('Пожалуйста, свяжитесь с нами для уточнения деталей вашей подписки.')}
+                  >
+                    Связаться
+                  </Button>
                 </div>
-                <div className="text-sm text-muted-foreground border-t pt-4">
-                  <p>Всего в системе: {lastSyncInfo.members_count || 0}</p>
-                  <p>В Telegram чат: ~{lastSyncInfo.chat_total_count || 0}</p>
-                  <p>В Telegram канал: ~{lastSyncInfo.channel_total_count || 0}</p>
-                </div>
-                {(lastSyncInfo.chat_warning || lastSyncInfo.channel_warning) && (
-                  <Alert>
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertDescription className="text-xs">
-                      {lastSyncInfo.chat_warning || lastSyncInfo.channel_warning}
-                    </AlertDescription>
-                  </Alert>
-                )}
               </div>
-            )}
+              <div className="space-y-2">
+                <Label htmlFor="message-text">Текст сообщения</Label>
+                <Textarea
+                  id="message-text"
+                  placeholder="Введите текст сообщения..."
+                  value={messageText}
+                  onChange={(e) => setMessageText(e.target.value)}
+                  rows={5}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Сообщение будет отправлено от имени бота. Пользователь должен был ранее начать диалог с ботом.
+                </p>
+              </div>
+            </div>
             <DialogFooter>
-              <Button onClick={() => setShowSyncReport(false)}>Закрыть</Button>
+              <Button variant="outline" onClick={() => {
+                setShowSendMessageDialog(false);
+                setMessageText('');
+                setMessageTarget(null);
+              }}>
+                Отмена
+              </Button>
+              <Button 
+                onClick={handleSendMessage} 
+                disabled={sendingMessage || !messageText.trim()}
+              >
+                {sendingMessage && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                <Send className="h-4 w-4 mr-2" />
+                Отправить
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

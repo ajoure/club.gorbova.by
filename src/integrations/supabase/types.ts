@@ -1481,6 +1481,7 @@ export type Database = {
           access_mode: string
           auto_resync_enabled: boolean | null
           auto_resync_interval_minutes: number | null
+          autokick_no_access: boolean | null
           bot_id: string
           channel_id: number | null
           channel_invite_link: string | null
@@ -1506,6 +1507,7 @@ export type Database = {
           access_mode?: string
           auto_resync_enabled?: boolean | null
           auto_resync_interval_minutes?: number | null
+          autokick_no_access?: boolean | null
           bot_id: string
           channel_id?: number | null
           channel_invite_link?: string | null
@@ -1531,6 +1533,7 @@ export type Database = {
           access_mode?: string
           auto_resync_enabled?: boolean | null
           auto_resync_interval_minutes?: number | null
+          autokick_no_access?: boolean | null
           bot_id?: string
           channel_id?: number | null
           channel_invite_link?: string | null
