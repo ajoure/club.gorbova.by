@@ -374,45 +374,54 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Grant Telegram access if subscription product
-      if (product?.product_type === 'subscription' && product?.duration_days) {
+      // Grant Telegram access based on product_club_mappings (for selected products)
+      if (product) {
         try {
-          const telegramGrantResult = await supabase.functions.invoke('telegram-grant-access', {
-            body: { 
-              user_id: order.user_id,
-              duration_days: product.duration_days
-            },
-          });
-          
-          if (telegramGrantResult.error) {
-            console.error('Failed to grant Telegram access:', telegramGrantResult.error);
-          } else {
-            console.log('Telegram access granted:', telegramGrantResult.data);
-          }
-
-          // Create telegram_access_grants record for history
-          const { data: clubs } = await supabase
-            .from('telegram_clubs')
-            .select('id')
+          // Check if this product has club mappings
+          const { data: mappings } = await supabase
+            .from('product_club_mappings')
+            .select('*, telegram_clubs(id, club_name)')
+            .eq('product_id', product.id)
             .eq('is_active', true);
 
-          if (clubs && clubs.length > 0) {
-            const startAt = new Date();
-            const endAt = new Date();
-            endAt.setDate(endAt.getDate() + product.duration_days);
+          if (mappings && mappings.length > 0) {
+            console.log(`Found ${mappings.length} club mappings for product ${product.name}`);
+            
+            for (const mapping of mappings) {
+              const durationDays = mapping.duration_days || product.duration_days || 30;
+              
+              // Grant access via edge function
+              const telegramGrantResult = await supabase.functions.invoke('telegram-grant-access', {
+                body: { 
+                  user_id: order.user_id,
+                  club_ids: [mapping.club_id],
+                  duration_days: durationDays
+                },
+              });
+              
+              if (telegramGrantResult.error) {
+                console.error('Failed to grant Telegram access:', telegramGrantResult.error);
+              } else {
+                console.log('Telegram access granted:', telegramGrantResult.data);
+              }
 
-            for (const club of clubs) {
+              // Create telegram_access_grants record for history
+              const startAt = new Date();
+              const endAt = new Date();
+              endAt.setDate(endAt.getDate() + durationDays);
+
               await supabase
                 .from('telegram_access_grants')
                 .insert({
                   user_id: order.user_id,
-                  club_id: club.id,
+                  club_id: mapping.club_id,
                   source: 'order',
                   source_id: orderId,
                   start_at: startAt.toISOString(),
                   end_at: endAt.toISOString(),
                   status: 'active',
                   meta: {
+                    product_id: product.id,
                     product_name: product.name,
                     product_tier: product.tier,
                     bepaid_uid: transactionUid,
@@ -421,10 +430,60 @@ Deno.serve(async (req) => {
                   },
                 });
             }
-            console.log('Telegram access grants created for', clubs.length, 'clubs');
+            console.log('Telegram access grants created for', mappings.length, 'clubs via product mappings');
+          } else if (product.product_type === 'subscription' && product.duration_days) {
+            // Fallback: if no explicit mapping but it's a subscription product, grant to all active clubs
+            console.log('No explicit mappings, using fallback for subscription product');
+            
+            const telegramGrantResult = await supabase.functions.invoke('telegram-grant-access', {
+              body: { 
+                user_id: order.user_id,
+                duration_days: product.duration_days
+              },
+            });
+            
+            if (telegramGrantResult.error) {
+              console.error('Failed to grant Telegram access (fallback):', telegramGrantResult.error);
+            } else {
+              console.log('Telegram access granted (fallback):', telegramGrantResult.data);
+            }
+
+            // Create grants for all active clubs
+            const { data: clubs } = await supabase
+              .from('telegram_clubs')
+              .select('id')
+              .eq('is_active', true);
+
+            if (clubs && clubs.length > 0) {
+              const startAt = new Date();
+              const endAt = new Date();
+              endAt.setDate(endAt.getDate() + product.duration_days);
+
+              for (const club of clubs) {
+                await supabase
+                  .from('telegram_access_grants')
+                  .insert({
+                    user_id: order.user_id,
+                    club_id: club.id,
+                    source: 'order',
+                    source_id: orderId,
+                    start_at: startAt.toISOString(),
+                    end_at: endAt.toISOString(),
+                    status: 'active',
+                    meta: {
+                      product_name: product.name,
+                      product_tier: product.tier,
+                      bepaid_uid: transactionUid,
+                      amount: order.amount,
+                      currency: order.currency,
+                    },
+                  });
+              }
+              console.log('Telegram access grants created for', clubs.length, 'clubs (fallback)');
+            }
           }
         } catch (telegramError) {
-          console.error('Error calling telegram-grant-access:', telegramError);
+          console.error('Error handling Telegram access:', telegramError);
         }
       }
 

@@ -894,6 +894,51 @@ export type Database = {
         }
         Relationships: []
       }
+      product_club_mappings: {
+        Row: {
+          club_id: string
+          created_at: string
+          duration_days: number
+          id: string
+          is_active: boolean
+          product_id: string
+          updated_at: string
+        }
+        Insert: {
+          club_id: string
+          created_at?: string
+          duration_days?: number
+          id?: string
+          is_active?: boolean
+          product_id: string
+          updated_at?: string
+        }
+        Update: {
+          club_id?: string
+          created_at?: string
+          duration_days?: number
+          id?: string
+          is_active?: boolean
+          product_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_club_mappings_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_club_mappings_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       products: {
         Row: {
           created_at: string
@@ -1443,6 +1488,59 @@ export type Database = {
           },
         ]
       }
+      telegram_invites: {
+        Row: {
+          club_id: string
+          code: string
+          created_at: string
+          created_by: string
+          duration_days: number
+          expires_at: string | null
+          id: string
+          is_active: boolean
+          max_uses: number | null
+          name: string
+          updated_at: string
+          uses_count: number
+        }
+        Insert: {
+          club_id: string
+          code: string
+          created_at?: string
+          created_by: string
+          duration_days?: number
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          max_uses?: number | null
+          name: string
+          updated_at?: string
+          uses_count?: number
+        }
+        Update: {
+          club_id?: string
+          code?: string
+          created_at?: string
+          created_by?: string
+          duration_days?: number
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          max_uses?: number | null
+          name?: string
+          updated_at?: string
+          uses_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_invites_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_link_tokens: {
         Row: {
           created_at: string
@@ -1557,6 +1655,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      telegram_mtproto_sessions: {
+        Row: {
+          api_hash: string
+          api_id: string
+          created_at: string
+          error_message: string | null
+          id: string
+          last_sync_at: string | null
+          phone_number: string
+          session_string: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          api_hash: string
+          api_id: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          last_sync_at?: string | null
+          phone_number: string
+          session_string?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          api_hash?: string
+          api_id?: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          last_sync_at?: string | null
+          phone_number?: string
+          session_string?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       user_roles: {
         Row: {

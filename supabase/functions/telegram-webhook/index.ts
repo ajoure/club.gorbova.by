@@ -121,6 +121,20 @@ const MESSAGES = {
   alreadyLinked: `ℹ️ Этот Telegram уже привязан к другому аккаунту.
 
 Если это ошибка — обратись к администратору.`,
+
+  inviteWelcome: `🎉 Добро пожаловать в Gorbova Club!
+
+Ты получил приглашение в закрытый клуб.`,
+
+  inviteExpired: `❌ Приглашение недействительно
+
+Эта ссылка-приглашение устарела или исчерпала лимит использований.
+
+Обратись к администратору для получения новой ссылки.`,
+
+  inviteSuccess: `✅ Приглашение активировано!
+
+Твой доступ в клуб оформлен.`,
 };
 
 // Send message to Telegram
@@ -193,17 +207,166 @@ Deno.serve(async (req) => {
     
     console.log('Received Telegram update:', JSON.stringify(update, null, 2));
 
-    // Handle /start command with potential link token
+    // Handle /start command with potential link token or invite code
     if (update.message?.text?.startsWith('/start')) {
       const telegramUserId = update.message.from.id;
       const telegramUsername = update.message.from.username;
+      const telegramFirstName = update.message.from.first_name;
+      const telegramLastName = update.message.from.last_name;
       const chatId = update.message.chat.id;
       const text = update.message.text;
       
-      // Check if there's a link token
+      // Check if there's a parameter
       const parts = text.split(' ');
       if (parts.length > 1) {
-        const linkToken = parts[1];
+        const param = parts[1];
+        
+        // Check if it's an invite code (starts with invite_)
+        if (param.startsWith('invite_')) {
+          const inviteCode = param.replace('invite_', '');
+          
+          // Find the invite
+          const { data: invite, error: inviteError } = await supabase
+            .from('telegram_invites')
+            .select('*, telegram_clubs(id, club_name, bot_id)')
+            .eq('code', inviteCode)
+            .eq('is_active', true)
+            .single();
+
+          if (inviteError || !invite) {
+            await sendMessage(botToken, chatId, MESSAGES.inviteExpired);
+            return new Response(JSON.stringify({ ok: true }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          // Check if invite is expired
+          if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+            await sendMessage(botToken, chatId, MESSAGES.inviteExpired);
+            return new Response(JSON.stringify({ ok: true }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          // Check if invite has reached max uses
+          if (invite.max_uses && invite.uses_count >= invite.max_uses) {
+            await sendMessage(botToken, chatId, MESSAGES.inviteExpired);
+            return new Response(JSON.stringify({ ok: true }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          // Check if user already has Telegram linked
+          const { data: existingProfile } = await supabase
+            .from('profiles')
+            .select('id, user_id')
+            .eq('telegram_user_id', telegramUserId)
+            .single();
+
+          let userId: string | null = existingProfile?.user_id || null;
+          let profileId: string | null = existingProfile?.id || null;
+
+          // If not linked, create a temporary club member record
+          if (!existingProfile) {
+            // Check if already a club member
+            const { data: existingMember } = await supabase
+              .from('telegram_club_members')
+              .select('id, profile_id')
+              .eq('club_id', invite.club_id)
+              .eq('telegram_user_id', telegramUserId)
+              .single();
+
+            if (!existingMember) {
+              // Create club member record
+              await supabase
+                .from('telegram_club_members')
+                .insert({
+                  club_id: invite.club_id,
+                  telegram_user_id: telegramUserId,
+                  telegram_username: telegramUsername,
+                  telegram_first_name: telegramFirstName,
+                  telegram_last_name: telegramLastName,
+                  link_status: 'not_linked',
+                  access_status: 'invite_pending',
+                });
+            }
+          }
+
+          // Increment invite uses count
+          await supabase
+            .from('telegram_invites')
+            .update({ uses_count: invite.uses_count + 1 })
+            .eq('id', invite.id);
+
+          // If user has a profile, grant access
+          if (userId) {
+            // Create access grant
+            const startAt = new Date();
+            const endAt = new Date();
+            endAt.setDate(endAt.getDate() + invite.duration_days);
+
+            await supabase
+              .from('telegram_access_grants')
+              .insert({
+                user_id: userId,
+                club_id: invite.club_id,
+                source: 'invite',
+                source_id: invite.id,
+                start_at: startAt.toISOString(),
+                end_at: endAt.toISOString(),
+                status: 'active',
+                meta: {
+                  invite_code: inviteCode,
+                  invite_name: invite.name,
+                },
+              });
+
+            // Try to grant actual access via edge function
+            await supabase.functions.invoke('telegram-grant-access', {
+              body: { 
+                user_id: userId,
+                club_ids: [invite.club_id],
+                duration_days: invite.duration_days
+              },
+            });
+
+            await sendMessage(botToken, chatId, MESSAGES.inviteSuccess);
+          } else {
+            // User not linked - send welcome with link button
+            const keyboard = {
+              inline_keyboard: [
+                [{ text: '🔗 Привязать аккаунт', url: `${getSiteUrl()}/auth` }],
+              ],
+            };
+            await sendMessage(
+              botToken, 
+              chatId, 
+              `${MESSAGES.inviteWelcome}\n\nЧтобы получить полный доступ, привяжи свой аккаунт 👇`,
+              keyboard
+            );
+          }
+
+          // Log the invite usage
+          await supabase.from('telegram_logs').insert({
+            user_id: userId,
+            club_id: invite.club_id,
+            action: 'INVITE_USED',
+            target: 'club',
+            status: 'ok',
+            meta: { 
+              invite_code: inviteCode,
+              telegram_user_id: telegramUserId,
+              telegram_username: telegramUsername,
+            },
+          });
+
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        
+        // Handle regular link token (existing code)
+        const linkToken = param;
         
         // Try to process the link token
         const { data: tokenData, error: tokenError } = await supabase
