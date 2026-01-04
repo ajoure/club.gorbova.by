@@ -35,7 +35,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Plus, Settings, Users, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone, AlertTriangle, HelpCircle, Info } from 'lucide-react';
+import { Plus, Settings, Users, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone, AlertTriangle, HelpCircle, Info, Link2, Package } from 'lucide-react';
 import { 
   useTelegramClubs, 
   useTelegramBots,
@@ -154,12 +154,27 @@ export function TelegramClubsTab() {
               </TooltipProvider>
             </div>
           </div>
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button disabled={activeBots.length === 0}>
-                <Plus className="h-4 w-4 mr-2" />
-                Добавить клуб
-              </Button>
+          <div className="flex items-center gap-2">
+            <Button 
+              variant="outline" 
+              onClick={() => navigate('/admin/integrations/telegram/product-mappings')}
+            >
+              <Package className="h-4 w-4 mr-2" />
+              Автодоступ
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => navigate('/admin/integrations/telegram/invites')}
+            >
+              <Link2 className="h-4 w-4 mr-2" />
+              Инвайты
+            </Button>
+            <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+              <DialogTrigger asChild>
+                <Button disabled={activeBots.length === 0}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Добавить клуб
+                </Button>
             </DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
@@ -256,7 +271,8 @@ export function TelegramClubsTab() {
                 </Button>
               </DialogFooter>
             </DialogContent>
-          </Dialog>
+            </Dialog>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
