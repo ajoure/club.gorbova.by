@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -13,13 +14,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -45,6 +39,9 @@ import {
   HelpCircle,
   Eye,
   Loader2,
+  UserCheck,
+  UserX,
+  Link2,
 } from 'lucide-react';
 import { 
   useTelegramClubs, 
@@ -57,7 +54,7 @@ import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { MemberDetailsDrawer } from '@/components/telegram/MemberDetailsDrawer';
 
-type FilterStatus = 'all' | 'violators' | 'linked' | 'not_linked' | 'chat' | 'channel' | 'clients';
+type FilterTab = 'all' | 'clients' | 'with_access' | 'no_access' | 'violators';
 
 export default function TelegramClubMembers() {
   const { clubId } = useParams<{ clubId: string }>();
@@ -66,14 +63,27 @@ export default function TelegramClubMembers() {
   const { data: clubs } = useTelegramClubs();
   const club = clubs?.find(c => c.id === clubId);
   
-  const { data: members, isLoading } = useClubMembers(clubId || null);
+  const { data: members, isLoading, refetch } = useClubMembers(clubId || null);
   const syncMembers = useSyncClubMembers();
   const kickViolators = useKickViolators();
 
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<FilterStatus>('all');
+  const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [showKickDialog, setShowKickDialog] = useState(false);
   const [selectedMember, setSelectedMember] = useState<TelegramClubMember | null>(null);
+
+  // Calculate counts for tabs
+  const counts = useMemo(() => {
+    if (!members) return { all: 0, clients: 0, with_access: 0, no_access: 0, violators: 0 };
+    
+    return {
+      all: members.length,
+      clients: members.filter(m => m.link_status === 'linked').length,
+      with_access: members.filter(m => m.access_status === 'ok').length,
+      no_access: members.filter(m => m.access_status === 'no_access' && m.link_status === 'linked').length,
+      violators: members.filter(m => m.access_status === 'no_access' && m.link_status !== 'linked' && (m.in_chat || m.in_channel)).length,
+    };
+  }, [members]);
 
   // Filter and search members
   const filteredMembers = useMemo(() => {
@@ -95,27 +105,21 @@ export default function TelegramClubMembers() {
         if (!matchesSearch) return false;
       }
 
-      // Status filter
-      switch (filter) {
-        case 'violators':
-          return member.access_status === 'no_access';
-        case 'linked':
-          return member.link_status === 'linked';
-        case 'not_linked':
-          return member.link_status === 'not_linked';
-        case 'chat':
-          return member.in_chat;
-        case 'channel':
-          return member.in_channel;
+      // Tab filter
+      switch (activeTab) {
         case 'clients':
-          return !!member.profiles && (member.in_chat || member.in_channel);
+          return member.link_status === 'linked';
+        case 'with_access':
+          return member.access_status === 'ok';
+        case 'no_access':
+          return member.access_status === 'no_access' && member.link_status === 'linked';
+        case 'violators':
+          return member.access_status === 'no_access' && member.link_status !== 'linked' && (member.in_chat || member.in_channel);
         default:
           return true;
       }
     });
-  }, [members, search, filter]);
-
-  const violatorsCount = members?.filter(m => m.access_status === 'no_access').length || 0;
+  }, [members, search, activeTab]);
 
   const handleExportCSV = () => {
     if (!filteredMembers.length) return;
@@ -247,7 +251,7 @@ export default function TelegramClubMembers() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-destructive">{violatorsCount}</div>
+              <div className="text-2xl font-bold text-destructive">{counts.violators}</div>
             </CardContent>
           </Card>
           <Card>
@@ -265,34 +269,49 @@ export default function TelegramClubMembers() {
           </Card>
         </div>
 
+        {/* Tab Filters */}
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)} className="w-full">
+          <TabsList className="grid w-full grid-cols-5">
+            <TabsTrigger value="all" className="gap-1.5">
+              <Users className="h-4 w-4" />
+              Все
+              <Badge variant="secondary" className="ml-1 h-5 px-1.5">{counts.all}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="clients" className="gap-1.5">
+              <Link2 className="h-4 w-4" />
+              Клиенты
+              <Badge variant="secondary" className="ml-1 h-5 px-1.5">{counts.clients}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="with_access" className="gap-1.5">
+              <UserCheck className="h-4 w-4" />
+              С доступом
+              <Badge variant="secondary" className="ml-1 h-5 px-1.5">{counts.with_access}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="no_access" className="gap-1.5">
+              <UserX className="h-4 w-4" />
+              Без доступа
+              <Badge variant="secondary" className="ml-1 h-5 px-1.5">{counts.no_access}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="violators" className="gap-1.5">
+              <AlertTriangle className="h-4 w-4" />
+              Нарушители
+              <Badge variant="destructive" className="ml-1 h-5 px-1.5">{counts.violators}</Badge>
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+
         {/* Actions */}
         <Card>
           <CardHeader>
             <div className="flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1 sm:w-64">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Поиск..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-                <Select value={filter} onValueChange={(v) => setFilter(v as FilterStatus)}>
-                  <SelectTrigger className="w-44">
-                    <SelectValue placeholder="Фильтр" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Все</SelectItem>
-                    <SelectItem value="clients">Клиенты в клубе</SelectItem>
-                    <SelectItem value="violators">Нарушители</SelectItem>
-                    <SelectItem value="linked">Связанные</SelectItem>
-                    <SelectItem value="not_linked">Без связки</SelectItem>
-                    <SelectItem value="chat">Только чат</SelectItem>
-                    <SelectItem value="channel">Только канал</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="relative flex-1 sm:w-80">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Поиск по имени, email, телефону..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-9"
+                />
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -315,13 +334,13 @@ export default function TelegramClubMembers() {
                   <Download className="h-4 w-4 mr-2" />
                   Экспорт
                 </Button>
-                {violatorsCount > 0 && (
+                {counts.violators > 0 && (
                   <Button
                     variant="destructive"
                     onClick={() => setShowKickDialog(true)}
                   >
                     <Trash2 className="h-4 w-4 mr-2" />
-                    Удалить нарушителей ({violatorsCount})
+                    Удалить нарушителей ({counts.violators})
                   </Button>
                 )}
               </div>
@@ -430,7 +449,7 @@ export default function TelegramClubMembers() {
             <AlertDialogHeader>
               <AlertDialogTitle>Удалить нарушителей?</AlertDialogTitle>
               <AlertDialogDescription>
-                Будет удалено {violatorsCount} участников без права доступа из чата и канала.
+                Будет удалено {counts.violators} участников без права доступа из чата и канала.
                 Это действие нельзя отменить.
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -449,7 +468,9 @@ export default function TelegramClubMembers() {
         {/* Member details drawer */}
         <MemberDetailsDrawer 
           member={selectedMember}
+          clubId={clubId || null}
           onClose={() => setSelectedMember(null)}
+          onRefresh={() => refetch()}
         />
       </div>
     </AdminLayout>
