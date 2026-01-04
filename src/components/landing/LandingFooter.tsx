@@ -96,6 +96,9 @@ export function LandingFooter() {
               <Link to="/contacts" className="text-muted-foreground hover:text-foreground transition-colors">
                 Контакты
               </Link>
+              <Link to="/help" className="text-muted-foreground hover:text-foreground transition-colors">
+                Помощь
+              </Link>
               <Link to="/auth" className="text-muted-foreground hover:text-foreground transition-colors">
                 Вход
               </Link>

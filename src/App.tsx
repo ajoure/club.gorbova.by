@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { HelpModeProvider } from "@/contexts/HelpModeContext";
 import { ImpersonationBar } from "@/components/layout/ImpersonationBar";
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
@@ -37,7 +38,7 @@ import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
 import Purchases from "./pages/Purchases";
 import Pay from "./pages/Pay";
 import Documentation from "./pages/Documentation";
-
+import Help from "./pages/Help";
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -47,10 +48,11 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
-          <ScrollToTop />
-          <ImpersonationBar />
-          <div className="impersonation-offset">
-            <Routes>
+          <HelpModeProvider>
+            <ScrollToTop />
+            <ImpersonationBar />
+            <div className="impersonation-offset">
+              <Routes>
               {/* Public routes */}
               <Route path="/" element={<Landing />} />
               <Route path="/auth" element={<Auth />} />
@@ -60,7 +62,7 @@ const App = () => (
               <Route path="/pay" element={<Pay />} />
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/contacts" element={<Contacts />} />
-              
+              <Route path="/help" element={<Help />} />
               {/* Protected routes */}
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/purchases" element={<ProtectedRoute><Purchases /></ProtectedRoute>} />
@@ -96,8 +98,9 @@ const App = () => (
               <Route path="/admin/duplicates" element={<Navigate to="/admin/users/duplicates" replace />} />
               
               <Route path="*" element={<NotFound />} />
-            </Routes>
-          </div>
+              </Routes>
+            </div>
+          </HelpModeProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

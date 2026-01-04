@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 interface DuplicateCase {
   id: string;
@@ -237,6 +238,7 @@ export default function AdminDuplicates() {
             {duplicateCount && duplicateCount > 0 && (
               <Badge variant="destructive" className="ml-1">{duplicateCount}</Badge>
             )}
+            <HelpIcon helpKey="duplicates.case" />
           </h1>
           <p className="text-muted-foreground">
             Управление дублирующимися профилями клиентов

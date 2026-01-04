@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Copy, Check, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 interface WebhookUrlDisplayProps {
   instanceId: string;
@@ -46,7 +47,10 @@ export function WebhookUrlDisplay({ instanceId, provider }: WebhookUrlDisplayPro
 
   return (
     <div className="space-y-2">
-      <Label className="text-sm font-medium">Webhook URL</Label>
+      <div className="flex items-center gap-1">
+        <Label className="text-sm font-medium">Webhook URL</Label>
+        <HelpIcon helpKey="integrations.webhook" />
+      </div>
       <div className="flex gap-2">
         <Input
           value={webhookUrl}

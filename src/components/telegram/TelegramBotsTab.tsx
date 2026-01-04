@@ -33,6 +33,7 @@ import {
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { toast } from 'sonner';
+import { HelpLabel } from '@/components/help/HelpComponents';
 
 export function TelegramBotsTab() {
   const { data: bots, isLoading } = useTelegramBots();
@@ -171,7 +172,9 @@ export function TelegramBotsTab() {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="bot_token">Токен бота</Label>
+                  <HelpLabel helpKey="telegram.bot_token" htmlFor="bot_token">
+                    Токен бота
+                  </HelpLabel>
                   <Input
                     id="bot_token"
                     type="password"

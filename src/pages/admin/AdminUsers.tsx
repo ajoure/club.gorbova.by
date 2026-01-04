@@ -73,6 +73,7 @@ import { RoleBadge } from "@/components/admin/RoleBadge";
 import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
 import { InviteUserDialog } from "@/components/admin/InviteUserDialog";
 import { SendNotificationDialog } from "@/components/admin/SendNotificationDialog";
+import { HelpIcon, HelpTooltip } from "@/components/help/HelpComponents";
 
 type StatusFilter = "all" | "active" | "deleted" | "blocked";
 type RoleFilter = "all" | "user" | "admin" | "super_admin" | "staff" | "editor" | "support";
@@ -305,6 +306,7 @@ export default function AdminUsers() {
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9"
             />
+            <HelpIcon helpKey="clients.search" className="absolute right-3 top-1/2 -translate-y-1/2" />
           </div>
         </div>
       </div>
@@ -345,7 +347,10 @@ export default function AdminUsers() {
           <TableHeader>
             <TableRow>
               <TableHead>Пользователь</TableHead>
-              <TableHead>Статус</TableHead>
+              <TableHead className="flex items-center gap-1">
+                Статус
+                <HelpIcon helpKey="clients.status" />
+              </TableHead>
               <TableHead>Роль</TableHead>
               <TableHead>Регистрация</TableHead>
               <TableHead>Последний визит</TableHead>

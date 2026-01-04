@@ -37,6 +37,7 @@ import {
 } from '@/hooks/useTelegramIntegration';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
+import { HelpLabel, HelpIcon } from '@/components/help/HelpComponents';
 
 export function TelegramClubsTab() {
   const { data: clubs, isLoading } = useTelegramClubs();
@@ -170,7 +171,9 @@ export function TelegramClubsTab() {
                 </div>
 
                 <div>
-                  <Label htmlFor="access_mode">Режим доступа</Label>
+                  <HelpLabel helpKey="telegram.access_mode" htmlFor="access_mode">
+                    Режим доступа
+                  </HelpLabel>
                   <Select
                     value={newClub.access_mode}
                     onValueChange={(value) => setNewClub({ ...newClub, access_mode: value })}
