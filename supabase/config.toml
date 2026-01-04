@@ -49,7 +49,7 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.telegram-grant-access]
-verify_jwt = true
+verify_jwt = false
 
 [functions.telegram-revoke-access]
 verify_jwt = false
