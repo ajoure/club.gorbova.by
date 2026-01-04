@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
   UserPlus, 
   CreditCard, 
@@ -18,7 +18,10 @@ import {
   Grid3X3,
   BookOpen,
   Search,
-  X
+  X,
+  ChevronLeft,
+  Home,
+  ChevronRight
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
@@ -26,47 +29,12 @@ import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { LandingHeader } from '@/components/landing/LandingHeader';
+import { useAuth } from '@/contexts/AuthContext';
+import { usePermissions } from '@/hooks/usePermissions';
 
-const quickStartCards = [
-  {
-    icon: UserPlus,
-    title: 'Регистрация и вход',
-    description: 'Создайте аккаунт и войдите в систему',
-    anchor: '#auth'
-  },
-  {
-    icon: CreditCard,
-    title: 'Оплата и подписка',
-    description: 'Оплатите доступ к платным функциям',
-    anchor: '#payments'
-  },
-  {
-    icon: LayoutDashboard,
-    title: 'Личный кабинет',
-    description: 'Ваш профиль и настройки',
-    anchor: '#dashboard'
-  },
-  {
-    icon: FileText,
-    title: 'Документы',
-    description: 'Работа с документами и генераторами',
-    anchor: '#documents'
-  },
-  {
-    icon: Link2,
-    title: 'Интеграции',
-    description: 'Подключение внешних сервисов',
-    anchor: '#integrations'
-  },
-  {
-    icon: ShieldCheck,
-    title: 'Админ-панель',
-    description: 'Управление системой',
-    anchor: '#admin'
-  }
-];
-
-const sections = [
+// User sections - visible to all
+const userSections = [
   {
     id: 'auth',
     title: 'Регистрация и вход',
@@ -194,11 +162,13 @@ const sections = [
   }
 ];
 
+// Admin sections - visible only to admins/employees with permissions
 const adminSections = [
   {
     id: 'admin',
     title: 'Общие сведения',
     icon: ShieldCheck,
+    requiredPermission: null, // Any admin can see this
     content: `
 **Доступ к админ-панели**
 - Требуется роль администратора
@@ -216,6 +186,7 @@ const adminSections = [
     id: 'admin-impersonate',
     title: 'Вход как пользователь',
     icon: Users,
+    requiredPermission: 'users.impersonate',
     content: `
 **Зачем нужно**
 - Диагностика проблем пользователя
@@ -234,6 +205,7 @@ const adminSections = [
     id: 'orders',
     title: 'Управление заказами',
     icon: CreditCard,
+    requiredPermission: 'orders.view',
     content: `
 **Статусы заказов**
 - **pending** — ожидает оплаты
@@ -254,6 +226,7 @@ const adminSections = [
     id: 'duplicates',
     title: 'Дубликаты клиентов',
     icon: Copy,
+    requiredPermission: 'users.view',
     content: `
 **Как появляются**
 - Клиент регистрируется с разных e-mail
@@ -274,6 +247,7 @@ const adminSections = [
     id: 'integrations',
     title: 'Интеграции',
     icon: Link2,
+    requiredPermission: 'integrations.view',
     content: `
 **Доступные интеграции**
 - **amoCRM** — синхронизация клиентов
@@ -292,6 +266,7 @@ const adminSections = [
     id: 'integrations-sync',
     title: 'Синхронизация данных',
     icon: RefreshCw,
+    requiredPermission: 'integrations.view',
     content: `
 **Направления**
 - **Import** — данные приходят из внешней системы
@@ -308,6 +283,7 @@ const adminSections = [
     id: 'integrations-mapping',
     title: 'Соответствие полей',
     icon: Grid3X3,
+    requiredPermission: 'integrations.view',
     content: `
 **Зачем нужно**
 - Связывает поля в CRM с полями в платформе
@@ -327,6 +303,7 @@ const adminSections = [
     id: 'telegram-bots',
     title: 'Telegram-боты',
     icon: Send,
+    requiredPermission: 'telegram.manage',
     content: `
 **Добавление бота**
 1. Создайте бота у @BotFather
@@ -345,6 +322,7 @@ const adminSections = [
     id: 'telegram-clubs',
     title: 'Telegram-клубы',
     icon: Users,
+    requiredPermission: 'telegram.manage',
     content: `
 **Создание клуба**
 1. Добавьте бота в чат/канал как администратора
@@ -364,6 +342,7 @@ const adminSections = [
     id: 'telegram-notifications',
     title: 'Уведомления',
     icon: Mail,
+    requiredPermission: 'telegram.manage',
     content: `
 **Автоматические**
 - Напоминание за 3 дня до окончания подписки
@@ -383,6 +362,7 @@ const adminSections = [
     id: 'roles',
     title: 'Роли и права',
     icon: ShieldCheck,
+    requiredPermission: 'roles.manage',
     content: `
 **Системные роли**
 - **user** — обычный пользователь
@@ -404,6 +384,7 @@ const adminSections = [
     id: 'amocrm',
     title: 'amoCRM',
     icon: Link2,
+    requiredPermission: 'integrations.manage',
     content: `
 **Подключение**
 1. Укажите поддомен (часть до .amocrm.ru)
@@ -423,6 +404,7 @@ const adminSections = [
     id: 'getcourse',
     title: 'GetCourse',
     icon: Link2,
+    requiredPermission: 'integrations.manage',
     content: `
 **Подключение**
 1. Укажите название аккаунта GetCourse
@@ -441,6 +423,7 @@ const adminSections = [
     id: 'bepaid',
     title: 'bePaid',
     icon: Wallet,
+    requiredPermission: 'integrations.manage',
     content: `
 **Настройка**
 - ID магазина и секретный ключ — в настройках bePaid
@@ -458,6 +441,7 @@ const adminSections = [
     id: 'email',
     title: 'Email-рассылки',
     icon: Mail,
+    requiredPermission: 'email.manage',
     content: `
 **Настройка SMTP**
 - Укажите сервер, порт, логин и пароль
@@ -502,13 +486,79 @@ const faq = [
 ];
 
 export default function Help() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { hasAdminAccess, hasPermission, isSuperAdmin, loading: permissionsLoading } = usePermissions();
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Combine all sections for search
+  // Filter admin sections based on permissions
+  const filteredAdminSections = useMemo(() => {
+    if (!hasAdminAccess()) return [];
+    
+    // Super admin sees everything
+    if (isSuperAdmin()) return adminSections;
+    
+    // Filter by specific permissions
+    return adminSections.filter(section => {
+      if (section.requiredPermission === null) return true; // General admin section
+      return hasPermission(section.requiredPermission);
+    });
+  }, [hasAdminAccess, isSuperAdmin, hasPermission]);
+
+  // Build quick start cards dynamically based on role
+  const quickStartCards = useMemo(() => {
+    const userCards = [
+      {
+        icon: UserPlus,
+        title: 'Регистрация и вход',
+        description: 'Создайте аккаунт и войдите в систему',
+        anchor: '#auth'
+      },
+      {
+        icon: CreditCard,
+        title: 'Оплата и подписка',
+        description: 'Оплатите доступ к платным функциям',
+        anchor: '#payments'
+      },
+      {
+        icon: LayoutDashboard,
+        title: 'Личный кабинет',
+        description: 'Ваш профиль и настройки',
+        anchor: '#dashboard'
+      },
+      {
+        icon: FileText,
+        title: 'Документы',
+        description: 'Работа с документами и генераторами',
+        anchor: '#documents'
+      }
+    ];
+
+    if (hasAdminAccess()) {
+      userCards.push(
+        {
+          icon: Link2,
+          title: 'Интеграции',
+          description: 'Подключение внешних сервисов',
+          anchor: '#integrations'
+        },
+        {
+          icon: ShieldCheck,
+          title: 'Админ-панель',
+          description: 'Управление системой',
+          anchor: '#admin'
+        }
+      );
+    }
+
+    return userCards;
+  }, [hasAdminAccess]);
+
+  // Combine sections for search, respecting permissions
   const allSections = useMemo(() => [
-    ...sections.map(s => ({ ...s, category: 'user' })),
-    ...adminSections.map(s => ({ ...s, category: 'admin' })),
-  ], []);
+    ...userSections.map(s => ({ ...s, category: 'user' as const })),
+    ...filteredAdminSections.map(s => ({ ...s, category: 'admin' as const })),
+  ], [filteredAdminSections]);
 
   // Filter sections based on search
   const filteredSections = useMemo(() => {
@@ -535,87 +585,216 @@ export default function Help() {
   const clearSearch = () => setSearchQuery('');
   const isSearching = searchQuery.trim().length > 0;
 
+  const handleBackClick = () => {
+    if (user) {
+      navigate('/dashboard');
+    } else {
+      navigate('/');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
-      {/* Hero */}
-      <div className="border-b bg-muted/30">
-        <div className="container py-12 md:py-16">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 rounded-lg bg-primary/10">
-              <BookOpen className="h-6 w-6 text-primary" />
-            </div>
-            <h1 className="text-3xl md:text-4xl font-bold">Как пользоваться платформой</h1>
-          </div>
-          <p className="text-muted-foreground text-lg max-w-2xl mb-6">
-            Руководство по всем функциям системы. Выберите раздел или найдите ответ в FAQ.
-          </p>
-          
-          {/* Search */}
-          <div className="relative max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Поиск по разделам и FAQ..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 pr-9 bg-background"
-            />
-            {isSearching && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
-                onClick={clearSearch}
+      {/* Header - same as landing page */}
+      <LandingHeader />
+
+      {/* Main content with padding for fixed header */}
+      <div className="pt-20">
+        {/* Hero with Breadcrumbs */}
+        <div className="border-b bg-muted/30">
+          <div className="container py-12 md:py-16">
+            {/* Breadcrumbs */}
+            <nav className="flex items-center gap-2 text-sm text-muted-foreground mb-6">
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={handleBackClick}
+                className="gap-1 -ml-2 h-auto py-1 px-2"
               >
-                <X className="h-4 w-4" />
+                <ChevronLeft className="h-4 w-4" />
+                Назад
               </Button>
-            )}
+              <span className="text-muted-foreground/50">|</span>
+              <Link to="/" className="hover:text-foreground transition-colors flex items-center gap-1">
+                <Home className="h-3.5 w-3.5" />
+                Главная
+              </Link>
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
+              <span className="text-foreground">Помощь</span>
+            </nav>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-primary/10">
+                <BookOpen className="h-6 w-6 text-primary" />
+              </div>
+              <h1 className="text-3xl md:text-4xl font-bold">Как пользоваться платформой</h1>
+            </div>
+            <p className="text-muted-foreground text-lg max-w-2xl mb-6">
+              Руководство по всем функциям системы. Выберите раздел или найдите ответ в FAQ.
+            </p>
+            
+            {/* Search */}
+            <div className="relative max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Поиск по разделам и FAQ..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 pr-9 bg-background"
+              />
+              {isSearching && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                  onClick={clearSearch}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="container py-8 md:py-12">
-        {/* Search Results */}
-        {isSearching ? (
-          <div className="space-y-8">
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary">
-                Найдено разделов: {filteredSections?.length || 0}
-              </Badge>
-              <Badge variant="secondary">
-                Найдено FAQ: {filteredFaq.length}
-              </Badge>
-              <Button variant="ghost" size="sm" onClick={clearSearch}>
-                Сбросить поиск
-              </Button>
+        <div className="container py-8 md:py-12">
+          {/* Search Results */}
+          {isSearching ? (
+            <div className="space-y-8">
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary">
+                  Найдено разделов: {filteredSections?.length || 0}
+                </Badge>
+                <Badge variant="secondary">
+                  Найдено FAQ: {filteredFaq.length}
+                </Badge>
+                <Button variant="ghost" size="sm" onClick={clearSearch}>
+                  Сбросить поиск
+                </Button>
+              </div>
+
+              {filteredSections && filteredSections.length > 0 && (
+                <section>
+                  <h2 className="text-xl font-semibold mb-4">Разделы</h2>
+                  <div className="space-y-4">
+                    {filteredSections.map((section) => (
+                      <Card key={section.id} id={section.id} className="scroll-mt-20">
+                        <CardHeader className="pb-2">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-muted">
+                              <section.icon className="h-5 w-5 text-muted-foreground" />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <CardTitle className="text-lg">{section.title}</CardTitle>
+                              <Badge variant="outline" className="text-xs">
+                                {section.category === 'admin' ? 'Админ' : 'Пользователь'}
+                              </Badge>
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="prose prose-sm dark:prose-invert max-w-none">
+                            {section.content.split('\n').slice(0, 8).map((line, i) => {
+                              if (line.startsWith('**') && line.endsWith('**')) {
+                                return <h4 key={i} className="font-semibold mt-4 mb-2 first:mt-0">{line.replace(/\*\*/g, '')}</h4>;
+                              }
+                              if (line.startsWith('- ')) {
+                                return <li key={i} className="text-muted-foreground ml-4">{line.slice(2)}</li>;
+                              }
+                              if (line.trim()) {
+                                return <p key={i} className="text-muted-foreground">{line}</p>;
+                              }
+                              return null;
+                            })}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {filteredFaq.length > 0 && (
+                <section>
+                  <h2 className="text-xl font-semibold mb-4">Частые вопросы</h2>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <Accordion type="single" collapsible className="w-full">
+                        {filteredFaq.map((item, index) => (
+                          <AccordionItem key={index} value={`faq-search-${index}`}>
+                            <AccordionTrigger className="text-left">
+                              {item.question}
+                            </AccordionTrigger>
+                            <AccordionContent className="text-muted-foreground">
+                              {item.answer}
+                            </AccordionContent>
+                          </AccordionItem>
+                        ))}
+                      </Accordion>
+                    </CardContent>
+                  </Card>
+                </section>
+              )}
+
+              {(!filteredSections || filteredSections.length === 0) && filteredFaq.length === 0 && (
+                <div className="text-center py-12">
+                  <p className="text-muted-foreground">Ничего не найдено по запросу «{searchQuery}»</p>
+                  <Button variant="link" onClick={clearSearch}>Сбросить поиск</Button>
+                </div>
+              )}
             </div>
+          ) : (
+            <>
+              {/* Быстрый старт */}
+              <section className="mb-12">
+                <h2 className="text-xl font-semibold mb-6">Быстрый старт</h2>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {quickStartCards.map((card) => (
+                    <a key={card.anchor} href={card.anchor}>
+                      <Card className="h-full hover:bg-muted/50 transition-colors cursor-pointer group">
+                        <CardHeader className="pb-2">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-primary/10 group-hover:bg-primary/20 transition-colors">
+                              <card.icon className="h-5 w-5 text-primary" />
+                            </div>
+                            <CardTitle className="text-base">{card.title}</CardTitle>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          <CardDescription>{card.description}</CardDescription>
+                        </CardContent>
+                      </Card>
+                    </a>
+                  ))}
+                </div>
+              </section>
 
-            {filteredSections && filteredSections.length > 0 && (
-              <section>
-                <h2 className="text-xl font-semibold mb-4">Разделы</h2>
+              <Separator className="my-8" />
+
+              {/* Пользовательские разделы */}
+              <section className="mb-12">
+                <h2 className="text-xl font-semibold mb-6">Для пользователей</h2>
                 <div className="space-y-4">
-                  {filteredSections.map((section) => (
+                  {userSections.map((section) => (
                     <Card key={section.id} id={section.id} className="scroll-mt-20">
                       <CardHeader className="pb-2">
                         <div className="flex items-center gap-3">
                           <div className="p-2 rounded-lg bg-muted">
                             <section.icon className="h-5 w-5 text-muted-foreground" />
                           </div>
-                          <div className="flex items-center gap-2">
-                            <CardTitle className="text-lg">{section.title}</CardTitle>
-                            <Badge variant="outline" className="text-xs">
-                              {section.category === 'admin' ? 'Админ' : 'Пользователь'}
-                            </Badge>
-                          </div>
+                          <CardTitle className="text-lg">{section.title}</CardTitle>
                         </div>
                       </CardHeader>
                       <CardContent>
                         <div className="prose prose-sm dark:prose-invert max-w-none">
-                          {section.content.split('\n').slice(0, 8).map((line, i) => {
+                          {section.content.split('\n').map((line, i) => {
                             if (line.startsWith('**') && line.endsWith('**')) {
                               return <h4 key={i} className="font-semibold mt-4 mb-2 first:mt-0">{line.replace(/\*\*/g, '')}</h4>;
                             }
                             if (line.startsWith('- ')) {
                               return <li key={i} className="text-muted-foreground ml-4">{line.slice(2)}</li>;
+                            }
+                            if (line.match(/^\d+\./)) {
+                              return <li key={i} className="text-muted-foreground ml-4 list-decimal">{line.slice(3)}</li>;
                             }
                             if (line.trim()) {
                               return <p key={i} className="text-muted-foreground">{line}</p>;
@@ -628,16 +807,64 @@ export default function Help() {
                   ))}
                 </div>
               </section>
-            )}
 
-            {filteredFaq.length > 0 && (
-              <section>
-                <h2 className="text-xl font-semibold mb-4">Частые вопросы</h2>
+              {/* Админ-разделы - only for admins */}
+              {filteredAdminSections.length > 0 && (
+                <>
+                  <Separator className="my-8" />
+
+                  <section className="mb-12">
+                    <h2 className="text-xl font-semibold mb-6">Для администраторов</h2>
+                    <div className="space-y-4">
+                      {filteredAdminSections.map((section) => (
+                        <Card key={section.id} id={section.id} className="scroll-mt-20">
+                          <CardHeader className="pb-2">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2 rounded-lg bg-muted">
+                                <section.icon className="h-5 w-5 text-muted-foreground" />
+                              </div>
+                              <CardTitle className="text-lg">{section.title}</CardTitle>
+                            </div>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="prose prose-sm dark:prose-invert max-w-none">
+                              {section.content.split('\n').map((line, i) => {
+                                if (line.startsWith('**') && line.endsWith('**')) {
+                                  return <h4 key={i} className="font-semibold mt-4 mb-2 first:mt-0">{line.replace(/\*\*/g, '')}</h4>;
+                                }
+                                if (line.startsWith('- ')) {
+                                  return <li key={i} className="text-muted-foreground ml-4">{line.slice(2)}</li>;
+                                }
+                                if (line.match(/^\d+\./)) {
+                                  return <li key={i} className="text-muted-foreground ml-4 list-decimal">{line.slice(3)}</li>;
+                                }
+                                if (line.trim()) {
+                                  return <p key={i} className="text-muted-foreground">{line}</p>;
+                                }
+                                return null;
+                              })}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </section>
+                </>
+              )}
+
+              <Separator className="my-8" />
+
+              {/* FAQ */}
+              <section className="mb-12" id="faq">
+                <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
+                  <HelpCircle className="h-5 w-5" />
+                  Частые вопросы
+                </h2>
                 <Card>
                   <CardContent className="pt-6">
                     <Accordion type="single" collapsible className="w-full">
-                      {filteredFaq.map((item, index) => (
-                        <AccordionItem key={index} value={`faq-search-${index}`}>
+                      {faq.map((item, index) => (
+                        <AccordionItem key={index} value={`faq-${index}`}>
                           <AccordionTrigger className="text-left">
                             {item.question}
                           </AccordionTrigger>
@@ -650,169 +877,30 @@ export default function Help() {
                   </CardContent>
                 </Card>
               </section>
-            )}
 
-            {(!filteredSections || filteredSections.length === 0) && filteredFaq.length === 0 && (
-              <div className="text-center py-12">
-                <p className="text-muted-foreground">Ничего не найдено по запросу «{searchQuery}»</p>
-                <Button variant="link" onClick={clearSearch}>Сбросить поиск</Button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <>
-        {/* Быстрый старт */}
-        <section className="mb-12">
-          <h2 className="text-xl font-semibold mb-6">Быстрый старт</h2>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {quickStartCards.map((card) => (
-              <a key={card.anchor} href={card.anchor}>
-                <Card className="h-full hover:bg-muted/50 transition-colors cursor-pointer group">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-primary/10 group-hover:bg-primary/20 transition-colors">
-                        <card.icon className="h-5 w-5 text-primary" />
-                      </div>
-                      <CardTitle className="text-base">{card.title}</CardTitle>
-                    </div>
+              {/* Контакты */}
+              <section id="contacts">
+                <Card className="bg-muted/30">
+                  <CardHeader>
+                    <CardTitle>Нужна помощь?</CardTitle>
+                    <CardDescription>
+                      Если не нашли ответ на свой вопрос — свяжитесь с поддержкой
+                    </CardDescription>
                   </CardHeader>
-                  <CardContent>
-                    <CardDescription>{card.description}</CardDescription>
+                  <CardContent className="flex flex-wrap gap-4">
+                    <Link 
+                      to="/contacts" 
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+                    >
+                      <Mail className="h-4 w-4" />
+                      Написать в поддержку
+                    </Link>
                   </CardContent>
                 </Card>
-              </a>
-            ))}
-          </div>
-        </section>
-
-        <Separator className="my-8" />
-
-        {/* Пользовательские разделы */}
-        <section className="mb-12">
-          <h2 className="text-xl font-semibold mb-6">Для пользователей</h2>
-          <div className="space-y-4">
-            {sections.map((section) => (
-              <Card key={section.id} id={section.id} className="scroll-mt-20">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-muted">
-                      <section.icon className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <CardTitle className="text-lg">{section.title}</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
-                    {section.content.split('\n').map((line, i) => {
-                      if (line.startsWith('**') && line.endsWith('**')) {
-                        return <h4 key={i} className="font-semibold mt-4 mb-2 first:mt-0">{line.replace(/\*\*/g, '')}</h4>;
-                      }
-                      if (line.startsWith('- ')) {
-                        return <li key={i} className="text-muted-foreground ml-4">{line.slice(2)}</li>;
-                      }
-                      if (line.match(/^\d+\./)) {
-                        return <li key={i} className="text-muted-foreground ml-4 list-decimal">{line.slice(3)}</li>;
-                      }
-                      if (line.trim()) {
-                        return <p key={i} className="text-muted-foreground">{line}</p>;
-                      }
-                      return null;
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-
-        <Separator className="my-8" />
-
-        {/* Админ-разделы */}
-        <section className="mb-12">
-          <h2 className="text-xl font-semibold mb-6">Для администраторов</h2>
-          <div className="space-y-4">
-            {adminSections.map((section) => (
-              <Card key={section.id} id={section.id} className="scroll-mt-20">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-muted">
-                      <section.icon className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <CardTitle className="text-lg">{section.title}</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
-                    {section.content.split('\n').map((line, i) => {
-                      if (line.startsWith('**') && line.endsWith('**')) {
-                        return <h4 key={i} className="font-semibold mt-4 mb-2 first:mt-0">{line.replace(/\*\*/g, '')}</h4>;
-                      }
-                      if (line.startsWith('- ')) {
-                        return <li key={i} className="text-muted-foreground ml-4">{line.slice(2)}</li>;
-                      }
-                      if (line.match(/^\d+\./)) {
-                        return <li key={i} className="text-muted-foreground ml-4 list-decimal">{line.slice(3)}</li>;
-                      }
-                      if (line.trim()) {
-                        return <p key={i} className="text-muted-foreground">{line}</p>;
-                      }
-                      return null;
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-
-        <Separator className="my-8" />
-
-        {/* FAQ */}
-        <section className="mb-12" id="faq">
-          <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-            <HelpCircle className="h-5 w-5" />
-            Частые вопросы
-          </h2>
-          <Card>
-            <CardContent className="pt-6">
-              <Accordion type="single" collapsible className="w-full">
-                {faq.map((item, index) => (
-                  <AccordionItem key={index} value={`faq-${index}`}>
-                    <AccordionTrigger className="text-left">
-                      {item.question}
-                    </AccordionTrigger>
-                    <AccordionContent className="text-muted-foreground">
-                      {item.answer}
-                    </AccordionContent>
-                  </AccordionItem>
-                ))}
-              </Accordion>
-            </CardContent>
-          </Card>
-        </section>
-
-        {/* Контакты */}
-        <section id="contacts">
-          <Card className="bg-muted/30">
-            <CardHeader>
-              <CardTitle>Нужна помощь?</CardTitle>
-              <CardDescription>
-                Если не нашли ответ на свой вопрос — свяжитесь с поддержкой
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-wrap gap-4">
-              <Link 
-                to="/contacts" 
-                className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-              >
-                <Mail className="h-4 w-4" />
-                Написать в поддержку
-              </Link>
-            </CardContent>
-          </Card>
-        </section>
-          </>
-        )}
+              </section>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
