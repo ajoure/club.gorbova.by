@@ -161,22 +161,37 @@ Deno.serve(async (req) => {
     let chatRevoked = false;
     let channelRevoked = false;
 
+    console.log('Club info:', { 
+      club_id: club.id, 
+      chat_id: club.chat_id, 
+      channel_id: club.channel_id,
+      telegramUserId 
+    });
+
     // Kick from chat
     if (club.chat_id) {
+      console.log(`Kicking from chat ${club.chat_id}...`);
       const kickResult = await kickUser(botToken, club.chat_id, telegramUserId);
       chatRevoked = kickResult.success;
+      console.log(`Chat kick result:`, kickResult);
       if (!kickResult.success) {
         console.error(`Failed to kick from chat ${club.chat_id}:`, kickResult.error);
       }
+    } else {
+      console.log('No chat_id configured for club');
     }
 
     // Kick from channel
     if (club.channel_id) {
+      console.log(`Kicking from channel ${club.channel_id}...`);
       const kickResult = await kickUser(botToken, club.channel_id, telegramUserId);
       channelRevoked = kickResult.success;
+      console.log(`Channel kick result:`, kickResult);
       if (!kickResult.success) {
         console.error(`Failed to kick from channel ${club.channel_id}:`, kickResult.error);
       }
+    } else {
+      console.log('No channel_id configured for club');
     }
 
     // Update telegram_access record if exists

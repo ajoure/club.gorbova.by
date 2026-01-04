@@ -5,6 +5,44 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Telegram API helper
+async function telegramRequest(botToken: string, method: string, params: Record<string, unknown>) {
+  const url = `https://api.telegram.org/bot${botToken}/${method}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return response.json();
+}
+
+async function kickUser(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string }> {
+  console.log(`Kicking violator ${userId} from chat ${chatId}`);
+  
+  const result = await telegramRequest(botToken, 'banChatMember', {
+    chat_id: chatId,
+    user_id: userId,
+  });
+  
+  if (!result.ok) {
+    if (result.description?.includes('user is not a member') || 
+        result.description?.includes('PARTICIPANT_NOT_EXISTS') ||
+        result.description?.includes('USER_NOT_PARTICIPANT')) {
+      return { success: true };
+    }
+    return { success: false, error: result.description };
+  }
+  
+  // Immediately unban so they can rejoin later if they pay
+  await telegramRequest(botToken, 'unbanChatMember', {
+    chat_id: chatId,
+    user_id: userId,
+    only_if_banned: true,
+  });
+  
+  return { success: true };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -15,7 +53,7 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log('Starting expired access check...');
+    console.log('Starting expired access and violator check...');
 
     const now = new Date().toISOString();
 
@@ -46,6 +84,7 @@ Deno.serve(async (req) => {
       revoked: 0,
       skipped: 0,
       errors: 0,
+      violators_kicked: 0,
     };
 
     for (const access of expiredAccess || []) {
@@ -130,49 +169,85 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 2. Check club members without linked profiles (violators)
+    // 2. Kick violators from all active clubs
+    // Violators = people in chat/channel who don't have access_status = 'ok'
     const { data: clubs } = await supabase
       .from('telegram_clubs')
-      .select('id, club_name')
+      .select('*, telegram_bots(*)')
       .eq('is_active', true);
 
-    let violatorsKicked = 0;
-
     for (const club of clubs || []) {
+      const bot = club.telegram_bots;
+      if (!bot || bot.status !== 'active') continue;
+
+      // Find violators - people in chat/channel without valid access
       const { data: violators } = await supabase
         .from('telegram_club_members')
-        .select('id, telegram_user_id')
+        .select('id, telegram_user_id, in_chat, in_channel, access_status, profile_id')
         .eq('club_id', club.id)
-        .is('profile_id', null)
-        .eq('access_status', 'violator');
+        .neq('access_status', 'ok')
+        .neq('access_status', 'removed')
+        .or('in_chat.eq.true,in_channel.eq.true');
 
-      if (violators && violators.length > 0) {
-        console.log(`Club ${club.club_name}: ${violators.length} violators found`);
-        
-        try {
-          const kickResult = await supabase.functions.invoke('telegram-club-members', {
-            body: {
-              action: 'kick',
-              club_id: club.id,
-              member_ids: violators.map(v => v.id),
+      if (!violators || violators.length === 0) continue;
+
+      console.log(`Club ${club.club_name}: ${violators.length} violators found`);
+      
+      const botToken = bot.bot_token_encrypted;
+
+      for (const violator of violators) {
+        let chatKicked = false;
+        let channelKicked = false;
+
+        // Kick from chat if present
+        if (club.chat_id && violator.in_chat) {
+          const kickResult = await kickUser(botToken, club.chat_id, violator.telegram_user_id);
+          chatKicked = kickResult.success;
+        }
+
+        // Kick from channel if present
+        if (club.channel_id && violator.in_channel) {
+          const kickResult = await kickUser(botToken, club.channel_id, violator.telegram_user_id);
+          channelKicked = kickResult.success;
+        }
+
+        if (chatKicked || channelKicked) {
+          results.violators_kicked++;
+
+          // Update member status
+          await supabase
+            .from('telegram_club_members')
+            .update({
+              in_chat: chatKicked ? false : violator.in_chat,
+              in_channel: channelKicked ? false : violator.in_channel,
+              access_status: 'removed',
+              updated_at: now,
+            })
+            .eq('id', violator.id);
+
+          // Log the action
+          await supabase.from('telegram_logs').insert({
+            user_id: violator.profile_id ? 
+              (await supabase.from('profiles').select('user_id').eq('id', violator.profile_id).single()).data?.user_id 
+              : null,
+            club_id: club.id,
+            action: 'AUTO_KICK_VIOLATOR',
+            status: 'ok',
+            meta: {
+              telegram_user_id: violator.telegram_user_id,
+              chat_kicked: chatKicked,
+              channel_kicked: channelKicked,
             },
           });
-
-          if (!kickResult.error) {
-            violatorsKicked += kickResult.data?.kicked_count || 0;
-          }
-        } catch (err) {
-          console.error(`Error kicking violators from club ${club.id}:`, err);
         }
       }
     }
 
-    console.log('Expired access check completed:', results, 'Violators kicked:', violatorsKicked);
+    console.log('Expired access and violator check completed:', results);
 
     return new Response(JSON.stringify({ 
       success: true,
       ...results,
-      violators_kicked: violatorsKicked,
       checked_at: now,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

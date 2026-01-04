@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/AdminLayout';
+import { ClubStatistics } from '@/components/telegram/ClubStatistics';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -68,6 +70,8 @@ import {
   Ban,
   MinusCircle,
   Calendar,
+  BarChart3,
+  ChevronDown,
 } from 'lucide-react';
 import { 
   useTelegramClubs, 
@@ -85,7 +89,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
-type FilterTab = 'all' | 'clients' | 'with_access' | 'violators';
+type FilterTab = 'all' | 'clients' | 'with_access' | 'violators' | 'removed';
 
 export default function TelegramClubMembers() {
   const { clubId } = useParams<{ clubId: string }>();
@@ -115,10 +119,11 @@ export default function TelegramClubMembers() {
   const [massGrantComment, setMassGrantComment] = useState('');
   const [massRevokeReason, setMassRevokeReason] = useState('');
   const [massActionLoading, setMassActionLoading] = useState(false);
+  const [showStats, setShowStats] = useState(false);
 
   // Calculate counts for tabs
   const counts = useMemo(() => {
-    if (!members) return { all: 0, clients: 0, with_access: 0, violators: 0 };
+    if (!members) return { all: 0, clients: 0, with_access: 0, violators: 0, removed: 0 };
     
     return {
       all: members.length,
@@ -126,9 +131,11 @@ export default function TelegramClubMembers() {
       with_access: members.filter(m => m.access_status === 'ok').length,
       // "Нарушители" = users in chat/channel but without legal access
       violators: members.filter(m => 
-        (m.access_status !== 'ok') && 
+        (m.access_status !== 'ok' && m.access_status !== 'removed') && 
         (m.in_chat || m.in_channel)
       ).length,
+      // "Удалённые" = users who were removed
+      removed: members.filter(m => m.access_status === 'removed').length,
     };
   }, [members]);
 
@@ -159,8 +166,10 @@ export default function TelegramClubMembers() {
         case 'with_access':
           return member.access_status === 'ok';
         case 'violators':
-          // "Нарушители" = users in chat/channel but without legal access
-          return (member.access_status !== 'ok') && (member.in_chat || member.in_channel);
+          // "Нарушители" = users in chat/channel but without legal access (excluding already removed)
+          return (member.access_status !== 'ok' && member.access_status !== 'removed') && (member.in_chat || member.in_channel);
+        case 'removed':
+          return member.access_status === 'removed';
         default:
           return true;
       }
@@ -379,7 +388,23 @@ export default function TelegramClubMembers() {
           </div>
         </div>
 
-        {/* Stats */}
+        {/* Statistics Toggle */}
+        <Collapsible open={showStats} onOpenChange={setShowStats}>
+          <CollapsibleTrigger asChild>
+            <Button variant="outline" className="w-full justify-between">
+              <span className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Статистика клуба
+              </span>
+              <ChevronDown className={`h-4 w-4 transition-transform ${showStats ? 'rotate-180' : ''}`} />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-4">
+            <ClubStatistics clubId={clubId!} />
+          </CollapsibleContent>
+        </Collapsible>
+
+        {/* Quick Stats */}
         <div className="grid gap-4 md:grid-cols-4">
           <Card>
             <CardHeader className="pb-2">
@@ -431,7 +456,7 @@ export default function TelegramClubMembers() {
 
         {/* Tab Filters */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)} className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="all" className="gap-1.5">
               <Users className="h-4 w-4" />
               Все
@@ -451,6 +476,11 @@ export default function TelegramClubMembers() {
               <AlertTriangle className="h-4 w-4" />
               Нарушители
               <Badge variant="destructive" className="ml-1 h-5 px-1.5">{counts.violators}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="removed" className="gap-1.5">
+              <MinusCircle className="h-4 w-4" />
+              Удалённые
+              <Badge variant="outline" className="ml-1 h-5 px-1.5">{counts.removed}</Badge>
             </TabsTrigger>
           </TabsList>
         </Tabs>
