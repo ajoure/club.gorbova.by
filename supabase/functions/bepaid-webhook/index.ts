@@ -201,7 +201,7 @@ Deno.serve(async (req) => {
     // Verify webhook signature if secret is configured
     if (bepaidSecretKey) {
       const signature = req.headers.get('X-Webhook-Signature') || 
-                       req.headers.get('Authorization')?.replace('Bearer ', '');
+                       req.headers.get('Authorization')?.replace('Bearer ', '') || null;
       
       const isValid = await verifyWebhookSignature(bodyText, signature, bepaidSecretKey);
       
