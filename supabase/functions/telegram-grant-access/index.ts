@@ -16,7 +16,6 @@ interface GrantAccessRequest {
   source_id?: string;
 }
 
-// Telegram API helpers
 async function telegramRequest(botToken: string, method: string, params: Record<string, unknown>) {
   const url = `https://api.telegram.org/bot${botToken}/${method}`;
   console.log(`Telegram API: ${method}`, params);
@@ -25,31 +24,40 @@ async function telegramRequest(botToken: string, method: string, params: Record<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
-  const result = await response.json();
-  console.log(`Telegram API response:`, result);
-  return result;
+  return response.json();
 }
 
 async function unbanUser(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string }> {
-  // Unban in case user was kicked before - this allows them to join via invite link
   const result = await telegramRequest(botToken, 'unbanChatMember', {
     chat_id: chatId,
     user_id: userId,
     only_if_banned: true,
   });
-  
-  // This may fail if user was never banned, which is fine
   return { success: true };
 }
 
-async function createInviteLink(botToken: string, chatId: number, name?: string): Promise<{ link?: string; error?: string }> {
-  const result = await telegramRequest(botToken, 'createChatInviteLink', {
+// Create invite link with join request mode if enabled
+async function createInviteLink(
+  botToken: string, 
+  chatId: number, 
+  name: string,
+  joinRequestMode: boolean
+): Promise<{ link?: string; error?: string }> {
+  const params: Record<string, unknown> = {
     chat_id: chatId,
     member_limit: 1,
     expire_date: Math.floor(Date.now() / 1000) + 86400, // 24 hours
     name: name || 'Auto-generated invite',
-  });
-  
+  };
+
+  // CRITICAL: If join_request_mode is enabled, create links that require approval
+  if (joinRequestMode) {
+    params.creates_join_request = true;
+    delete params.member_limit; // Can't use member_limit with creates_join_request
+  }
+
+  const result = await telegramRequest(botToken, 'createChatInviteLink', params);
+
   if (result.ok) {
     return { link: result.result.invite_link };
   }
@@ -58,19 +66,18 @@ async function createInviteLink(botToken: string, chatId: number, name?: string)
 }
 
 async function sendMessage(botToken: string, chatId: number, text: string, replyMarkup?: object) {
-  const body: Record<string, unknown> = {
-    chat_id: chatId,
-    text,
-    parse_mode: 'HTML',
-  };
-  if (replyMarkup) {
-    body.reply_markup = replyMarkup;
-  }
+  const body: Record<string, unknown> = { chat_id: chatId, text, parse_mode: 'HTML' };
+  if (replyMarkup) body.reply_markup = replyMarkup;
   return telegramRequest(botToken, 'sendMessage', body);
 }
 
 function getSiteUrl(): string {
   return Deno.env.get('SITE_URL') || 'https://fsby.lovable.app';
+}
+
+// Log audit
+async function logAudit(supabase: any, event: any) {
+  await supabase.from('telegram_access_audit').insert(event);
 }
 
 Deno.serve(async (req) => {
@@ -90,12 +97,11 @@ Deno.serve(async (req) => {
 
     if (!user_id) {
       return new Response(JSON.stringify({ error: 'user_id required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Get user profile with Telegram info
+    // Get user profile
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('*')
@@ -104,41 +110,27 @@ Deno.serve(async (req) => {
 
     if (profileError || !profile) {
       return new Response(JSON.stringify({ error: 'Profile not found' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     if (!profile.telegram_user_id) {
       await supabase.from('telegram_logs').insert({
-        user_id,
-        action: 'GRANT_FAILED',
-        status: 'error',
-        error_message: 'Telegram not linked',
+        user_id, action: 'GRANT_FAILED', status: 'error', error_message: 'Telegram not linked',
       });
-      
       return new Response(JSON.stringify({ error: 'Telegram not linked', code: 'TG_NOT_LINKED' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Get clubs to grant access to
-    let clubsQuery = supabase
-      .from('telegram_clubs')
-      .select('*, telegram_bots(*)')
-      .eq('is_active', true);
-
-    if (club_id) {
-      clubsQuery = clubsQuery.eq('id', club_id);
-    }
-
+    // Get clubs
+    let clubsQuery = supabase.from('telegram_clubs').select('*, telegram_bots(*)').eq('is_active', true);
+    if (club_id) clubsQuery = clubsQuery.eq('id', club_id);
     const { data: clubs, error: clubsError } = await clubsQuery;
 
-    if (clubsError || !clubs || clubs.length === 0) {
+    if (clubsError || !clubs?.length) {
       return new Response(JSON.stringify({ error: 'No active clubs found' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -153,171 +145,157 @@ Deno.serve(async (req) => {
       }
 
       const botToken = bot.bot_token_encrypted;
-      
+      const joinRequestMode = club.join_request_mode ?? false;
+
       let chatInviteLink: string | null = null;
       let channelInviteLink: string | null = null;
       let chatUnbanned = false;
       let channelUnbanned = false;
 
-      // Process chat access
+      // Process chat
       if (club.chat_id) {
-        // First unban the user (in case they were kicked before)
-        const unbanResult = await unbanUser(botToken, club.chat_id, telegramUserId);
-        chatUnbanned = unbanResult.success;
-        
-        // Create invite link (always - user needs to join manually via Telegram)
-        const inviteResult = await createInviteLink(botToken, club.chat_id, `Chat access for ${profile.email || user_id}`);
-        if (inviteResult.link) {
-          chatInviteLink = inviteResult.link;
-        } else {
-          // Use existing invite link from club settings as fallback
-          chatInviteLink = club.chat_invite_link || null;
-        }
+        await unbanUser(botToken, club.chat_id, telegramUserId);
+        chatUnbanned = true;
+
+        const inviteResult = await createInviteLink(
+          botToken, 
+          club.chat_id, 
+          `Chat access for ${profile.email || user_id}`,
+          joinRequestMode
+        );
+        chatInviteLink = inviteResult.link || club.chat_invite_link || null;
       }
 
-      // Process channel access
+      // Process channel
       if (club.channel_id) {
-        // First unban the user
-        const unbanResult = await unbanUser(botToken, club.channel_id, telegramUserId);
-        channelUnbanned = unbanResult.success;
-        
-        // Create invite link
-        const inviteResult = await createInviteLink(botToken, club.channel_id, `Channel access for ${profile.email || user_id}`);
-        if (inviteResult.link) {
-          channelInviteLink = inviteResult.link;
-        } else {
-          // Use existing invite link from club settings as fallback
-          channelInviteLink = club.channel_invite_link || null;
-        }
+        await unbanUser(botToken, club.channel_id, telegramUserId);
+        channelUnbanned = true;
+
+        const inviteResult = await createInviteLink(
+          botToken, 
+          club.channel_id, 
+          `Channel access for ${profile.email || user_id}`,
+          joinRequestMode
+        );
+        channelInviteLink = inviteResult.link || club.channel_invite_link || null;
       }
 
       // Calculate active_until
-      let activeUntil: string | null = null;
-      if (valid_until) {
-        activeUntil = valid_until;
-      } else if (!is_manual) {
-        // Get from subscription
+      let activeUntil: string | null = valid_until || null;
+      if (!activeUntil && !is_manual) {
         const { data: subscription } = await supabase
           .from('subscriptions')
           .select('expires_at')
           .eq('user_id', user_id)
           .eq('is_active', true)
           .single();
-        
         activeUntil = subscription?.expires_at || null;
       }
 
-      // Update or create telegram_access record
-      const { error: accessError } = await supabase
-        .from('telegram_access')
-        .upsert({
-          user_id,
-          club_id: club.id,
-          state_chat: 'pending', // Will become 'active' when user joins
-          state_channel: 'pending',
-          active_until: activeUntil,
-          last_sync_at: new Date().toISOString(),
-        }, {
-          onConflict: 'user_id,club_id',
-        });
+      // Update telegram_access
+      await supabase.from('telegram_access').upsert({
+        user_id,
+        club_id: club.id,
+        state_chat: 'pending',
+        state_channel: 'pending',
+        active_until: activeUntil,
+        last_sync_at: new Date().toISOString(),
+      }, { onConflict: 'user_id,club_id' });
 
-      if (accessError) {
-        console.error('Failed to update telegram_access:', accessError);
-      }
+      // Create access grant record
+      await supabase.from('telegram_access_grants').insert({
+        user_id,
+        club_id: club.id,
+        source: source || (is_manual ? 'manual' : 'system'),
+        source_id: source_id || null,
+        granted_by: admin_id || null,
+        start_at: new Date().toISOString(),
+        end_at: activeUntil,
+        status: 'active',
+        meta: { comment, chat_invite_sent: !!chatInviteLink, channel_invite_sent: !!channelInviteLink },
+      });
 
-      // Create telegram_access_grants record for history
-      await supabase
-        .from('telegram_access_grants')
-        .insert({
-          user_id,
-          club_id: club.id,
-          source: source || (is_manual ? 'manual' : 'system'),
-          source_id: source_id || null,
-          granted_by: admin_id || null,
-          start_at: new Date().toISOString(),
-          end_at: activeUntil,
-          status: 'active',
-          meta: {
-            comment: comment || null,
-            chat_invite_sent: !!chatInviteLink,
-            channel_invite_sent: !!channelInviteLink,
-          },
-        });
-
-      // If manual access, create/update manual access record
+      // Create manual access record if needed
       if (is_manual && admin_id) {
-        await supabase
-          .from('telegram_manual_access')
-          .upsert({
-            user_id,
-            club_id: club.id,
-            is_active: true,
-            valid_until: valid_until || null,
-            comment: comment || null,
-            created_by_admin_id: admin_id,
-          }, {
-            onConflict: 'user_id,club_id',
-          });
+        await supabase.from('telegram_manual_access').upsert({
+          user_id,
+          club_id: club.id,
+          is_active: true,
+          valid_until: valid_until || null,
+          comment: comment || null,
+          created_by_admin_id: admin_id,
+        }, { onConflict: 'user_id,club_id' });
       }
 
-      // Update telegram_club_members
-      await supabase
-        .from('telegram_club_members')
-        .update({
-          access_status: 'ok',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('telegram_user_id', telegramUserId)
-        .eq('club_id', club.id);
+      // Update member record
+      await supabase.from('telegram_club_members').update({
+        access_status: 'ok',
+        updated_at: new Date().toISOString(),
+      }).eq('telegram_user_id', telegramUserId).eq('club_id', club.id);
 
-      // Send invite links to user via bot
+      // Send invite links via bot
+      let dmSent = false;
+      let dmError: string | undefined;
+
       if (chatInviteLink || channelInviteLink) {
-        const keyboard: { inline_keyboard: Array<Array<{ text: string; url: string }>> } = {
-          inline_keyboard: [],
-        };
-        
-        if (chatInviteLink) {
-          keyboard.inline_keyboard.push([{ text: '💬 Войти в чат клуба', url: chatInviteLink }]);
-        }
-        if (channelInviteLink) {
-          keyboard.inline_keyboard.push([{ text: '📣 Войти в канал клуба', url: channelInviteLink }]);
-        }
+        const keyboard: { inline_keyboard: Array<Array<{ text: string; url: string }>> } = { inline_keyboard: [] };
+        if (chatInviteLink) keyboard.inline_keyboard.push([{ text: '💬 Войти в чат клуба', url: chatInviteLink }]);
+        if (channelInviteLink) keyboard.inline_keyboard.push([{ text: '📣 Войти в канал клуба', url: channelInviteLink }]);
 
-        const validUntilText = activeUntil 
+        const validUntilText = activeUntil
           ? `\n📅 Доступ активен до: ${new Date(activeUntil).toLocaleDateString('ru-RU')}`
           : '';
 
-        await sendMessage(
-          botToken, 
+        const joinRequestNote = joinRequestMode
+          ? '\n\n⏳ <i>После перехода по ссылке твоя заявка будет автоматически одобрена.</i>'
+          : '\n\n⚠️ <i>Ссылки одноразовые — переходи сейчас!</i>';
+
+        const result = await sendMessage(
+          botToken,
           telegramUserId,
-          `✅ <b>Доступ открыт!</b>\n\nЯ подготовил для тебя ссылки для входа в клуб.${validUntilText}\n\n⚠️ <i>Ссылки одноразовые — переходи сейчас!</i>`,
+          `✅ <b>Доступ открыт!</b>\n\nЯ подготовил для тебя ссылки для входа в клуб.${validUntilText}${joinRequestNote}`,
           keyboard
         );
 
-        console.log('Invite links sent to user:', telegramUserId);
+        dmSent = result.ok;
+        if (!result.ok) dmError = result.description;
+
+        // Update can_dm status
+        const canDm = !result.description?.includes('bot was blocked') && !result.description?.includes("can't initiate");
+        await supabase.from('telegram_club_members').update({
+          can_dm: canDm,
+        }).eq('telegram_user_id', telegramUserId).eq('club_id', club.id);
       }
 
-      // Log the action
+      // Log audit
+      await logAudit(supabase, {
+        club_id: club.id,
+        user_id,
+        telegram_user_id: telegramUserId,
+        event_type: 'GRANT',
+        actor_type: is_manual ? 'admin' : 'system',
+        actor_id: admin_id,
+        reason: comment,
+        telegram_chat_result: { unbanned: chatUnbanned, invite_link: chatInviteLink },
+        telegram_channel_result: { unbanned: channelUnbanned, invite_link: channelInviteLink },
+        meta: { dm_sent: dmSent, dm_error: dmError, valid_until: activeUntil, join_request_mode: joinRequestMode },
+      });
+
+      // Legacy log
       await supabase.from('telegram_logs').insert({
         user_id,
         club_id: club.id,
         action: is_manual ? 'MANUAL_GRANT' : 'AUTO_GRANT',
         target: 'both',
         status: (chatInviteLink || channelInviteLink) ? 'ok' : 'partial',
-        meta: {
-          chat_unbanned: chatUnbanned,
-          channel_unbanned: channelUnbanned,
-          chat_invite_link: chatInviteLink,
-          channel_invite_link: channelInviteLink,
-          valid_until: activeUntil,
-          comment: comment,
-        },
+        meta: { chat_invite_link: chatInviteLink, channel_invite_link: channelInviteLink, valid_until: activeUntil },
       });
 
       results.push({
         club_id: club.id,
         chat_invite_link: chatInviteLink,
         channel_invite_link: channelInviteLink,
+        dm_sent: dmSent,
       });
     }
 
@@ -328,8 +306,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('Grant access error:', error);
     return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });

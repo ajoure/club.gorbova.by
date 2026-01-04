@@ -1241,6 +1241,59 @@ export type Database = {
           },
         ]
       }
+      telegram_access_audit: {
+        Row: {
+          actor_id: string | null
+          actor_type: string
+          club_id: string | null
+          created_at: string
+          event_type: string
+          id: string
+          meta: Json | null
+          reason: string | null
+          telegram_channel_result: Json | null
+          telegram_chat_result: Json | null
+          telegram_user_id: number | null
+          user_id: string | null
+        }
+        Insert: {
+          actor_id?: string | null
+          actor_type?: string
+          club_id?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          meta?: Json | null
+          reason?: string | null
+          telegram_channel_result?: Json | null
+          telegram_chat_result?: Json | null
+          telegram_user_id?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          actor_id?: string | null
+          actor_type?: string
+          club_id?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          meta?: Json | null
+          reason?: string | null
+          telegram_channel_result?: Json | null
+          telegram_chat_result?: Json | null
+          telegram_user_id?: number | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_access_audit_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_access_grants: {
         Row: {
           club_id: string
@@ -1345,6 +1398,7 @@ export type Database = {
       telegram_club_members: {
         Row: {
           access_status: string
+          can_dm: boolean | null
           club_id: string
           created_at: string
           id: string
@@ -1353,6 +1407,8 @@ export type Database = {
           joined_channel_at: string | null
           joined_chat_at: string | null
           last_synced_at: string | null
+          last_telegram_check_at: string | null
+          last_telegram_check_result: Json | null
           link_status: string
           profile_id: string | null
           telegram_first_name: string | null
@@ -1363,6 +1419,7 @@ export type Database = {
         }
         Insert: {
           access_status?: string
+          can_dm?: boolean | null
           club_id: string
           created_at?: string
           id?: string
@@ -1371,6 +1428,8 @@ export type Database = {
           joined_channel_at?: string | null
           joined_chat_at?: string | null
           last_synced_at?: string | null
+          last_telegram_check_at?: string | null
+          last_telegram_check_result?: Json | null
           link_status?: string
           profile_id?: string | null
           telegram_first_name?: string | null
@@ -1381,6 +1440,7 @@ export type Database = {
         }
         Update: {
           access_status?: string
+          can_dm?: boolean | null
           club_id?: string
           created_at?: string
           id?: string
@@ -1389,6 +1449,8 @@ export type Database = {
           joined_channel_at?: string | null
           joined_chat_at?: string | null
           last_synced_at?: string | null
+          last_telegram_check_at?: string | null
+          last_telegram_check_result?: Json | null
           link_status?: string
           profile_id?: string | null
           telegram_first_name?: string | null
@@ -1417,6 +1479,8 @@ export type Database = {
       telegram_clubs: {
         Row: {
           access_mode: string
+          auto_resync_enabled: boolean | null
+          auto_resync_interval_minutes: number | null
           bot_id: string
           channel_id: number | null
           channel_invite_link: string | null
@@ -1428,7 +1492,9 @@ export type Database = {
           created_at: string
           id: string
           is_active: boolean
+          join_request_mode: boolean | null
           last_members_sync_at: string | null
+          last_status_check_at: string | null
           members_count_channel: number | null
           members_count_chat: number | null
           revoke_mode: string
@@ -1438,6 +1504,8 @@ export type Database = {
         }
         Insert: {
           access_mode?: string
+          auto_resync_enabled?: boolean | null
+          auto_resync_interval_minutes?: number | null
           bot_id: string
           channel_id?: number | null
           channel_invite_link?: string | null
@@ -1449,7 +1517,9 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          join_request_mode?: boolean | null
           last_members_sync_at?: string | null
+          last_status_check_at?: string | null
           members_count_channel?: number | null
           members_count_chat?: number | null
           revoke_mode?: string
@@ -1459,6 +1529,8 @@ export type Database = {
         }
         Update: {
           access_mode?: string
+          auto_resync_enabled?: boolean | null
+          auto_resync_interval_minutes?: number | null
           bot_id?: string
           channel_id?: number | null
           channel_invite_link?: string | null
@@ -1470,7 +1542,9 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          join_request_mode?: boolean | null
           last_members_sync_at?: string | null
+          last_status_check_at?: string | null
           members_count_channel?: number | null
           members_count_chat?: number | null
           revoke_mode?: string
