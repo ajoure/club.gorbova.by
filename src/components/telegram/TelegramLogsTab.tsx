@@ -29,12 +29,17 @@ const actionLabels: Record<string, string> = {
   LINK_CONFLICT: 'Конфликт привязки',
   AUTO_GRANT: 'Авто-выдача',
   MANUAL_GRANT: 'Ручная выдача',
+  MANUAL_EXTEND: 'Продление',
+  MASS_GRANT: 'Массовая выдача',
   AUTO_REVOKE: 'Авто-отзыв',
   MANUAL_REVOKE: 'Ручной отзыв',
+  MASS_REVOKE: 'Массовый отзыв',
   GRANT_FAILED: 'Ошибка выдачи',
   REMINDER_SENT: 'Напоминание',
   NOTIFICATION_SENT: 'Уведомление',
   MASS_NOTIFICATION: 'Массовая рассылка',
+  MEMBERS_SYNC: 'Синхронизация',
+  KICK: 'Удаление',
 };
 
 const actionColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -43,12 +48,17 @@ const actionColors: Record<string, 'default' | 'secondary' | 'destructive' | 'ou
   LINK_CONFLICT: 'destructive',
   AUTO_GRANT: 'default',
   MANUAL_GRANT: 'secondary',
+  MANUAL_EXTEND: 'secondary',
+  MASS_GRANT: 'default',
   AUTO_REVOKE: 'outline',
   MANUAL_REVOKE: 'outline',
+  MASS_REVOKE: 'destructive',
   GRANT_FAILED: 'destructive',
   REMINDER_SENT: 'secondary',
   NOTIFICATION_SENT: 'secondary',
   MASS_NOTIFICATION: 'default',
+  MEMBERS_SYNC: 'outline',
+  KICK: 'destructive',
 };
 
 const ALL_ACTIONS = Object.keys(actionLabels);

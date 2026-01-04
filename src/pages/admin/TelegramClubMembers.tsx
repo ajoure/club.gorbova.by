@@ -7,6 +7,9 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Table,
   TableBody,
@@ -25,6 +28,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,23 +67,30 @@ import {
   Clock,
   Ban,
   MinusCircle,
+  Calendar,
 } from 'lucide-react';
 import { 
   useTelegramClubs, 
   useClubMembers, 
   useSyncClubMembers,
   useKickViolators,
+  useGrantTelegramAccess,
+  useRevokeTelegramAccess,
   TelegramClubMember,
 } from '@/hooks/useTelegramIntegration';
-import { format } from 'date-fns';
+import { format, addDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { MemberDetailsDrawer } from '@/components/telegram/MemberDetailsDrawer';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { toast } from 'sonner';
 
 type FilterTab = 'all' | 'clients' | 'with_access' | 'no_access' | 'violators';
 
 export default function TelegramClubMembers() {
   const { clubId } = useParams<{ clubId: string }>();
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
   
   const { data: clubs } = useTelegramClubs();
   const club = clubs?.find(c => c.id === clubId);
@@ -80,12 +98,23 @@ export default function TelegramClubMembers() {
   const { data: members, isLoading, refetch } = useClubMembers(clubId || null);
   const syncMembers = useSyncClubMembers();
   const kickViolators = useKickViolators();
+  const grantAccess = useGrantTelegramAccess();
+  const revokeAccess = useRevokeTelegramAccess();
 
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [showKickDialog, setShowKickDialog] = useState(false);
   const [selectedMember, setSelectedMember] = useState<TelegramClubMember | null>(null);
   const [lastSyncInfo, setLastSyncInfo] = useState<{ chat_total_count?: number; channel_total_count?: number; chat_warning?: string; channel_warning?: string; members_count?: number } | null>(null);
+  
+  // Mass selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showMassGrantDialog, setShowMassGrantDialog] = useState(false);
+  const [showMassRevokeDialog, setShowMassRevokeDialog] = useState(false);
+  const [massGrantDays, setMassGrantDays] = useState(30);
+  const [massGrantComment, setMassGrantComment] = useState('');
+  const [massRevokeReason, setMassRevokeReason] = useState('');
+  const [massActionLoading, setMassActionLoading] = useState(false);
 
   // Calculate counts for tabs
   const counts = useMemo(() => {
@@ -177,6 +206,129 @@ export default function TelegramClubMembers() {
     if (!clubId) return;
     kickViolators.mutate({ clubId });
     setShowKickDialog(false);
+  };
+
+  // Mass selection handlers
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredMembers.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredMembers.map(m => m.id)));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    const newSet = new Set(selectedIds);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    setSelectedIds(newSet);
+  };
+
+  const selectedMembers = useMemo(() => {
+    return filteredMembers.filter(m => selectedIds.has(m.id));
+  }, [filteredMembers, selectedIds]);
+
+  const selectedLinkedMembers = useMemo(() => {
+    return selectedMembers.filter(m => m.link_status === 'linked' && m.profiles?.user_id);
+  }, [selectedMembers]);
+
+  // Mass grant access
+  const handleMassGrant = async () => {
+    if (!clubId || selectedLinkedMembers.length === 0) return;
+    setMassActionLoading(true);
+    
+    const validUntil = addDays(new Date(), massGrantDays).toISOString();
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const member of selectedLinkedMembers) {
+      if (!member.profiles?.user_id) continue;
+      try {
+        await grantAccess.mutateAsync({
+          userId: member.profiles.user_id,
+          clubId,
+          isManual: true,
+          validUntil,
+          comment: massGrantComment || 'Массовая выдача доступа',
+        });
+        
+        // Log the action
+        await supabase.from('telegram_logs').insert({
+          user_id: member.profiles.user_id,
+          club_id: clubId,
+          action: 'MASS_GRANT',
+          status: 'ok',
+          target: member.telegram_username || String(member.telegram_user_id),
+          meta: { 
+            granted_by: currentUser?.id,
+            days: massGrantDays, 
+            comment: massGrantComment,
+          },
+        });
+        successCount++;
+      } catch (e) {
+        errorCount++;
+      }
+    }
+
+    setMassActionLoading(false);
+    setShowMassGrantDialog(false);
+    setSelectedIds(new Set());
+    setMassGrantDays(30);
+    setMassGrantComment('');
+    refetch();
+    
+    if (successCount > 0) toast.success(`Доступ выдан ${successCount} пользователям`);
+    if (errorCount > 0) toast.error(`Ошибки: ${errorCount}`);
+  };
+
+  // Mass revoke access
+  const handleMassRevoke = async () => {
+    if (!clubId || selectedLinkedMembers.length === 0) return;
+    setMassActionLoading(true);
+    
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const member of selectedLinkedMembers) {
+      if (!member.profiles?.user_id) continue;
+      try {
+        await revokeAccess.mutateAsync({
+          userId: member.profiles.user_id,
+          clubId,
+          reason: massRevokeReason || 'Массовый отзыв доступа',
+          isManual: true,
+        });
+        
+        // Log the action
+        await supabase.from('telegram_logs').insert({
+          user_id: member.profiles.user_id,
+          club_id: clubId,
+          action: 'MASS_REVOKE',
+          status: 'ok',
+          target: member.telegram_username || String(member.telegram_user_id),
+          meta: { 
+            revoked_by: currentUser?.id,
+            reason: massRevokeReason,
+          },
+        });
+        successCount++;
+      } catch (e) {
+        errorCount++;
+      }
+    }
+
+    setMassActionLoading(false);
+    setShowMassRevokeDialog(false);
+    setSelectedIds(new Set());
+    setMassRevokeReason('');
+    refetch();
+    
+    if (successCount > 0) toast.success(`Доступ отозван у ${successCount} пользователей`);
+    if (errorCount > 0) toast.error(`Ошибки: ${errorCount}`);
   };
 
   const getAccessStatusBadge = (status: string, linkStatus?: string) => {
@@ -376,6 +528,45 @@ export default function TelegramClubMembers() {
                 )}
               </div>
             </div>
+            
+            {/* Mass selection toolbar */}
+            {selectedIds.size > 0 && (
+              <div className="flex items-center gap-3 p-3 bg-muted rounded-lg mt-4">
+                <span className="text-sm font-medium">
+                  Выбрано: {selectedIds.size} 
+                  {selectedLinkedMembers.length < selectedIds.size && (
+                    <span className="text-muted-foreground"> (с профилем: {selectedLinkedMembers.length})</span>
+                  )}
+                </span>
+                <div className="flex-1" />
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => setSelectedIds(new Set())}
+                >
+                  Снять выбор
+                </Button>
+                {selectedLinkedMembers.length > 0 && (
+                  <>
+                    <Button 
+                      size="sm" 
+                      onClick={() => setShowMassGrantDialog(true)}
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Выдать доступ
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="destructive"
+                      onClick={() => setShowMassRevokeDialog(true)}
+                    >
+                      <MinusCircle className="h-4 w-4 mr-1" />
+                      Отозвать доступ
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
           </CardHeader>
           <CardContent>
             {(lastSyncInfo?.chat_warning || lastSyncInfo?.channel_warning) && (
@@ -403,6 +594,12 @@ export default function TelegramClubMembers() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox 
+                        checked={selectedIds.size > 0 && selectedIds.size === filteredMembers.length}
+                        onCheckedChange={toggleSelectAll}
+                      />
+                    </TableHead>
                     <TableHead>Telegram</TableHead>
                     <TableHead>Связь с ЛК</TableHead>
                     <TableHead>Статус доступа</TableHead>
@@ -415,14 +612,22 @@ export default function TelegramClubMembers() {
                   {filteredMembers.map((member) => (
                     <TableRow 
                       key={member.id}
-                      className={
-                        member.access_status === 'no_access' || member.access_status === 'removed' 
+                      className={`
+                        ${selectedIds.has(member.id) ? 'bg-primary/5' : ''}
+                        ${member.access_status === 'no_access' || member.access_status === 'removed' 
                           ? 'bg-destructive/5' 
                           : member.access_status === 'expired' 
                             ? 'bg-yellow-500/5' 
                             : ''
-                      }
+                        }
+                      `}
                     >
+                      <TableCell>
+                        <Checkbox 
+                          checked={selectedIds.has(member.id)}
+                          onCheckedChange={() => toggleSelect(member.id)}
+                        />
+                      </TableCell>
                       <TableCell>
                         <div>
                           <div className="font-medium">
@@ -549,6 +754,93 @@ export default function TelegramClubMembers() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Mass Grant Dialog */}
+        <Dialog open={showMassGrantDialog} onOpenChange={setShowMassGrantDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Массовая выдача доступа</DialogTitle>
+              <DialogDescription>
+                Выдать доступ {selectedLinkedMembers.length} пользователям
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="mass-days">Срок доступа (дней)</Label>
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="mass-days"
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={massGrantDays}
+                    onChange={(e) => setMassGrantDays(parseInt(e.target.value) || 30)}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  До {format(addDays(new Date(), massGrantDays), 'dd.MM.yyyy', { locale: ru })}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="mass-comment">Комментарий</Label>
+                <Textarea
+                  id="mass-comment"
+                  placeholder="Причина массовой выдачи..."
+                  value={massGrantComment}
+                  onChange={(e) => setMassGrantComment(e.target.value)}
+                  rows={3}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowMassGrantDialog(false)}>
+                Отмена
+              </Button>
+              <Button onClick={handleMassGrant} disabled={massActionLoading}>
+                {massActionLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                Выдать доступ ({selectedLinkedMembers.length})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Mass Revoke Dialog */}
+        <Dialog open={showMassRevokeDialog} onOpenChange={setShowMassRevokeDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="text-destructive">Массовый отзыв доступа</DialogTitle>
+              <DialogDescription>
+                Отозвать доступ у {selectedLinkedMembers.length} пользователей
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="mass-reason">Причина отзыва *</Label>
+                <Textarea
+                  id="mass-reason"
+                  placeholder="Укажите причину массового отзыва..."
+                  value={massRevokeReason}
+                  onChange={(e) => setMassRevokeReason(e.target.value)}
+                  rows={3}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowMassRevokeDialog(false)}>
+                Отмена
+              </Button>
+              <Button 
+                variant="destructive" 
+                onClick={handleMassRevoke} 
+                disabled={massActionLoading || !massRevokeReason.trim()}
+              >
+                {massActionLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                Отозвать доступ ({selectedLinkedMembers.length})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Member details drawer */}
         <MemberDetailsDrawer 

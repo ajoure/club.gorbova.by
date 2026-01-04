@@ -100,18 +100,17 @@ async function kickMember(botToken: string, chatId: number, userId: number): Pro
 }
 
 // Calculate access status: 'ok' | 'expired' | 'no_access'
+// Access is granted ONLY through:
+// 1. Active telegram_access record (from purchases/orders)
+// 2. Active telegram_manual_access record (admin-granted)
+// 3. Active telegram_access_grants record (from invites, orders, etc.)
+// NOTE: System admins do NOT automatically get access to clubs
 function calculateAccessStatus(
   userId: string | undefined,
   accessRecords: Map<string, any>,
   manualAccessMap: Map<string, any>,
   grantsMap: Map<string, any>,
-  adminUserIds: Set<string>,
 ): 'ok' | 'expired' | 'no_access' {
-  // Admins always have access
-  if (userId && adminUserIds.has(userId)) {
-    return 'ok';
-  }
-  
   if (!userId) {
     return 'no_access';
   }
@@ -283,21 +282,6 @@ Deno.serve(async (req) => {
 
       console.log(`Found ${allProfiles?.length || 0} profiles with linked Telegram`);
 
-      // Get admin user IDs
-      const { data: adminRolesV2 } = await supabase
-        .from('user_roles_v2')
-        .select('user_id, roles!inner(code)')
-        .in('roles.code', ['admin', 'super_admin']);
-      
-      const adminUserIds = new Set<string>(adminRolesV2?.map(r => r.user_id) || []);
-
-      const { data: legacyAdmins } = await supabase
-        .from('user_roles')
-        .select('user_id')
-        .in('role', ['admin', 'superadmin']);
-      
-      legacyAdmins?.forEach(r => adminUserIds.add(r.user_id));
-
       // Get ALL access records for this club
       const { data: accessRecords } = await supabase
         .from('telegram_access')
@@ -332,7 +316,6 @@ Deno.serve(async (req) => {
           accessMap,
           manualAccessMap,
           grantsMap,
-          adminUserIds,
         );
 
         // Track counts
