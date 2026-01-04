@@ -71,3 +71,6 @@ verify_jwt = false
 
 [functions.telegram-club-members]
 verify_jwt = true
+
+[functions.telegram-check-expired]
+verify_jwt = false
