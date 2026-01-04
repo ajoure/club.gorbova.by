@@ -111,10 +111,51 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    
+    // Verify user is authenticated and has admin access
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Authorization required' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } }
+    });
+
+    const { data: { user }, error: authError } = await userClient.auth.getUser();
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Invalid token' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Check if user has admin permissions
+    const { data: hasPermission } = await userClient.rpc('has_permission', {
+      _user_id: user.id,
+      _permission_code: 'telegram.clubs.manage'
+    });
+
+    // Also check legacy roles
+    const { data: userRole } = await userClient.rpc('get_user_role', { _user_id: user.id });
+    
+    const isAdmin = hasPermission || userRole === 'admin' || userRole === 'superadmin';
+    if (!isAdmin) {
+      return new Response(JSON.stringify({ error: 'Admin access required' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Use service role for actual operations
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const { action, club_id, member_ids } = await req.json();
-    console.log(`Club members action: ${action}, club_id: ${club_id}`);
+    console.log(`Club members action: ${action}, club_id: ${club_id}, user: ${user.email}`);
 
     // Get club with bot
     const { data: club, error: clubError } = await supabase
