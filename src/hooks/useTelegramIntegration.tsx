@@ -585,11 +585,11 @@ export function useSyncClubMembers() {
     onSuccess: (data, clubId) => {
       queryClient.invalidateQueries({ queryKey: ['telegram-club-members', clubId] });
       queryClient.invalidateQueries({ queryKey: ['telegram-clubs'] });
-      toast.success(`Синхронизировано: ${data.members_count} участников`);
+      // Toast removed - handled in component for combined sync+check flow
     },
     onError: (error) => {
       console.error('Sync error:', error);
-      toast.error('Ошибка синхронизации');
+      // Toast removed - handled in component
     },
   });
 }

@@ -716,14 +716,14 @@ export default function TelegramClubMembers() {
                 <Button
                   variant="outline"
                   onClick={handleSync}
-                  disabled={syncMembers.isPending}
+                  disabled={syncMembers.isPending || checkingStatuses}
                 >
-                  {syncMembers.isPending ? (
+                  {syncMembers.isPending || checkingStatuses ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
                   ) : (
                     <RefreshCw className="h-4 w-4 mr-2" />
                   )}
-                  Обновить
+                  {checkingStatuses ? 'Проверка статусов...' : 'Обновить'}
                 </Button>
                 <Button
                   variant="outline"
