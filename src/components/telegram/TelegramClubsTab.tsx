@@ -35,7 +35,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Plus, Settings, Users, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone, AlertTriangle, HelpCircle, Info, Link2, Package } from 'lucide-react';
+import { Plus, Settings, Users, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone, AlertTriangle, HelpCircle, Info, Link2, Package, Zap } from 'lucide-react';
 import { 
   useTelegramClubs, 
   useTelegramBots,
@@ -168,6 +168,13 @@ export function TelegramClubsTab() {
             >
               <Link2 className="h-4 w-4 mr-2" />
               Инвайты
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={() => navigate('/admin/integrations/telegram/mtproto')}
+            >
+              <Zap className="h-4 w-4 mr-2" />
+              MTProto
             </Button>
             <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
               <DialogTrigger asChild>

@@ -35,6 +35,7 @@ import AdminIntegrations from "./pages/admin/AdminIntegrations";
 import TelegramClubMembers from "./pages/admin/TelegramClubMembers";
 import TelegramInvites from "./pages/admin/TelegramInvites";
 import ProductClubMappings from "./pages/admin/ProductClubMappings";
+import TelegramMTProto from "./pages/admin/TelegramMTProto";
 
 import MnsResponseService from "./pages/audits/MnsResponseService";
 import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
@@ -97,6 +98,7 @@ const App = () => (
               <Route path="/admin/integrations/telegram/clubs/:clubId/members" element={<ProtectedRoute><TelegramClubMembers /></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/invites" element={<ProtectedRoute><TelegramInvites /></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><ProductClubMappings /></ProtectedRoute>} />
+              <Route path="/admin/integrations/telegram/mtproto" element={<ProtectedRoute><TelegramMTProto /></ProtectedRoute>} />
               
               {/* Legacy redirects */}
               <Route path="/admin/payments" element={<Navigate to="/admin/integrations/payments" replace />} />
