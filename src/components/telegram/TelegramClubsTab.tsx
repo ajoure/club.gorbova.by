@@ -35,7 +35,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Plus, Settings, Users, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone, AlertTriangle } from 'lucide-react';
+import { Plus, Settings, Users, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone, AlertTriangle, HelpCircle, Info } from 'lucide-react';
 import { 
   useTelegramClubs, 
   useTelegramBots,
@@ -114,6 +114,46 @@ export function TelegramClubsTab() {
             <CardDescription>
               Клубы объединяют чат и канал. После оплаты подписки пользователь 
               автоматически получает доступ. Через 30 дней доступ отзывается автоматически.
+            </CardDescription>
+            <div className="mt-3 flex flex-wrap gap-4 text-sm">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-1 text-muted-foreground cursor-help">
+                      <Info className="h-3.5 w-3.5" />
+                      Режимы доступа
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs">
+                    <p className="font-medium mb-1">Режимы выдачи доступа:</p>
+                    <ul className="text-xs space-y-1">
+                      <li><strong>Авто</strong> — бот разблокирует пользователя автоматически (требуется /start в боте)</li>
+                      <li><strong>Ссылки</strong> — бот отправляет одноразовые инвайт-ссылки</li>
+                      <li><strong>Авто+</strong> — сначала пробует авто, при неудаче отправляет ссылку</li>
+                    </ul>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-1 text-muted-foreground cursor-help">
+                      <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                      Нарушители
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs">
+                    <p className="font-medium mb-1">Кто такие нарушители?</p>
+                    <p className="text-xs">
+                      Это участники чата/канала, у которых нет привязанного аккаунта в системе. 
+                      Они попали в клуб без оплаты — через чужую ссылку или другим способом. 
+                      Их можно удалить на экране «Участники».
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+          </div>
             </CardDescription>
           </div>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>

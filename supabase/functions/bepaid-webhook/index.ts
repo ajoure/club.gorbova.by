@@ -389,6 +389,40 @@ Deno.serve(async (req) => {
           } else {
             console.log('Telegram access granted:', telegramGrantResult.data);
           }
+
+          // Create telegram_access_grants record for history
+          const { data: clubs } = await supabase
+            .from('telegram_clubs')
+            .select('id')
+            .eq('is_active', true);
+
+          if (clubs && clubs.length > 0) {
+            const startAt = new Date();
+            const endAt = new Date();
+            endAt.setDate(endAt.getDate() + product.duration_days);
+
+            for (const club of clubs) {
+              await supabase
+                .from('telegram_access_grants')
+                .insert({
+                  user_id: order.user_id,
+                  club_id: club.id,
+                  source: 'order',
+                  source_id: orderId,
+                  start_at: startAt.toISOString(),
+                  end_at: endAt.toISOString(),
+                  status: 'active',
+                  meta: {
+                    product_name: product.name,
+                    product_tier: product.tier,
+                    bepaid_uid: transactionUid,
+                    amount: order.amount,
+                    currency: order.currency,
+                  },
+                });
+            }
+            console.log('Telegram access grants created for', clubs.length, 'clubs');
+          }
         } catch (telegramError) {
           console.error('Error calling telegram-grant-access:', telegramError);
         }
