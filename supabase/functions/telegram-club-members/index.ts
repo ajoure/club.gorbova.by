@@ -232,22 +232,6 @@ Deno.serve(async (req) => {
         .select('id, user_id, telegram_user_id, telegram_username, full_name')
         .not('telegram_user_id', 'is', null);
 
-      // Add all linked profiles to the members map (if not already there from Telegram API)
-      for (const profile of allProfiles || []) {
-        if (profile.telegram_user_id && !allMembers.has(profile.telegram_user_id)) {
-          // Split full_name into first_name and last_name
-          const nameParts = (profile.full_name || '').split(' ');
-          allMembers.set(profile.telegram_user_id, {
-            telegram_user_id: profile.telegram_user_id,
-            telegram_username: profile.telegram_username || undefined,
-            telegram_first_name: nameParts[0] || undefined,
-            telegram_last_name: nameParts.slice(1).join(' ') || undefined,
-            in_chat: false, // Will be updated from telegram_access
-            in_channel: false,
-          });
-        }
-      }
-
       // Get all access records for this club to know who SHOULD have access
       const { data: accessRecords } = await supabase
         .from('telegram_access')
@@ -255,6 +239,44 @@ Deno.serve(async (req) => {
         .eq('club_id', club_id);
 
       const accessMap = new Map(accessRecords?.map(a => [a.user_id, a]) || []);
+
+      // Also get manual access and access grants for this club
+      const { data: manualAccess } = await supabase
+        .from('telegram_manual_access')
+        .select('user_id, is_active, valid_until')
+        .eq('club_id', club_id)
+        .eq('is_active', true);
+
+      const { data: accessGrants } = await supabase
+        .from('telegram_access_grants')
+        .select('user_id, status, end_at')
+        .eq('club_id', club_id)
+        .eq('status', 'active');
+
+      // Combine all users who have access to this club
+      const usersWithAccess = new Set<string>();
+      accessRecords?.forEach(a => usersWithAccess.add(a.user_id));
+      manualAccess?.forEach(a => usersWithAccess.add(a.user_id));
+      accessGrants?.forEach(a => usersWithAccess.add(a.user_id));
+
+      // Add all profiles that have access to this club
+      for (const profile of allProfiles || []) {
+        if (profile.telegram_user_id) {
+          // Add if has access OR if not already in allMembers
+          const hasAccessToThisClub = usersWithAccess.has(profile.user_id);
+          if (hasAccessToThisClub && !allMembers.has(profile.telegram_user_id)) {
+            const nameParts = (profile.full_name || '').split(' ');
+            allMembers.set(profile.telegram_user_id, {
+              telegram_user_id: profile.telegram_user_id,
+              telegram_username: profile.telegram_username || undefined,
+              telegram_first_name: nameParts[0] || undefined,
+              telegram_last_name: nameParts.slice(1).join(' ') || undefined,
+              in_chat: false,
+              in_channel: false,
+            });
+          }
+        }
+      }
 
       // Build profile map by telegram_user_id
       const profileMap = new Map(allProfiles?.map(p => [p.telegram_user_id, p]) || []);
@@ -281,7 +303,6 @@ Deno.serve(async (req) => {
         if (profile?.telegram_user_id) {
           const existing = allMembers.get(profile.telegram_user_id);
           if (existing) {
-            // If access record shows they're in chat/channel, update the member
             const isInChat = access.state_chat === 'member' || access.state_chat === 'active';
             const isInChannel = access.state_channel === 'member' || access.state_channel === 'active';
             allMembers.set(profile.telegram_user_id, {
@@ -293,6 +314,10 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Build maps for manual access and grants
+      const manualAccessMap = new Map(manualAccess?.map(a => [a.user_id, a]) || []);
+      const grantsMap = new Map(accessGrants?.map(a => [a.user_id, a]) || []);
+
       // Upsert members
       let violatorsCount = 0;
       const membersToUpsert = [];
@@ -300,6 +325,8 @@ Deno.serve(async (req) => {
       for (const [tgUserId, member] of allMembers) {
         const profile = profileMap.get(tgUserId);
         const access = profile ? accessMap.get(profile.user_id) : null;
+        const manual = profile ? manualAccessMap.get(profile.user_id) : null;
+        const grant = profile ? grantsMap.get(profile.user_id) : null;
         const isAdmin = profile ? adminUserIds.has(profile.user_id) : false;
         
         let accessStatus = 'no_access';
@@ -307,10 +334,33 @@ Deno.serve(async (req) => {
         // Admins always have access
         if (isAdmin) {
           accessStatus = 'ok';
-        } else if (profile && access) {
-          const isActive = access.active_until ? new Date(access.active_until) > new Date() : true;
-          accessStatus = isActive ? 'ok' : 'expired';
-        } else if (!profile) {
+        } else if (profile) {
+          // Check if has any form of active access
+          let hasActiveAccess = false;
+
+          // Check telegram_access
+          if (access) {
+            const isActive = access.active_until ? new Date(access.active_until) > new Date() : true;
+            if (isActive) hasActiveAccess = true;
+            else if (!hasActiveAccess) accessStatus = 'expired';
+          }
+
+          // Check manual_access
+          if (manual && manual.is_active) {
+            const isActive = manual.valid_until ? new Date(manual.valid_until) > new Date() : true;
+            if (isActive) hasActiveAccess = true;
+          }
+
+          // Check access_grants
+          if (grant && grant.status === 'active') {
+            const isActive = grant.end_at ? new Date(grant.end_at) > new Date() : true;
+            if (isActive) hasActiveAccess = true;
+          }
+
+          if (hasActiveAccess) {
+            accessStatus = 'ok';
+          }
+        } else {
           // Not linked to any profile - violator (only if they're actually in chat/channel)
           if (member.in_chat || member.in_channel) {
             accessStatus = 'no_access';
@@ -318,9 +368,6 @@ Deno.serve(async (req) => {
           } else {
             accessStatus = 'no_access';
           }
-        } else {
-          // Has profile but no access record and not admin
-          accessStatus = 'no_access';
         }
 
         membersToUpsert.push({
