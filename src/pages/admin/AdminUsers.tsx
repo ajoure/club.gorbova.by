@@ -66,11 +66,13 @@ import {
   RotateCcw,
   UserPlus,
   Shield,
-  Copy
+  Copy,
+  Send
 } from "lucide-react";
 import { RoleBadge } from "@/components/admin/RoleBadge";
 import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
 import { InviteUserDialog } from "@/components/admin/InviteUserDialog";
+import { SendNotificationDialog } from "@/components/admin/SendNotificationDialog";
 
 type StatusFilter = "all" | "active" | "deleted" | "blocked";
 type RoleFilter = "all" | "user" | "admin" | "super_admin" | "staff" | "editor" | "support";
@@ -108,6 +110,13 @@ export default function AdminUsers() {
   }>({ open: false, userId: "", email: "", roleCode: "", roleName: "" });
 
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+
+  const [notificationDialog, setNotificationDialog] = useState<{
+    open: boolean;
+    userId: string;
+    email: string;
+    name: string;
+  }>({ open: false, userId: "", email: "", name: "" });
 
   // Fetch duplicate count
   const { data: duplicateCount } = useQuery({
@@ -429,6 +438,11 @@ export default function AdminUsers() {
                                   <UserCheck className="w-4 h-4 mr-2" />Войти как пользователь
                                 </DropdownMenuItem>
                               )}
+                              {hasPermission("entitlements.manage") && (
+                                <DropdownMenuItem onClick={() => setNotificationDialog({ open: true, userId: user.user_id, email: user.email || "", name: user.full_name || "" })}>
+                                  <Send className="w-4 h-4 mr-2" />Отправить уведомление
+                                </DropdownMenuItem>
+                              )}
                               {hasPermission("users.delete") && (
                                 <>
                                   <DropdownMenuSeparator />
@@ -528,6 +542,15 @@ export default function AdminUsers() {
         onOpenChange={setInviteDialogOpen}
         roles={roles}
         onSuccess={refetch}
+      />
+
+      {/* Send Notification Dialog */}
+      <SendNotificationDialog
+        open={notificationDialog.open}
+        onOpenChange={(open) => setNotificationDialog({ ...notificationDialog, open })}
+        userId={notificationDialog.userId}
+        userEmail={notificationDialog.email}
+        userName={notificationDialog.name}
       />
     </div>
   );

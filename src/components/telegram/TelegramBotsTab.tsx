@@ -133,7 +133,8 @@ export function TelegramBotsTab() {
           <div>
             <CardTitle>Telegram боты</CardTitle>
             <CardDescription>
-              Управление ботами для доступа в клубы
+              Управление ботами для автоматической выдачи доступа в чаты и каналы. 
+              Создайте бота через @BotFather, добавьте токен и установите Webhook.
             </CardDescription>
           </div>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>

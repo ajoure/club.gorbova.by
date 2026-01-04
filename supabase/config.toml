@@ -62,3 +62,6 @@ verify_jwt = false
 
 [functions.telegram-send-reminders]
 verify_jwt = false
+
+[functions.telegram-send-notification]
+verify_jwt = false

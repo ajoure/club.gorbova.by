@@ -53,7 +53,8 @@ export function TelegramLogsTab() {
       <CardHeader>
         <CardTitle>Логи Telegram</CardTitle>
         <CardDescription>
-          История действий по управлению доступами
+          История всех действий: привязка аккаунтов, выдача и отзыв доступа, 
+          отправка уведомлений. Помогает отследить проблемы и проанализировать работу системы.
         </CardDescription>
       </CardHeader>
       <CardContent>

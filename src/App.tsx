@@ -36,6 +36,7 @@ import MnsResponseService from "./pages/audits/MnsResponseService";
 import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
 import Purchases from "./pages/Purchases";
 import Pay from "./pages/Pay";
+import Documentation from "./pages/Documentation";
 
 const queryClient = new QueryClient();
 
@@ -71,6 +72,7 @@ const App = () => (
               <Route path="/self-development" element={<ProtectedRoute><SelfDevelopment /></ProtectedRoute>} />
               <Route path="/tools/eisenhower" element={<ProtectedRoute><EisenhowerMatrix /></ProtectedRoute>} />
               <Route path="/tools/balance-wheel" element={<ProtectedRoute><BalanceWheel /></ProtectedRoute>} />
+              <Route path="/docs" element={<ProtectedRoute><Documentation /></ProtectedRoute>} />
               
               {/* Admin routes */}
               <Route path="/admin/users" element={<ProtectedRoute><AdminLayout><AdminUsers /></AdminLayout></ProtectedRoute>} />

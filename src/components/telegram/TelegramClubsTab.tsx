@@ -101,7 +101,8 @@ export function TelegramClubsTab() {
           <div>
             <CardTitle>Telegram клубы</CardTitle>
             <CardDescription>
-              Клубы с чатами и каналами для подписчиков
+              Клубы объединяют чат и канал. После оплаты подписки пользователь 
+              автоматически получает доступ. Через 30 дней доступ отзывается автоматически.
             </CardDescription>
           </div>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>

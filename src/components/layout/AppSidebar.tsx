@@ -6,7 +6,7 @@ import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGrou
 import { NavLink } from "@/components/NavLink";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag } from "lucide-react";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen } from "lucide-react";
 const mainMenuItems = [{
   title: "Обзор",
   url: "/dashboard",
@@ -40,6 +40,10 @@ const leaderToolsItems = [{
   title: "Колесо баланса",
   url: "/tools/balance-wheel",
   icon: Target
+}, {
+  title: "Документация",
+  url: "/docs",
+  icon: BookOpen
 }];
 export function AppSidebar() {
   const {
