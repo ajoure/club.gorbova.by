@@ -374,6 +374,26 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Grant Telegram access if subscription product
+      if (product?.product_type === 'subscription' && product?.duration_days) {
+        try {
+          const telegramGrantResult = await supabase.functions.invoke('telegram-grant-access', {
+            body: { 
+              user_id: order.user_id,
+              duration_days: product.duration_days
+            },
+          });
+          
+          if (telegramGrantResult.error) {
+            console.error('Failed to grant Telegram access:', telegramGrantResult.error);
+          } else {
+            console.log('Telegram access granted:', telegramGrantResult.data);
+          }
+        } catch (telegramError) {
+          console.error('Error calling telegram-grant-access:', telegramError);
+        }
+      }
+
       // Create contact and deal in AmoCRM
       const customerName = meta.customer_first_name 
         ? `${meta.customer_first_name} ${meta.customer_last_name || ''}`.trim()

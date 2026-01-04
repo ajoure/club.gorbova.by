@@ -1,5 +1,6 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { TelegramLinkButton } from "@/components/telegram/TelegramLinkButton";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { 
@@ -91,16 +92,19 @@ export default function Dashboard() {
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-8">
         {/* Welcome section */}
-        <div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">
-            Добро пожаловать, {user?.user_metadata?.full_name || "Пользователь"}!
-          </h1>
-          {/* Only show role for staff members */}
-          {isStaff && effectiveRole && (
-            <p className="text-muted-foreground">
-              Ваша роль: <span className="text-primary font-medium">{getRoleDisplayName(effectiveRole.code)}</span>
-            </p>
-          )}
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground mb-2">
+              Добро пожаловать, {user?.user_metadata?.full_name || "Пользователь"}!
+            </h1>
+            {/* Only show role for staff members */}
+            {isStaff && effectiveRole && (
+              <p className="text-muted-foreground">
+                Ваша роль: <span className="text-primary font-medium">{getRoleDisplayName(effectiveRole.code)}</span>
+              </p>
+            )}
+          </div>
+          <TelegramLinkButton />
         </div>
 
         {/* Quick links grid */}
