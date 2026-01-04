@@ -151,6 +151,35 @@ async function createAmoCRMDeal(
 }
 
 
+// Verify webhook signature using HMAC-SHA256
+async function verifyWebhookSignature(body: string, signature: string | null, secret: string): Promise<boolean> {
+  if (!signature || !secret) {
+    return false;
+  }
+  
+  try {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    
+    const signatureBytes = await crypto.subtle.sign('HMAC', key, encoder.encode(body));
+    const expectedSignature = Array.from(new Uint8Array(signatureBytes))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+    
+    // Compare signatures (case-insensitive)
+    return signature.toLowerCase() === expectedSignature.toLowerCase();
+  } catch (error) {
+    console.error('Signature verification error:', error);
+    return false;
+  }
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -160,12 +189,35 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY');
     const resendApiKey = Deno.env.get('RESEND_API_KEY');
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
-    const body = await req.json();
+    // Read body as text for signature verification
+    const bodyText = await req.text();
+    
+    // Verify webhook signature if secret is configured
+    if (bepaidSecretKey) {
+      const signature = req.headers.get('X-Webhook-Signature') || 
+                       req.headers.get('Authorization')?.replace('Bearer ', '');
+      
+      const isValid = await verifyWebhookSignature(bodyText, signature, bepaidSecretKey);
+      
+      if (!isValid) {
+        console.error('Invalid bePaid webhook signature');
+        return new Response(
+          JSON.stringify({ error: 'Invalid signature' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      console.log('bePaid webhook signature verified successfully');
+    } else {
+      console.warn('BEPAID_SECRET_KEY not configured - webhook signature verification skipped');
+    }
+
+    const body = JSON.parse(bodyText);
     console.log('bePaid webhook received:', JSON.stringify(body, null, 2));
 
     const transaction = body.transaction;

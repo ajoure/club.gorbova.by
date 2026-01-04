@@ -254,6 +254,36 @@ async function syncDeal(supabase: any, instanceId: string, lead: AmoCRMEntity, a
   });
 }
 
+// Verify webhook using configured secret
+async function verifyWebhookSecret(req: Request, supabase: any): Promise<{ valid: boolean; reason?: string }> {
+  // Get configured webhook secret from integration instances
+  const { data: instances } = await supabase
+    .from('integration_instances')
+    .select('config')
+    .eq('provider', 'amocrm')
+    .eq('status', 'connected')
+    .limit(1);
+  
+  const webhookSecret = instances?.[0]?.config?.webhook_secret || Deno.env.get('AMOCRM_WEBHOOK_SECRET');
+  
+  if (!webhookSecret) {
+    // If no secret configured, allow but log warning
+    console.warn('No amoCRM webhook secret configured - verification skipped');
+    return { valid: true, reason: 'no_secret_configured' };
+  }
+  
+  // Check for secret in query params or headers
+  const url = new URL(req.url);
+  const querySecret = url.searchParams.get('secret');
+  const headerSecret = req.headers.get('X-Webhook-Secret');
+  
+  if (querySecret === webhookSecret || headerSecret === webhookSecret) {
+    return { valid: true };
+  }
+  
+  return { valid: false, reason: 'invalid_secret' };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -266,6 +296,22 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
+
+    // Verify webhook secret
+    const verification = await verifyWebhookSecret(req, supabaseClient);
+    if (!verification.valid) {
+      console.error('amoCRM webhook verification failed:', verification.reason);
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    if (verification.reason === 'no_secret_configured') {
+      console.log('Webhook processed without secret verification');
+    } else {
+      console.log('amoCRM webhook verified successfully');
+    }
 
     // Parse the webhook payload
     let payload: AmoCRMWebhookPayload;

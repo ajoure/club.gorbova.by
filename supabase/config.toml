@@ -1,22 +1,22 @@
 project_id = "hdjgkjceownmmnrqqtuz"
 
 [functions.analyze-task-priority]
-verify_jwt = false
+verify_jwt = true
 
 [functions.users-admin-actions]
-verify_jwt = false
+verify_jwt = true
 
 [functions.roles-admin]
-verify_jwt = false
+verify_jwt = true
 
 [functions.send-email]
-verify_jwt = false
+verify_jwt = true
 
 [functions.auth-actions]
 verify_jwt = false
 
 [functions.mns-response-generator]
-verify_jwt = false
+verify_jwt = true
 
 [functions.bepaid-create-token]
 verify_jwt = false
@@ -25,19 +25,22 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.merge-clients]
-verify_jwt = false
+verify_jwt = true
 
 [functions.detect-duplicates]
-verify_jwt = false
+verify_jwt = true
 
 [functions.amocrm-sync]
-verify_jwt = false
+verify_jwt = true
 
 [functions.amocrm-webhook]
 verify_jwt = false
 
 [functions.integration-healthcheck]
-verify_jwt = false
+verify_jwt = true
 
 [functions.getcourse-webhook]
 verify_jwt = false
+
+[functions.integration-sync]
+verify_jwt = true

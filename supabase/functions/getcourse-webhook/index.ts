@@ -6,6 +6,39 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Verify webhook using configured secret
+async function verifyWebhookSecret(req: Request, instanceId: string | null, supabase: any): Promise<{ valid: boolean; reason?: string }> {
+  if (!instanceId) {
+    return { valid: false, reason: 'no_instance_id' };
+  }
+  
+  // Get configured webhook secret from integration instance
+  const { data: instance } = await supabase
+    .from('integration_instances')
+    .select('config')
+    .eq('id', instanceId)
+    .single();
+  
+  const webhookSecret = instance?.config?.webhook_secret || Deno.env.get('GETCOURSE_WEBHOOK_SECRET');
+  
+  if (!webhookSecret) {
+    // If no secret configured, allow but log warning
+    console.warn('No GetCourse webhook secret configured - verification skipped');
+    return { valid: true, reason: 'no_secret_configured' };
+  }
+  
+  // Check for secret in query params or headers
+  const url = new URL(req.url);
+  const querySecret = url.searchParams.get('secret');
+  const headerSecret = req.headers.get('X-Webhook-Secret');
+  
+  if (querySecret === webhookSecret || headerSecret === webhookSecret) {
+    return { valid: true };
+  }
+  
+  return { valid: false, reason: 'invalid_secret' };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -18,6 +51,22 @@ serve(async (req) => {
 
     const url = new URL(req.url);
     const instanceId = url.searchParams.get("instance_id");
+
+    // Verify webhook secret
+    const verification = await verifyWebhookSecret(req, instanceId, supabase);
+    if (!verification.valid) {
+      console.error('GetCourse webhook verification failed:', verification.reason);
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized', reason: verification.reason }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    if (verification.reason === 'no_secret_configured') {
+      console.log('Webhook processed without secret verification');
+    } else {
+      console.log('GetCourse webhook verified successfully');
+    }
 
     // Parse request body
     let body: Record<string, unknown> = {};
