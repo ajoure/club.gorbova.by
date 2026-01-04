@@ -80,14 +80,17 @@ export interface TelegramClubMember {
   telegram_username: string | null;
   telegram_first_name: string | null;
   telegram_last_name: string | null;
-  in_chat: boolean;
-  in_channel: boolean;
+  in_chat: boolean | null;
+  in_channel: boolean | null;
   joined_chat_at: string | null;
   joined_channel_at: string | null;
   profile_id: string | null;
   link_status: string;
   access_status: string;
   last_synced_at: string | null;
+  last_telegram_check_at: string | null;
+  last_telegram_check_result: Record<string, unknown> | null;
+  can_dm: boolean | null;
   created_at: string;
   updated_at: string;
   profiles?: {

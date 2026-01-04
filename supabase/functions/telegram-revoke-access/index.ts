@@ -24,12 +24,15 @@ async function telegramRequest(botToken: string, method: string, params: Record<
   return response.json();
 }
 
-async function kickUser(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string; notMember?: boolean }> {
-  console.log(`Kicking user ${userId} from chat ${chatId}`);
+// CRITICAL: Ban user permanently (no automatic unban) to prevent rejoin via old links
+async function banUser(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string; notMember?: boolean }> {
+  console.log(`Banning user ${userId} from chat ${chatId} (permanent, no unban)`);
   
   const result = await telegramRequest(botToken, 'banChatMember', {
     chat_id: chatId,
     user_id: userId,
+    // Ban for 366 days to prevent rejoin - user can be unbanned manually when access is restored
+    until_date: Math.floor(Date.now() / 1000) + 366 * 24 * 60 * 60,
   });
   
   console.log(`banChatMember result for ${chatId}:`, result);
@@ -38,7 +41,14 @@ async function kickUser(botToken: string, chatId: number, userId: number): Promi
     if (result.description?.includes('user is not a member') || 
         result.description?.includes('PARTICIPANT_NOT_EXISTS') ||
         result.description?.includes('USER_NOT_PARTICIPANT')) {
-      return { success: true, notMember: true };
+      // User not in chat - still try to ban to prevent future joins
+      console.log(`User ${userId} not in chat ${chatId}, attempting preventive ban`);
+      const preventiveBan = await telegramRequest(botToken, 'banChatMember', {
+        chat_id: chatId,
+        user_id: userId,
+        until_date: Math.floor(Date.now() / 1000) + 366 * 24 * 60 * 60,
+      });
+      return { success: preventiveBan.ok || true, notMember: true };
     }
     if (result.description?.includes('not enough rights')) {
       return { success: false, error: result.description };
@@ -46,12 +56,8 @@ async function kickUser(botToken: string, chatId: number, userId: number): Promi
     return { success: false, error: result.description };
   }
   
-  // Immediately unban to allow rejoin later
-  await telegramRequest(botToken, 'unbanChatMember', {
-    chat_id: chatId,
-    user_id: userId,
-    only_if_banned: true,
-  });
+  // DO NOT UNBAN - this prevents rejoin via old invite links
+  // User will be unbanned when access is granted again via telegram-grant-access
   
   return { success: true };
 }
@@ -153,18 +159,18 @@ Deno.serve(async (req) => {
     let chatKickResult: { success: boolean; error?: string; notMember?: boolean } | null = null;
     let channelKickResult: { success: boolean; error?: string; notMember?: boolean } | null = null;
 
-    // Kick from chat
+    // Ban from chat (permanent until access is restored)
     if (club.chat_id) {
-      console.log(`Kicking from chat ${club.chat_id}...`);
-      chatKickResult = await kickUser(botToken, club.chat_id, telegramUserId);
-      console.log('Chat kick result:', chatKickResult);
+      console.log(`Banning from chat ${club.chat_id}...`);
+      chatKickResult = await banUser(botToken, club.chat_id, telegramUserId);
+      console.log('Chat ban result:', chatKickResult);
     }
 
-    // Kick from channel
+    // Ban from channel (permanent until access is restored)
     if (club.channel_id) {
-      console.log(`Kicking from channel ${club.channel_id}...`);
-      channelKickResult = await kickUser(botToken, club.channel_id, telegramUserId);
-      console.log('Channel kick result:', channelKickResult);
+      console.log(`Banning from channel ${club.channel_id}...`);
+      channelKickResult = await banUser(botToken, club.channel_id, telegramUserId);
+      console.log('Channel ban result:', channelKickResult);
     }
 
     const chatRevoked = chatKickResult?.success ?? false;

@@ -489,39 +489,67 @@ export default function TelegramClubMembers() {
     }
   };
 
-  // Telegram status display with tooltip
-  const getTelegramStatus = (inChat: boolean | null, inChannel: boolean | null, lastCheck: any) => {
-    const getIcon = (status: boolean | null) => {
-      if (status === true) return <CheckCircle className="h-4 w-4 text-green-600" />;
-      if (status === false) return <XCircle className="h-4 w-4 text-destructive" />;
-      return <HelpCircle className="h-4 w-4 text-muted-foreground" />;
+  // Telegram status display - CHAT is master, CHANNEL is derived
+  const getTelegramStatus = (member: TelegramClubMember) => {
+    const inChat = member.in_chat;
+    const hasTelegramId = !!member.telegram_user_id;
+    const lastCheck = member.last_telegram_check_at || member.last_synced_at;
+    
+    // Channel status is derived from chat (master)
+    // If in chat = true, channel is considered accessible
+    // If in chat = false, channel is also inaccessible
+    const derivedChannelStatus = inChat;
+    
+    const getChatIcon = () => {
+      if (inChat === true) return <CheckCircle className="h-4 w-4 text-green-600" />;
+      if (inChat === false) return <XCircle className="h-4 w-4 text-destructive" />;
+      if (!hasTelegramId) return <HelpCircle className="h-4 w-4 text-muted-foreground" />;
+      return <HelpCircle className="h-4 w-4 text-yellow-500" />;
+    };
+    
+    const getChannelIcon = () => {
+      // Channel is derived from chat - show same status
+      if (!hasTelegramId) return <HelpCircle className="h-4 w-4 text-muted-foreground" />;
+      if (derivedChannelStatus === true) return <CheckCircle className="h-4 w-4 text-green-600" />;
+      if (derivedChannelStatus === false) return <XCircle className="h-4 w-4 text-destructive" />;
+      return <HelpCircle className="h-4 w-4 text-yellow-500" />;
     };
 
-    const getTooltip = (status: boolean | null, type: string) => {
-      if (status === true) return `В ${type}`;
-      if (status === false) return `Не в ${type}`;
-      return `Статус ${type} неизвестен`;
+    const getChatTooltip = () => {
+      if (!hasTelegramId) return 'Telegram не привязан';
+      if (inChat === true) return 'В чате (подтверждено)';
+      if (inChat === false) return 'Не в чате';
+      return 'Статус неизвестен - проверьте';
+    };
+    
+    const getChannelTooltip = () => {
+      if (!hasTelegramId) return 'Telegram не привязан';
+      if (derivedChannelStatus === true) return 'В канале (чат = master)';
+      if (derivedChannelStatus === false) return 'Не в канале (чат = master)';
+      return 'Зависит от статуса чата';
     };
 
     const lastCheckInfo = lastCheck ? 
       `Проверено: ${format(new Date(lastCheck), 'dd.MM.yy HH:mm', { locale: ru })}` : 
-      'Не проверялось';
+      'Не проверялось через getChatMember';
 
     return (
       <div className="flex items-center justify-center gap-1">
         <Tooltip>
-          <TooltipTrigger>{getIcon(inChat)}</TooltipTrigger>
+          <TooltipTrigger>{getChatIcon()}</TooltipTrigger>
           <TooltipContent>
-            <p>{getTooltip(inChat, 'чате')}</p>
-            <p className="text-xs text-muted-foreground">{lastCheckInfo}</p>
+            <p className="font-medium">Чат (master)</p>
+            <p>{getChatTooltip()}</p>
+            <p className="text-xs text-muted-foreground mt-1">{lastCheckInfo}</p>
           </TooltipContent>
         </Tooltip>
         <span className="text-muted-foreground">/</span>
         <Tooltip>
-          <TooltipTrigger>{getIcon(inChannel)}</TooltipTrigger>
+          <TooltipTrigger>{getChannelIcon()}</TooltipTrigger>
           <TooltipContent>
-            <p>{getTooltip(inChannel, 'канале')}</p>
-            <p className="text-xs text-muted-foreground">{lastCheckInfo}</p>
+            <p className="font-medium">Канал (derived)</p>
+            <p>{getChannelTooltip()}</p>
+            <p className="text-xs text-muted-foreground mt-1">Статус канала = статус чата</p>
           </TooltipContent>
         </Tooltip>
       </div>
@@ -862,7 +890,7 @@ export default function TelegramClubMembers() {
                         {getAccessStatusBadge(member.access_status, member.link_status)}
                       </TableCell>
                       <TableCell className="text-center">
-                        {getTelegramStatus(member.in_chat, member.in_channel, member.last_synced_at)}
+                        {getTelegramStatus(member)}
                       </TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
