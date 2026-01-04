@@ -20,8 +20,24 @@ export function LandingHeader() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [isImpersonating, setIsImpersonating] = useState(false);
 
   const isHomePage = location.pathname === "/";
+
+  // Check for impersonation mode
+  useEffect(() => {
+    const checkImpersonation = () => {
+      setIsImpersonating(document.body.classList.contains("impersonation-active"));
+    };
+    
+    checkImpersonation();
+    
+    // Observe body class changes
+    const observer = new MutationObserver(checkImpersonation);
+    observer.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    
+    return () => observer.disconnect();
+  }, []);
 
   // Animation on mount
   useEffect(() => {
@@ -96,7 +112,7 @@ export function LandingHeader() {
 
   return (
     <header
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
+      className={`fixed left-0 right-0 z-50 transition-all duration-500 ${
         isScrolled
           ? "py-3 border-b border-border/50"
           : "py-4"
@@ -106,6 +122,7 @@ export function LandingHeader() {
           : "opacity-0 -translate-y-4"
       }`}
       style={{
+        top: isImpersonating ? "44px" : "0",
         background: isScrolled
           ? "linear-gradient(135deg, hsl(var(--card) / 0.95), hsl(var(--card) / 0.85))"
           : "transparent",
