@@ -214,18 +214,38 @@ export default function TelegramClubMembers() {
     setShowKickDialog(false);
   };
 
-  // Sync without modal
-  const handleSync = () => {
+  // Sync and then check statuses via getChatMember
+  const handleSync = async () => {
     if (!clubId) return;
-    syncMembers.mutate(clubId, {
-      onSuccess: () => {
-        toast.success('Данные обновлены');
-        refetch();
-      },
-      onError: () => {
-        toast.error('Ошибка синхронизации');
+    
+    try {
+      // Step 1: Sync data from database
+      await syncMembers.mutateAsync(clubId);
+      
+      // Step 2: Check statuses via Telegram API for all members
+      setCheckingStatuses(true);
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: {
+          action: 'check_status',
+          club_id: clubId,
+          member_ids: [], // Empty = all members (up to 50)
+        },
+      });
+      setCheckingStatuses(false);
+      
+      if (error) {
+        console.error('Check status error:', error);
+        toast.error('Синхронизировано, но ошибка проверки статусов');
+      } else {
+        toast.success(`Обновлено. Проверено статусов: ${data.checked_count}`);
       }
-    });
+      
+      refetch();
+    } catch (e) {
+      setCheckingStatuses(false);
+      console.error('Sync error:', e);
+      toast.error('Ошибка синхронизации');
+    }
   };
 
   // Check statuses via getChatMember for selected members
