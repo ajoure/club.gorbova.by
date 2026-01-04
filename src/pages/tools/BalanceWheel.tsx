@@ -9,6 +9,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useBalanceWheel } from "@/hooks/useBalanceWheel";
 import { SphereTasks } from "@/components/wheel/SphereTasks";
 import { SphereGoals } from "@/components/wheel/SphereGoals";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 const stages = [
   { 

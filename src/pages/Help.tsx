@@ -1,3 +1,4 @@
+import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   UserPlus, 
@@ -15,11 +16,16 @@ import {
   Wallet,
   Target,
   Grid3X3,
-  BookOpen
+  BookOpen,
+  Search,
+  X
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Separator } from '@/components/ui/separator';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
 const quickStartCards = [
   {
@@ -496,6 +502,39 @@ const faq = [
 ];
 
 export default function Help() {
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Combine all sections for search
+  const allSections = useMemo(() => [
+    ...sections.map(s => ({ ...s, category: 'user' })),
+    ...adminSections.map(s => ({ ...s, category: 'admin' })),
+  ], []);
+
+  // Filter sections based on search
+  const filteredSections = useMemo(() => {
+    if (!searchQuery.trim()) return null;
+    
+    const query = searchQuery.toLowerCase();
+    return allSections.filter(section => 
+      section.title.toLowerCase().includes(query) ||
+      section.content.toLowerCase().includes(query)
+    );
+  }, [searchQuery, allSections]);
+
+  // Filter FAQ
+  const filteredFaq = useMemo(() => {
+    if (!searchQuery.trim()) return faq;
+    
+    const query = searchQuery.toLowerCase();
+    return faq.filter(item => 
+      item.question.toLowerCase().includes(query) ||
+      item.answer.toLowerCase().includes(query)
+    );
+  }, [searchQuery]);
+
+  const clearSearch = () => setSearchQuery('');
+  const isSearching = searchQuery.trim().length > 0;
+
   return (
     <div className="min-h-screen bg-background">
       {/* Hero */}
@@ -507,13 +546,121 @@ export default function Help() {
             </div>
             <h1 className="text-3xl md:text-4xl font-bold">Как пользоваться платформой</h1>
           </div>
-          <p className="text-muted-foreground text-lg max-w-2xl">
+          <p className="text-muted-foreground text-lg max-w-2xl mb-6">
             Руководство по всем функциям системы. Выберите раздел или найдите ответ в FAQ.
           </p>
+          
+          {/* Search */}
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Поиск по разделам и FAQ..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 pr-9 bg-background"
+            />
+            {isSearching && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                onClick={clearSearch}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="container py-8 md:py-12">
+        {/* Search Results */}
+        {isSearching ? (
+          <div className="space-y-8">
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary">
+                Найдено разделов: {filteredSections?.length || 0}
+              </Badge>
+              <Badge variant="secondary">
+                Найдено FAQ: {filteredFaq.length}
+              </Badge>
+              <Button variant="ghost" size="sm" onClick={clearSearch}>
+                Сбросить поиск
+              </Button>
+            </div>
+
+            {filteredSections && filteredSections.length > 0 && (
+              <section>
+                <h2 className="text-xl font-semibold mb-4">Разделы</h2>
+                <div className="space-y-4">
+                  {filteredSections.map((section) => (
+                    <Card key={section.id} id={section.id} className="scroll-mt-20">
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-muted">
+                            <section.icon className="h-5 w-5 text-muted-foreground" />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <CardTitle className="text-lg">{section.title}</CardTitle>
+                            <Badge variant="outline" className="text-xs">
+                              {section.category === 'admin' ? 'Админ' : 'Пользователь'}
+                            </Badge>
+                          </div>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="prose prose-sm dark:prose-invert max-w-none">
+                          {section.content.split('\n').slice(0, 8).map((line, i) => {
+                            if (line.startsWith('**') && line.endsWith('**')) {
+                              return <h4 key={i} className="font-semibold mt-4 mb-2 first:mt-0">{line.replace(/\*\*/g, '')}</h4>;
+                            }
+                            if (line.startsWith('- ')) {
+                              return <li key={i} className="text-muted-foreground ml-4">{line.slice(2)}</li>;
+                            }
+                            if (line.trim()) {
+                              return <p key={i} className="text-muted-foreground">{line}</p>;
+                            }
+                            return null;
+                          })}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {filteredFaq.length > 0 && (
+              <section>
+                <h2 className="text-xl font-semibold mb-4">Частые вопросы</h2>
+                <Card>
+                  <CardContent className="pt-6">
+                    <Accordion type="single" collapsible className="w-full">
+                      {filteredFaq.map((item, index) => (
+                        <AccordionItem key={index} value={`faq-search-${index}`}>
+                          <AccordionTrigger className="text-left">
+                            {item.question}
+                          </AccordionTrigger>
+                          <AccordionContent className="text-muted-foreground">
+                            {item.answer}
+                          </AccordionContent>
+                        </AccordionItem>
+                      ))}
+                    </Accordion>
+                  </CardContent>
+                </Card>
+              </section>
+            )}
+
+            {(!filteredSections || filteredSections.length === 0) && filteredFaq.length === 0 && (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">Ничего не найдено по запросу «{searchQuery}»</p>
+                <Button variant="link" onClick={clearSearch}>Сбросить поиск</Button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
         {/* Быстрый старт */}
         <section className="mb-12">
           <h2 className="text-xl font-semibold mb-6">Быстрый старт</h2>
@@ -664,6 +811,8 @@ export default function Help() {
             </CardContent>
           </Card>
         </section>
+          </>
+        )}
       </div>
     </div>
   );

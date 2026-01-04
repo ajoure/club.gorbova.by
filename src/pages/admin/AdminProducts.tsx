@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, Package, Copy, Link, ExternalLink } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { HelpIcon, HelpLabel } from "@/components/help/HelpComponents";
 
 interface Product {
   id: string;
@@ -163,9 +164,16 @@ export default function AdminProducts() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Продукты</h1>
-          <p className="text-muted-foreground">Управление продуктами для продажи</p>
+        <div className="flex items-center gap-2">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">Продукты</h1>
+            <p className="text-muted-foreground">Управление продуктами для продажи</p>
+          </div>
+          <HelpIcon 
+            helpKey="subscription.tier" 
+            customText={{ short: "Продукты", full: "Создавайте подписки, разовые покупки и вебинары. Продукты привязываются к тарифам и отображаются на странице оплаты.", link: "/help#orders" }} 
+            alwaysShow 
+          />
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
@@ -248,7 +256,7 @@ export default function AdminProducts() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="tier">Тариф</Label>
+                    <HelpLabel helpKey="subscription.tier" htmlFor="tier">Тариф</HelpLabel>
                     <Select
                       value={formData.tier || "pro"}
                       onValueChange={(value) => setFormData({ ...formData, tier: value })}

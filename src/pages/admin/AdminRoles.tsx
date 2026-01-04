@@ -34,6 +34,7 @@ import {
 import { Loader2, Shield, UserPlus, Plus } from "lucide-react";
 import { RoleBadge } from "@/components/admin/RoleBadge";
 import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 export default function AdminRoles() {
   const { roles, allPermissions, loading, assignRole, removeRole, setRolePermissions, createRole, refetch } = useAdminRoles();
@@ -133,7 +134,10 @@ export default function AdminRoles() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Сотрудники и роли</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="text-2xl font-bold">Сотрудники и роли</h1>
+        <HelpIcon helpKey="roles.admin" alwaysShow />
+      </div>
 
       <Tabs defaultValue="staff">
         <TabsList>

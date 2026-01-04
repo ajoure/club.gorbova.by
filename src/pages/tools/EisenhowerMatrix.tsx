@@ -39,6 +39,7 @@ import { ClearCompletedDialog } from "@/components/eisenhower/ClearCompletedDial
 import { DeleteTaskDialog } from "@/components/eisenhower/DeleteTaskDialog";
 import { format, parse, isBefore, startOfDay } from "date-fns";
 import { SPHERES, getGroupedSpheres, getSphereById } from "@/constants/spheres";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 interface Quadrant {
   title: string;

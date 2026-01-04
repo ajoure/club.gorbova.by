@@ -19,6 +19,7 @@ import {
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { OrderFilters, OrderFilters as OrderFiltersType } from "@/components/admin/OrderFilters";
+import { HelpIcon } from "@/components/help/HelpComponents";
 
 interface PaymentSetting {
   id: string;
@@ -270,9 +271,12 @@ export default function AdminPayments({ embedded }: AdminPaymentsProps = {}) {
   return (
     <div className="space-y-6">
       {!embedded && (
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Платежи</h1>
-          <p className="text-muted-foreground">Настройки bePaid и история заказов</p>
+        <div className="flex items-center gap-2">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">Платежи</h1>
+            <p className="text-muted-foreground">Настройки bePaid и история заказов</p>
+          </div>
+          <HelpIcon helpKey="payments.bepaid" alwaysShow />
         </div>
       )}
 

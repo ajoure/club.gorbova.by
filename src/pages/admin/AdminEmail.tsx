@@ -57,6 +57,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { HelpIcon, HelpLabel } from "@/components/help/HelpComponents";
 
 interface EmailAccount {
   id: string;
@@ -363,6 +364,7 @@ export default function AdminEmail() {
           <div className="flex items-center gap-2">
             <Server className="w-5 h-5 text-primary" />
             <h2 className="text-lg font-semibold">Почтовые ящики</h2>
+            <HelpIcon helpKey="email.smtp" alwaysShow />
           </div>
           <Button
             onClick={() =>

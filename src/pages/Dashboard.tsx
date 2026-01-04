@@ -3,6 +3,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { TelegramLinkButton } from "@/components/telegram/TelegramLinkButton";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { HelpIcon } from "@/components/help/HelpComponents";
 import { 
   Calculator, 
   Briefcase, 
@@ -104,9 +105,11 @@ export default function Dashboard() {
               </p>
             )}
           </div>
-          <TelegramLinkButton />
+          <div className="flex items-center gap-3">
+            <TelegramLinkButton />
+            <HelpIcon helpKey="user.telegram_link" alwaysShow className="text-muted-foreground" />
+          </div>
         </div>
-
         {/* Quick links grid */}
         <div>
           <h2 className="text-xl font-semibold text-foreground mb-4">Разделы</h2>
@@ -136,9 +139,16 @@ export default function Dashboard() {
 
         {/* Leader tools */}
         <div>
-          <h2 className="text-xl font-semibold text-foreground mb-4">
-            Инструменты лидера
-          </h2>
+          <div className="flex items-center gap-2 mb-4">
+            <h2 className="text-xl font-semibold text-foreground">
+              Инструменты лидера
+            </h2>
+            <HelpIcon 
+              helpKey="tools.balance_wheel" 
+              customText={{ short: "Инструменты", full: "Колесо баланса и матрица Эйзенхауэра — инструменты для планирования и приоритизации.", link: "/help#tools" }}
+              alwaysShow 
+            />
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {leaderTools.map((tool) => (
               <Link key={tool.url} to={tool.url}>
