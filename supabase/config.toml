@@ -55,7 +55,7 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.telegram-check-expired]
-verify_jwt = true
+verify_jwt = false
 
 [functions.telegram-bot-actions]
-verify_jwt = true
+verify_jwt = false
