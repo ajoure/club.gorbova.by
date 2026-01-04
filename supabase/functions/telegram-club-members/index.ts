@@ -148,10 +148,15 @@ Deno.serve(async (req) => {
         _permission_code: 'telegram.clubs.manage',
       });
 
+      // Check legacy roles (get_user_role returns 'admin' | 'superadmin' | 'user')
       const { data: userRole } = await userClient.rpc('get_user_role', { _user_id: user.id });
+      
+      // Also check is_super_admin function for new role system
+      const { data: isSuperAdmin } = await userClient.rpc('is_super_admin', { _user_id: user.id });
 
-      const isAdmin = !!hasPermission || userRole === 'admin' || userRole === 'superadmin';
+      const isAdmin = !!hasPermission || !!isSuperAdmin || userRole === 'admin' || userRole === 'superadmin';
       if (!isAdmin) {
+        console.log(`Access denied for user ${user.email}: hasPermission=${hasPermission}, isSuperAdmin=${isSuperAdmin}, userRole=${userRole}`);
         return new Response(JSON.stringify({ error: 'Admin access required' }), {
           status: 403,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
