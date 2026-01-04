@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Link2, CreditCard, Mail } from "lucide-react";
+import { Plus, Link2, CreditCard, Mail, Send } from "lucide-react";
 import {
   useIntegrations,
   PROVIDERS,
@@ -18,6 +18,9 @@ import { AddIntegrationDialog } from "@/components/integrations/AddIntegrationDi
 import { EditIntegrationDialog } from "@/components/integrations/EditIntegrationDialog";
 import { IntegrationLogsSheet } from "@/components/integrations/IntegrationLogsSheet";
 import { IntegrationSyncSettingsDialog } from "@/components/integrations/IntegrationSyncSettingsDialog";
+import { TelegramBotsTab } from "@/components/telegram/TelegramBotsTab";
+import { TelegramClubsTab } from "@/components/telegram/TelegramClubsTab";
+import { TelegramLogsTab } from "@/components/telegram/TelegramLogsTab";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
@@ -26,6 +29,7 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
   crm: Link2,
   payments: CreditCard,
   email: Mail,
+  telegram: Send,
 };
 
 export default function AdminIntegrations() {
@@ -46,6 +50,7 @@ export default function AdminIntegrations() {
   const getActiveTab = (): IntegrationCategory => {
     if (location.pathname.includes("/integrations/payments")) return "payments";
     if (location.pathname.includes("/integrations/email")) return "email";
+    if (location.pathname.includes("/integrations/telegram")) return "telegram";
     return "crm";
   };
 
@@ -123,13 +128,13 @@ export default function AdminIntegrations() {
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        <TabsList className="grid w-full grid-cols-3 max-w-md">
+        <TabsList className="grid w-full grid-cols-4 max-w-lg">
           {CATEGORIES.map((cat) => {
             const Icon = CATEGORY_ICONS[cat.id] || Link2;
-            const count = (instances || []).filter(
+            const count = cat.id === "telegram" ? 0 : (instances || []).filter(
               (i) => i.category === cat.id
             ).length;
-            const hasErrors = (instances || []).some(
+            const hasErrors = cat.id === "telegram" ? false : (instances || []).some(
               (i) => i.category === cat.id && i.status === "error"
             );
             return (
@@ -152,6 +157,26 @@ export default function AdminIntegrations() {
           })}
         </TabsList>
 
+        {activeTab === "telegram" ? (
+          <div className="mt-6 space-y-6">
+            <Tabs defaultValue="bots" className="w-full">
+              <TabsList>
+                <TabsTrigger value="bots">Боты</TabsTrigger>
+                <TabsTrigger value="clubs">Клубы</TabsTrigger>
+                <TabsTrigger value="logs">Логи</TabsTrigger>
+              </TabsList>
+              <TabsContent value="bots" className="mt-4">
+                <TelegramBotsTab />
+              </TabsContent>
+              <TabsContent value="clubs" className="mt-4">
+                <TelegramClubsTab />
+              </TabsContent>
+              <TabsContent value="logs" className="mt-4">
+                <TelegramLogsTab />
+              </TabsContent>
+            </Tabs>
+          </div>
+        ) : (
         <div className="mt-6 space-y-6">
           {/* Provider cards */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -230,7 +255,7 @@ export default function AdminIntegrations() {
             </Card>
           )}
         </div>
-      </Tabs>
+        )}
 
       {/* Dialogs */}
       <AddIntegrationDialog

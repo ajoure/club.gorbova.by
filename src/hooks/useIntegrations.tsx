@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
 
-export type IntegrationCategory = "crm" | "payments" | "email" | "other";
+export type IntegrationCategory = "crm" | "payments" | "email" | "telegram" | "other";
 export type IntegrationStatus = "connected" | "error" | "disconnected";
 
 export interface IntegrationInstance {
@@ -108,6 +108,7 @@ export const CATEGORIES: { id: IntegrationCategory; label: string; icon: string 
   { id: "crm", label: "CRM", icon: "Link2" },
   { id: "payments", label: "Платежи", icon: "CreditCard" },
   { id: "email", label: "Почта", icon: "Mail" },
+  { id: "telegram", label: "Telegram", icon: "Send" },
 ];
 
 export function useIntegrations(category?: IntegrationCategory) {

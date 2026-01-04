@@ -115,6 +115,18 @@ Deno.serve(async (req) => {
               .eq('id', bot_id);
           }
           
+          // Log admin action
+          await supabase.from('audit_logs').insert({
+            action: 'telegram_bot_check',
+            actor_user_id: user.id,
+            meta: {
+              bot_id,
+              action: 'check_connection',
+              result: 'success',
+              bot_username: result.result.username,
+            },
+          });
+          
           return new Response(JSON.stringify({
             success: true,
             bot: result.result,
@@ -132,6 +144,18 @@ Deno.serve(async (req) => {
               })
               .eq('id', bot_id);
           }
+          
+          // Log admin action
+          await supabase.from('audit_logs').insert({
+            action: 'telegram_bot_check',
+            actor_user_id: user.id,
+            meta: {
+              bot_id,
+              action: 'check_connection',
+              result: 'error',
+              error: result.description,
+            },
+          });
           
           return new Response(JSON.stringify({
             success: false,
@@ -156,6 +180,17 @@ Deno.serve(async (req) => {
           allowed_updates: ['message', 'my_chat_member', 'callback_query'],
         });
 
+        // Log admin action
+        await supabase.from('audit_logs').insert({
+          action: 'telegram_webhook_set',
+          actor_user_id: user.id,
+          meta: {
+            bot_id,
+            webhook_url: webhookUrl,
+            result: result.ok ? 'success' : 'error',
+          },
+        });
+
         return new Response(JSON.stringify({
           success: result.ok,
           webhook_url: webhookUrl,
@@ -167,6 +202,17 @@ Deno.serve(async (req) => {
 
       case 'delete_webhook': {
         const result = await telegramRequest(botToken, 'deleteWebhook');
+        
+        // Log admin action
+        await supabase.from('audit_logs').insert({
+          action: 'telegram_webhook_delete',
+          actor_user_id: user.id,
+          meta: {
+            bot_id,
+            result: result.ok ? 'success' : 'error',
+          },
+        });
+        
         return new Response(JSON.stringify({
           success: result.ok,
           result,
