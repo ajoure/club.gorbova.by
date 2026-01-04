@@ -52,7 +52,7 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.telegram-revoke-access]
-verify_jwt = true
+verify_jwt = false
 
 [functions.telegram-check-expired]
 verify_jwt = false
