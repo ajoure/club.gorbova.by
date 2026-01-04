@@ -14,7 +14,10 @@ interface ClubMember {
   in_channel: boolean;
 }
 
-async function getChatMembers(botToken: string, chatId: number): Promise<{ members: ClubMember[]; error?: string }> {
+async function getChatMembers(
+  botToken: string,
+  chatId: number,
+): Promise<{ members: ClubMember[]; total_count?: number; error?: string }> {
   try {
     // Get chat member count first
     const countResponse = await fetch(`https://api.telegram.org/bot${botToken}/getChatMemberCount`, {
@@ -23,25 +26,24 @@ async function getChatMembers(botToken: string, chatId: number): Promise<{ membe
       body: JSON.stringify({ chat_id: chatId }),
     });
     const countData = await countResponse.json();
-    
+
+    const totalCount: number | undefined = countData?.ok ? countData.result : undefined;
+
     if (!countData.ok) {
-      return { members: [], error: countData.description || 'Failed to get member count' };
+      return { members: [], total_count: totalCount, error: countData.description || 'Failed to get member count' };
     }
 
-    // For channels, we can't get members list via Bot API
-    // We need to use getChatAdministrators which only returns admins
-    // Full member list requires MTProto API which is not available in bots
-    
-    // Try to get administrators at minimum
+    // Telegram Bot API does NOT provide a way to list all members/subscribers.
+    // We can only fetch administrators.
     const adminsResponse = await fetch(`https://api.telegram.org/bot${botToken}/getChatAdministrators`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId }),
     });
     const adminsData = await adminsResponse.json();
-    
+
     const members: ClubMember[] = [];
-    
+
     if (adminsData.ok && adminsData.result) {
       for (const admin of adminsData.result) {
         if (!admin.user.is_bot) {
@@ -57,15 +59,20 @@ async function getChatMembers(botToken: string, chatId: number): Promise<{ membe
       }
     }
 
-    return { 
-      members, 
-      error: countData.result > members.length 
-        ? `API возвращает только администраторов (${members.length} из ${countData.result}). Полный список участников недоступен через Bot API.` 
-        : undefined 
+    return {
+      members,
+      total_count: totalCount,
+      error:
+        totalCount && totalCount > members.length
+          ? `API возвращает только администраторов (${members.length} из ${totalCount}). Полный список участников недоступен через Bot API.`
+          : undefined,
     };
   } catch (error) {
     console.error('Error getting chat members:', error);
-    return { members: [], error: error instanceof Error ? error.message : 'Unknown error' };
+    return {
+      members: [],
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
   }
 }
 
@@ -196,11 +203,14 @@ Deno.serve(async (req) => {
       const allMembers: Map<number, ClubMember> = new Map();
       let chatError: string | undefined;
       let channelError: string | undefined;
+      let chatTotal: number | undefined;
+      let channelTotal: number | undefined;
 
       // Get chat members from Telegram API (only admins available)
       if (club.chat_id) {
         const chatResult = await getChatMembers(botToken, club.chat_id);
         chatError = chatResult.error;
+        chatTotal = chatResult.total_count;
         for (const member of chatResult.members) {
           const existing = allMembers.get(member.telegram_user_id);
           allMembers.set(member.telegram_user_id, {
@@ -215,6 +225,7 @@ Deno.serve(async (req) => {
       if (club.channel_id) {
         const channelResult = await getChatMembers(botToken, club.channel_id);
         channelError = channelResult.error;
+        channelTotal = channelResult.total_count;
         for (const member of channelResult.members) {
           const existing = allMembers.get(member.telegram_user_id);
           allMembers.set(member.telegram_user_id, {
@@ -403,16 +414,19 @@ Deno.serve(async (req) => {
         .from('telegram_clubs')
         .update({
           last_members_sync_at: new Date().toISOString(),
-          members_count_chat: [...allMembers.values()].filter(m => m.in_chat).length,
-          members_count_channel: [...allMembers.values()].filter(m => m.in_channel).length,
+          // Show real Telegram counts (not just "known" members)
+          members_count_chat: chatTotal ?? 0,
+          members_count_channel: channelTotal ?? 0,
           violators_count: violatorsCount,
         })
         .eq('id', club_id);
 
-      return new Response(JSON.stringify({ 
-        success: true, 
+      return new Response(JSON.stringify({
+        success: true,
         members_count: allMembers.size,
         violators_count: violatorsCount,
+        chat_total_count: chatTotal,
+        channel_total_count: channelTotal,
         chat_warning: chatError,
         channel_warning: channelError,
       }), {

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Table,
   TableBody,
@@ -71,6 +72,7 @@ export default function TelegramClubMembers() {
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [showKickDialog, setShowKickDialog] = useState(false);
   const [selectedMember, setSelectedMember] = useState<TelegramClubMember | null>(null);
+  const [lastSyncInfo, setLastSyncInfo] = useState<{ chat_total_count?: number; channel_total_count?: number; chat_warning?: string; channel_warning?: string; members_count?: number } | null>(null);
 
   // Calculate counts for tabs
   const counts = useMemo(() => {
@@ -316,7 +318,12 @@ export default function TelegramClubMembers() {
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
-                  onClick={() => clubId && syncMembers.mutate(clubId)}
+                  onClick={() =>
+                    clubId &&
+                    syncMembers.mutate(clubId, {
+                      onSuccess: (data: any) => setLastSyncInfo(data),
+                    })
+                  }
                   disabled={syncMembers.isPending}
                 >
                   {syncMembers.isPending ? (
@@ -347,6 +354,19 @@ export default function TelegramClubMembers() {
             </div>
           </CardHeader>
           <CardContent>
+            {(lastSyncInfo?.chat_warning || lastSyncInfo?.channel_warning) && (
+              <Alert className="mb-4">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Ограничение Telegram</AlertTitle>
+                <AlertDescription>
+                  {lastSyncInfo.chat_warning || lastSyncInfo.channel_warning}
+                  <div className="mt-2 text-sm text-muted-foreground">
+                    Сейчас в системе известно: {counts.all}. Telegram показывает: чат {club.members_count_chat || 0}, канал {club.members_count_channel || 0}.
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
+
             {isLoading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin" />
