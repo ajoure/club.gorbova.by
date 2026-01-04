@@ -154,8 +154,6 @@ export function TelegramClubsTab() {
               </TooltipProvider>
             </div>
           </div>
-            </CardDescription>
-          </div>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
               <Button disabled={activeBots.length === 0}>
