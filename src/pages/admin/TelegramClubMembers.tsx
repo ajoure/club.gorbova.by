@@ -659,17 +659,21 @@ export default function TelegramClubMembers() {
                         {getAccessStatusBadge(member.access_status, member.link_status)}
                       </TableCell>
                       <TableCell className="text-center">
-                        {member.in_chat ? (
-                          <CheckCircle className="h-4 w-4 text-green-500 mx-auto" />
+                        {member.in_chat === true ? (
+                          <CheckCircle className="h-4 w-4 text-green-600 mx-auto" />
+                        ) : member.in_chat === false ? (
+                          <XCircle className="h-4 w-4 text-destructive mx-auto" />
                         ) : (
-                          <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />
+                          <HelpCircle className="h-4 w-4 text-muted-foreground mx-auto" />
                         )}
                       </TableCell>
                       <TableCell className="text-center">
-                        {member.in_channel ? (
-                          <CheckCircle className="h-4 w-4 text-green-500 mx-auto" />
+                        {member.in_channel === true ? (
+                          <CheckCircle className="h-4 w-4 text-green-600 mx-auto" />
+                        ) : member.in_channel === false ? (
+                          <XCircle className="h-4 w-4 text-destructive mx-auto" />
                         ) : (
-                          <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />
+                          <HelpCircle className="h-4 w-4 text-muted-foreground mx-auto" />
                         )}
                       </TableCell>
                       <TableCell className="text-right">

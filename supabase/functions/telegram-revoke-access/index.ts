@@ -24,7 +24,7 @@ async function telegramRequest(botToken: string, method: string, params: Record<
   return response.json();
 }
 
-async function kickUser(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string }> {
+async function kickUser(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string; notMember?: boolean }> {
   console.log(`Kicking user ${userId} from chat ${chatId}`);
   
   const result = await telegramRequest(botToken, 'banChatMember', {
@@ -32,22 +32,32 @@ async function kickUser(botToken: string, chatId: number, userId: number): Promi
     user_id: userId,
   });
   
+  console.log(`banChatMember result for ${chatId}:`, result);
+  
   if (!result.ok) {
+    // User not in chat - that's fine
     if (result.description?.includes('user is not a member') || 
         result.description?.includes('PARTICIPANT_NOT_EXISTS') ||
         result.description?.includes('USER_NOT_PARTICIPANT')) {
       console.log(`User ${userId} not in chat ${chatId}, marking as success`);
-      return { success: true };
+      return { success: true, notMember: true };
+    }
+    // Bot doesn't have enough rights
+    if (result.description?.includes('not enough rights')) {
+      console.error(`Bot lacks rights in chat ${chatId}: ${result.description}`);
+      return { success: false, error: result.description };
     }
     return { success: false, error: result.description };
   }
   
   // Immediately unban so they can rejoin later if they pay again
-  await telegramRequest(botToken, 'unbanChatMember', {
+  const unbanResult = await telegramRequest(botToken, 'unbanChatMember', {
     chat_id: chatId,
     user_id: userId,
     only_if_banned: true,
   });
+  
+  console.log(`unbanChatMember result for ${chatId}:`, unbanResult);
   
   return { success: true };
 }
