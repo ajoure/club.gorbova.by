@@ -10,75 +10,64 @@ interface ClubMember {
   telegram_username?: string;
   telegram_first_name?: string;
   telegram_last_name?: string;
+  profile_id?: string;
+  user_id?: string;
   in_chat: boolean;
   in_channel: boolean;
 }
 
-async function getChatMembers(
+async function getChatMemberCount(botToken: string, chatId: number): Promise<{ count?: number; error?: string }> {
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/getChatMemberCount`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId }),
+    });
+    const data = await response.json();
+    if (!data.ok) {
+      return { error: data.description || 'Failed to get member count' };
+    }
+    return { count: data.result };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+async function getChatAdministrators(
   botToken: string,
   chatId: number,
-): Promise<{ members: ClubMember[]; total_count?: number; error?: string }> {
+): Promise<{ admins: { telegram_user_id: number; telegram_username?: string; telegram_first_name?: string; telegram_last_name?: string }[]; error?: string }> {
   try {
-    // Get chat member count first
-    const countResponse = await fetch(`https://api.telegram.org/bot${botToken}/getChatMemberCount`, {
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/getChatAdministrators`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId }),
     });
-    const countData = await countResponse.json();
+    const data = await response.json();
 
-    const totalCount: number | undefined = countData?.ok ? countData.result : undefined;
-
-    if (!countData.ok) {
-      return { members: [], total_count: totalCount, error: countData.description || 'Failed to get member count' };
-    }
-
-    // Telegram Bot API does NOT provide a way to list all members/subscribers.
-    // We can only fetch administrators.
-    const adminsResponse = await fetch(`https://api.telegram.org/bot${botToken}/getChatAdministrators`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId }),
-    });
-    const adminsData = await adminsResponse.json();
-
-    const members: ClubMember[] = [];
-
-    if (adminsData.ok && adminsData.result) {
-      for (const admin of adminsData.result) {
+    const admins: { telegram_user_id: number; telegram_username?: string; telegram_first_name?: string; telegram_last_name?: string }[] = [];
+    if (data.ok && data.result) {
+      for (const admin of data.result) {
         if (!admin.user.is_bot) {
-          members.push({
+          admins.push({
             telegram_user_id: admin.user.id,
             telegram_username: admin.user.username,
             telegram_first_name: admin.user.first_name,
             telegram_last_name: admin.user.last_name,
-            in_chat: false, // Will be set correctly based on source
-            in_channel: false,
           });
         }
       }
     }
-
-    return {
-      members,
-      total_count: totalCount,
-      error:
-        totalCount && totalCount > members.length
-          ? `API возвращает только администраторов (${members.length} из ${totalCount}). Полный список участников недоступен через Bot API.`
-          : undefined,
-    };
+    return { admins };
   } catch (error) {
-    console.error('Error getting chat members:', error);
-    return {
-      members: [],
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
+    return { admins: [], error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
 
 async function kickMember(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string }> {
   try {
-    const response = await fetch(`https://api.telegram.org/bot${botToken}/banChatMember`, {
+    // Ban the user
+    const banResponse = await fetch(`https://api.telegram.org/bot${botToken}/banChatMember`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
@@ -87,13 +76,13 @@ async function kickMember(botToken: string, chatId: number, userId: number): Pro
         revoke_messages: false,
       }),
     });
-    const data = await response.json();
+    const banData = await banResponse.json();
     
-    if (!data.ok) {
-      return { success: false, error: data.description };
+    if (!banData.ok) {
+      return { success: false, error: banData.description };
     }
 
-    // Immediately unban to allow rejoin with proper invite
+    // Immediately unban to allow rejoin with proper invite (kick without blacklist)
     await fetch(`https://api.telegram.org/bot${botToken}/unbanChatMember`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -108,6 +97,59 @@ async function kickMember(botToken: string, chatId: number, userId: number): Pro
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
+}
+
+// Calculate access status: 'ok' | 'expired' | 'no_access'
+function calculateAccessStatus(
+  userId: string | undefined,
+  accessRecords: Map<string, any>,
+  manualAccessMap: Map<string, any>,
+  grantsMap: Map<string, any>,
+  adminUserIds: Set<string>,
+): 'ok' | 'expired' | 'no_access' {
+  // Admins always have access
+  if (userId && adminUserIds.has(userId)) {
+    return 'ok';
+  }
+  
+  if (!userId) {
+    return 'no_access';
+  }
+
+  let hasExpiredAccess = false;
+  const now = new Date();
+
+  // Check telegram_access
+  const access = accessRecords.get(userId);
+  if (access) {
+    const activeUntil = access.active_until ? new Date(access.active_until) : null;
+    if (!activeUntil || activeUntil > now) {
+      return 'ok';
+    }
+    hasExpiredAccess = true;
+  }
+
+  // Check manual_access
+  const manual = manualAccessMap.get(userId);
+  if (manual && manual.is_active) {
+    const validUntil = manual.valid_until ? new Date(manual.valid_until) : null;
+    if (!validUntil || validUntil > now) {
+      return 'ok';
+    }
+    hasExpiredAccess = true;
+  }
+
+  // Check access_grants
+  const grant = grantsMap.get(userId);
+  if (grant && grant.status === 'active') {
+    const endAt = grant.end_at ? new Date(grant.end_at) : null;
+    if (!endAt || endAt > now) {
+      return 'ok';
+    }
+    hasExpiredAccess = true;
+  }
+
+  return hasExpiredAccess ? 'expired' : 'no_access';
 }
 
 Deno.serve(async (req) => {
@@ -127,7 +169,6 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // For calls coming from the web app, enforce auth + admin check.
-    // For internal calls (cron/backend), allow service-role invocations.
     let requesterLabel = 'internal';
 
     if (!isServiceInvocation) {
@@ -155,10 +196,7 @@ Deno.serve(async (req) => {
         _permission_code: 'telegram.clubs.manage',
       });
 
-      // Check legacy roles (get_user_role returns 'admin' | 'superadmin' | 'user')
       const { data: userRole } = await userClient.rpc('get_user_role', { _user_id: user.id });
-      
-      // Also check is_super_admin function for new role system
       const { data: isSuperAdmin } = await userClient.rpc('is_super_admin', { _user_id: user.id });
 
       const isAdmin = !!hasPermission || !!isSuperAdmin || userRole === 'admin' || userRole === 'superadmin';
@@ -198,109 +236,61 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Action: SYNC - Synchronize members from Telegram
+    // ==========================================
+    // Action: SYNC - Synchronize members from DB
+    // ==========================================
     if (action === 'sync') {
-      const allMembers: Map<number, ClubMember> = new Map();
-      let chatError: string | undefined;
-      let channelError: string | undefined;
+      console.log('Starting sync for club:', club_id);
+      
+      // Get Telegram stats (only counts and admins available via Bot API)
       let chatTotal: number | undefined;
       let channelTotal: number | undefined;
+      let chatWarning: string | undefined;
+      let channelWarning: string | undefined;
 
-      // Get chat members from Telegram API (only admins available)
       if (club.chat_id) {
-        const chatResult = await getChatMembers(botToken, club.chat_id);
-        chatError = chatResult.error;
-        chatTotal = chatResult.total_count;
-        for (const member of chatResult.members) {
-          const existing = allMembers.get(member.telegram_user_id);
-          allMembers.set(member.telegram_user_id, {
-            ...member,
-            in_chat: true,
-            in_channel: existing?.in_channel || false,
-          });
+        const countResult = await getChatMemberCount(botToken, club.chat_id);
+        chatTotal = countResult.count;
+        if (countResult.error) {
+          chatWarning = countResult.error;
         }
       }
 
-      // Get channel members from Telegram API (only admins available)
       if (club.channel_id) {
-        const channelResult = await getChatMembers(botToken, club.channel_id);
-        channelError = channelResult.error;
-        channelTotal = channelResult.total_count;
-        for (const member of channelResult.members) {
-          const existing = allMembers.get(member.telegram_user_id);
-          allMembers.set(member.telegram_user_id, {
-            ...(existing || member),
-            in_chat: existing?.in_chat || false,
-            in_channel: true,
-          });
+        const countResult = await getChatMemberCount(botToken, club.channel_id);
+        channelTotal = countResult.count;
+        if (countResult.error) {
+          channelWarning = countResult.error;
         }
       }
 
-      // IMPORTANT: Also get all profiles with linked telegram accounts
-      // This gives us the full list of users, not just Telegram admins
-      const { data: allProfiles } = await supabase
+      // =====================================================
+      // CORE FIX: Source of truth is our database, NOT Telegram API
+      // Get ALL profiles with linked Telegram accounts
+      // =====================================================
+      const { data: allProfiles, error: profilesError } = await supabase
         .from('profiles')
-        .select('id, user_id, telegram_user_id, telegram_username, full_name')
+        .select('id, user_id, telegram_user_id, telegram_username, full_name, telegram_linked_at')
         .not('telegram_user_id', 'is', null);
 
-      // Get all access records for this club to know who SHOULD have access
-      const { data: accessRecords } = await supabase
-        .from('telegram_access')
-        .select('user_id, state_chat, state_channel, active_until')
-        .eq('club_id', club_id);
-
-      const accessMap = new Map(accessRecords?.map(a => [a.user_id, a]) || []);
-
-      // Also get manual access and access grants for this club
-      const { data: manualAccess } = await supabase
-        .from('telegram_manual_access')
-        .select('user_id, is_active, valid_until')
-        .eq('club_id', club_id)
-        .eq('is_active', true);
-
-      const { data: accessGrants } = await supabase
-        .from('telegram_access_grants')
-        .select('user_id, status, end_at')
-        .eq('club_id', club_id)
-        .eq('status', 'active');
-
-      // Combine all users who have access to this club
-      const usersWithAccess = new Set<string>();
-      accessRecords?.forEach(a => usersWithAccess.add(a.user_id));
-      manualAccess?.forEach(a => usersWithAccess.add(a.user_id));
-      accessGrants?.forEach(a => usersWithAccess.add(a.user_id));
-
-      // Add all profiles that have access to this club
-      for (const profile of allProfiles || []) {
-        if (profile.telegram_user_id) {
-          // Add if has access OR if not already in allMembers
-          const hasAccessToThisClub = usersWithAccess.has(profile.user_id);
-          if (hasAccessToThisClub && !allMembers.has(profile.telegram_user_id)) {
-            const nameParts = (profile.full_name || '').split(' ');
-            allMembers.set(profile.telegram_user_id, {
-              telegram_user_id: profile.telegram_user_id,
-              telegram_username: profile.telegram_username || undefined,
-              telegram_first_name: nameParts[0] || undefined,
-              telegram_last_name: nameParts.slice(1).join(' ') || undefined,
-              in_chat: false,
-              in_channel: false,
-            });
-          }
-        }
+      if (profilesError) {
+        console.error('Error fetching profiles:', profilesError);
+        return new Response(JSON.stringify({ success: false, error: 'Failed to fetch profiles' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
 
-      // Build profile map by telegram_user_id
-      const profileMap = new Map(allProfiles?.map(p => [p.telegram_user_id, p]) || []);
+      console.log(`Found ${allProfiles?.length || 0} profiles with linked Telegram`);
 
-      // Get admin/super_admin user IDs from user_roles_v2
-      const { data: adminRoles } = await supabase
+      // Get admin user IDs
+      const { data: adminRolesV2 } = await supabase
         .from('user_roles_v2')
         .select('user_id, roles!inner(code)')
         .in('roles.code', ['admin', 'super_admin']);
       
-      const adminUserIds = new Set(adminRoles?.map(r => r.user_id) || []);
+      const adminUserIds = new Set<string>(adminRolesV2?.map(r => r.user_id) || []);
 
-      // Also check legacy user_roles for admin/superadmin
       const { data: legacyAdmins } = await supabase
         .from('user_roles')
         .select('user_id')
@@ -308,94 +298,126 @@ Deno.serve(async (req) => {
       
       legacyAdmins?.forEach(r => adminUserIds.add(r.user_id));
 
-      // Update in_chat/in_channel from telegram_access records
-      for (const access of accessRecords || []) {
-        const profile = allProfiles?.find(p => p.user_id === access.user_id);
-        if (profile?.telegram_user_id) {
-          const existing = allMembers.get(profile.telegram_user_id);
-          if (existing) {
-            const isInChat = access.state_chat === 'member' || access.state_chat === 'active';
-            const isInChannel = access.state_channel === 'member' || access.state_channel === 'active';
-            allMembers.set(profile.telegram_user_id, {
-              ...existing,
-              in_chat: existing.in_chat || isInChat,
-              in_channel: existing.in_channel || isInChannel,
-            });
-          }
-        }
-      }
+      // Get ALL access records for this club
+      const { data: accessRecords } = await supabase
+        .from('telegram_access')
+        .select('user_id, state_chat, state_channel, active_until')
+        .eq('club_id', club_id);
+      const accessMap = new Map(accessRecords?.map(a => [a.user_id, a]) || []);
 
-      // Build maps for manual access and grants
+      const { data: manualAccess } = await supabase
+        .from('telegram_manual_access')
+        .select('user_id, is_active, valid_until')
+        .eq('club_id', club_id);
       const manualAccessMap = new Map(manualAccess?.map(a => [a.user_id, a]) || []);
+
+      const { data: accessGrants } = await supabase
+        .from('telegram_access_grants')
+        .select('user_id, status, end_at')
+        .eq('club_id', club_id);
       const grantsMap = new Map(accessGrants?.map(a => [a.user_id, a]) || []);
 
-      // Upsert members
-      let violatorsCount = 0;
-      const membersToUpsert = [];
+      // Build members list from ALL linked profiles
+      const membersToUpsert: any[] = [];
+      let countActive = 0;
+      let countExpired = 0;
+      let countNoAccess = 0;
 
-      for (const [tgUserId, member] of allMembers) {
-        const profile = profileMap.get(tgUserId);
-        const access = profile ? accessMap.get(profile.user_id) : null;
-        const manual = profile ? manualAccessMap.get(profile.user_id) : null;
-        const grant = profile ? grantsMap.get(profile.user_id) : null;
-        const isAdmin = profile ? adminUserIds.has(profile.user_id) : false;
-        
-        let accessStatus = 'no_access';
-        
-        // Admins always have access
-        if (isAdmin) {
-          accessStatus = 'ok';
-        } else if (profile) {
-          // Check if has any form of active access
-          let hasActiveAccess = false;
+      for (const profile of allProfiles || []) {
+        if (!profile.telegram_user_id) continue;
 
-          // Check telegram_access
-          if (access) {
-            const isActive = access.active_until ? new Date(access.active_until) > new Date() : true;
-            if (isActive) hasActiveAccess = true;
-            else if (!hasActiveAccess) accessStatus = 'expired';
-          }
+        const nameParts = (profile.full_name || '').split(' ');
+        const accessStatus = calculateAccessStatus(
+          profile.user_id,
+          accessMap,
+          manualAccessMap,
+          grantsMap,
+          adminUserIds,
+        );
 
-          // Check manual_access
-          if (manual && manual.is_active) {
-            const isActive = manual.valid_until ? new Date(manual.valid_until) > new Date() : true;
-            if (isActive) hasActiveAccess = true;
-          }
+        // Track counts
+        if (accessStatus === 'ok') countActive++;
+        else if (accessStatus === 'expired') countExpired++;
+        else countNoAccess++;
 
-          // Check access_grants
-          if (grant && grant.status === 'active') {
-            const isActive = grant.end_at ? new Date(grant.end_at) > new Date() : true;
-            if (isActive) hasActiveAccess = true;
-          }
-
-          if (hasActiveAccess) {
-            accessStatus = 'ok';
-          }
-        } else {
-          // Not linked to any profile - violator (only if they're actually in chat/channel)
-          if (member.in_chat || member.in_channel) {
-            accessStatus = 'no_access';
-            violatorsCount++;
-          } else {
-            accessStatus = 'no_access';
-          }
-        }
+        // Get presence info from access records (we can't check Telegram API for regular members)
+        const access = accessMap.get(profile.user_id);
+        const inChat = access?.state_chat === 'member' || access?.state_chat === 'active';
+        const inChannel = access?.state_channel === 'member' || access?.state_channel === 'active';
 
         membersToUpsert.push({
           club_id: club_id,
-          telegram_user_id: tgUserId,
-          telegram_username: member.telegram_username,
-          telegram_first_name: member.telegram_first_name,
-          telegram_last_name: member.telegram_last_name,
-          in_chat: member.in_chat,
-          in_channel: member.in_channel,
-          profile_id: profile?.id || null,
-          link_status: profile ? 'linked' : 'not_linked',
+          telegram_user_id: profile.telegram_user_id,
+          telegram_username: profile.telegram_username,
+          telegram_first_name: nameParts[0] || null,
+          telegram_last_name: nameParts.slice(1).join(' ') || null,
+          profile_id: profile.id,
+          link_status: 'linked',
           access_status: accessStatus,
+          in_chat: inChat || false,
+          in_channel: inChannel || false,
           last_synced_at: new Date().toISOString(),
         });
       }
 
+      // Also get Telegram admins for presence info (they might not be in our profiles)
+      const adminTelegramIds = new Set<number>();
+      if (club.chat_id) {
+        const chatAdmins = await getChatAdministrators(botToken, club.chat_id);
+        for (const admin of chatAdmins.admins) {
+          adminTelegramIds.add(admin.telegram_user_id);
+          // Check if this admin is already in our list
+          const existingIndex = membersToUpsert.findIndex(m => m.telegram_user_id === admin.telegram_user_id);
+          if (existingIndex >= 0) {
+            membersToUpsert[existingIndex].in_chat = true;
+          } else {
+            // Admin not in our profiles - add as unlinked
+            membersToUpsert.push({
+              club_id: club_id,
+              telegram_user_id: admin.telegram_user_id,
+              telegram_username: admin.telegram_username,
+              telegram_first_name: admin.telegram_first_name,
+              telegram_last_name: admin.telegram_last_name,
+              profile_id: null,
+              link_status: 'not_linked',
+              access_status: 'no_access',
+              in_chat: true,
+              in_channel: false,
+              last_synced_at: new Date().toISOString(),
+            });
+            countNoAccess++;
+          }
+        }
+      }
+
+      if (club.channel_id) {
+        const channelAdmins = await getChatAdministrators(botToken, club.channel_id);
+        for (const admin of channelAdmins.admins) {
+          const existingIndex = membersToUpsert.findIndex(m => m.telegram_user_id === admin.telegram_user_id);
+          if (existingIndex >= 0) {
+            membersToUpsert[existingIndex].in_channel = true;
+          } else if (!adminTelegramIds.has(admin.telegram_user_id)) {
+            membersToUpsert.push({
+              club_id: club_id,
+              telegram_user_id: admin.telegram_user_id,
+              telegram_username: admin.telegram_username,
+              telegram_first_name: admin.telegram_first_name,
+              telegram_last_name: admin.telegram_last_name,
+              profile_id: null,
+              link_status: 'not_linked',
+              access_status: 'no_access',
+              in_chat: false,
+              in_channel: true,
+              last_synced_at: new Date().toISOString(),
+            });
+            countNoAccess++;
+          }
+        }
+      }
+
+      console.log(`Syncing ${membersToUpsert.length} members: ${countActive} active, ${countExpired} expired, ${countNoAccess} no_access`);
+
+      // Upsert all members
       if (membersToUpsert.length > 0) {
         const { error: upsertError } = await supabase
           .from('telegram_club_members')
@@ -406,35 +428,70 @@ Deno.serve(async (req) => {
 
         if (upsertError) {
           console.error('Upsert error:', upsertError);
+          return new Response(JSON.stringify({ success: false, error: 'Failed to save members' }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
         }
       }
+
+      // Calculate violators (in chat/channel but no access)
+      const violatorsCount = membersToUpsert.filter(m => 
+        m.access_status === 'no_access' && (m.in_chat || m.in_channel)
+      ).length;
 
       // Update club stats
       await supabase
         .from('telegram_clubs')
         .update({
           last_members_sync_at: new Date().toISOString(),
-          // Show real Telegram counts (not just "known" members)
           members_count_chat: chatTotal ?? 0,
           members_count_channel: channelTotal ?? 0,
           violators_count: violatorsCount,
         })
         .eq('id', club_id);
 
+      // Log sync event
+      await supabase.from('telegram_logs').insert({
+        club_id: club_id,
+        action: 'MEMBERS_SYNC',
+        status: 'ok',
+        meta: {
+          total: membersToUpsert.length,
+          active: countActive,
+          expired: countExpired,
+          no_access: countNoAccess,
+          violators: violatorsCount,
+          telegram_chat_total: chatTotal,
+          telegram_channel_total: channelTotal,
+        },
+      });
+
+      // Generate warning message for Telegram API limitations
+      let apiWarning: string | undefined;
+      if (chatTotal && chatTotal > (membersToUpsert.filter(m => m.in_chat).length + 5)) {
+        apiWarning = `Telegram Bot API не позволяет получить полный список участников. Список формируется из привязок в системе (${membersToUpsert.length}). В Telegram: чат ~${chatTotal}, канал ~${channelTotal || 0}.`;
+      }
+
       return new Response(JSON.stringify({
         success: true,
-        members_count: allMembers.size,
+        members_count: membersToUpsert.length,
+        active_count: countActive,
+        expired_count: countExpired,
+        no_access_count: countNoAccess,
         violators_count: violatorsCount,
         chat_total_count: chatTotal,
         channel_total_count: channelTotal,
-        chat_warning: chatError,
-        channel_warning: channelError,
+        chat_warning: chatWarning || apiWarning,
+        channel_warning: channelWarning,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
+    // ==========================================
     // Action: KICK - Remove violators
+    // ==========================================
     if (action === 'kick') {
       const results: { telegram_user_id: number; success: boolean; error?: string }[] = [];
 
@@ -450,83 +507,95 @@ Deno.serve(async (req) => {
       }
 
       const { data: members } = await query;
+      let kickedCount = 0;
 
       for (const member of members || []) {
+        let kickSuccess = true;
+        let kickError: string | undefined;
+
         // Kick from chat
         if (member.in_chat && club.chat_id) {
           const chatResult = await kickMember(botToken, club.chat_id, member.telegram_user_id);
           if (!chatResult.success) {
-            results.push({ telegram_user_id: member.telegram_user_id, success: false, error: chatResult.error });
-            continue;
+            kickSuccess = false;
+            kickError = chatResult.error;
           }
         }
 
         // Kick from channel
-        if (member.in_channel && club.channel_id) {
+        if (kickSuccess && member.in_channel && club.channel_id) {
           const channelResult = await kickMember(botToken, club.channel_id, member.telegram_user_id);
           if (!channelResult.success) {
-            results.push({ telegram_user_id: member.telegram_user_id, success: false, error: channelResult.error });
-            continue;
+            kickSuccess = false;
+            kickError = channelResult.error;
           }
         }
 
-        // Update member status
-        await supabase
-          .from('telegram_club_members')
-          .update({ 
-            in_chat: false, 
-            in_channel: false,
-            access_status: 'removed',
-          })
-          .eq('id', member.id);
+        if (kickSuccess) {
+          kickedCount++;
+          // Update member status
+          await supabase
+            .from('telegram_club_members')
+            .update({ 
+              access_status: 'removed',
+              in_chat: false,
+              in_channel: false,
+            })
+            .eq('id', member.id);
 
-        // Log the action
-        await supabase.from('telegram_logs').insert({
-          club_id: club_id,
-          action: 'KICK_VIOLATOR',
-          target: `tg_user_${member.telegram_user_id}`,
-          status: 'ok',
-          meta: { 
-            telegram_user_id: member.telegram_user_id,
-            telegram_username: member.telegram_username,
-          },
+          // Log kick
+          await supabase.from('telegram_logs').insert({
+            user_id: member.profile_id,
+            club_id: club_id,
+            action: 'KICK',
+            target: `@${member.telegram_username || member.telegram_user_id}`,
+            status: 'ok',
+            meta: { telegram_user_id: member.telegram_user_id },
+          });
+        }
+
+        results.push({ 
+          telegram_user_id: member.telegram_user_id, 
+          success: kickSuccess, 
+          error: kickError 
         });
-
-        results.push({ telegram_user_id: member.telegram_user_id, success: true });
       }
 
       // Update violators count
-      const { count } = await supabase
+      const { count: newViolatorsCount } = await supabase
         .from('telegram_club_members')
-        .select('id', { count: 'exact', head: true })
+        .select('*', { count: 'exact', head: true })
         .eq('club_id', club_id)
-        .eq('access_status', 'no_access');
+        .eq('access_status', 'no_access')
+        .or('in_chat.eq.true,in_channel.eq.true');
 
       await supabase
         .from('telegram_clubs')
-        .update({ violators_count: count || 0 })
+        .update({ violators_count: newViolatorsCount || 0 })
         .eq('id', club_id);
 
-      return new Response(JSON.stringify({ 
-        success: true, 
-        results,
-        kicked_count: results.filter(r => r.success).length,
-        failed_count: results.filter(r => !r.success).length,
+      return new Response(JSON.stringify({
+        success: true,
+        kicked_count: kickedCount,
+        results: results,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Action: PREVIEW - Get list of violators for preview
+    // ==========================================
+    // Action: PREVIEW - Get list of violators
+    // ==========================================
     if (action === 'preview') {
       const { data: violators } = await supabase
         .from('telegram_club_members')
         .select('*')
         .eq('club_id', club_id)
-        .eq('access_status', 'no_access');
+        .eq('access_status', 'no_access')
+        .or('in_chat.eq.true,in_channel.eq.true');
 
-      return new Response(JSON.stringify({ 
-        success: true, 
+      return new Response(JSON.stringify({
+        success: true,
         violators: violators || [],
         count: violators?.length || 0,
       }), {
@@ -534,13 +603,73 @@ Deno.serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify({ success: false, error: 'Unknown action' }), {
+    // ==========================================
+    // Action: CHECK_LINK - Verify user link status
+    // ==========================================
+    if (action === 'check_link') {
+      const { profile_id, telegram_user_id } = await req.json();
+      
+      const diagnostics: any = {
+        profile_id,
+        telegram_user_id,
+        checks: [],
+      };
+
+      // Check profile
+      if (profile_id) {
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, user_id, telegram_user_id, telegram_username, telegram_linked_at')
+          .eq('id', profile_id)
+          .single();
+        
+        diagnostics.profile = profile;
+        diagnostics.profile_error = profileError?.message;
+        diagnostics.checks.push({
+          check: 'profile_exists',
+          passed: !!profile && !profileError,
+          details: profile ? `Telegram ID: ${profile.telegram_user_id}` : profileError?.message,
+        });
+      }
+
+      // Check club member record
+      const memberQuery = telegram_user_id 
+        ? { club_id, telegram_user_id }
+        : profile_id
+          ? { club_id, profile_id }
+          : null;
+
+      if (memberQuery) {
+        const { data: member, error: memberError } = await supabase
+          .from('telegram_club_members')
+          .select('*')
+          .match(memberQuery)
+          .single();
+        
+        diagnostics.member = member;
+        diagnostics.member_error = memberError?.message;
+        diagnostics.checks.push({
+          check: 'member_record_exists',
+          passed: !!member && !memberError,
+          details: member ? `Status: ${member.access_status}` : memberError?.message,
+        });
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        diagnostics,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ error: 'Unknown action' }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
-    console.error('Club members error:', error);
+    console.error('Edge function error:', error);
     return new Response(JSON.stringify({ 
       success: false, 
       error: error instanceof Error ? error.message : 'Unknown error' 

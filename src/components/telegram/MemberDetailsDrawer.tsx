@@ -35,16 +35,19 @@ import {
   Loader2,
   Plus,
   Calendar,
+  Search,
+  Copy,
 } from 'lucide-react';
 import { 
   TelegramClubMember,
   useUserAccessGrants,
   useGrantTelegramAccess,
 } from '@/hooks/useTelegramIntegration';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { format, addDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
+import { toast } from 'sonner';
 
 interface MemberDetailsDrawerProps {
   member: TelegramClubMember | null;
@@ -58,8 +61,33 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
   const [showGrantDialog, setShowGrantDialog] = useState(false);
   const [grantDays, setGrantDays] = useState(30);
   const [grantComment, setGrantComment] = useState('');
+  const [diagnosticResult, setDiagnosticResult] = useState<any>(null);
   
   const grantAccess = useGrantTelegramAccess();
+
+  // Check link mutation
+  const checkLink = useMutation({
+    mutationFn: async () => {
+      if (!clubId || !member) return null;
+      const { data, error } = await supabase.functions.invoke('telegram-club-members', {
+        body: { 
+          action: 'check_link', 
+          club_id: clubId,
+          profile_id: member.profile_id,
+          telegram_user_id: member.telegram_user_id,
+        },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      setDiagnosticResult(data?.diagnostics);
+      toast.success('Проверка выполнена');
+    },
+    onError: (error: any) => {
+      toast.error('Ошибка проверки: ' + error.message);
+    },
+  });
 
   // Fetch access grants history
   const { data: accessGrants, isLoading: grantsLoading } = useUserAccessGrants(userId || null);
@@ -225,6 +253,92 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
                       <XCircle className="h-4 w-4 text-muted-foreground" />
                     )}
                   </div>
+                </CardContent>
+              </Card>
+
+              {/* Diagnostics Card */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base">Диагностика</CardTitle>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => checkLink.mutate()}
+                      disabled={checkLink.isPending}
+                    >
+                      {checkLink.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <Search className="h-4 w-4 mr-2" />
+                      )}
+                      Проверить связку
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">telegram_user_id</span>
+                    <span className="font-mono flex items-center gap-1">
+                      {member.telegram_user_id}
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-5 w-5"
+                        onClick={() => {
+                          navigator.clipboard.writeText(String(member.telegram_user_id));
+                          toast.success('Скопировано');
+                        }}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">profile_id</span>
+                    <span className="font-mono text-xs">{member.profile_id || '—'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">link_status</span>
+                    <Badge variant={member.link_status === 'linked' ? 'default' : 'secondary'}>
+                      {member.link_status}
+                    </Badge>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">access_status</span>
+                    <Badge variant={
+                      member.access_status === 'ok' ? 'default' : 
+                      member.access_status === 'expired' ? 'secondary' : 
+                      'destructive'
+                    }>
+                      {member.access_status}
+                    </Badge>
+                  </div>
+                  {member.last_synced_at && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">last_synced_at</span>
+                      <span className="text-xs">
+                        {format(new Date(member.last_synced_at), 'dd.MM.yy HH:mm', { locale: ru })}
+                      </span>
+                    </div>
+                  )}
+                  
+                  {/* Diagnostic results */}
+                  {diagnosticResult && (
+                    <div className="mt-4 p-3 bg-muted rounded-md">
+                      <p className="font-medium mb-2">Результат проверки:</p>
+                      {diagnosticResult.checks?.map((check: any, i: number) => (
+                        <div key={i} className="flex items-center gap-2 text-xs mb-1">
+                          {check.passed ? (
+                            <CheckCircle className="h-3 w-3 text-green-500" />
+                          ) : (
+                            <XCircle className="h-3 w-3 text-destructive" />
+                          )}
+                          <span>{check.check}: {check.details}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 

@@ -82,8 +82,16 @@ export default function TelegramClubMembers() {
       all: members.length,
       clients: members.filter(m => m.link_status === 'linked').length,
       with_access: members.filter(m => m.access_status === 'ok').length,
-      no_access: members.filter(m => m.access_status === 'no_access' && m.link_status === 'linked').length,
-      violators: members.filter(m => m.access_status === 'no_access' && m.link_status !== 'linked' && (m.in_chat || m.in_channel)).length,
+      // "Без доступа" = linked users with expired OR no_access status
+      no_access: members.filter(m => 
+        m.link_status === 'linked' && 
+        (m.access_status === 'no_access' || m.access_status === 'expired')
+      ).length,
+      // "Нарушители" = users in chat/channel but without access (regardless of link status)
+      violators: members.filter(m => 
+        m.access_status === 'no_access' && 
+        (m.in_chat || m.in_channel)
+      ).length,
     };
   }, [members]);
 
@@ -114,9 +122,12 @@ export default function TelegramClubMembers() {
         case 'with_access':
           return member.access_status === 'ok';
         case 'no_access':
-          return member.access_status === 'no_access' && member.link_status === 'linked';
+          // "Без доступа" = linked users with expired OR no_access status  
+          return member.link_status === 'linked' && 
+            (member.access_status === 'no_access' || member.access_status === 'expired');
         case 'violators':
-          return member.access_status === 'no_access' && member.link_status !== 'linked' && (member.in_chat || member.in_channel);
+          // "Нарушители" = users in chat/channel but without access
+          return member.access_status === 'no_access' && (member.in_chat || member.in_channel);
         default:
           return true;
       }
@@ -155,20 +166,20 @@ export default function TelegramClubMembers() {
     setShowKickDialog(false);
   };
 
-  const getAccessStatusBadge = (status: string) => {
+  const getAccessStatusBadge = (status: string, linkStatus?: string) => {
     switch (status) {
       case 'ok':
         return (
           <Badge variant="outline" className="bg-green-500/10 text-green-600 gap-1">
             <CheckCircle className="h-3 w-3" />
-            OK
+            С доступом
           </Badge>
         );
       case 'no_access':
         return (
           <Badge variant="destructive" className="gap-1">
             <XCircle className="h-3 w-3" />
-            Нет доступа
+            Без доступа
           </Badge>
         );
       case 'expired':
@@ -357,11 +368,15 @@ export default function TelegramClubMembers() {
             {(lastSyncInfo?.chat_warning || lastSyncInfo?.channel_warning) && (
               <Alert className="mb-4">
                 <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Ограничение Telegram</AlertTitle>
+                <AlertTitle>Ограничение Telegram Bot API</AlertTitle>
                 <AlertDescription>
-                  {lastSyncInfo.chat_warning || lastSyncInfo.channel_warning}
+                  Telegram Bot API не позволяет получить полный список участников чата/канала.
+                  Поэтому список «Участники» формируется по привязкам Telegram в системе.
                   <div className="mt-2 text-sm text-muted-foreground">
-                    Сейчас в системе известно: {counts.all}. Telegram показывает: чат {club.members_count_chat || 0}, канал {club.members_count_channel || 0}.
+                    Привязано в системе: {counts.all} пользователей. 
+                    Telegram показывает: чат ~{club.members_count_chat || 0}, канал ~{club.members_count_channel || 0}.
+                    <br />
+                    Поля «В чате/В канале» могут иметь состояние "unknown", если мы не можем проверить факт присутствия.
                   </div>
                 </AlertDescription>
               </Alert>
