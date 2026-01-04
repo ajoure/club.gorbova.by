@@ -197,7 +197,7 @@ Deno.serve(async (req) => {
       let chatError: string | undefined;
       let channelError: string | undefined;
 
-      // Get chat members
+      // Get chat members from Telegram API (only admins available)
       if (club.chat_id) {
         const chatResult = await getChatMembers(botToken, club.chat_id);
         chatError = chatResult.error;
@@ -211,7 +211,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Get channel members
+      // Get channel members from Telegram API (only admins available)
       if (club.channel_id) {
         const channelResult = await getChatMembers(botToken, club.channel_id);
         channelError = channelResult.error;
@@ -225,21 +225,39 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Get all profiles with telegram_user_id to match
-      const { data: profiles } = await supabase
+      // IMPORTANT: Also get all profiles with linked telegram accounts
+      // This gives us the full list of users, not just Telegram admins
+      const { data: allProfiles } = await supabase
         .from('profiles')
-        .select('id, user_id, telegram_user_id')
+        .select('id, user_id, telegram_user_id, telegram_username, full_name')
         .not('telegram_user_id', 'is', null);
 
-      const profileMap = new Map(profiles?.map(p => [p.telegram_user_id, p]) || []);
+      // Add all linked profiles to the members map (if not already there from Telegram API)
+      for (const profile of allProfiles || []) {
+        if (profile.telegram_user_id && !allMembers.has(profile.telegram_user_id)) {
+          // Split full_name into first_name and last_name
+          const nameParts = (profile.full_name || '').split(' ');
+          allMembers.set(profile.telegram_user_id, {
+            telegram_user_id: profile.telegram_user_id,
+            telegram_username: profile.telegram_username || undefined,
+            telegram_first_name: nameParts[0] || undefined,
+            telegram_last_name: nameParts.slice(1).join(' ') || undefined,
+            in_chat: false, // Will be updated from telegram_access
+            in_channel: false,
+          });
+        }
+      }
 
-      // Get existing access records
+      // Get all access records for this club to know who SHOULD have access
       const { data: accessRecords } = await supabase
         .from('telegram_access')
         .select('user_id, state_chat, state_channel, active_until')
         .eq('club_id', club_id);
 
       const accessMap = new Map(accessRecords?.map(a => [a.user_id, a]) || []);
+
+      // Build profile map by telegram_user_id
+      const profileMap = new Map(allProfiles?.map(p => [p.telegram_user_id, p]) || []);
 
       // Get admin/super_admin user IDs from user_roles_v2
       const { data: adminRoles } = await supabase
@@ -256,6 +274,24 @@ Deno.serve(async (req) => {
         .in('role', ['admin', 'superadmin']);
       
       legacyAdmins?.forEach(r => adminUserIds.add(r.user_id));
+
+      // Update in_chat/in_channel from telegram_access records
+      for (const access of accessRecords || []) {
+        const profile = allProfiles?.find(p => p.user_id === access.user_id);
+        if (profile?.telegram_user_id) {
+          const existing = allMembers.get(profile.telegram_user_id);
+          if (existing) {
+            // If access record shows they're in chat/channel, update the member
+            const isInChat = access.state_chat === 'member' || access.state_chat === 'active';
+            const isInChannel = access.state_channel === 'member' || access.state_channel === 'active';
+            allMembers.set(profile.telegram_user_id, {
+              ...existing,
+              in_chat: existing.in_chat || isInChat,
+              in_channel: existing.in_channel || isInChannel,
+            });
+          }
+        }
+      }
 
       // Upsert members
       let violatorsCount = 0;
@@ -275,9 +311,13 @@ Deno.serve(async (req) => {
           const isActive = access.active_until ? new Date(access.active_until) > new Date() : true;
           accessStatus = isActive ? 'ok' : 'expired';
         } else if (!profile) {
-          // Not linked to any profile - violator
-          accessStatus = 'no_access';
-          violatorsCount++;
+          // Not linked to any profile - violator (only if they're actually in chat/channel)
+          if (member.in_chat || member.in_channel) {
+            accessStatus = 'no_access';
+            violatorsCount++;
+          } else {
+            accessStatus = 'no_access';
+          }
         } else {
           // Has profile but no access record and not admin
           accessStatus = 'no_access';
