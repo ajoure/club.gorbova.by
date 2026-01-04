@@ -4,7 +4,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Link2, CreditCard, Mail, Send } from "lucide-react";
+import { Plus, Link2, CreditCard, Mail, Send, Users } from "lucide-react";
 import {
   useIntegrations,
   PROVIDERS,
@@ -21,6 +21,7 @@ import { IntegrationSyncSettingsDialog } from "@/components/integrations/Integra
 import { TelegramBotsTab } from "@/components/telegram/TelegramBotsTab";
 import { TelegramClubsTab } from "@/components/telegram/TelegramClubsTab";
 import { TelegramLogsTab } from "@/components/telegram/TelegramLogsTab";
+import { MassBroadcastDialog } from "@/components/telegram/MassBroadcastDialog";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
@@ -45,6 +46,7 @@ export default function AdminIntegrations() {
   const [logsInstance, setLogsInstance] = useState<IntegrationInstance | null>(null);
   const [syncSettingsInstance, setSyncSettingsInstance] = useState<IntegrationInstance | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
+  const [massBroadcastOpen, setMassBroadcastOpen] = useState(false);
 
   // Determine active tab from URL
   const getActiveTab = (): IntegrationCategory => {
@@ -159,22 +161,30 @@ export default function AdminIntegrations() {
 
         {activeTab === "telegram" ? (
           <div className="mt-6 space-y-6">
-            <Tabs defaultValue="bots" className="w-full">
-              <TabsList>
-                <TabsTrigger value="bots">Боты</TabsTrigger>
-                <TabsTrigger value="clubs">Клубы</TabsTrigger>
-                <TabsTrigger value="logs">Логи</TabsTrigger>
-              </TabsList>
-              <TabsContent value="bots" className="mt-4">
-                <TelegramBotsTab />
-              </TabsContent>
-              <TabsContent value="clubs" className="mt-4">
-                <TelegramClubsTab />
-              </TabsContent>
-              <TabsContent value="logs" className="mt-4">
-                <TelegramLogsTab />
-              </TabsContent>
-            </Tabs>
+            <div className="flex justify-between items-center">
+              <Tabs defaultValue="bots" className="w-full">
+                <div className="flex justify-between items-center">
+                  <TabsList>
+                    <TabsTrigger value="bots">Боты</TabsTrigger>
+                    <TabsTrigger value="clubs">Клубы</TabsTrigger>
+                    <TabsTrigger value="logs">Логи</TabsTrigger>
+                  </TabsList>
+                  <Button onClick={() => setMassBroadcastOpen(true)}>
+                    <Users className="h-4 w-4 mr-2" />
+                    Массовая рассылка
+                  </Button>
+                </div>
+                <TabsContent value="bots" className="mt-4">
+                  <TelegramBotsTab />
+                </TabsContent>
+                <TabsContent value="clubs" className="mt-4">
+                  <TelegramClubsTab />
+                </TabsContent>
+                <TabsContent value="logs" className="mt-4">
+                  <TelegramLogsTab />
+                </TabsContent>
+              </Tabs>
+            </div>
           </div>
         ) : (
         <div className="mt-6 space-y-6">
@@ -282,6 +292,11 @@ export default function AdminIntegrations() {
         instance={syncSettingsInstance}
         open={!!syncSettingsInstance}
         onOpenChange={(open) => !open && setSyncSettingsInstance(null)}
+      />
+
+      <MassBroadcastDialog
+        open={massBroadcastOpen}
+        onOpenChange={setMassBroadcastOpen}
       />
     </div>
   );
