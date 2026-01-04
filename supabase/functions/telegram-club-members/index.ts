@@ -216,7 +216,8 @@ Deno.serve(async (req) => {
       requesterLabel = user.email ?? user.id;
     }
 
-    const { action, club_id, member_ids } = await req.json();
+    const body = await req.json();
+    const { action, club_id, member_ids, profile_id, telegram_user_id } = body;
     console.log(`Club members action: ${action}, club_id: ${club_id}, requester: ${requesterLabel}`);
 
     // Get club with bot
@@ -618,11 +619,124 @@ Deno.serve(async (req) => {
     }
 
     // ==========================================
+    // Action: MARK_REMOVED - Mark members as removed without kicking
+    // ==========================================
+    if (action === 'mark_removed') {
+      if (!member_ids || member_ids.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: 'No member_ids provided' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const { error: updateError } = await supabase
+        .from('telegram_club_members')
+        .update({ access_status: 'removed', updated_at: new Date().toISOString() })
+        .eq('club_id', club_id)
+        .in('id', member_ids);
+
+      if (updateError) {
+        return new Response(JSON.stringify({ success: false, error: updateError.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      await supabase.from('telegram_logs').insert({
+        club_id: club_id,
+        action: 'MARK_REMOVED',
+        status: 'ok',
+        meta: { member_ids, count: member_ids.length },
+      });
+
+      return new Response(JSON.stringify({ success: true, marked_count: member_ids.length }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // ==========================================
+    // Action: KICK_PRESENT - Kick only members who are actually in chat/channel
+    // ==========================================
+    if (action === 'kick_present') {
+      const results: { telegram_user_id: number; success: boolean; error?: string }[] = [];
+      let kickedCount = 0;
+
+      // Get members who are in chat or channel
+      let query = supabase
+        .from('telegram_club_members')
+        .select('*')
+        .eq('club_id', club_id)
+        .or('in_chat.eq.true,in_channel.eq.true');
+
+      if (member_ids && member_ids.length > 0) {
+        query = query.in('id', member_ids);
+      }
+
+      const { data: members } = await query;
+
+      for (const member of members || []) {
+        let chatKicked = false;
+        let channelKicked = false;
+        let lastError: string | undefined;
+
+        if (member.in_chat && club.chat_id) {
+          const chatResult = await kickMember(botToken, club.chat_id, member.telegram_user_id);
+          chatKicked = chatResult.success;
+          if (!chatResult.success) lastError = chatResult.error;
+        }
+
+        if (member.in_channel && club.channel_id) {
+          const channelResult = await kickMember(botToken, club.channel_id, member.telegram_user_id);
+          channelKicked = channelResult.success;
+          if (!channelResult.success) lastError = channelResult.error;
+        }
+
+        if (chatKicked || channelKicked) {
+          kickedCount++;
+          await supabase
+            .from('telegram_club_members')
+            .update({
+              in_chat: chatKicked ? false : member.in_chat,
+              in_channel: channelKicked ? false : member.in_channel,
+              access_status: 'removed',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', member.id);
+
+          await supabase.from('telegram_logs').insert({
+            user_id: member.profile_id,
+            club_id: club_id,
+            action: 'KICK_PRESENT',
+            target: `@${member.telegram_username || member.telegram_user_id}`,
+            status: 'ok',
+            meta: { 
+              telegram_user_id: member.telegram_user_id, 
+              chat_kicked: chatKicked, 
+              channel_kicked: channelKicked 
+            },
+          });
+        }
+
+        results.push({
+          telegram_user_id: member.telegram_user_id,
+          success: chatKicked || channelKicked,
+          error: lastError,
+        });
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        kicked_count: kickedCount,
+        results,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // ==========================================
     // Action: CHECK_LINK - Verify user link status
     // ==========================================
     if (action === 'check_link') {
-      const { profile_id, telegram_user_id } = await req.json();
-      
       const diagnostics: any = {
         profile_id,
         telegram_user_id,
