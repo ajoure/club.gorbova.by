@@ -1926,6 +1926,7 @@ export type Database = {
           created_at: string | null
           id: string
           is_active: boolean | null
+          is_primary: boolean | null
           offer_type: string
           requires_card_tokenization: boolean | null
           sort_order: number | null
@@ -1944,6 +1945,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           is_active?: boolean | null
+          is_primary?: boolean | null
           offer_type: string
           requires_card_tokenization?: boolean | null
           sort_order?: number | null
@@ -1962,6 +1964,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           is_active?: boolean | null
+          is_primary?: boolean | null
           offer_type?: string
           requires_card_tokenization?: boolean | null
           sort_order?: number | null

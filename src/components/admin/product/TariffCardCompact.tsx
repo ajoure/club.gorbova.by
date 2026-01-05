@@ -19,6 +19,7 @@ interface TariffOffer {
   auto_charge_after_trial: boolean;
   auto_charge_amount: number | null;
   is_active: boolean;
+  is_primary?: boolean;
 }
 
 interface TariffCardCompactProps {
@@ -49,8 +50,11 @@ export function TariffCardCompact({
 }: TariffCardCompactProps) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const mainOffer = offers.find(o => o.offer_type === "pay_now" && o.is_active);
+  // Primary offer takes precedence, fallback to first active pay_now
+  const mainOffer = offers.find(o => o.offer_type === "pay_now" && o.is_active && o.is_primary) 
+    || offers.find(o => o.offer_type === "pay_now" && o.is_active);
   const trialOffer = offers.find(o => o.offer_type === "trial" && o.is_active);
+  const hasPrimaryPayOffer = offers.some(o => o.offer_type === "pay_now" && o.is_active && o.is_primary);
 
   const copyCode = () => {
     navigator.clipboard.writeText(tariff.code);
@@ -75,6 +79,11 @@ export function TariffCardCompact({
             {trialOffer && (
               <Badge variant="outline" className="shrink-0">
                 Trial {trialOffer.trial_days} дн.
+              </Badge>
+            )}
+            {!hasPrimaryPayOffer && mainOffer && (
+              <Badge variant="destructive" className="shrink-0 text-xs">
+                Нет основной цены
               </Badge>
             )}
           </div>
@@ -116,13 +125,11 @@ export function TariffCardCompact({
 
       {/* Collapsible Details */}
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" size="sm" className="w-full mt-3 justify-between">
-            <span className="text-muted-foreground text-sm">
-              Подробности
-            </span>
-            <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-          </Button>
+        <CollapsibleTrigger className="w-full mt-3 flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 hover:bg-muted/30 hover:border-border/50 border border-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 group">
+          <span className="text-muted-foreground text-sm group-hover:text-foreground transition-colors">
+            Подробности
+          </span>
+          <ChevronDown className={`h-4 w-4 text-muted-foreground group-hover:text-foreground transition-all duration-200 ${isOpen ? 'rotate-180' : ''}`} />
         </CollapsibleTrigger>
         <CollapsibleContent className="pt-3 space-y-3">
           {/* Main Price */}

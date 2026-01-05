@@ -16,6 +16,7 @@ interface TariffOffer {
   button_label: string;
   amount: number;
   is_active: boolean;
+  is_primary?: boolean;
 }
 
 interface TariffPreviewCardProps {
@@ -38,9 +39,11 @@ export function TariffPreviewCard({
   offers,
   showButtons = true,
 }: TariffPreviewCardProps) {
-  const mainOffer = offers.find(o => o.offer_type === "pay_now" && o.is_active);
+  // Primary offer takes precedence for price display, fallback to first active pay_now
+  const mainOffer = offers.find(o => o.offer_type === "pay_now" && o.is_active && o.is_primary) 
+    || offers.find(o => o.offer_type === "pay_now" && o.is_active);
   const trialOffer = offers.find(o => o.offer_type === "trial" && o.is_active);
-  const displayPrice = mainOffer?.amount || 0;
+  const displayPrice = mainOffer?.amount ?? null;
 
   return (
     <div
@@ -79,12 +82,16 @@ export function TariffPreviewCard({
 
         {/* Price */}
         <div className="text-center mb-4">
-          <div className="flex items-baseline justify-center gap-1">
-            <span className="text-4xl font-bold text-foreground">{displayPrice}</span>
-            <span className="text-muted-foreground">
-              {tariff.period_label || "BYN/мес"}
-            </span>
-          </div>
+          {displayPrice !== null ? (
+            <div className="flex items-baseline justify-center gap-1">
+              <span className="text-4xl font-bold text-foreground">{displayPrice}</span>
+              <span className="text-muted-foreground">
+                {tariff.period_label || "BYN/мес"}
+              </span>
+            </div>
+          ) : (
+            <div className="text-sm text-destructive">Не задана основная цена</div>
+          )}
         </div>
 
         {/* Features - flex-1 to push buttons down */}

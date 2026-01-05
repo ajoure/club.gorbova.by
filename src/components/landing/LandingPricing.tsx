@@ -19,6 +19,7 @@ interface TariffOffer {
   auto_charge_after_trial: boolean;
   auto_charge_amount: number | null;
   requires_card_tokenization: boolean;
+  is_primary?: boolean;
   sort_order: number;
 }
 
@@ -280,9 +281,12 @@ export function LandingPricing() {
                 
                 return tariffs.map((tariff, index) => {
                   const visibleFeatures = tariff.features.filter(isFeatureVisible);
-                  const price = tariff.current_price || tariff.original_price || 0;
-                  const payOffer = tariff.offers?.find((o) => o.offer_type === "pay_now");
+                  // Primary pay offer takes precedence for price display
+                  const payOffer = tariff.offers?.find((o) => o.offer_type === "pay_now" && o.is_primary) 
+                    || tariff.offers?.find((o) => o.offer_type === "pay_now");
                   const trialOffer = tariff.offers?.find((o) => o.offer_type === "trial");
+                  // Price comes from primary pay offer, not from tariff_prices
+                  const price = payOffer?.amount ?? tariff.current_price ?? tariff.original_price ?? 0;
 
                   return (
                     <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 150}>

@@ -14,6 +14,7 @@ export interface TariffOffer {
   auto_charge_delay_days: number | null;
   requires_card_tokenization: boolean;
   is_active: boolean;
+  is_primary: boolean;
   visible_from: string | null;
   visible_to: string | null;
   sort_order: number;
@@ -151,7 +152,7 @@ export function useCreateDefaultOffers() {
       trialPrice?: number;
       trialDays?: number;
     }) => {
-      // Create pay_now offer
+      // Create pay_now offer (primary)
       await createOffer.mutateAsync({
         tariff_id: tariffId,
         offer_type: "pay_now",
@@ -163,6 +164,7 @@ export function useCreateDefaultOffers() {
         auto_charge_delay_days: null,
         requires_card_tokenization: false,
         is_active: true,
+        is_primary: true,
         visible_from: null,
         visible_to: null,
         sort_order: 0,
@@ -180,10 +182,42 @@ export function useCreateDefaultOffers() {
         auto_charge_delay_days: trialDays,
         requires_card_tokenization: true,
         is_active: true,
+        is_primary: false,
         visible_from: null,
         visible_to: null,
         sort_order: 1,
       });
+    },
+  });
+}
+
+// Hook to set primary offer (unsets other primaries for same tariff)
+export function useSetPrimaryOffer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ offerId, tariffId }: { offerId: string; tariffId: string }) => {
+      // First unset all primaries for this tariff
+      await supabase
+        .from("tariff_offers")
+        .update({ is_primary: false })
+        .eq("tariff_id", tariffId)
+        .eq("offer_type", "pay_now");
+      
+      // Then set the new primary
+      const { error } = await supabase
+        .from("tariff_offers")
+        .update({ is_primary: true })
+        .eq("id", offerId);
+      
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tariff_offers"] });
+      queryClient.invalidateQueries({ queryKey: ["product_offers"] });
+      toast.success("Основная цена установлена");
+    },
+    onError: (error) => {
+      toast.error(`Ошибка: ${error.message}`);
     },
   });
 }
