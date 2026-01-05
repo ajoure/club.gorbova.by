@@ -144,7 +144,7 @@ ${messagesText.slice(0, 15000)}
 - Важные темы обсуждений`;
 
       try {
-        const aiResponse = await fetch('https://ai.lovable.dev/v1/chat/completions', {
+        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${lovableApiKey}`,
