@@ -6,6 +6,99 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// GetCourse Offer ID mapping
+const GETCOURSE_OFFER_IDS: Record<string, number> = {
+  'chat': 6744625,
+  'full': 6744626,
+  'business': 6744628,
+  // 'web': 6744634, // Reserved, not used now
+};
+
+// Send order to GetCourse
+async function sendToGetCourse(
+  email: string,
+  phone: string | null,
+  offerCode: string,
+  orderId: string,
+  amount: number
+): Promise<{ success: boolean; error?: string; gcOrderId?: string }> {
+  const apiKey = Deno.env.get('GETCOURSE_API_KEY');
+  const accountName = 'gorbova';
+  
+  if (!apiKey) {
+    console.log('GetCourse API key not configured, skipping');
+    return { success: false, error: 'API key not configured' };
+  }
+  
+  const offerId = GETCOURSE_OFFER_IDS[offerCode];
+  if (!offerId) {
+    console.log(`Unknown tariff code: ${offerCode}, skipping GetCourse sync`);
+    return { success: false, error: `Unknown tariff code: ${offerCode}` };
+  }
+  
+  try {
+    console.log(`Sending order to GetCourse: email=${email}, offerId=${offerId}, orderId=${orderId}`);
+    
+    // GetCourse API expects form-encoded data with action and params
+    const params = {
+      user: {
+        email: email,
+        phone: phone || undefined,
+      },
+      system: {
+        refresh_if_exists: 1,
+      },
+      deal: {
+        offer_code: offerId.toString(),
+        deal_number: orderId,
+        deal_cost: amount / 100, // Convert from kopecks
+        deal_status: 'payed',
+        deal_is_paid: 1,
+        payment_type: 'CARD',
+        manager_email: 'info@ajoure.by',
+        deal_comment: `Оплата через сайт club.gorbova.by. Order ID: ${orderId}`,
+      },
+    };
+    
+    const formData = new URLSearchParams();
+    formData.append('action', 'add');
+    formData.append('key', apiKey);
+    formData.append('params', btoa(unescape(encodeURIComponent(JSON.stringify(params)))));
+    
+    const response = await fetch(`https://${accountName}.getcourse.ru/pl/api/deals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData.toString(),
+    });
+    
+    const responseText = await response.text();
+    console.log('GetCourse response:', responseText);
+    
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      console.error('Failed to parse GetCourse response:', responseText);
+      return { success: false, error: `Invalid response: ${responseText.substring(0, 200)}` };
+    }
+    
+    if (data.success || data.result?.success) {
+      console.log('Order successfully sent to GetCourse');
+      return { success: true, gcOrderId: data.result?.deal_id?.toString() };
+    } else {
+      const errorMsg = data.error_message || data.result?.error_message || 'Unknown error';
+      console.error('GetCourse error:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error('GetCourse API error:', errorMsg);
+    return { success: false, error: errorMsg };
+  }
+}
+
 // AmoCRM integration helpers
 function normalizeAmoCRMSubdomain(raw: string): string {
   const trimmed = raw.trim();
@@ -509,6 +602,43 @@ Deno.serve(async (req) => {
         }
       );
 
+      // Send to GetCourse
+      let gcSyncResult: { success: boolean; error?: string; gcOrderId?: string } = { success: false };
+      const tariffCode = meta.tariff_code as string | undefined;
+      
+      if (tariffCode && order.customer_email) {
+        console.log(`Sending order to GetCourse: tariff=${tariffCode}, email=${order.customer_email}`);
+        gcSyncResult = await sendToGetCourse(
+          order.customer_email,
+          meta.customer_phone || null,
+          tariffCode,
+          orderId,
+          order.amount
+        );
+        
+        // Update order with GetCourse sync status
+        await supabase
+          .from('orders')
+          .update({
+            meta: {
+              ...meta,
+              gc_sync_status: gcSyncResult.success ? 'success' : 'failed',
+              gc_sync_error: gcSyncResult.error || null,
+              gc_order_id: gcSyncResult.gcOrderId || null,
+              gc_sync_at: new Date().toISOString(),
+            },
+          })
+          .eq('id', orderId);
+        
+        if (gcSyncResult.success) {
+          console.log('GetCourse sync successful');
+        } else {
+          console.error('GetCourse sync failed:', gcSyncResult.error);
+        }
+      } else {
+        console.log('GetCourse sync skipped: no tariff_code or email');
+      }
+
       // Log the action
       await supabase
         .from('audit_logs')
@@ -524,6 +654,8 @@ Deno.serve(async (req) => {
             product_name: product?.name,
             amocrm_contact_id: amoCRMContactId,
             amocrm_deal_id: amoCRMDealId,
+            gc_sync_status: gcSyncResult.success ? 'success' : (tariffCode ? 'failed' : 'skipped'),
+            gc_order_id: gcSyncResult.gcOrderId,
           },
         });
 

@@ -21,6 +21,7 @@ interface PaymentDialogProps {
   productId: string;
   productName: string;
   price: string;
+  tariffCode?: string; // For GetCourse integration: 'chat', 'full', 'business'
 }
 
 const emailSchema = z.string().email("Введите корректный email");
@@ -41,6 +42,7 @@ export function PaymentDialog({
   productId,
   productName,
   price,
+  tariffCode,
 }: PaymentDialogProps) {
   const { user, session } = useAuth();
   const [step, setStep] = useState<Step>("email");
@@ -179,6 +181,7 @@ export function PaymentDialog({
           customerLastName: formData.lastName,
           existingUserId,
           description: productName,
+          tariffCode, // For GetCourse integration
         },
       });
 
