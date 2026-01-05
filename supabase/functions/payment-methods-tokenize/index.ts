@@ -45,16 +45,30 @@ serve(async (req) => {
         const { data: settings } = await supabase
           .from('payment_settings')
           .select('key, value')
-          .in('key', ['bepaid_shop_id', 'bepaid_test_mode']);
-        
+          .in('key', [
+            'bepaid_shop_id',
+            'bepaid_test_mode',
+            'bepaid_currency',
+            'bepaid_tokenization_amount',
+          ]);
+
         const settingsMap: Record<string, string> = settings?.reduce(
-          (acc: Record<string, string>, s: { key: string; value: string }) => ({ ...acc, [s.key]: s.value }), 
+          (acc: Record<string, string>, s: { key: string; value: string }) => ({
+            ...acc,
+            [s.key]: s.value,
+          }),
           {}
         ) || {};
-        
+
         const shopId = settingsMap['bepaid_shop_id'] || '33524';
         const testMode = settingsMap['bepaid_test_mode'] === 'true';
-        
+        const currency = settingsMap['bepaid_currency'] || 'BYN';
+
+        // Amount is in minimal currency units (e.g. 100 = 1.00 BYN). For tokenization this can be 0.
+        const tokenizationAmountRaw = settingsMap['bepaid_tokenization_amount'] ?? '0';
+        const tokenizationAmount = Number.parseInt(tokenizationAmountRaw, 10);
+        const tokenizationAmountSafe = Number.isFinite(tokenizationAmount) && tokenizationAmount >= 0 ? tokenizationAmount : 0;
+
         // Create bePaid tokenization checkout
         const returnUrl = `${req.headers.get('origin') || 'https://gorbova.club'}/settings/payment-methods?tokenize=success`;
         const cancelUrl = `${req.headers.get('origin') || 'https://gorbova.club'}/settings/payment-methods?tokenize=cancel`;
@@ -70,6 +84,11 @@ serve(async (req) => {
           checkout: {
             test: testMode,
             transaction_type: 'tokenization',
+            order: {
+              amount: tokenizationAmountSafe,
+              currency,
+              description: 'Card tokenization',
+            },
             settings: {
               return_url: returnUrl,
               cancel_url: cancelUrl,
