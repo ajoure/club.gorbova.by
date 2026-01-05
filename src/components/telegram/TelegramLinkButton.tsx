@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { 
   useCurrentUserTelegramStatus, 
   useGenerateTelegramLinkToken 
 } from '@/hooks/useTelegramIntegration';
-import { Loader2, Link2, CheckCircle, ExternalLink } from 'lucide-react';
+import { Loader2, CheckCircle, ExternalLink, MessageCircle } from 'lucide-react';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 
@@ -29,100 +33,116 @@ export function TelegramLinkButton({ botUsername = 'fsby_bot' }: TelegramLinkBut
 
   if (isLoading) {
     return (
-      <Card>
-        <CardContent className="flex items-center justify-center py-6">
-          <Loader2 className="h-5 w-5 animate-spin" />
-        </CardContent>
-      </Card>
+      <Button variant="ghost" size="sm" disabled className="gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span className="hidden sm:inline">Загрузка...</span>
+      </Button>
     );
   }
 
   if (status?.isLinked) {
     return (
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg flex items-center gap-2">
-            <CheckCircle className="h-5 w-5 text-green-500" />
-            Telegram привязан
-          </CardTitle>
-          <CardDescription>
-            @{status.profile?.telegram_username || 'пользователь'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="text-sm text-muted-foreground">
-            Привязан {status.profile?.telegram_linked_at && 
-              format(new Date(status.profile.telegram_linked_at), 'd MMMM yyyy', { locale: ru })}
-          </div>
-          {status.access && status.access.length > 0 && (
-            <div className="mt-3 space-y-2">
-              {status.access.map((acc: { id: string; telegram_clubs?: { club_name: string }; state_chat: string; state_channel: string; active_until: string | null }) => (
-                <div key={acc.id} className="flex items-center justify-between">
-                  <span className="text-sm">{acc.telegram_clubs?.club_name || 'Клуб'}</span>
-                  <div className="flex gap-2">
-                    <Badge variant={acc.state_chat === 'active' ? 'default' : 'secondary'}>
-                      Чат: {acc.state_chat === 'active' ? 'активен' : 'нет'}
-                    </Badge>
-                    <Badge variant={acc.state_channel === 'active' ? 'default' : 'secondary'}>
-                      Канал: {acc.state_channel === 'active' ? 'активен' : 'нет'}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground hover:text-foreground">
+            <CheckCircle className="h-4 w-4 text-green-500" />
+            <span className="hidden sm:inline">@{status.profile?.telegram_username || 'Telegram'}</span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72" align="end">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-green-500" />
+              <span className="font-medium text-sm">Telegram привязан</span>
             </div>
-          )}
-        </CardContent>
-      </Card>
+            
+            <div className="text-xs text-muted-foreground">
+              @{status.profile?.telegram_username || 'пользователь'}
+              {status.profile?.telegram_linked_at && (
+                <span className="ml-1">
+                  · {format(new Date(status.profile.telegram_linked_at), 'd MMM yyyy', { locale: ru })}
+                </span>
+              )}
+            </div>
+            
+            {status.access && status.access.length > 0 && (
+              <div className="space-y-2 pt-2 border-t">
+                <p className="text-xs font-medium text-muted-foreground">Доступы:</p>
+                {status.access.map((acc: { id: string; telegram_clubs?: { club_name: string }; state_chat: string; state_channel: string }) => (
+                  <div key={acc.id} className="space-y-1">
+                    <p className="text-xs font-medium">{acc.telegram_clubs?.club_name || 'Клуб'}</p>
+                    <div className="flex gap-1.5 flex-wrap">
+                      <Badge 
+                        variant={acc.state_chat === 'active' ? 'default' : 'secondary'} 
+                        className="text-[10px] px-1.5 py-0"
+                      >
+                        Чат
+                      </Badge>
+                      <Badge 
+                        variant={acc.state_channel === 'active' ? 'default' : 'secondary'}
+                        className="text-[10px] px-1.5 py-0"
+                      >
+                        Канал
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
     );
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-lg flex items-center gap-2">
-          <Link2 className="h-5 w-5" />
-          Привязать Telegram
-        </CardTitle>
-        <CardDescription>
-          Привяжите Telegram для доступа к закрытому клубу
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {linkUrl ? (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Нажмите на кнопку ниже, чтобы открыть бота и привязать аккаунт:
-            </p>
-            <Button asChild className="w-full">
-              <a href={linkUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4 mr-2" />
-                Открыть бота @{botUsername}
-              </a>
-            </Button>
-            <p className="text-xs text-muted-foreground text-center">
-              Ссылка действительна 15 минут
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground hover:text-foreground">
+          <MessageCircle className="h-4 w-4" />
+          <span className="hidden sm:inline">Привязать Telegram</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72" align="end">
+        <div className="space-y-3">
+          <div>
+            <p className="font-medium text-sm mb-1">Привязать Telegram</p>
+            <p className="text-xs text-muted-foreground">
+              Для доступа к закрытому клубу
             </p>
           </div>
-        ) : (
-          <Button 
-            onClick={handleGenerateLink} 
-            disabled={generateToken.isPending}
-            className="w-full"
-          >
-            {generateToken.isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Генерация...
-              </>
-            ) : (
-              <>
-                <Link2 className="h-4 w-4 mr-2" />
-                Привязать Telegram
-              </>
-            )}
-          </Button>
-        )}
-      </CardContent>
-    </Card>
+          
+          {linkUrl ? (
+            <div className="space-y-2">
+              <Button asChild size="sm" className="w-full">
+                <a href={linkUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                  Открыть @{botUsername}
+                </a>
+              </Button>
+              <p className="text-[10px] text-muted-foreground text-center">
+                Ссылка действительна 15 минут
+              </p>
+            </div>
+          ) : (
+            <Button 
+              onClick={handleGenerateLink} 
+              disabled={generateToken.isPending}
+              size="sm"
+              className="w-full"
+            >
+              {generateToken.isPending ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  Генерация...
+                </>
+              ) : (
+                'Получить ссылку'
+              )}
+            </Button>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
