@@ -13,10 +13,18 @@ interface CreateTokenRequest {
   customerLastName?: string;
   existingUserId?: string | null;
   description?: string;
-  tariffCode?: string; // For GetCourse integration: 'chat', 'full', 'business'
+  tariffCode?: string; // For tariff identification: 'chat', 'full', 'business'
   skipRedirect?: boolean; // For admin test payments - just create order, don't create bePaid subscription
   isTrial?: boolean; // Trial payment flag
   trialDays?: number; // Trial duration in days
+}
+
+interface ProductInfo {
+  id: string;
+  name: string;
+  price: number;
+  currency: string;
+  isV2: boolean;
 }
 
 function generatePassword(length = 12): string {
@@ -81,16 +89,117 @@ Deno.serve(async (req) => {
 
     const emailLower = customerEmail.toLowerCase().trim();
 
-    // Get product details
-    const { data: product, error: productError } = await supabase
-      .from('products')
-      .select('*')
+    // Try to get product from products_v2 first (new system), then fallback to products (legacy)
+    let productInfo: ProductInfo | null = null;
+    
+    // Try products_v2 first
+    const { data: productV2 } = await supabase
+      .from('products_v2')
+      .select('id, name, currency')
       .eq('id', productId)
       .eq('is_active', true)
-      .single();
-
-    if (productError || !product) {
-      console.error('Product not found:', productError);
+      .maybeSingle();
+    
+    if (productV2) {
+      console.log('Found product in products_v2:', productV2.name);
+      
+      // For v2 products, get price from tariff_offers based on tariffCode
+      let priceFromOffer = 0;
+      
+      if (tariffCode) {
+        // Get tariff by code
+        const { data: tariff } = await supabase
+          .from('tariffs')
+          .select('id, original_price')
+          .eq('code', tariffCode)
+          .eq('product_id', productId)
+          .maybeSingle();
+        
+        if (tariff) {
+          if (isTrial) {
+            // Get trial offer
+            const { data: trialOffer } = await supabase
+              .from('tariff_offers')
+              .select('amount, trial_days, auto_charge_amount, requires_card_tokenization')
+              .eq('tariff_id', tariff.id)
+              .eq('offer_type', 'trial')
+              .eq('is_active', true)
+              .maybeSingle();
+            
+            if (trialOffer) {
+              priceFromOffer = trialOffer.amount;
+              console.log('Using trial offer price:', priceFromOffer);
+            } else {
+              console.warn('No active trial offer found for tariff:', tariffCode);
+            }
+          } else {
+            // Get primary pay_now offer
+            const { data: payOffer } = await supabase
+              .from('tariff_offers')
+              .select('amount')
+              .eq('tariff_id', tariff.id)
+              .eq('offer_type', 'pay_now')
+              .eq('is_active', true)
+              .eq('is_primary', true)
+              .maybeSingle();
+            
+            if (payOffer) {
+              priceFromOffer = payOffer.amount;
+              console.log('Using primary pay offer price:', priceFromOffer);
+            } else {
+              // Fallback to first active pay offer
+              const { data: firstPayOffer } = await supabase
+                .from('tariff_offers')
+                .select('amount')
+                .eq('tariff_id', tariff.id)
+                .eq('offer_type', 'pay_now')
+                .eq('is_active', true)
+                .order('sort_order', { ascending: true })
+                .limit(1)
+                .maybeSingle();
+              
+              if (firstPayOffer) {
+                priceFromOffer = firstPayOffer.amount;
+                console.log('Using first pay offer price:', priceFromOffer);
+              } else {
+                priceFromOffer = tariff.original_price || 0;
+                console.log('Using tariff original_price:', priceFromOffer);
+              }
+            }
+          }
+        }
+      }
+      
+      productInfo = {
+        id: productV2.id,
+        name: productV2.name,
+        price: priceFromOffer,
+        currency: productV2.currency,
+        isV2: true,
+      };
+    } else {
+      // Fallback to legacy products table
+      const { data: product, error: productError } = await supabase
+        .from('products')
+        .select('*')
+        .eq('id', productId)
+        .eq('is_active', true)
+        .maybeSingle();
+      
+      if (product) {
+        console.log('Found product in legacy products table:', product.name);
+        productInfo = {
+          id: product.id,
+          name: product.name,
+          price: product.price_byn,
+          currency: product.currency,
+          isV2: false,
+        };
+      }
+    }
+    
+    if (!productInfo) {
+      console.error('Product not found in either products_v2 or products table:', productId);
       return new Response(
         JSON.stringify({ success: false, error: 'Product not found' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -169,19 +278,63 @@ Deno.serve(async (req) => {
 
     const settingsMap: Record<string, string> = settings?.reduce((acc: Record<string, string>, s: { key: string; value: string }) => ({ ...acc, [s.key]: s.value }), {}) || {};
     const shopId = settingsMap['bepaid_shop_id'] || '14588';
-    const testMode = settingsMap['bepaid_test_mode'] === 'true';
     const successUrl = settingsMap['bepaid_success_url'] || '/dashboard?payment=success';
     const failUrl = settingsMap['bepaid_fail_url'] || '/pricing?payment=failed';
     
     // Get origin from request for URLs
     const origin = req.headers.get('origin') || 'https://lovable.app';
 
-    // If this is a trial payment, get trial settings from tariff_offers
-    let paymentAmount = product.price_byn;
+    // Payment amount
+    let paymentAmount = productInfo.price;
     let trialConfig: { trial_days: number; auto_charge_amount: number } | null = null;
     
-    if (isTrial && tariffCode) {
-      // Get tariff and trial offer
+    // For trial payments, get trial configuration
+    if (isTrial && tariffCode && productInfo.isV2) {
+      const { data: tariff } = await supabase
+        .from('tariffs')
+        .select('id, original_price')
+        .eq('code', tariffCode)
+        .eq('product_id', productId)
+        .maybeSingle();
+      
+      if (tariff) {
+        const { data: trialOffer } = await supabase
+          .from('tariff_offers')
+          .select('amount, trial_days, auto_charge_amount, auto_charge_after_trial')
+          .eq('tariff_id', tariff.id)
+          .eq('offer_type', 'trial')
+          .eq('is_active', true)
+          .maybeSingle();
+        
+        if (trialOffer) {
+          paymentAmount = trialOffer.amount;
+          
+          // Get auto-charge amount from primary pay offer if not set
+          let autoChargeAmount = trialOffer.auto_charge_amount;
+          if (!autoChargeAmount) {
+            const { data: primaryPayOffer } = await supabase
+              .from('tariff_offers')
+              .select('amount')
+              .eq('tariff_id', tariff.id)
+              .eq('offer_type', 'pay_now')
+              .eq('is_active', true)
+              .eq('is_primary', true)
+              .maybeSingle();
+            
+            autoChargeAmount = primaryPayOffer?.amount || tariff.original_price || 0;
+          }
+          
+          trialConfig = {
+            trial_days: trialOffer.trial_days || trialDays || 5,
+            auto_charge_amount: autoChargeAmount,
+          };
+          console.log('Trial payment configured:', { paymentAmount, trialConfig });
+        }
+      }
+    }
+    
+    // For legacy products with trial
+    if (isTrial && !productInfo.isV2 && tariffCode) {
       const { data: tariff } = await supabase
         .from('tariffs')
         .select('id, original_price')
@@ -198,36 +351,39 @@ Deno.serve(async (req) => {
           .maybeSingle();
         
         if (trialOffer) {
-          paymentAmount = trialOffer.amount * 100; // Convert to kopecks if needed
+          paymentAmount = trialOffer.amount;
           trialConfig = {
             trial_days: trialOffer.trial_days || trialDays || 5,
-            auto_charge_amount: trialOffer.auto_charge_amount || tariff.original_price || product.price_byn,
+            auto_charge_amount: trialOffer.auto_charge_amount || tariff.original_price || productInfo.price,
           };
-          console.log('Trial payment configured:', trialConfig);
+          console.log('Legacy trial payment configured:', trialConfig);
         }
       }
     }
 
-    // Create order in database
+    console.log('Final payment amount:', paymentAmount, 'BYN');
+
+    // Create order in database (using legacy orders table for compatibility)
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .insert({
         user_id: userId,
-        product_id: productId,
+        product_id: productInfo.isV2 ? null : productId, // Only set for legacy products
         amount: paymentAmount,
-        currency: product.currency,
+        currency: productInfo.currency,
         status: 'pending',
         customer_email: emailLower,
         customer_ip: req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip') || 'unknown',
         meta: { 
-          product_name: product.name, 
+          product_name: productInfo.name,
+          product_v2_id: productInfo.isV2 ? productId : null,
           description,
           customer_first_name: customerFirstName,
           customer_last_name: customerLastName,
           customer_phone: customerPhone,
           new_user_created: newUserCreated,
           new_user_password: newUserCreated ? newUserPassword : null,
-          tariff_code: tariffCode || null, // For GetCourse integration
+          tariff_code: tariffCode || null,
           is_trial: isTrial || false,
           trial_days: trialConfig?.trial_days || null,
           auto_charge_amount: trialConfig?.auto_charge_amount || null,
@@ -244,7 +400,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log('Created order:', order.id, 'for user:', userId);
+    console.log('Created order:', order.id, 'for user:', userId, 'amount:', paymentAmount);
 
     // For admin test payments, skip bePaid integration and just return the order ID
     if (skipRedirect) {
@@ -259,10 +415,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Create bePaid subscription (recurring)
-    // For trial: first payment is trial amount, then recurring at full price after trial_days
-    // For regular: recurring every 30 days at full price
-    
     // Get client IP address for bePaid
     const customerIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() 
                     || req.headers.get('cf-connecting-ip') 
@@ -271,25 +423,25 @@ Deno.serve(async (req) => {
 
     // Build subscription plan based on trial or regular payment
     const planConfig = isTrial && trialConfig ? {
-      title: `${product.name} (Trial)`,
-      currency: product.currency,
+      title: `${productInfo.name} (Trial)`,
+      currency: productInfo.currency,
       shop_id: Number(shopId),
       plan: {
-        amount: trialConfig.auto_charge_amount, // Full amount for recurring
+        amount: Math.round(trialConfig.auto_charge_amount * 100), // Convert to cents
         interval: 30,
         interval_unit: 'day',
       },
       trial: {
-        amount: paymentAmount, // Trial amount (e.g., 1 BYN)
+        amount: Math.round(paymentAmount * 100), // Convert to cents
         interval: trialConfig.trial_days,
         interval_unit: 'day',
       },
     } : {
-      title: product.name,
-      currency: product.currency,
+      title: productInfo.name,
+      currency: productInfo.currency,
       shop_id: Number(shopId),
       plan: {
-        amount: paymentAmount,
+        amount: Math.round(paymentAmount * 100), // Convert to cents
         interval: 30,
         interval_unit: 'day',
       },
@@ -301,7 +453,7 @@ Deno.serve(async (req) => {
         first_name: customerFirstName || undefined,
         last_name: customerLastName || undefined,
         phone: customerPhone || undefined,
-        ip: customerIp, // Required by bePaid subscriptions API
+        ip: customerIp,
       },
       plan: planConfig,
       tracking_id: order.id,
