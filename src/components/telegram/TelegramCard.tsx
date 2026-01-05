@@ -12,7 +12,6 @@ import {
   Link2,
   Clock
 } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -25,6 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { supabase } from '@/integrations/supabase/client';
 import {
   useTelegramLinkStatus,
   useStartTelegramLink,
@@ -33,8 +33,10 @@ import {
   useCancelTelegramLink,
   type LinkSessionResult,
 } from '@/hooks/useTelegramLink';
+import { useAuth } from '@/contexts/AuthContext';
 
 export function TelegramCard() {
+  const { user } = useAuth();
   const { data: linkStatus, isLoading: isStatusLoading, refetch } = useTelegramLinkStatus();
   const startLink = useStartTelegramLink();
   const unlink = useUnlinkTelegram();
@@ -69,14 +71,35 @@ export function TelegramCard() {
     return () => clearInterval(interval);
   }, [linkSession?.expires_at, refetch]);
 
-  // Check status on mount (with throttling handled server-side)
+  // Subscribe to profile changes for realtime updates
   useEffect(() => {
-    if (linkStatus?.status === 'active' && !linkStatus.cached) {
-      // Already up-to-date
-    } else if (linkStatus?.status === 'active' || linkStatus?.status === 'inactive') {
-      // Could trigger auto-check, but respect server-side throttling
-    }
-  }, [linkStatus]);
+    if (!user?.id || !linkSession) return;
+
+    const channel = supabase
+      .channel('telegram-link-status')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const newStatus = (payload.new as any)?.telegram_link_status;
+          if (newStatus === 'active') {
+            // Link confirmed!
+            setLinkSession(null);
+            refetch();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, linkSession, refetch]);
 
   const handleStartLink = async () => {
     const result = await startLink.mutateAsync();
@@ -108,11 +131,11 @@ export function TelegramCard() {
 
   if (isStatusLoading) {
     return (
-      <Card>
-        <CardContent className="flex items-center justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </CardContent>
-      </Card>
+      <div className="rounded-2xl border border-border/40 bg-background/60 backdrop-blur-sm p-4">
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      </div>
     );
   }
 
@@ -121,156 +144,130 @@ export function TelegramCard() {
   // Pending state - waiting for user to confirm in Telegram
   if (status === 'pending' || linkSession) {
     return (
-      <Card className="border-primary/30 bg-primary/5">
-        <CardHeader className="pb-2">
+      <div className="rounded-2xl border border-primary/20 bg-primary/5 backdrop-blur-sm p-4 space-y-3">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="p-2 rounded-lg bg-primary/10">
-              <Clock className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <CardTitle className="text-base">Telegram</CardTitle>
-              <CardDescription>Ожидаем подтверждение</CardDescription>
-            </div>
+            <Clock className="h-4 w-4 text-primary" />
+            <span className="text-sm font-medium">Telegram</span>
           </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="text-primary border-primary/30">
-              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-              Ожидание
-            </Badge>
+          <Badge variant="outline" className="text-xs text-primary border-primary/30 bg-primary/10">
+            Ожидание
             {timeLeft !== null && (
-              <span className="text-xs text-muted-foreground">
+              <span className="ml-1.5 tabular-nums">
                 {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}
               </span>
             )}
-          </div>
+          </Badge>
+        </div>
 
-          <p className="text-sm text-muted-foreground">
-            Нажмите <strong>Start</strong> в боте, чтобы завершить привязку
-          </p>
+        <p className="text-xs text-muted-foreground">
+          Нажмите <strong>Start</strong> в боте
+        </p>
 
-          <div className="flex flex-col sm:flex-row gap-2">
-            <Button 
-              onClick={handleOpenTelegram}
-              className="flex-1"
-              disabled={!linkSession?.deep_link}
-            >
-              <ExternalLink className="h-4 w-4 mr-2" />
-              Открыть Telegram
-            </Button>
-            <Button 
-              variant="outline" 
-              onClick={handleCancel}
-              disabled={cancelLink.isPending}
-            >
-              Отменить
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+        <div className="flex gap-2">
+          <Button 
+            size="sm"
+            onClick={handleOpenTelegram}
+            disabled={!linkSession?.deep_link}
+            className="flex-1 h-8 bg-primary/90 hover:bg-primary text-xs"
+          >
+            <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+            Открыть
+          </Button>
+          <Button 
+            size="sm"
+            variant="ghost" 
+            onClick={handleCancel}
+            disabled={cancelLink.isPending}
+            className="h-8 text-xs text-muted-foreground hover:text-foreground"
+          >
+            Отмена
+          </Button>
+        </div>
+      </div>
     );
   }
 
   // Not linked state
   if (status === 'not_linked') {
     return (
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-lg bg-muted">
-              <MessageCircle className="h-5 w-5 text-muted-foreground" />
-            </div>
-            <div>
-              <CardTitle className="text-base">Telegram</CardTitle>
-              <CardDescription>Не привязан</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Привяжите Telegram для доступа к клубу и получения уведомлений
-          </p>
-          <Button 
-            onClick={handleStartLink}
-            disabled={startLink.isPending}
-            className="w-full sm:w-auto"
-          >
-            {startLink.isPending ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <Link2 className="h-4 w-4 mr-2" />
-            )}
-            Привязать Telegram
-          </Button>
-        </CardContent>
-      </Card>
+      <div className="rounded-2xl border border-border/40 bg-background/60 backdrop-blur-sm p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <MessageCircle className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium">Telegram</span>
+        </div>
+        
+        <p className="text-xs text-muted-foreground">
+          Для доступа к клубу и уведомлений
+        </p>
+
+        <Button 
+          size="sm"
+          onClick={handleStartLink}
+          disabled={startLink.isPending}
+          className="w-full h-8 text-xs bg-primary/90 hover:bg-primary"
+        >
+          {startLink.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+          ) : (
+            <Link2 className="h-3.5 w-3.5 mr-1.5" />
+          )}
+          Привязать
+        </Button>
+      </div>
     );
   }
 
   // Inactive state - bot blocked or connection lost
   if (status === 'inactive') {
     return (
-      <Card className="border-destructive/30 bg-destructive/5">
-        <CardHeader className="pb-2">
+      <div className="rounded-2xl border border-destructive/20 bg-destructive/5 backdrop-blur-sm p-4 space-y-3">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="p-2 rounded-lg bg-destructive/10">
-              <AlertTriangle className="h-5 w-5 text-destructive" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <CardTitle className="text-base">Telegram</CardTitle>
-              <CardDescription className="text-destructive">
-                Нужна перепривязка
-              </CardDescription>
-            </div>
+            <AlertTriangle className="h-4 w-4 text-destructive" />
+            <span className="text-sm font-medium">Telegram</span>
           </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1">
-            {linkStatus?.telegram_username && (
-              <p className="text-sm">
-                @{linkStatus.telegram_username}
-                <span className="text-muted-foreground ml-1">
-                  ({linkStatus.telegram_id_masked})
-                </span>
-              </p>
-            )}
-          </div>
+          <Badge variant="outline" className="text-xs text-destructive border-destructive/30 bg-destructive/10">
+            Ошибка
+          </Badge>
+        </div>
 
-          <p className="text-sm text-muted-foreground">
-            Связь с ботом потеряна. Перепривяжите Telegram для восстановления доступа.
+        {linkStatus?.telegram_username && (
+          <p className="text-xs text-muted-foreground">
+            @{linkStatus.telegram_username} · {linkStatus.telegram_id_masked}
           </p>
+        )}
 
-          <div className="flex flex-col sm:flex-row gap-2">
-            <Button 
-              onClick={handleStartLink}
-              disabled={startLink.isPending}
-              className="flex-1"
-            >
-              {startLink.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Link2 className="h-4 w-4 mr-2" />
-              )}
-              Перепривязать
-            </Button>
-            <Button 
-              variant="outline" 
-              onClick={() => setShowUnlinkDialog(true)}
-            >
-              <Unlink className="h-4 w-4 mr-2" />
-              Отвязать
-            </Button>
-          </div>
-        </CardContent>
+        <div className="flex gap-2">
+          <Button 
+            size="sm"
+            onClick={handleStartLink}
+            disabled={startLink.isPending}
+            className="flex-1 h-8 text-xs"
+          >
+            {startLink.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <Link2 className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            Перепривязать
+          </Button>
+          <Button 
+            size="sm"
+            variant="ghost" 
+            onClick={() => setShowUnlinkDialog(true)}
+            className="h-8 text-xs text-muted-foreground hover:text-destructive"
+          >
+            <Unlink className="h-3.5 w-3.5" />
+          </Button>
+        </div>
 
         <AlertDialog open={showUnlinkDialog} onOpenChange={setShowUnlinkDialog}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Отвязать Telegram?</AlertDialogTitle>
               <AlertDialogDescription>
-                Доступ к чатам и каналам клуба может быть ограничен. 
-                Вы сможете привязать Telegram снова в любой момент.
+                Доступ к чатам клуба может быть ограничен.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -286,82 +283,72 @@ export function TelegramCard() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-      </Card>
+      </div>
     );
   }
 
   // Active state - linked and working
   return (
-    <Card className="border-green-500/20 bg-green-500/5">
-      <CardHeader className="pb-2">
+    <div className="rounded-2xl border border-green-500/20 bg-green-500/5 backdrop-blur-sm p-4 space-y-3">
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="p-2 rounded-lg bg-green-500/10">
-            <CheckCircle className="h-5 w-5 text-green-500" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <CardTitle className="text-base">Telegram</CardTitle>
-            <CardDescription className="text-green-600 dark:text-green-400">
-              Активен
-            </CardDescription>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleCheckStatus}
-            disabled={checkStatus.isPending}
-            className="shrink-0"
-            title="Проверить статус"
-          >
-            <RefreshCw className={`h-4 w-4 ${checkStatus.isPending ? 'animate-spin' : ''}`} />
-          </Button>
+          <CheckCircle className="h-4 w-4 text-green-500" />
+          <span className="text-sm font-medium">Telegram</span>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-1">
-          <p className="text-sm font-medium">
-            @{linkStatus?.telegram_username || 'пользователь'}
-          </p>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span>ID: {linkStatus?.telegram_id_masked}</span>
-            {linkStatus?.linked_at && (
-              <span>
-                Привязан: {format(new Date(linkStatus.linked_at), 'd MMM yyyy', { locale: ru })}
-              </span>
-            )}
-          </div>
-        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={handleCheckStatus}
+          disabled={checkStatus.isPending}
+          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${checkStatus.isPending ? 'animate-spin' : ''}`} />
+        </Button>
+      </div>
 
-        <div className="flex flex-col sm:flex-row gap-2">
-          <Button 
-            variant="outline" 
-            onClick={handleStartLink}
-            disabled={startLink.isPending}
-            className="flex-1"
-          >
-            {startLink.isPending ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <Link2 className="h-4 w-4 mr-2" />
-            )}
-            Перепривязать
-          </Button>
-          <Button 
-            variant="ghost" 
-            onClick={() => setShowUnlinkDialog(true)}
-          >
-            <Unlink className="h-4 w-4 mr-2" />
-            Отвязать
-          </Button>
-        </div>
-      </CardContent>
+      <div className="space-y-0.5">
+        <p className="text-sm font-medium">@{linkStatus?.telegram_username || 'пользователь'}</p>
+        <p className="text-[11px] text-muted-foreground">
+          {linkStatus?.telegram_id_masked}
+          {linkStatus?.linked_at && (
+            <span className="ml-1.5">
+              · {format(new Date(linkStatus.linked_at), 'd MMM', { locale: ru })}
+            </span>
+          )}
+        </p>
+      </div>
+
+      <div className="flex gap-2">
+        <Button 
+          size="sm"
+          variant="outline" 
+          onClick={handleStartLink}
+          disabled={startLink.isPending}
+          className="flex-1 h-8 text-xs border-border/50 bg-background/50 hover:bg-background"
+        >
+          {startLink.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+          ) : (
+            <Link2 className="h-3.5 w-3.5 mr-1.5" />
+          )}
+          Перепривязать
+        </Button>
+        <Button 
+          size="sm"
+          variant="ghost" 
+          onClick={() => setShowUnlinkDialog(true)}
+          className="h-8 text-xs text-muted-foreground hover:text-destructive"
+        >
+          <Unlink className="h-3.5 w-3.5" />
+        </Button>
+      </div>
 
       <AlertDialog open={showUnlinkDialog} onOpenChange={setShowUnlinkDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Отвязать Telegram?</AlertDialogTitle>
             <AlertDialogDescription>
-              Доступ к чатам и каналам клуба может быть ограничен. 
-              Вы сможете привязать Telegram снова в любой момент.
+              Доступ к чатам клуба может быть ограничен.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -377,6 +364,6 @@ export function TelegramCard() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Card>
+    </div>
   );
 }
