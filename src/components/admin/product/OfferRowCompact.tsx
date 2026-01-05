@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
-import { Pencil, Trash2, Check, X } from "lucide-react";
+import { Pencil, Trash2, Check, X, Star } from "lucide-react";
 
 interface OfferRowCompactProps {
   offer: {
@@ -15,19 +15,24 @@ interface OfferRowCompactProps {
     auto_charge_after_trial: boolean;
     auto_charge_amount: number | null;
     is_active: boolean;
+    is_primary?: boolean;
   };
   onToggleActive: (id: string, isActive: boolean) => void;
   onUpdateLabel: (id: string, label: string) => void;
+  onSetPrimary?: (id: string) => void;
   onEdit: () => void;
   onDelete: () => void;
+  hasPrimaryInTariff?: boolean;
 }
 
 export function OfferRowCompact({
   offer,
   onToggleActive,
   onUpdateLabel,
+  onSetPrimary,
   onEdit,
   onDelete,
+  hasPrimaryInTariff = false,
 }: OfferRowCompactProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(offer.button_label);
@@ -49,16 +54,31 @@ export function OfferRowCompact({
     if (e.key === "Escape") handleCancel();
   };
 
+  const isPrimary = offer.is_primary && offer.offer_type === "pay_now";
+  const canBePrimary = offer.offer_type === "pay_now" && offer.is_active && !isPrimary;
+
   return (
-    <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-card/50 hover:bg-card transition-colors">
+    <div className={`flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
+      isPrimary 
+        ? "bg-primary/5 border-primary/30" 
+        : "bg-card/50 border-border/50 hover:bg-card"
+    }`}>
       {/* Left: Type badge + Label */}
       <div className="flex items-center gap-3 min-w-0 flex-1">
-        <Badge 
-          variant={offer.offer_type === "trial" ? "secondary" : "default"}
-          className="shrink-0"
-        >
-          {offer.offer_type === "trial" ? "Trial" : "Оплата"}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          <Badge 
+            variant={offer.offer_type === "trial" ? "secondary" : "default"}
+            className="shrink-0"
+          >
+            {offer.offer_type === "trial" ? "Trial" : "Оплата"}
+          </Badge>
+          {isPrimary && (
+            <Badge variant="outline" className="shrink-0 border-primary text-primary gap-1">
+              <Star className="h-3 w-3" />
+              Основная
+            </Badge>
+          )}
+        </div>
         
         <div className="min-w-0 flex-1">
           {isEditing ? (
@@ -101,8 +121,20 @@ export function OfferRowCompact({
         </div>
       </div>
 
-      {/* Right: Toggle + Actions */}
+      {/* Right: Primary toggle + Active toggle + Actions */}
       <div className="flex items-center gap-2 shrink-0">
+        {/* Set as Primary button - only for pay_now offers */}
+        {canBePrimary && onSetPrimary && (
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-8 text-xs text-muted-foreground hover:text-primary"
+            onClick={() => onSetPrimary(offer.id)}
+          >
+            Сделать основной
+          </Button>
+        )}
+        
         <Switch
           checked={offer.is_active}
           onCheckedChange={(checked) => onToggleActive(offer.id, checked)}

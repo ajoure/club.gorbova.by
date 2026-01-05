@@ -31,6 +31,7 @@ import {
   useCreateTariffOffer,
   useUpdateTariffOffer,
   useDeleteTariffOffer,
+  useSetPrimaryOffer,
   type TariffOffer,
   type TariffOfferInsert,
 } from "@/hooks/useTariffOffers";
@@ -77,6 +78,7 @@ export default function AdminProductDetailV2() {
   const createOffer = useCreateTariffOffer();
   const updateOffer = useUpdateTariffOffer();
   const deleteOffer = useDeleteTariffOffer();
+  const setPrimaryOffer = useSetPrimaryOffer();
 
   // Dialog states
   const [tariffDialog, setTariffDialog] = useState<{ open: boolean; editing: any }>({ open: false, editing: null });
@@ -241,6 +243,7 @@ export default function AdminProductDetailV2() {
       auto_charge_delay_days: offerForm.offer_type === "trial" ? offerForm.auto_charge_delay_days : null,
       requires_card_tokenization: offerForm.offer_type === "trial" ? true : offerForm.requires_card_tokenization,
       is_active: offerForm.is_active,
+      is_primary: offerForm.offer_type === "pay_now" ? (offerForm as any).is_primary ?? false : false,
       visible_from: null,
       visible_to: null,
       sort_order: offerForm.offer_type === "trial" ? 1 : 0,
@@ -445,12 +448,20 @@ export default function AdminProductDetailV2() {
                   const tariffOffers = getOffersForTariff(tariff.id);
                   if (!tariffOffers.length) return null;
                   
+                  const hasPrimary = tariffOffers.some((o: any) => o.is_primary && o.offer_type === 'pay_now');
+                  const hasNoPrimaryWarning = tariffOffers.some((o: any) => o.offer_type === 'pay_now' && o.is_active) && !hasPrimary;
+                  
                   return (
                     <GlassCard key={tariff.id} className="p-4">
                       <div className="flex items-center gap-2 mb-3">
                         <Tag className="h-4 w-4 text-muted-foreground" />
                         <span className="font-medium">{tariff.name}</span>
                         <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{tariff.code}</code>
+                        {hasNoPrimaryWarning && (
+                          <Badge variant="destructive" className="text-xs">
+                            Нет основной цены
+                          </Badge>
+                        )}
                       </div>
                       <div className="space-y-2">
                         {tariffOffers.map((offer: any) => (
@@ -459,8 +470,10 @@ export default function AdminProductDetailV2() {
                             offer={offer}
                             onToggleActive={handleToggleOfferActive}
                             onUpdateLabel={handleUpdateOfferLabel}
+                            onSetPrimary={(offerId) => setPrimaryOffer.mutate({ offerId, tariffId: tariff.id })}
                             onEdit={() => openOfferDialog(offer)}
                             onDelete={() => setDeleteConfirm({ type: "offer", id: offer.id })}
+                            hasPrimaryInTariff={hasPrimary}
                           />
                         ))}
                       </div>
