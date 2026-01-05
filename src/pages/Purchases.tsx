@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -8,12 +8,22 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShoppingBag, Receipt, CheckCircle, XCircle, Clock, CreditCard, Download, RefreshCw } from "lucide-react";
+import { ShoppingBag, CheckCircle, XCircle, Clock, CreditCard, Download, Ban, RotateCcw } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
 import { jsPDF } from "jspdf";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface OrderV2 {
   id: string;
@@ -51,6 +61,8 @@ interface SubscriptionV2 {
   access_start_at: string;
   access_end_at: string | null;
   trial_end_at: string | null;
+  cancel_at: string | null;
+  canceled_at: string | null;
   created_at: string;
   products_v2: {
     id: string;
@@ -65,7 +77,11 @@ interface SubscriptionV2 {
 
 export default function Purchases() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [renewProduct, setRenewProduct] = useState<{ id: string; name: string; price: number } | null>(null);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [subscriptionToCancel, setSubscriptionToCancel] = useState<SubscriptionV2 | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Fetch orders from orders_v2
   const { data: orders, isLoading: ordersLoading } = useQuery({
@@ -98,7 +114,7 @@ export default function Purchases() {
       const { data, error } = await supabase
         .from("subscriptions_v2")
         .select(`
-          id, status, is_trial, access_start_at, access_end_at, trial_end_at, created_at,
+          id, status, is_trial, access_start_at, access_end_at, trial_end_at, cancel_at, canceled_at, created_at,
           products_v2(id, name, code),
           tariffs(name, code)
         `)
@@ -110,6 +126,65 @@ export default function Purchases() {
     },
     enabled: !!user,
   });
+
+  const handleCancelSubscription = async () => {
+    if (!subscriptionToCancel) return;
+    
+    setIsProcessing(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Not authenticated");
+
+      const { data, error } = await supabase.functions.invoke("subscription-actions", {
+        body: {
+          action: "cancel",
+          subscription_id: subscriptionToCancel.id,
+        },
+      });
+
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error || "Failed to cancel");
+
+      toast.success("Подписка отменена", {
+        description: `Доступ сохранится до ${format(new Date(data.cancel_at), "d MMMM yyyy", { locale: ru })}`,
+      });
+      
+      queryClient.invalidateQueries({ queryKey: ["user-subscriptions-v2"] });
+    } catch (error) {
+      console.error("Cancel error:", error);
+      toast.error("Ошибка отмены подписки");
+    } finally {
+      setIsProcessing(false);
+      setCancelDialogOpen(false);
+      setSubscriptionToCancel(null);
+    }
+  };
+
+  const handleResumeSubscription = async (sub: SubscriptionV2) => {
+    setIsProcessing(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Not authenticated");
+
+      const { data, error } = await supabase.functions.invoke("subscription-actions", {
+        body: {
+          action: "resume",
+          subscription_id: sub.id,
+        },
+      });
+
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error || "Failed to resume");
+
+      toast.success("Подписка восстановлена");
+      queryClient.invalidateQueries({ queryKey: ["user-subscriptions-v2"] });
+    } catch (error) {
+      console.error("Resume error:", error);
+      toast.error("Ошибка восстановления подписки");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const getOrderStatusBadge = (order: OrderV2) => {
     const payment = order.payments_v2?.[0];
@@ -363,14 +438,17 @@ export default function Purchases() {
                 {activeSubscriptions.map((sub) => {
                   const isExpiringSoon = sub.access_end_at && 
                     new Date(sub.access_end_at) < new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+                  const isCanceled = !!sub.cancel_at;
                   
                   return (
                     <div
                       key={sub.id}
                       className={`rounded-lg border p-4 ${
-                        isExpiringSoon 
-                          ? "bg-gradient-to-br from-amber-500/10 to-orange-500/10 border-amber-500/30"
-                          : "bg-gradient-to-br from-primary/5 to-accent/5"
+                        isCanceled
+                          ? "bg-muted/30 border-muted"
+                          : isExpiringSoon 
+                            ? "bg-gradient-to-br from-amber-500/10 to-orange-500/10 border-amber-500/30"
+                            : "bg-gradient-to-br from-primary/5 to-accent/5"
                       }`}
                     >
                       <div className="flex items-start justify-between mb-3">
@@ -386,8 +464,43 @@ export default function Purchases() {
                               Действует до: {formatDate(sub.access_end_at)}
                             </p>
                           )}
+                          {isCanceled && sub.cancel_at && (
+                            <p className="text-sm text-destructive">
+                              Отменена, доступ до: {format(new Date(sub.cancel_at), "d MMMM yyyy", { locale: ru })}
+                            </p>
+                          )}
                         </div>
                         {getSubscriptionStatusBadge(sub)}
+                      </div>
+                      
+                      {/* Cancel/Resume buttons */}
+                      <div className="flex gap-2 mt-2">
+                        {isCanceled ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleResumeSubscription(sub)}
+                            disabled={isProcessing}
+                            className="gap-1"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Восстановить
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setSubscriptionToCancel(sub);
+                              setCancelDialogOpen(true);
+                            }}
+                            disabled={isProcessing}
+                            className="gap-1 text-muted-foreground hover:text-destructive"
+                          >
+                            <Ban className="h-3 w-3" />
+                            Отменить
+                          </Button>
+                        )}
                       </div>
                     </div>
                   );
@@ -493,6 +606,39 @@ export default function Purchases() {
           price={`${(renewProduct.price / 100).toFixed(2)} BYN`}
         />
       )}
+
+      {/* Cancel Subscription Dialog */}
+      <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Отменить подписку?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {subscriptionToCancel && (
+                <>
+                  Подписка <strong>{subscriptionToCancel.products_v2?.code || "Подписка"}</strong> будет отменена.
+                  <br />
+                  Доступ сохранится до окончания оплаченного периода
+                  {subscriptionToCancel.access_end_at && (
+                    <> — <strong>{format(new Date(subscriptionToCancel.access_end_at), "d MMMM yyyy", { locale: ru })}</strong></>
+                  )}.
+                  <br /><br />
+                  Автоматическое продление будет отключено.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isProcessing}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCancelSubscription}
+              disabled={isProcessing}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isProcessing ? "Отмена..." : "Да, отменить подписку"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 }
