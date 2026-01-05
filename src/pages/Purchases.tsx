@@ -15,158 +15,136 @@ import { toast } from "sonner";
 import { jsPDF } from "jspdf";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 
-interface OrderMeta {
-  description?: string;
-  product_name?: string;
-  tariff_code?: string;
-  is_trial?: boolean;
-  trial_days?: number;
-  test_payment?: boolean;
-  bepaid_subscription_id?: string;
-  [key: string]: unknown;
-}
-
-interface Order {
+interface OrderV2 {
   id: string;
-  amount: number;
+  order_number: string;
+  final_price: number;
   currency: string;
   status: string;
-  payment_method: string | null;
-  bepaid_uid: string | null;
+  is_trial: boolean;
+  trial_end_at: string | null;
   customer_email: string | null;
   created_at: string;
-  meta: OrderMeta | null;
-  products: {
-    name: string;
-    product_type: string;
-  } | null;
-}
-
-interface Entitlement {
-  id: string;
-  product_code: string;
-  status: string;
-  expires_at: string | null;
-  created_at: string;
   meta: Record<string, any> | null;
+  purchase_snapshot: Record<string, any> | null;
+  products_v2: {
+    name: string;
+    code: string;
+  } | null;
+  tariffs: {
+    name: string;
+    code: string;
+  } | null;
+  payments_v2: Array<{
+    id: string;
+    status: string;
+    provider_payment_id: string | null;
+    card_brand: string | null;
+    card_last4: string | null;
+  }>;
 }
 
-interface Product {
+interface SubscriptionV2 {
   id: string;
-  name: string;
-  price_byn: number;
-  product_type: string;
-  tier: string | null;
+  status: string;
+  is_trial: boolean;
+  access_start_at: string;
+  access_end_at: string | null;
+  trial_end_at: string | null;
+  created_at: string;
+  products_v2: {
+    id: string;
+    name: string;
+    code: string;
+  } | null;
+  tariffs: {
+    name: string;
+    code: string;
+  } | null;
 }
 
 export default function Purchases() {
   const { user } = useAuth();
   const [renewProduct, setRenewProduct] = useState<{ id: string; name: string; price: number } | null>(null);
 
+  // Fetch orders from orders_v2
   const { data: orders, isLoading: ordersLoading } = useQuery({
-    queryKey: ["user-orders", user?.id],
+    queryKey: ["user-orders-v2", user?.id],
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase
-        .from("orders")
-        .select("id, amount, currency, status, payment_method, bepaid_uid, customer_email, created_at, meta, products(name, product_type)")
+        .from("orders_v2")
+        .select(`
+          id, order_number, final_price, currency, status, is_trial, trial_end_at,
+          customer_email, created_at, meta, purchase_snapshot,
+          products_v2(name, code),
+          tariffs(name, code),
+          payments_v2(id, status, provider_payment_id, card_brand, card_last4)
+        `)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
       
       if (error) throw error;
-      return data as Order[];
+      return data as OrderV2[];
     },
     enabled: !!user,
   });
 
-  const { data: entitlements, isLoading: entitlementsLoading } = useQuery({
-    queryKey: ["user-entitlements", user?.id],
+  // Fetch subscriptions from subscriptions_v2
+  const { data: subscriptions, isLoading: subscriptionsLoading } = useQuery({
+    queryKey: ["user-subscriptions-v2", user?.id],
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase
-        .from("entitlements")
-        .select("*")
+        .from("subscriptions_v2")
+        .select(`
+          id, status, is_trial, access_start_at, access_end_at, trial_end_at, created_at,
+          products_v2(id, name, code),
+          tariffs(name, code)
+        `)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
       
       if (error) throw error;
-      return data as Entitlement[];
+      return data as SubscriptionV2[];
     },
     enabled: !!user,
   });
 
-  // Fetch products for renewal
-  const { data: products } = useQuery({
-    queryKey: ["products-for-renewal"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("products")
-        .select("id, name, price_byn, product_type, tier")
-        .eq("is_active", true);
-      
-      if (error) throw error;
-      return data as Product[];
-    },
-  });
-
-  const findProductForRenewal = (entitlement: Entitlement): Product | null => {
-    if (!products) return null;
+  const getOrderStatusBadge = (order: OrderV2) => {
+    const payment = order.payments_v2?.[0];
     
-    // Try to find by product_code matching tier or product id
-    const product = products.find(p => 
-      p.tier === entitlement.product_code || 
-      p.id === entitlement.product_code
-    );
-    
-    return product || null;
-  };
-
-  const handleRenew = (entitlement: Entitlement) => {
-    const product = findProductForRenewal(entitlement);
-    if (product) {
-      setRenewProduct({
-        id: product.id,
-        name: product.name,
-        price: product.price_byn,
-      });
-    } else {
-      toast.error("Продукт для продления не найден");
+    if (order.status === "paid" || payment?.status === "succeeded") {
+      return (
+        <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+          <CheckCircle className="mr-1 h-3 w-3" />
+          Оплачено
+        </Badge>
+      );
     }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "completed":
-        return (
-          <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-            <CheckCircle className="mr-1 h-3 w-3" />
-            Оплачено
-          </Badge>
-        );
-      case "failed":
-        return (
-          <Badge variant="destructive">
-            <XCircle className="mr-1 h-3 w-3" />
-            Ошибка
-          </Badge>
-        );
-      case "processing":
-      case "pending":
-        return (
-          <Badge variant="secondary">
-            <Clock className="mr-1 h-3 w-3" />
-            В обработке
-          </Badge>
-        );
-      default:
-        return <Badge variant="outline">{status}</Badge>;
+    if (order.status === "failed" || payment?.status === "failed") {
+      return (
+        <Badge variant="destructive">
+          <XCircle className="mr-1 h-3 w-3" />
+          Ошибка
+        </Badge>
+      );
     }
+    if (order.status === "pending" || order.status === "processing") {
+      return (
+        <Badge variant="secondary">
+          <Clock className="mr-1 h-3 w-3" />
+          В обработке
+        </Badge>
+      );
+    }
+    return <Badge variant="outline">{order.status}</Badge>;
   };
 
-  const getEntitlementStatusBadge = (entitlement: Entitlement) => {
-    const isExpired = entitlement.expires_at && new Date(entitlement.expires_at) < new Date();
+  const getSubscriptionStatusBadge = (sub: SubscriptionV2) => {
+    const isExpired = sub.access_end_at && new Date(sub.access_end_at) < new Date();
     
-    if (entitlement.status === "active" && !isExpired) {
+    if (sub.status === "active" && !isExpired) {
       return (
         <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
           <CheckCircle className="mr-1 h-3 w-3" />
@@ -174,8 +152,15 @@ export default function Purchases() {
         </Badge>
       );
     }
-    
-    if (isExpired) {
+    if (sub.status === "trial" && !isExpired) {
+      return (
+        <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+          <Clock className="mr-1 h-3 w-3" />
+          Пробный период
+        </Badge>
+      );
+    }
+    if (isExpired || sub.status === "expired") {
       return (
         <Badge variant="secondary">
           <Clock className="mr-1 h-3 w-3" />
@@ -183,80 +168,57 @@ export default function Purchases() {
         </Badge>
       );
     }
-    
-    return <Badge variant="outline">{entitlement.status}</Badge>;
+    if (sub.status === "canceled") {
+      return (
+        <Badge variant="outline">
+          <XCircle className="mr-1 h-3 w-3" />
+          Отменена
+        </Badge>
+      );
+    }
+    return <Badge variant="outline">{sub.status}</Badge>;
   };
 
   const formatPrice = (amount: number, currency: string) => {
-    return `${(amount / 100).toFixed(2)} ${currency}`;
+    return `${amount.toFixed(2)} ${currency}`;
   };
 
   const formatDate = (dateString: string) => {
     return format(new Date(dateString), "d MMMM yyyy, HH:mm", { locale: ru });
   };
 
-  const getProductCodeName = (code: string) => {
-    const names: Record<string, string> = {
-      pro: "PRO подписка",
-      premium: "PREMIUM подписка",
-      webinar: "Вебинар",
-    };
-    return names[code] || code;
-  };
-
-  const getOrderProductName = (order: Order): string => {
-    // First try meta.description (has full product + tariff name like "CHAT — Месячная подписка")
-    if (order.meta?.description) {
-      return order.meta.description;
+  const getOrderProductName = (order: OrderV2): string => {
+    const productName = order.products_v2?.name || order.purchase_snapshot?.product_name || "";
+    const tariffName = order.tariffs?.name || order.purchase_snapshot?.tariff_name || "";
+    
+    if (productName && tariffName) {
+      return `${order.products_v2?.code || ""} — ${tariffName}`;
     }
-    // Fallback to meta.product_name
-    if (order.meta?.product_name) {
-      return order.meta.product_name;
-    }
-    // Fallback to linked product
-    if (order.products?.name) {
-      return order.products.name;
-    }
+    if (productName) return productName;
+    if (order.is_trial) return "Пробный период";
     return "—";
   };
 
-  const getOrderPaymentMethod = (order: Order): string | null => {
-    // Check payment_method field
-    if (order.payment_method) {
-      return order.payment_method;
+  const getPaymentMethod = (order: OrderV2): { label: string; icon: React.ReactNode } => {
+    if (order.is_trial && order.final_price === 0) {
+      return { label: "Пробный период", icon: <Clock className="h-3 w-3" /> };
     }
-    // Check if it's a trial (free)
-    if (order.meta?.is_trial) {
-      return "trial";
+    
+    const payment = order.payments_v2?.[0];
+    if (payment?.card_brand && payment?.card_last4) {
+      return { 
+        label: `${payment.card_brand} **** ${payment.card_last4}`, 
+        icon: <CreditCard className="h-3 w-3" /> 
+      };
     }
-    // Check for bePaid subscription
-    if (order.meta?.bepaid_subscription_id) {
-      return "bepaid";
-    }
-    return null;
+    
+    return { label: "Банковская карта", icon: <CreditCard className="h-3 w-3" /> };
   };
 
-  const formatPaymentMethod = (method: string | null): { label: string; icon: React.ReactNode } => {
-    switch (method) {
-      case "trial":
-        return { label: "Пробный период", icon: <Clock className="h-3 w-3" /> };
-      case "test_payment":
-        return { label: "Тестовый платёж", icon: <Receipt className="h-3 w-3" /> };
-      case "bepaid":
-        return { label: "Банковская карта", icon: <CreditCard className="h-3 w-3" /> };
-      case "card":
-        return { label: "Банковская карта", icon: <CreditCard className="h-3 w-3" /> };
-      default:
-        if (method) {
-          return { label: method, icon: <Receipt className="h-3 w-3" /> };
-        }
-        return { label: "—", icon: null };
-    }
-  };
-
-  const downloadReceipt = (order: Order) => {
-    const priceFormatted = formatPrice(order.amount, order.currency);
+  const downloadReceipt = (order: OrderV2) => {
+    const priceFormatted = formatPrice(order.final_price, order.currency);
     const dateFormatted = formatDate(order.created_at);
+    const payment = order.payments_v2?.[0];
     
     const doc = new jsPDF();
     
@@ -264,7 +226,7 @@ export default function Purchases() {
     doc.setFillColor(102, 126, 234);
     doc.rect(0, 0, 210, 45, "F");
     
-    // Logo text (placeholder for actual logo)
+    // Logo text
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(24);
     doc.setFont("helvetica", "bold");
@@ -287,11 +249,11 @@ export default function Purchases() {
     let y = 73;
     
     doc.text("Номер заказа:", 20, y);
-    doc.text(order.id, 80, y);
+    doc.text(order.order_number, 80, y);
     y += 8;
     
     doc.text("ID транзакции:", 20, y);
-    doc.text(order.bepaid_uid || "—", 80, y);
+    doc.text(payment?.provider_payment_id || "—", 80, y);
     y += 8;
     
     doc.text("Дата и время:", 20, y);
@@ -306,15 +268,11 @@ export default function Purchases() {
     
     doc.setFont("helvetica", "normal");
     doc.text("Продукт:", 20, y);
-    doc.text(order.products?.name || "Подписка", 80, y);
+    doc.text(getOrderProductName(order), 80, y);
     y += 8;
     
     doc.text("Тип:", 20, y);
-    doc.text(
-      order.products?.product_type === "subscription" ? "Подписка" : 
-      order.products?.product_type === "webinar" ? "Вебинар" : "Разовая покупка",
-      80, y
-    );
+    doc.text(order.is_trial ? "Пробный период" : "Подписка", 80, y);
     y += 15;
     
     // Payment section
@@ -324,8 +282,9 @@ export default function Purchases() {
     y += 13;
     
     doc.setFont("helvetica", "normal");
+    const paymentInfo = getPaymentMethod(order);
     doc.text("Способ оплаты:", 20, y);
-    doc.text(order.payment_method || "Банковская карта", 80, y);
+    doc.text(paymentInfo.label, 80, y);
     y += 8;
     
     doc.text("Статус:", 20, y);
@@ -363,17 +322,15 @@ export default function Purchases() {
     doc.text("Данный документ сформирован автоматически и является подтверждением оплаты.", 105, y, { align: "center" });
     
     // Save the PDF
-    doc.save(`receipt_${order.id.slice(0, 8)}_${format(new Date(order.created_at), "yyyyMMdd")}.pdf`);
+    doc.save(`receipt_${order.order_number}_${format(new Date(order.created_at), "yyyyMMdd")}.pdf`);
     
     toast.success("PDF-чек скачан");
   };
 
-  // Show all entitlements, including expired ones for renewal
-  const allEntitlements = entitlements || [];
-  
-  const activeEntitlements = entitlements?.filter(e => {
-    const isExpired = e.expires_at && new Date(e.expires_at) < new Date();
-    return e.status === "active" && !isExpired;
+  // Filter active subscriptions
+  const activeSubscriptions = subscriptions?.filter(s => {
+    const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
+    return (s.status === "active" || s.status === "trial") && !isExpired;
   }) || [];
 
   return (
@@ -396,58 +353,42 @@ export default function Purchases() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {entitlementsLoading ? (
+            {subscriptionsLoading ? (
               <div className="space-y-2">
                 <Skeleton className="h-12 w-full" />
                 <Skeleton className="h-12 w-full" />
               </div>
-            ) : allEntitlements.length > 0 ? (
+            ) : activeSubscriptions.length > 0 ? (
               <div className="grid gap-4 md:grid-cols-2">
-                {allEntitlements.map((entitlement) => {
-                  const isExpired = entitlement.expires_at && new Date(entitlement.expires_at) < new Date();
-                  const isExpiringSoon = entitlement.expires_at && !isExpired && 
-                    new Date(entitlement.expires_at) < new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-                  const renewalProduct = findProductForRenewal(entitlement);
+                {activeSubscriptions.map((sub) => {
+                  const isExpiringSoon = sub.access_end_at && 
+                    new Date(sub.access_end_at) < new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
                   
                   return (
                     <div
-                      key={entitlement.id}
+                      key={sub.id}
                       className={`rounded-lg border p-4 ${
-                        isExpired 
-                          ? "bg-muted/50 border-destructive/30" 
-                          : isExpiringSoon 
-                            ? "bg-gradient-to-br from-amber-500/10 to-orange-500/10 border-amber-500/30"
-                            : "bg-gradient-to-br from-primary/5 to-accent/5"
+                        isExpiringSoon 
+                          ? "bg-gradient-to-br from-amber-500/10 to-orange-500/10 border-amber-500/30"
+                          : "bg-gradient-to-br from-primary/5 to-accent/5"
                       }`}
                     >
                       <div className="flex items-start justify-between mb-3">
                         <div>
                           <h3 className="font-semibold text-foreground">
-                            {(entitlement.meta as Record<string, any>)?.product_name || getProductCodeName(entitlement.product_code)}
+                            {sub.products_v2?.code || sub.products_v2?.name || "Подписка"} — {sub.tariffs?.name || (sub.is_trial ? "Пробный период" : "Подписка")}
                           </h3>
                           <p className="text-sm text-muted-foreground">
-                            Активирована: {formatDate(entitlement.created_at)}
+                            Активирована: {formatDate(sub.access_start_at)}
                           </p>
-                          {entitlement.expires_at && (
-                            <p className={`text-sm ${isExpired ? "text-destructive" : isExpiringSoon ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}>
-                              {isExpired ? "Истекла: " : "Действует до: "}{formatDate(entitlement.expires_at)}
+                          {sub.access_end_at && (
+                            <p className={`text-sm ${isExpiringSoon ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}>
+                              Действует до: {formatDate(sub.access_end_at)}
                             </p>
                           )}
                         </div>
-                        {getEntitlementStatusBadge(entitlement)}
+                        {getSubscriptionStatusBadge(sub)}
                       </div>
-                      
-                      {(isExpired || isExpiringSoon) && renewalProduct && (
-                        <Button
-                          size="sm"
-                          onClick={() => handleRenew(entitlement)}
-                          className="w-full gap-2"
-                          variant={isExpired ? "default" : "outline"}
-                        >
-                          <RefreshCw className="h-4 w-4" />
-                          {isExpired ? "Продлить подписку" : "Продлить заранее"}
-                        </Button>
-                      )}
                     </div>
                   );
                 })}
@@ -455,7 +396,7 @@ export default function Purchases() {
             ) : (
               <div className="text-center py-8 text-muted-foreground">
                 <CreditCard className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>У вас пока нет подписок</p>
+                <p>У вас пока нет активных подписок</p>
               </div>
             )}
           </CardContent>
@@ -492,47 +433,44 @@ export default function Purchases() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {orders.map((order) => (
-                    <TableRow key={order.id}>
-                      <TableCell className="whitespace-nowrap">
-                        {formatDate(order.created_at)}
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        {getOrderProductName(order)}
-                      </TableCell>
-                      <TableCell>
-                        {formatPrice(order.amount, order.currency)}
-                      </TableCell>
-                      <TableCell>
-                        {(() => {
-                          const method = getOrderPaymentMethod(order);
-                          const { label, icon } = formatPaymentMethod(method);
-                          return icon ? (
-                            <span className="flex items-center gap-1">
-                              {icon}
-                              {label}
-                            </span>
-                          ) : (
-                            label
-                          );
-                        })()}
-                      </TableCell>
-                      <TableCell>{getStatusBadge(order.status)}</TableCell>
-                      <TableCell className="text-right">
-                        {order.status === "completed" && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => downloadReceipt(order)}
-                            className="gap-1"
-                          >
-                            <Download className="h-4 w-4" />
-                            <span className="hidden sm:inline">Чек</span>
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {orders.map((order) => {
+                    const paymentInfo = getPaymentMethod(order);
+                    const isPaid = order.status === "paid" || order.payments_v2?.[0]?.status === "succeeded";
+                    
+                    return (
+                      <TableRow key={order.id}>
+                        <TableCell className="whitespace-nowrap">
+                          {formatDate(order.created_at)}
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          {getOrderProductName(order)}
+                        </TableCell>
+                        <TableCell>
+                          {formatPrice(order.final_price, order.currency)}
+                        </TableCell>
+                        <TableCell>
+                          <span className="flex items-center gap-1">
+                            {paymentInfo.icon}
+                            {paymentInfo.label}
+                          </span>
+                        </TableCell>
+                        <TableCell>{getOrderStatusBadge(order)}</TableCell>
+                        <TableCell className="text-right">
+                          {isPaid && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => downloadReceipt(order)}
+                              className="gap-1"
+                            >
+                              <Download className="h-4 w-4" />
+                              <span className="hidden sm:inline">Чек</span>
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             ) : (

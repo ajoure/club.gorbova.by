@@ -183,13 +183,28 @@ Deno.serve(async (req) => {
       // Calculate active_until
       let activeUntil: string | null = valid_until || null;
       if (!activeUntil && !is_manual) {
-        const { data: subscription } = await supabase
-          .from('subscriptions')
-          .select('expires_at')
+        // First try subscriptions_v2
+        const { data: subV2 } = await supabase
+          .from('subscriptions_v2')
+          .select('access_end_at')
           .eq('user_id', user_id)
-          .eq('is_active', true)
-          .single();
-        activeUntil = subscription?.expires_at || null;
+          .in('status', ['active', 'trial'])
+          .order('access_end_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        
+        if (subV2?.access_end_at) {
+          activeUntil = subV2.access_end_at;
+        } else {
+          // Fallback to legacy subscriptions table
+          const { data: subscription } = await supabase
+            .from('subscriptions')
+            .select('expires_at')
+            .eq('user_id', user_id)
+            .eq('is_active', true)
+            .single();
+          activeUntil = subscription?.expires_at || null;
+        }
       }
 
       // Update telegram_access
