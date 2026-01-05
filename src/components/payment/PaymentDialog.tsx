@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Loader2, CreditCard, CheckCircle } from "lucide-react";
+import { Loader2, CreditCard, CheckCircle, ShieldCheck } from "lucide-react";
 import { z } from "zod";
 
 interface PaymentDialogProps {
@@ -45,7 +46,9 @@ export function PaymentDialog({
   tariffCode,
 }: PaymentDialogProps) {
   const { user, session } = useAuth();
+  const { isSuperAdmin, isAdmin } = usePermissions();
   const [step, setStep] = useState<Step>("email");
+  const [isTestPaymentLoading, setIsTestPaymentLoading] = useState(false);
   const [formData, setFormData] = useState<UserFormData>({
     email: "",
     firstName: "",
@@ -206,6 +209,65 @@ export function PaymentDialog({
       setStep("ready");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Admin test payment - simulates successful bePaid webhook
+  const handleTestPayment = async () => {
+    if (!isSuperAdmin() && !isAdmin()) {
+      toast.error("Только администраторы могут использовать эту функцию");
+      return;
+    }
+
+    setIsTestPaymentLoading(true);
+    try {
+      // First create an order in draft status
+      const { data: createData, error: createError } = await supabase.functions.invoke("bepaid-create-token", {
+        body: {
+          productId,
+          customerEmail: formData.email,
+          customerPhone: formData.phone,
+          customerFirstName: formData.firstName,
+          customerLastName: formData.lastName,
+          existingUserId,
+          description: productName,
+          tariffCode,
+          skipRedirect: true, // Just create order, don't redirect
+        },
+      });
+
+      if (createError || !createData?.success) {
+        throw new Error(createData?.error || createError?.message || "Ошибка создания заказа");
+      }
+
+      const orderId = createData.orderId;
+      if (!orderId) {
+        throw new Error("Не удалось получить ID заказа");
+      }
+
+      // Now simulate payment completion
+      const { data, error } = await supabase.functions.invoke("test-payment-complete", {
+        body: { orderId },
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (!data.success) {
+        throw new Error(data.error || "Ошибка симуляции оплаты");
+      }
+
+      toast.success("Тестовая оплата выполнена успешно!");
+      onOpenChange(false);
+      
+      // Reload page to show updated status
+      setTimeout(() => window.location.reload(), 1000);
+    } catch (error) {
+      console.error("Test payment error:", error);
+      toast.error(error instanceof Error ? error.message : "Ошибка тестовой оплаты");
+    } finally {
+      setIsTestPaymentLoading(false);
     }
   };
 
@@ -376,16 +438,39 @@ export function PaymentDialog({
                     setStep("email");
                   }
                 }}
-                disabled={isLoading}
+                disabled={isLoading || isTestPaymentLoading}
                 className="flex-1"
               >
                 {user && session ? "Отмена" : "Назад"}
               </Button>
-              <Button onClick={handlePayment} disabled={isLoading} className="flex-1">
+              <Button onClick={handlePayment} disabled={isLoading || isTestPaymentLoading} className="flex-1">
                 <CreditCard className="mr-2 h-4 w-4" />
                 Оплатить {price}
               </Button>
             </div>
+
+            {/* Admin test payment button */}
+            {(isSuperAdmin() || isAdmin()) && (
+              <div className="border-t pt-4 mt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleTestPayment}
+                  disabled={isLoading || isTestPaymentLoading}
+                  className="w-full border-dashed border-amber-500 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/20"
+                >
+                  {isTestPaymentLoading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <ShieldCheck className="mr-2 h-4 w-4" />
+                  )}
+                  Тест: Симулировать оплату (только для админов)
+                </Button>
+                <p className="text-xs text-muted-foreground text-center mt-2">
+                  Создаёт заказ и симулирует успешный webhook от bePaid
+                </p>
+              </div>
+            )}
           </div>
         );
 

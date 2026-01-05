@@ -14,6 +14,7 @@ interface CreateTokenRequest {
   existingUserId?: string | null;
   description?: string;
   tariffCode?: string; // For GetCourse integration: 'chat', 'full', 'business'
+  skipRedirect?: boolean; // For admin test payments - just create order, don't create bePaid subscription
 }
 
 function generatePassword(length = 12): string {
@@ -63,7 +64,8 @@ Deno.serve(async (req) => {
       customerLastName,
       existingUserId,
       description,
-      tariffCode
+      tariffCode,
+      skipRedirect
     }: CreateTokenRequest = await req.json();
 
     if (!productId || !customerEmail) {
@@ -204,6 +206,19 @@ Deno.serve(async (req) => {
     }
 
     console.log('Created order:', order.id, 'for user:', userId);
+
+    // For admin test payments, skip bePaid integration and just return the order ID
+    if (skipRedirect) {
+      console.log('Skip redirect requested, returning order without bePaid integration');
+      return new Response(
+        JSON.stringify({
+          success: true,
+          orderId: order.id,
+          skipped: true,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // Create bePaid subscription (recurring every 30 days)
     // IMPORTANT: subscriptions are created via the Subscriptions API, not /checkouts
