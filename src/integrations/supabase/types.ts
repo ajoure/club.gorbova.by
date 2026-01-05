@@ -427,6 +427,122 @@ export type Database = {
         }
         Relationships: []
       }
+      field_values: {
+        Row: {
+          created_at: string
+          entity_id: string
+          entity_type: Database["public"]["Enums"]["field_entity_type"]
+          field_id: string
+          id: string
+          updated_at: string
+          value_boolean: boolean | null
+          value_date: string | null
+          value_datetime: string | null
+          value_json: Json | null
+          value_number: number | null
+          value_text: string | null
+        }
+        Insert: {
+          created_at?: string
+          entity_id: string
+          entity_type: Database["public"]["Enums"]["field_entity_type"]
+          field_id: string
+          id?: string
+          updated_at?: string
+          value_boolean?: boolean | null
+          value_date?: string | null
+          value_datetime?: string | null
+          value_json?: Json | null
+          value_number?: number | null
+          value_text?: string | null
+        }
+        Update: {
+          created_at?: string
+          entity_id?: string
+          entity_type?: Database["public"]["Enums"]["field_entity_type"]
+          field_id?: string
+          id?: string
+          updated_at?: string
+          value_boolean?: boolean | null
+          value_date?: string | null
+          value_datetime?: string | null
+          value_json?: Json | null
+          value_number?: number | null
+          value_text?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "field_values_field_id_fkey"
+            columns: ["field_id"]
+            isOneToOne: false
+            referencedRelation: "fields"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fields: {
+        Row: {
+          created_at: string
+          data_type: Database["public"]["Enums"]["field_data_type"]
+          default_value: string | null
+          description: string | null
+          display_order: number | null
+          entity_type: Database["public"]["Enums"]["field_entity_type"]
+          enum_options: Json | null
+          external_id_amo: string | null
+          external_id_b24: string | null
+          external_id_gc: string | null
+          id: string
+          is_active: boolean
+          is_required: boolean
+          is_system: boolean
+          key: string
+          label: string
+          updated_at: string
+          validation_rules: Json | null
+        }
+        Insert: {
+          created_at?: string
+          data_type?: Database["public"]["Enums"]["field_data_type"]
+          default_value?: string | null
+          description?: string | null
+          display_order?: number | null
+          entity_type: Database["public"]["Enums"]["field_entity_type"]
+          enum_options?: Json | null
+          external_id_amo?: string | null
+          external_id_b24?: string | null
+          external_id_gc?: string | null
+          id?: string
+          is_active?: boolean
+          is_required?: boolean
+          is_system?: boolean
+          key: string
+          label: string
+          updated_at?: string
+          validation_rules?: Json | null
+        }
+        Update: {
+          created_at?: string
+          data_type?: Database["public"]["Enums"]["field_data_type"]
+          default_value?: string | null
+          description?: string | null
+          display_order?: number | null
+          entity_type?: Database["public"]["Enums"]["field_entity_type"]
+          enum_options?: Json | null
+          external_id_amo?: string | null
+          external_id_b24?: string | null
+          external_id_gc?: string | null
+          id?: string
+          is_active?: boolean
+          is_required?: boolean
+          is_system?: boolean
+          key?: string
+          label?: string
+          updated_at?: string
+          validation_rules?: Json | null
+        }
+        Relationships: []
+      }
       impersonation_sessions: {
         Row: {
           actor_user_id: string
@@ -1900,6 +2016,27 @@ export type Database = {
     }
     Enums: {
       app_role: "user" | "admin" | "superadmin"
+      field_data_type:
+        | "string"
+        | "number"
+        | "boolean"
+        | "date"
+        | "datetime"
+        | "money"
+        | "enum"
+        | "json"
+        | "email"
+        | "phone"
+      field_entity_type:
+        | "client"
+        | "order"
+        | "subscription"
+        | "product"
+        | "tariff"
+        | "payment"
+        | "company"
+        | "telegram_member"
+        | "custom"
       subscription_tier: "free" | "pro" | "premium" | "webinar"
     }
     CompositeTypes: {
@@ -2029,6 +2166,29 @@ export const Constants = {
   public: {
     Enums: {
       app_role: ["user", "admin", "superadmin"],
+      field_data_type: [
+        "string",
+        "number",
+        "boolean",
+        "date",
+        "datetime",
+        "money",
+        "enum",
+        "json",
+        "email",
+        "phone",
+      ],
+      field_entity_type: [
+        "client",
+        "order",
+        "subscription",
+        "product",
+        "tariff",
+        "payment",
+        "company",
+        "telegram_member",
+        "custom",
+      ],
       subscription_tier: ["free", "pro", "premium", "webinar"],
     },
   },
