@@ -74,11 +74,13 @@ export function PaymentDialog({
   const [emailCheckResult, setEmailCheckResult] = useState<EmailCheckResult | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [savedCard, setSavedCard] = useState<{ id: string; brand: string; last4: string } | null>(null);
+  const [isLoadingCard, setIsLoadingCard] = useState(false);
 
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
       setSavedCard(null);
+      setIsLoadingCard(false);
       if (user && session) {
         // User is authenticated - use their data
         setFormData({
@@ -92,18 +94,27 @@ export function PaymentDialog({
         setStep("ready");
         
         // Check for saved payment method
-        supabase
-          .from("payment_methods")
-          .select("id, brand, last4")
-          .eq("user_id", user.id)
-          .eq("status", "active")
-          .eq("is_default", true)
-          .maybeSingle()
-          .then(({ data }) => {
+        setIsLoadingCard(true);
+        (async () => {
+          try {
+            const { data, error } = await supabase
+              .from("payment_methods")
+              .select("id, brand, last4")
+              .eq("user_id", user.id)
+              .eq("status", "active")
+              .eq("is_default", true)
+              .maybeSingle();
+            
+            console.log("Payment methods query result:", { data, error });
             if (data) {
               setSavedCard({ id: data.id, brand: data.brand || "", last4: data.last4 || "" });
             }
-          });
+          } catch (err) {
+            console.error("Error loading payment method:", err);
+          } finally {
+            setIsLoadingCard(false);
+          }
+        })();
       } else {
         // User is not authenticated - start with email step
         setFormData({ email: "", firstName: "", lastName: "", phone: "", password: "" });
@@ -272,9 +283,12 @@ export function PaymentDialog({
     setIsLoading(true);
     setStep("processing");
 
+    console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId });
+
     try {
       // If user has a saved card and tariffCode is provided, use direct charge
       if (savedCard && tariffCode && user) {
+        console.log("Using direct charge with saved card:", savedCard.id);
         const { data, error } = await supabase.functions.invoke("direct-charge", {
           body: {
             productId,
@@ -714,8 +728,12 @@ export function PaymentDialog({
               >
                 {user && session ? "Отмена" : "Назад"}
               </Button>
-              <Button onClick={handlePayment} disabled={isLoading || isTestPaymentLoading} className="flex-1">
-                <CreditCard className="mr-2 h-4 w-4" />
+              <Button onClick={handlePayment} disabled={isLoading || isTestPaymentLoading || isLoadingCard} className="flex-1">
+                {isLoadingCard ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <CreditCard className="mr-2 h-4 w-4" />
+                )}
                 {savedCard 
                   ? (isTrial ? "Активировать триал" : `Оплатить ${price}`)
                   : `Оплатить ${price}`
