@@ -77,3 +77,6 @@ verify_jwt = true
 
 [functions.telegram-cron-sync]
 verify_jwt = false
+
+[functions.telegram-kick-violators]
+verify_jwt = false
