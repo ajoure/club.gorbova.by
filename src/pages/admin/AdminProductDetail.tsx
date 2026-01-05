@@ -15,8 +15,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { 
   ArrowLeft, Plus, Pencil, Trash2, Tag, Clock, CreditCard, 
-  Calendar, Users, DollarSign, Percent, Check, MousePointer, Eye, Globe
+  Calendar, Users, DollarSign, Percent, Check, MousePointer, Eye, Globe, Star
 } from "lucide-react";
+import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -79,6 +80,10 @@ export default function AdminProductDetail() {
     code: "",
     name: "",
     description: "",
+    subtitle: "",
+    period_label: "BYN/мес",
+    is_popular: false,
+    badge: "",
     access_days: 30,
     trial_enabled: false,
     trial_days: 7,
@@ -152,6 +157,10 @@ export default function AdminProductDetail() {
         code: tariff.code,
         name: tariff.name,
         description: tariff.description || "",
+        subtitle: tariff.subtitle || "",
+        period_label: tariff.period_label || "BYN/мес",
+        is_popular: tariff.is_popular || false,
+        badge: tariff.badge || "",
         access_days: tariff.access_days,
         trial_enabled: tariff.trial_enabled,
         trial_days: tariff.trial_days || 7,
@@ -166,6 +175,10 @@ export default function AdminProductDetail() {
         code: "",
         name: "",
         description: "",
+        subtitle: "",
+        period_label: "BYN/мес",
+        is_popular: false,
+        badge: "",
         access_days: 30,
         trial_enabled: false,
         trial_days: 7,
@@ -784,88 +797,152 @@ export default function AdminProductDetail() {
 
       {/* Tariff Dialog */}
       <Dialog open={tariffDialog.open} onOpenChange={(open) => setTariffDialog({ ...tariffDialog, open })}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
             </DialogTitle>
           </DialogHeader>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Код *</Label>
-              <Input
-                placeholder="base"
-                value={tariffForm.code}
-                onChange={(e) => setTariffForm({ ...tariffForm, code: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Название *</Label>
-              <Input
-                placeholder="Базовый"
-                value={tariffForm.name}
-                onChange={(e) => setTariffForm({ ...tariffForm, name: e.target.value })}
-              />
-            </div>
-            <div className="col-span-2 space-y-2">
-              <Label>Описание</Label>
-              <Textarea
-                value={tariffForm.description}
-                onChange={(e) => setTariffForm({ ...tariffForm, description: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Дней доступа</Label>
-              <Input
-                type="number"
-                value={tariffForm.access_days}
-                onChange={(e) => setTariffForm({ ...tariffForm, access_days: parseInt(e.target.value) || 30 })}
-              />
-            </div>
-            <div className="flex items-center space-x-2 pt-6">
-              <Switch
-                checked={tariffForm.is_active}
-                onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
-              />
-              <Label>Активен</Label>
-            </div>
-          </div>
-
-          <div className="border-t pt-4 mt-4">
-            <div className="flex items-center space-x-2 mb-4">
-              <Switch
-                checked={tariffForm.trial_enabled}
-                onCheckedChange={(checked) => setTariffForm({ ...tariffForm, trial_enabled: checked })}
-              />
-              <Label>Пробный период</Label>
+          <div className="space-y-6">
+            {/* Basic info */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Код *</Label>
+                <Input
+                  placeholder="base"
+                  value={tariffForm.code}
+                  onChange={(e) => setTariffForm({ ...tariffForm, code: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Название *</Label>
+                <Input
+                  placeholder="FULL"
+                  value={tariffForm.name}
+                  onChange={(e) => setTariffForm({ ...tariffForm, name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Подзаголовок</Label>
+                <Input
+                  placeholder="Самый популярный"
+                  value={tariffForm.subtitle}
+                  onChange={(e) => setTariffForm({ ...tariffForm, subtitle: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Период (BYN/мес)</Label>
+                <Input
+                  placeholder="BYN/мес"
+                  value={tariffForm.period_label}
+                  onChange={(e) => setTariffForm({ ...tariffForm, period_label: e.target.value })}
+                />
+              </div>
+              <div className="col-span-2 space-y-2">
+                <Label>Описание</Label>
+                <Textarea
+                  value={tariffForm.description}
+                  onChange={(e) => setTariffForm({ ...tariffForm, description: e.target.value })}
+                />
+              </div>
             </div>
 
-            {tariffForm.trial_enabled && (
-              <div className="grid grid-cols-3 gap-4 pl-6">
+            {/* Visual settings */}
+            <div className="border-t pt-4">
+              <h4 className="text-sm font-medium mb-4">Визуальные настройки</h4>
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Дней пробного</Label>
+                  <Label>Бейдж</Label>
+                  <Input
+                    placeholder="Популярный"
+                    value={tariffForm.badge}
+                    onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
+                  />
+                </div>
+                <div className="flex items-center gap-4 pt-6">
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      checked={tariffForm.is_popular}
+                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_popular: checked })}
+                    />
+                    <Label className="flex items-center gap-1">
+                      <Star className="h-4 w-4" />
+                      Выделить
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      checked={tariffForm.is_active}
+                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
+                    />
+                    <Label>Активен</Label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Access settings */}
+            <div className="border-t pt-4">
+              <h4 className="text-sm font-medium mb-4">Доступ</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Дней доступа</Label>
                   <Input
                     type="number"
-                    value={tariffForm.trial_days}
-                    onChange={(e) => setTariffForm({ ...tariffForm, trial_days: parseInt(e.target.value) || 7 })}
+                    value={tariffForm.access_days}
+                    onChange={(e) => setTariffForm({ ...tariffForm, access_days: parseInt(e.target.value) || 30 })}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>Цена пробного (BYN)</Label>
-                  <Input
-                    type="number"
-                    value={tariffForm.trial_price}
-                    onChange={(e) => setTariffForm({ ...tariffForm, trial_price: parseFloat(e.target.value) || 0 })}
-                  />
+              </div>
+            </div>
+
+            {/* Trial settings */}
+            <div className="border-t pt-4">
+              <div className="flex items-center space-x-2 mb-4">
+                <Switch
+                  checked={tariffForm.trial_enabled}
+                  onCheckedChange={(checked) => setTariffForm({ ...tariffForm, trial_enabled: checked })}
+                />
+                <Label>Пробный период</Label>
+              </div>
+
+              {tariffForm.trial_enabled && (
+                <div className="grid grid-cols-3 gap-4 pl-6">
+                  <div className="space-y-2">
+                    <Label>Дней пробного</Label>
+                    <Input
+                      type="number"
+                      value={tariffForm.trial_days}
+                      onChange={(e) => setTariffForm({ ...tariffForm, trial_days: parseInt(e.target.value) || 7 })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Цена пробного (BYN)</Label>
+                    <Input
+                      type="number"
+                      value={tariffForm.trial_price}
+                      onChange={(e) => setTariffForm({ ...tariffForm, trial_price: parseFloat(e.target.value) || 0 })}
+                    />
+                  </div>
+                  <div className="flex items-center space-x-2 pt-6">
+                    <Switch
+                      checked={tariffForm.trial_auto_charge}
+                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, trial_auto_charge: checked })}
+                    />
+                    <Label>Автосписание</Label>
+                  </div>
                 </div>
-                <div className="flex items-center space-x-2 pt-6">
-                  <Switch
-                    checked={tariffForm.trial_auto_charge}
-                    onCheckedChange={(checked) => setTariffForm({ ...tariffForm, trial_auto_charge: checked })}
-                  />
-                  <Label>Автосписание</Label>
-                </div>
+              )}
+            </div>
+
+            {/* Features Editor - only for existing tariffs */}
+            {tariffDialog.editing && (
+              <div className="border-t pt-4">
+                <TariffFeaturesEditor
+                  tariffId={tariffDialog.editing.id}
+                  availableTariffs={tariffs?.map(t => ({ id: t.id, name: t.name })) || []}
+                />
               </div>
             )}
           </div>

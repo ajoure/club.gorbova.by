@@ -1854,6 +1854,68 @@ export type Database = {
           },
         ]
       }
+      tariff_features: {
+        Row: {
+          active_from: string | null
+          active_to: string | null
+          bonus_type: string | null
+          created_at: string
+          icon: string | null
+          id: string
+          is_bonus: boolean | null
+          is_highlighted: boolean | null
+          label: string | null
+          link_url: string | null
+          sort_order: number | null
+          tariff_id: string
+          text: string
+          updated_at: string
+          visibility_mode: string | null
+        }
+        Insert: {
+          active_from?: string | null
+          active_to?: string | null
+          bonus_type?: string | null
+          created_at?: string
+          icon?: string | null
+          id?: string
+          is_bonus?: boolean | null
+          is_highlighted?: boolean | null
+          label?: string | null
+          link_url?: string | null
+          sort_order?: number | null
+          tariff_id: string
+          text: string
+          updated_at?: string
+          visibility_mode?: string | null
+        }
+        Update: {
+          active_from?: string | null
+          active_to?: string | null
+          bonus_type?: string | null
+          created_at?: string
+          icon?: string | null
+          id?: string
+          is_bonus?: boolean | null
+          is_highlighted?: boolean | null
+          label?: string | null
+          link_url?: string | null
+          sort_order?: number | null
+          tariff_id?: string
+          text?: string
+          updated_at?: string
+          visibility_mode?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tariff_features_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tariff_offers: {
         Row: {
           amount: number
