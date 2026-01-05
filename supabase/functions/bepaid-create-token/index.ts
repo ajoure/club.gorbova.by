@@ -13,6 +13,7 @@ interface CreateTokenRequest {
   customerLastName?: string;
   existingUserId?: string | null;
   description?: string;
+  tariffCode?: string; // For GetCourse integration: 'chat', 'full', 'business'
 }
 
 function generatePassword(length = 12): string {
@@ -61,7 +62,8 @@ Deno.serve(async (req) => {
       customerFirstName,
       customerLastName,
       existingUserId,
-      description 
+      description,
+      tariffCode
     }: CreateTokenRequest = await req.json();
 
     if (!productId || !customerEmail) {
@@ -187,6 +189,7 @@ Deno.serve(async (req) => {
           customer_phone: customerPhone,
           new_user_created: newUserCreated,
           new_user_password: newUserCreated ? newUserPassword : null,
+          tariff_code: tariffCode || null, // For GetCourse integration
         }
       })
       .select()
