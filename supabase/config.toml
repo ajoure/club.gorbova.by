@@ -106,7 +106,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.subscription-actions]
-verify_jwt = true
+verify_jwt = false
 
 [functions.payment-methods-tokenize]
 verify_jwt = false

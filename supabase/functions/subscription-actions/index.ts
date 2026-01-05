@@ -13,37 +13,48 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
     // Get user from auth header
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'No authorization header' }), {
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    // Create client with user's auth header for JWT validation
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } }
+    });
 
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    const { data: claimsData, error: claimsError } = await supabaseAuth.auth.getClaims(token);
     
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid token' }), {
+    if (claimsError || !claimsData?.claims) {
+      console.error('JWT validation error:', claimsError);
+      return new Response(JSON.stringify({ error: 'Invalid JWT' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
+    const userId = claimsData.claims.sub;
+    
+    // Use service role for database operations
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+
     const { action, subscription_id, payment_method_id } = await req.json();
-    console.log(`Subscription action: ${action} for subscription ${subscription_id} by user ${user.id}`);
+    console.log(`Subscription action: ${action} for subscription ${subscription_id} by user ${userId}`);
 
     // Verify subscription belongs to user
     const { data: subscription, error: subError } = await supabase
       .from('subscriptions_v2')
       .select('*')
       .eq('id', subscription_id)
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .single();
 
     if (subError || !subscription) {
@@ -88,7 +99,7 @@ serve(async (req) => {
 
         // Log the action
         await supabase.from('audit_logs').insert({
-          actor_user_id: user.id,
+          actor_user_id: userId,
           action: 'subscription.canceled',
           meta: { subscription_id, cancel_at: cancelAt },
         });
@@ -134,7 +145,7 @@ serve(async (req) => {
 
         // Log the action
         await supabase.from('audit_logs').insert({
-          actor_user_id: user.id,
+          actor_user_id: userId,
           action: 'subscription.resumed',
           meta: { subscription_id },
         });
@@ -158,7 +169,7 @@ serve(async (req) => {
           .from('payment_methods')
           .select('id, provider_token')
           .eq('id', payment_method_id)
-          .eq('user_id', user.id)
+          .eq('user_id', userId)
           .eq('status', 'active')
           .single();
 
@@ -188,7 +199,7 @@ serve(async (req) => {
 
         // Log the action
         await supabase.from('audit_logs').insert({
-          actor_user_id: user.id,
+          actor_user_id: userId,
           action: 'subscription.payment_method_changed',
           meta: { subscription_id, payment_method_id },
         });
