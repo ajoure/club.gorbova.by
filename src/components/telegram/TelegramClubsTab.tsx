@@ -35,7 +35,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Plus, Settings, Users, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone, AlertTriangle, HelpCircle, Info, Link2, Package, Zap, BarChart3 } from 'lucide-react';
+import { Plus, Settings, Users, CheckCircle, XCircle, Loader2, MessageSquare, Megaphone, AlertTriangle, HelpCircle, Info, Link2, Package, BarChart3 } from 'lucide-react';
 import { 
   useTelegramClubs, 
   useTelegramBots,
@@ -107,9 +107,9 @@ export function TelegramClubsTab() {
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
+      <CardHeader className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div className="space-y-2">
             <CardTitle>Telegram клубы</CardTitle>
             <CardDescription>
               Клубы объединяют чат и канал. После оплаты подписки пользователь 
@@ -154,40 +154,36 @@ export function TelegramClubsTab() {
               </TooltipProvider>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 mt-4 sm:mt-0">
             <Button 
               variant="outline" 
+              size="sm"
               onClick={() => navigate('/admin/integrations/telegram/product-mappings')}
             >
               <Package className="h-4 w-4 mr-2" />
-              Автодоступ
+              <span className="hidden sm:inline">Автодоступ</span>
             </Button>
             <Button 
               variant="outline"
+              size="sm"
               onClick={() => navigate('/admin/integrations/telegram/invites')}
             >
               <Link2 className="h-4 w-4 mr-2" />
-              Инвайты
+              <span className="hidden sm:inline">Инвайты</span>
             </Button>
             <Button 
               variant="outline"
-              onClick={() => navigate('/admin/integrations/telegram/mtproto')}
-            >
-              <Zap className="h-4 w-4 mr-2" />
-              MTProto
-            </Button>
-            <Button 
-              variant="outline"
+              size="sm"
               onClick={() => navigate('/admin/integrations/telegram/analytics')}
             >
               <BarChart3 className="h-4 w-4 mr-2" />
-              Аналитика
+              <span className="hidden sm:inline">Аналитика</span>
             </Button>
             <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
               <DialogTrigger asChild>
-                <Button disabled={activeBots.length === 0}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Добавить клуб
+                <Button size="sm" disabled={activeBots.length === 0}>
+                  <Plus className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Добавить клуб</span>
                 </Button>
             </DialogTrigger>
             <DialogContent className="max-w-lg">

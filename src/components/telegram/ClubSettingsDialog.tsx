@@ -331,7 +331,7 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
                     variant="outline" 
                     size="sm"
                     onClick={handleTestBot}
-                    disabled={testingBot || !formData.chat_id}
+                    disabled={testingBot || (!formData.chat_id && !formData.channel_id)}
                   >
                     {testingBot ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -341,36 +341,93 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
                     Проверить права
                   </Button>
                 </div>
+                {!formData.chat_id && !formData.channel_id && (
+                  <p className="text-sm text-muted-foreground">
+                    Укажите Chat ID или Channel ID для проверки
+                  </p>
+                )}
                 {botTestResult && (
-                  <div className="text-sm space-y-1">
+                  <div className="text-sm space-y-3">
                     {botTestResult.error ? (
                       <p className="text-destructive">{botTestResult.error}</p>
                     ) : (
                       <>
-                        <div className="flex items-center gap-2">
-                          {botTestResult.chat?.is_admin ? (
-                            <CheckCircle className="h-4 w-4 text-green-500" />
-                          ) : (
-                            <XCircle className="h-4 w-4 text-destructive" />
-                          )}
-                          <span>Бот админ в чате: {botTestResult.chat?.is_admin ? 'Да' : 'Нет'}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {botTestResult.chat?.can_restrict_members ? (
-                            <CheckCircle className="h-4 w-4 text-green-500" />
-                          ) : (
-                            <XCircle className="h-4 w-4 text-destructive" />
-                          )}
-                          <span>Может кикать: {botTestResult.chat?.can_restrict_members ? 'Да' : 'Нет'}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {botTestResult.chat?.can_invite_users ? (
-                            <CheckCircle className="h-4 w-4 text-green-500" />
-                          ) : (
-                            <XCircle className="h-4 w-4 text-destructive" />
-                          )}
-                          <span>Может приглашать: {botTestResult.chat?.can_invite_users ? 'Да' : 'Нет'}</span>
-                        </div>
+                        {botTestResult.chat && (
+                          <div className="space-y-1">
+                            <p className="font-medium text-muted-foreground">Чат (группа):</p>
+                            {botTestResult.chat.error ? (
+                              <div className="flex items-center gap-2 text-destructive">
+                                <XCircle className="h-4 w-4" />
+                                <span>{botTestResult.chat.error}</span>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-2">
+                                  {botTestResult.chat.is_admin ? (
+                                    <CheckCircle className="h-4 w-4 text-green-500" />
+                                  ) : (
+                                    <XCircle className="h-4 w-4 text-destructive" />
+                                  )}
+                                  <span>Админ: {botTestResult.chat.is_admin ? 'Да' : 'Нет'}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {botTestResult.chat.can_restrict_members ? (
+                                    <CheckCircle className="h-4 w-4 text-green-500" />
+                                  ) : (
+                                    <XCircle className="h-4 w-4 text-destructive" />
+                                  )}
+                                  <span>Может кикать: {botTestResult.chat.can_restrict_members ? 'Да' : 'Нет'}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {botTestResult.chat.can_invite_users ? (
+                                    <CheckCircle className="h-4 w-4 text-green-500" />
+                                  ) : (
+                                    <XCircle className="h-4 w-4 text-destructive" />
+                                  )}
+                                  <span>Может приглашать: {botTestResult.chat.can_invite_users ? 'Да' : 'Нет'}</span>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                        {botTestResult.channel && (
+                          <div className="space-y-1">
+                            <p className="font-medium text-muted-foreground">Канал:</p>
+                            {botTestResult.channel.error ? (
+                              <div className="flex items-center gap-2 text-destructive">
+                                <XCircle className="h-4 w-4" />
+                                <span>{botTestResult.channel.error}</span>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-2">
+                                  {botTestResult.channel.is_admin ? (
+                                    <CheckCircle className="h-4 w-4 text-green-500" />
+                                  ) : (
+                                    <XCircle className="h-4 w-4 text-destructive" />
+                                  )}
+                                  <span>Админ: {botTestResult.channel.is_admin ? 'Да' : 'Нет'}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {botTestResult.channel.can_restrict_members ? (
+                                    <CheckCircle className="h-4 w-4 text-green-500" />
+                                  ) : (
+                                    <XCircle className="h-4 w-4 text-destructive" />
+                                  )}
+                                  <span>Может кикать: {botTestResult.channel.can_restrict_members ? 'Да' : 'Нет'}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {botTestResult.channel.can_invite_users ? (
+                                    <CheckCircle className="h-4 w-4 text-green-500" />
+                                  ) : (
+                                    <XCircle className="h-4 w-4 text-destructive" />
+                                  )}
+                                  <span>Может приглашать: {botTestResult.channel.can_invite_users ? 'Да' : 'Нет'}</span>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </>
                     )}
                   </div>

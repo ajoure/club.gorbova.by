@@ -130,7 +130,7 @@ export default function AdminIntegrations() {
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        <TabsList className="grid w-full grid-cols-4 max-w-lg">
+        <TabsList className="w-full grid grid-cols-2 sm:grid-cols-4 sm:max-w-lg">
           {CATEGORIES.map((cat) => {
             const Icon = CATEGORY_ICONS[cat.id] || Link2;
             const count = cat.id === "telegram" ? 0 : (instances || []).filter(
@@ -140,9 +140,10 @@ export default function AdminIntegrations() {
               (i) => i.category === cat.id && i.status === "error"
             );
             return (
-              <TabsTrigger key={cat.id} value={cat.id} className="flex items-center gap-2">
+              <TabsTrigger key={cat.id} value={cat.id} className="flex items-center gap-1.5 text-xs sm:text-sm">
                 <Icon className="h-4 w-4" />
-                {cat.label}
+                <span className="hidden sm:inline">{cat.label}</span>
+                <span className="sm:hidden">{cat.label.slice(0, 5)}{cat.label.length > 5 ? '' : ''}</span>
                 {count > 0 && (
                   <span
                     className={`text-xs px-1.5 py-0.5 rounded-full ${
@@ -161,21 +162,21 @@ export default function AdminIntegrations() {
 
         {activeTab === "telegram" ? (
           <div className="mt-6 space-y-6">
-            <div className="flex justify-between items-center">
-              <Tabs defaultValue="bots" className="w-full">
-                <div className="flex justify-between items-center">
-                  <TabsList>
-                    <TabsTrigger value="bots">Боты</TabsTrigger>
-                    <TabsTrigger value="clubs">Клубы</TabsTrigger>
-                    <TabsTrigger value="logs">Логи</TabsTrigger>
-                  </TabsList>
-                  <Button onClick={() => setMassBroadcastOpen(true)}>
-                    <Users className="h-4 w-4 mr-2" />
-                    Массовая рассылка
-                  </Button>
-                </div>
-                <TabsContent value="bots" className="mt-4">
-                  <TelegramBotsTab />
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+            <Tabs defaultValue="bots" className="w-full">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+                <TabsList className="w-full sm:w-auto">
+                  <TabsTrigger value="bots">Боты</TabsTrigger>
+                  <TabsTrigger value="clubs">Клубы</TabsTrigger>
+                  <TabsTrigger value="logs">Логи</TabsTrigger>
+                </TabsList>
+                <Button size="sm" onClick={() => setMassBroadcastOpen(true)}>
+                  <Users className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Массовая рассылка</span>
+                </Button>
+              </div>
+              <TabsContent value="bots" className="mt-4">
+                <TelegramBotsTab />
                 </TabsContent>
                 <TabsContent value="clubs" className="mt-4">
                   <TelegramClubsTab />

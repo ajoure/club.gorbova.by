@@ -10,6 +10,7 @@ interface BotAction {
   bot_id?: string;
   bot_token?: string;
   chat_id?: number;
+  channel_id?: number;
 }
 
 // Telegram API helper
@@ -69,7 +70,7 @@ Deno.serve(async (req) => {
     }
 
     const body: BotAction = await req.json();
-    const { action, bot_id, bot_token: providedToken, chat_id } = body;
+    const { action, bot_id, bot_token: providedToken, chat_id, channel_id } = body;
 
     let botToken = providedToken;
 
@@ -222,8 +223,8 @@ Deno.serve(async (req) => {
       }
 
       case 'check_chat_rights': {
-        if (!chat_id) {
-          return new Response(JSON.stringify({ error: 'chat_id required' }), {
+        if (!chat_id && !channel_id) {
+          return new Response(JSON.stringify({ error: 'chat_id or channel_id required' }), {
             status: 400,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
@@ -234,41 +235,78 @@ Deno.serve(async (req) => {
         if (!meResult.ok) {
           return new Response(JSON.stringify({
             success: false,
-            error: 'Failed to get bot info',
+            error: 'Failed to get bot info: ' + (meResult.description || 'Unknown error'),
           }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
 
         const botUserId = meResult.result.id;
-        const memberResult = await telegramRequest(botToken, 'getChatMember', {
-          chat_id,
-          user_id: botUserId,
-        });
+        const results: { chat?: any; channel?: any } = {};
 
-        if (!memberResult.ok) {
-          return new Response(JSON.stringify({
-            success: false,
-            error: memberResult.description || 'Failed to check chat member',
-            is_member: false,
-            is_admin: false,
-          }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        // Check chat rights
+        if (chat_id) {
+          const memberResult = await telegramRequest(botToken, 'getChatMember', {
+            chat_id,
+            user_id: botUserId,
           });
+
+          if (!memberResult.ok) {
+            results.chat = {
+              success: false,
+              error: memberResult.description || 'Failed to check chat member',
+              is_member: false,
+              is_admin: false,
+              can_invite_users: false,
+              can_restrict_members: false,
+            };
+          } else {
+            const member = memberResult.result;
+            const isAdmin = member.status === 'administrator' || member.status === 'creator';
+            results.chat = {
+              success: true,
+              status: member.status,
+              is_admin: isAdmin,
+              can_invite_users: member.can_invite_users || member.status === 'creator',
+              can_restrict_members: member.can_restrict_members || member.status === 'creator',
+              can_promote_members: member.can_promote_members || member.status === 'creator',
+            };
+          }
         }
 
-        const member = memberResult.result;
-        const isAdmin = member.status === 'administrator' || member.status === 'creator';
-        const canInvite = member.can_invite_users || member.status === 'creator';
-        const canRestrict = member.can_restrict_members || member.status === 'creator';
+        // Check channel rights
+        if (channel_id) {
+          const memberResult = await telegramRequest(botToken, 'getChatMember', {
+            chat_id: channel_id,
+            user_id: botUserId,
+          });
+
+          if (!memberResult.ok) {
+            results.channel = {
+              success: false,
+              error: memberResult.description || 'Failed to check channel member',
+              is_member: false,
+              is_admin: false,
+              can_invite_users: false,
+              can_restrict_members: false,
+            };
+          } else {
+            const member = memberResult.result;
+            const isAdmin = member.status === 'administrator' || member.status === 'creator';
+            results.channel = {
+              success: true,
+              status: member.status,
+              is_admin: isAdmin,
+              can_invite_users: member.can_invite_users || member.status === 'creator',
+              can_restrict_members: member.can_restrict_members || member.status === 'creator',
+              can_post_messages: member.can_post_messages || member.status === 'creator',
+            };
+          }
+        }
 
         return new Response(JSON.stringify({
           success: true,
-          status: member.status,
-          is_admin: isAdmin,
-          can_invite: canInvite,
-          can_restrict: canRestrict,
-          has_required_permissions: isAdmin && canInvite && canRestrict,
+          ...results,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });

@@ -38,7 +38,7 @@ import AdminIntegrations from "./pages/admin/AdminIntegrations";
 import TelegramClubMembers from "./pages/admin/TelegramClubMembers";
 import TelegramInvites from "./pages/admin/TelegramInvites";
 import ProductClubMappings from "./pages/admin/ProductClubMappings";
-import TelegramMTProto from "./pages/admin/TelegramMTProto";
+
 import TelegramChatAnalytics from "./pages/admin/TelegramChatAnalytics";
 import AdminFieldRegistry from "./pages/admin/AdminFieldRegistry";
 import AdminProductsV2 from "./pages/admin/AdminProductsV2";
@@ -111,7 +111,7 @@ const App = () => (
               <Route path="/admin/integrations/telegram/clubs/:clubId/members" element={<ProtectedRoute><TelegramClubMembers /></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/invites" element={<ProtectedRoute><TelegramInvites /></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><ProductClubMappings /></ProtectedRoute>} />
-              <Route path="/admin/integrations/telegram/mtproto" element={<ProtectedRoute><TelegramMTProto /></ProtectedRoute>} />
+              
               <Route path="/admin/integrations/telegram/analytics" element={<ProtectedRoute><AdminLayout><TelegramChatAnalytics /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/fields" element={<ProtectedRoute><AdminFieldRegistry /></ProtectedRoute>} />
               <Route path="/admin/system/audit" element={<ProtectedRoute><AdminSystemAudit /></ProtectedRoute>} />
