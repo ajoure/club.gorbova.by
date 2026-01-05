@@ -313,24 +313,20 @@ Deno.serve(async (req) => {
     const body = JSON.parse(bodyText);
     console.log('bePaid webhook received:', JSON.stringify(body, null, 2));
 
-    const transaction = body.transaction;
-    if (!transaction) {
-      console.error('No transaction in webhook payload');
-      return new Response(
-        JSON.stringify({ error: 'Invalid payload' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const subscription = body.subscription || null;
+    // bePaid can send either transaction webhooks or subscription webhooks
+    const transaction = body.transaction || subscription?.last_transaction || null;
 
-    const orderId = transaction.tracking_id;
-    const transactionStatus = transaction.status;
-    const transactionUid = transaction.uid;
-    const paymentMethod = transaction.payment_method_type;
+    const orderId = transaction?.tracking_id || subscription?.tracking_id || null;
+    const transactionStatus = transaction?.status || null;
+    const transactionUid = transaction?.uid || null;
+    const paymentMethod = transaction?.payment_method_type || transaction?.payment_method || null;
+    const subscriptionId = subscription?.id || null;
 
-    console.log(`Processing transaction: ${transactionUid}, status: ${transactionStatus}, order: ${orderId}`);
+    console.log(`Processing bePaid webhook: order=${orderId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}`);
 
-    if (!orderId) {
-      console.error('No tracking_id (order ID) in transaction');
+    if (!orderId && !subscriptionId) {
+      console.error('No tracking_id nor subscription id in webhook payload');
       return new Response(
         JSON.stringify({ error: 'Missing tracking_id' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -338,35 +334,66 @@ Deno.serve(async (req) => {
     }
 
     // Get the order
-    const { data: order, error: orderError } = await supabase
-      .from('orders')
-      .select('*, products(*)')
-      .eq('id', orderId)
-      .single();
+    let order: any = null;
 
-    if (orderError || !order) {
-      console.error('Order not found:', orderId, orderError);
+    if (orderId) {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*, products(*)')
+        .eq('id', orderId)
+        .maybeSingle();
+
+      if (!error && data) order = data;
+    }
+
+    // Fallback: find order by subscription id saved in meta
+    if (!order && subscriptionId) {
+      const { data: subOrder, error: subOrderError } = await supabase
+        .from('orders')
+        .select('*, products(*)')
+        .eq('meta->>bepaid_subscription_id', subscriptionId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!subOrderError && subOrder) order = subOrder;
+    }
+
+    if (!order) {
+      console.error('Order not found for webhook:', { orderId, subscriptionId });
       return new Response(
         JSON.stringify({ error: 'Order not found' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
+    const internalOrderId = order.id as string;
+
     // Map bePaid status to our status
     let orderStatus = order.status;
-    switch (transactionStatus) {
-      case 'successful':
-        orderStatus = 'completed';
-        break;
-      case 'failed':
-      case 'expired':
-        orderStatus = 'failed';
-        break;
-      case 'incomplete':
-        orderStatus = 'processing';
-        break;
-      default:
-        orderStatus = 'processing';
+
+    if (transactionStatus) {
+      switch (transactionStatus) {
+        case 'successful':
+          orderStatus = 'completed';
+          break;
+        case 'failed':
+        case 'expired':
+          orderStatus = 'failed';
+          break;
+        case 'incomplete':
+          orderStatus = 'processing';
+          break;
+        default:
+          orderStatus = 'processing';
+      }
+    } else if (subscription?.state) {
+      // Subscription webhooks might not include transaction object
+      if (subscription.state === 'active') orderStatus = 'completed';
+      else if (subscription.state === 'failed' || subscription.state === 'canceled') orderStatus = 'failed';
+      else orderStatus = 'processing';
+    } else {
+      orderStatus = 'processing';
     }
 
     // Update order
@@ -374,15 +401,17 @@ Deno.serve(async (req) => {
       .from('orders')
       .update({
         status: orderStatus,
-        bepaid_uid: transactionUid,
-        payment_method: paymentMethod,
-        error_message: transaction.message || null,
+        bepaid_uid: transactionUid || null,
+        payment_method: paymentMethod || null,
+        error_message: transaction?.message || null,
         meta: {
           ...order.meta,
-          bepaid_response: transaction,
+          ...(subscriptionId ? { bepaid_subscription_id: subscriptionId } : {}),
+          ...(subscription ? { bepaid_subscription: subscription } : {}),
+          ...(transaction ? { bepaid_response: transaction } : {}),
         },
       })
-      .eq('id', orderId);
+      .eq('id', internalOrderId);
 
     if (updateError) {
       console.error('Failed to update order:', updateError);
@@ -404,14 +433,14 @@ Deno.serve(async (req) => {
           });
           
           if (duplicateResult.data?.isDuplicate) {
-            console.log(`Duplicate detected for order ${orderId}, case: ${duplicateResult.data.caseId}`);
+            console.log(`Duplicate detected for order ${internalOrderId}, case: ${duplicateResult.data.caseId}`);
             await supabase
               .from('orders')
               .update({
                 possible_duplicate: true,
                 duplicate_reason: `Дубль по телефону: ${duplicateResult.data.duplicates?.length || 0} профилей`,
               })
-              .eq('id', orderId);
+              .eq('id', internalOrderId);
           }
         } catch (dupError) {
           console.error('Error detecting duplicates:', dupError);
@@ -421,10 +450,23 @@ Deno.serve(async (req) => {
       if (product) {
         console.log(`Granting entitlement for product: ${product.name}`);
 
-        // Calculate expiration date
+        const productCode = product.product_type === 'subscription' ? (product.tier || 'pro') : product.id;
+
+        // Calculate expiration date (extend from current expires_at if still active)
         let expiresAt = null;
         if (product.duration_days) {
-          expiresAt = new Date();
+          const { data: existingEnt } = await supabase
+            .from('entitlements')
+            .select('expires_at')
+            .eq('user_id', order.user_id)
+            .eq('product_code', productCode)
+            .maybeSingle();
+
+          const now = new Date();
+          const currentExpires = existingEnt?.expires_at ? new Date(existingEnt.expires_at) : null;
+          const baseDate = currentExpires && currentExpires > now ? currentExpires : now;
+
+          expiresAt = new Date(baseDate);
           expiresAt.setDate(expiresAt.getDate() + product.duration_days);
         }
 
@@ -433,13 +475,14 @@ Deno.serve(async (req) => {
           .from('entitlements')
           .upsert({
             user_id: order.user_id,
-            product_code: product.product_type === 'subscription' ? (product.tier || 'pro') : product.id,
+            product_code: productCode,
             status: 'active',
             expires_at: expiresAt?.toISOString() || null,
             meta: {
-              order_id: orderId,
+              order_id: internalOrderId,
               product_name: product.name,
               bepaid_uid: transactionUid,
+              bepaid_subscription_id: subscriptionId,
             },
           }, {
             onConflict: 'user_id,product_code',
@@ -509,7 +552,7 @@ Deno.serve(async (req) => {
                   user_id: order.user_id,
                   club_id: mapping.club_id,
                   source: 'order',
-                  source_id: orderId,
+                  source_id: internalOrderId,
                   start_at: startAt.toISOString(),
                   end_at: endAt.toISOString(),
                   status: 'active',
@@ -558,9 +601,9 @@ Deno.serve(async (req) => {
                   .insert({
                     user_id: order.user_id,
                     club_id: club.id,
-                    source: 'order',
-                    source_id: orderId,
-                    start_at: startAt.toISOString(),
+                     source: 'order',
+                     source_id: internalOrderId,
+                     start_at: startAt.toISOString(),
                     end_at: endAt.toISOString(),
                     status: 'active',
                     meta: {
@@ -596,7 +639,7 @@ Deno.serve(async (req) => {
         order.amount / 100, // Convert from kopecks to rubles
         amoCRMContactId,
         {
-          order_id: orderId,
+          order_id: internalOrderId,
           product: product?.name,
           subscription_tier: product?.tier,
         }
@@ -612,7 +655,7 @@ Deno.serve(async (req) => {
           order.customer_email,
           meta.customer_phone || null,
           tariffCode,
-          orderId,
+          internalOrderId,
           order.amount
         );
         
@@ -628,7 +671,7 @@ Deno.serve(async (req) => {
               gc_sync_at: new Date().toISOString(),
             },
           })
-          .eq('id', orderId);
+          .eq('id', internalOrderId);
         
         if (gcSyncResult.success) {
           console.log('GetCourse sync successful');
@@ -647,7 +690,7 @@ Deno.serve(async (req) => {
           actor_user_id: order.user_id,
           target_user_id: order.user_id,
           meta: {
-            order_id: orderId,
+            order_id: internalOrderId,
             amount: order.amount,
             currency: order.currency,
             bepaid_uid: transactionUid,
@@ -656,6 +699,7 @@ Deno.serve(async (req) => {
             amocrm_deal_id: amoCRMDealId,
             gc_sync_status: gcSyncResult.success ? 'success' : (tariffCode ? 'failed' : 'skipped'),
             gc_order_id: gcSyncResult.gcOrderId,
+            bepaid_subscription_id: subscriptionId,
           },
         });
 
@@ -701,7 +745,7 @@ Deno.serve(async (req) => {
                     </div>
                     <div class="info-row">
                       <span>Номер заказа:</span>
-                      <span>${orderId}</span>
+                      <span>${internalOrderId}</span>
                     </div>
                     <div class="info-row">
                       <span>ID транзакции:</span>

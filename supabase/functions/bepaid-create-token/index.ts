@@ -205,57 +205,43 @@ Deno.serve(async (req) => {
 
     console.log('Created order:', order.id, 'for user:', userId);
 
-    // Create bePaid checkout token for recurring/subscription payment
-    // Using subscription with 30-day recurring interval
-    const bepaidPayload = {
-      checkout: {
-        test: testMode,
-        transaction_type: 'payment', // Use payment for initial charge
-        attempts: 3,
-        settings: {
-          return_url: `${origin}${successUrl}`,
-          decline_url: `${origin}${failUrl}`,
-          fail_url: `${origin}${failUrl}`,
-          notification_url: `${supabaseUrl}/functions/v1/bepaid-webhook`,
-          language: 'ru',
-          customer_fields: {
-            read_only: ['email'],
-          },
-          recurring_mode: true, // Enable recurring payments
-          save_card_toggle: {
-            display: false, // Always save card for subscriptions
-          },
-        },
-        order: {
+    // Create bePaid subscription (recurring every 30 days)
+    // IMPORTANT: subscriptions are created via the Subscriptions API, not /checkouts
+    const subscriptionPayload = {
+      customer: {
+        email: emailLower,
+        first_name: customerFirstName || undefined,
+        last_name: customerLastName || undefined,
+        phone: customerPhone || undefined,
+      },
+      plan: {
+        title: product.name,
+        currency: product.currency,
+        shop_id: Number(shopId),
+        plan: {
           amount: product.price_byn,
-          currency: product.currency,
-          description: description || product.name,
-          tracking_id: order.id,
+          interval: 30,
+          interval_unit: 'day',
         },
-        customer: {
-          email: emailLower,
-          first_name: customerFirstName || undefined,
-          last_name: customerLastName || undefined,
-          phone: customerPhone || undefined,
-        },
-        // Subscription plan for 30-day recurring payments
-        subscription: {
-          plan: {
-            amount: product.price_byn,
-            currency: product.currency,
-            interval: 30,
-            interval_unit: 'day',
-            description: `Ежемесячная подписка: ${product.name}`,
-          },
-        },
+      },
+      tracking_id: order.id,
+      return_url: `${origin}${successUrl}`,
+      notification_url: `${supabaseUrl}/functions/v1/bepaid-webhook`,
+      settings: {
+        language: 'ru',
+      },
+      additional_data: {
+        order_id: order.id,
+        product_id: productId,
+        tariff_code: tariffCode || null,
+        description: description || null,
       },
     };
 
-    console.log('Sending to bePaid:', JSON.stringify(bepaidPayload, null, 2));
+    console.log('Sending subscription to bePaid:', JSON.stringify(subscriptionPayload, null, 2));
 
-    // Make request to bePaid
     const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
-    const bepaidResponse = await fetch('https://checkout.bepaid.by/ctp/api/checkouts', {
+    const bepaidResponse = await fetch('https://api.bepaid.by/subscriptions', {
       method: 'POST',
       headers: {
         'Authorization': `Basic ${bepaidAuth}`,
@@ -263,45 +249,53 @@ Deno.serve(async (req) => {
         'Accept': 'application/json',
         'X-API-Version': '2',
       },
-      body: JSON.stringify(bepaidPayload),
+      body: JSON.stringify(subscriptionPayload),
     });
 
     const bepaidData = await bepaidResponse.json();
-    console.log('bePaid response:', JSON.stringify(bepaidData, null, 2));
+    console.log('bePaid subscription response:', JSON.stringify(bepaidData, null, 2));
 
-    if (!bepaidResponse.ok || !bepaidData.checkout?.token) {
-      console.error('bePaid API error:', bepaidData);
-      
-      // Update order status to failed
+    const subscriptionId = bepaidData?.id as string | undefined;
+    const subscriptionToken = bepaidData?.token as string | undefined;
+    const redirectUrl = bepaidData?.redirect_url as string | undefined;
+
+    if (!bepaidResponse.ok || !subscriptionId || !redirectUrl) {
+      const errMsg = bepaidData?.message || bepaidData?.error || 'Payment service error';
+      console.error('bePaid subscription API error:', errMsg, bepaidData);
+
       await supabase
         .from('orders')
-        .update({ status: 'failed', error_message: bepaidData.message || 'Payment service error' })
+        .update({ status: 'failed', error_message: errMsg })
         .eq('id', order.id);
 
       return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: bepaidData.message || 'Failed to create payment token' 
-        }),
+        JSON.stringify({ success: false, error: errMsg }),
         { status: bepaidResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Update order with token
+    // Persist subscription identifiers on our order
     await supabase
       .from('orders')
-      .update({ 
-        bepaid_token: bepaidData.checkout.token,
-        status: 'processing'
+      .update({
+        bepaid_token: subscriptionToken || null,
+        status: 'processing',
+        meta: {
+          ...(order.meta as Record<string, any> || {}),
+          bepaid_subscription_id: subscriptionId,
+          bepaid_subscription_state: bepaidData?.state || null,
+          bepaid_subscription_plan: bepaidData?.plan || null,
+        },
       })
       .eq('id', order.id);
 
     return new Response(
       JSON.stringify({
         success: true,
-        token: bepaidData.checkout.token,
-        redirectUrl: bepaidData.checkout.redirect_url,
+        token: subscriptionToken,
+        redirectUrl,
         orderId: order.id,
+        subscriptionId,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
