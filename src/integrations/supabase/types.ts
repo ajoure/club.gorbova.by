@@ -1393,6 +1393,44 @@ export type Database = {
           },
         ]
       }
+      product_versions: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          diff_summary: string | null
+          id: string
+          product_id: string
+          snapshot: Json
+          version: number
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          diff_summary?: string | null
+          id?: string
+          product_id: string
+          snapshot: Json
+          version?: number
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          diff_summary?: string | null
+          id?: string
+          product_id?: string
+          snapshot?: Json
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_versions_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       products: {
         Row: {
           created_at: string
@@ -1446,6 +1484,7 @@ export type Database = {
           description: string | null
           id: string
           is_active: boolean
+          landing_config: Json | null
           meta: Json | null
           name: string
           payment_disclaimer_text: string | null
@@ -1464,6 +1503,7 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean
+          landing_config?: Json | null
           meta?: Json | null
           name: string
           payment_disclaimer_text?: string | null
@@ -1482,6 +1522,7 @@ export type Database = {
           description?: string | null
           id?: string
           is_active?: boolean
+          landing_config?: Json | null
           meta?: Json | null
           name?: string
           payment_disclaimer_text?: string | null
@@ -1942,12 +1983,16 @@ export type Database = {
           code: string
           created_at: string
           description: string | null
+          discount_enabled: boolean | null
+          discount_percent: number | null
           display_order: number | null
           features: Json | null
           id: string
           is_active: boolean
+          is_popular: boolean | null
           meta: Json | null
           name: string
+          original_price: number | null
           period_label: string | null
           price_monthly: number | null
           product_id: string
@@ -1967,12 +2012,16 @@ export type Database = {
           code: string
           created_at?: string
           description?: string | null
+          discount_enabled?: boolean | null
+          discount_percent?: number | null
           display_order?: number | null
           features?: Json | null
           id?: string
           is_active?: boolean
+          is_popular?: boolean | null
           meta?: Json | null
           name: string
+          original_price?: number | null
           period_label?: string | null
           price_monthly?: number | null
           product_id: string
@@ -1992,12 +2041,16 @@ export type Database = {
           code?: string
           created_at?: string
           description?: string | null
+          discount_enabled?: boolean | null
+          discount_percent?: number | null
           display_order?: number | null
           features?: Json | null
           id?: string
           is_active?: boolean
+          is_popular?: boolean | null
           meta?: Json | null
           name?: string
+          original_price?: number | null
           period_label?: string | null
           price_monthly?: number | null
           product_id?: string

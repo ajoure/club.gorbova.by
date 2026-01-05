@@ -44,6 +44,7 @@ import AdminProductDetail from "./pages/admin/AdminProductDetail";
 import AdminOrdersV2 from "./pages/admin/AdminOrdersV2";
 import AdminPaymentsV2 from "./pages/admin/AdminPaymentsV2";
 import AdminSubscriptionsV2 from "./pages/admin/AdminSubscriptionsV2";
+import AdminSystemAudit from "./pages/admin/AdminSystemAudit";
 import MnsResponseService from "./pages/audits/MnsResponseService";
 import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
 import Purchases from "./pages/Purchases";
@@ -109,6 +110,7 @@ const App = () => (
               <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><ProductClubMappings /></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/mtproto" element={<ProtectedRoute><TelegramMTProto /></ProtectedRoute>} />
               <Route path="/admin/fields" element={<ProtectedRoute><AdminFieldRegistry /></ProtectedRoute>} />
+              <Route path="/admin/system/audit" element={<ProtectedRoute><AdminSystemAudit /></ProtectedRoute>} />
               
               {/* Legacy admin routes - hidden from menu but still accessible */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />

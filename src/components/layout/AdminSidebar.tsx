@@ -31,6 +31,7 @@ import {
   Plug,
   Handshake,
   Package,
+  Wrench,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -279,6 +280,25 @@ export function AdminSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
+
+              {/* Аудит системы - только для super_admin */}
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={location.pathname === "/admin/system/audit"}
+                  tooltip={collapsed ? "Аудит системы" : undefined}
+                >
+                  <NavLink
+                    to="/admin/system/audit"
+                    end
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                    activeClassName="bg-sidebar-accent text-sidebar-primary"
+                  >
+                    <Wrench className="h-5 w-5 shrink-0" />
+                    {!collapsed && <span>Аудит системы</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

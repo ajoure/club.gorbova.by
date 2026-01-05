@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch product by primary_domain
+    // Fetch product by primary_domain with landing_config
     const { data: product, error: productError } = await supabase
       .from("products_v2")
       .select(`
@@ -49,6 +49,7 @@ Deno.serve(async (req) => {
         public_title,
         public_subtitle,
         payment_disclaimer_text,
+        landing_config,
         telegram_club_id,
         is_active
       `)
@@ -65,7 +66,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch active tariffs for this product
+    // Fetch active tariffs for this product with extended fields
     const now = new Date().toISOString();
     const { data: tariffs, error: tariffsError } = await supabase
       .from("tariffs")
@@ -80,6 +81,10 @@ Deno.serve(async (req) => {
         period_label,
         access_days,
         features,
+        is_popular,
+        discount_enabled,
+        discount_percent,
+        original_price,
         trial_enabled,
         trial_days,
         trial_price,
@@ -191,6 +196,12 @@ Deno.serve(async (req) => {
           public_title: product.public_title,
           public_subtitle: product.public_subtitle,
           payment_disclaimer_text: product.payment_disclaimer_text,
+          landing_config: product.landing_config || {
+            tariffs_title: "Тарифы",
+            tariffs_subtitle: "Выберите подходящий формат участия",
+            show_badges: true,
+            price_suffix: "BYN/мес",
+          },
         },
         tariffs: tariffsWithPrices,
         pricing_stage: currentStage || null,
