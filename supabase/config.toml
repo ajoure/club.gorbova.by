@@ -98,3 +98,9 @@ verify_jwt = false
 
 [functions.test-payment-complete]
 verify_jwt = false
+
+[functions.telegram-daily-summary]
+verify_jwt = false
+
+[functions.auth-check-email]
+verify_jwt = false

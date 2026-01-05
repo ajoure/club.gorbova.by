@@ -10,9 +10,14 @@ interface TelegramUpdate {
   message?: {
     message_id: number;
     from: { id: number; is_bot: boolean; first_name: string; last_name?: string; username?: string };
-    chat: { id: number; type: string };
+    chat: { id: number; type: string; title?: string };
     date: number;
     text?: string;
+    caption?: string;
+    photo?: object[];
+    video?: object;
+    document?: object;
+    reply_to_message?: { message_id: number };
   };
   my_chat_member?: {
     chat: { id: number; title?: string; type: string };
@@ -393,6 +398,47 @@ Deno.serve(async (req) => {
             inline_keyboard: [[{ text: '💳 Оформить подписку', url: `${getSiteUrl()}/pricing` }]],
           };
           await sendMessage(botToken, chatId, MESSAGES.noSubscription, keyboard);
+        }
+      }
+    }
+
+    // ==========================================
+    // Handle regular messages - save for analytics
+    // ==========================================
+    if (update.message && !update.message.text?.startsWith('/')) {
+      const msg = update.message;
+      const chatId = msg.chat.id;
+      const chatType = msg.chat.type;
+
+      // Only process group/supergroup messages (not private chats)
+      if (chatType === 'supergroup' || chatType === 'group') {
+        // Find club for this chat with analytics enabled
+        const { data: club } = await supabase
+          .from('telegram_clubs')
+          .select('id, chat_analytics_enabled')
+          .eq('bot_id', botId)
+          .eq('chat_id', chatId)
+          .single();
+
+        if (club?.chat_analytics_enabled) {
+          const displayName = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ');
+          const hasMedia = !!(msg.photo || msg.video || msg.document);
+          const text = msg.text || msg.caption || null;
+
+          await supabase.from('tg_chat_messages').upsert({
+            club_id: club.id,
+            chat_id: chatId,
+            message_id: msg.message_id,
+            message_ts: new Date(msg.date * 1000).toISOString(),
+            from_tg_user_id: msg.from.id,
+            from_display_name: displayName || null,
+            text,
+            has_media: hasMedia,
+            reply_to_message_id: msg.reply_to_message?.message_id || null,
+            raw_payload: msg,
+          }, { onConflict: 'club_id,message_id' });
+
+          console.log(`Saved message ${msg.message_id} for analytics in club ${club.id}`);
         }
       }
     }
