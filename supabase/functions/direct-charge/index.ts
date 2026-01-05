@@ -125,6 +125,29 @@ Deno.serve(async (req) => {
 
     console.log(`Charge amount: ${amount} ${product.currency}, trial=${isTrial}, days=${effectiveTrialDays}`);
 
+    // Check if user already has an active subscription for this product
+    const { data: existingSub } = await supabase
+      .from('subscriptions_v2')
+      .select('id, status, access_end_at')
+      .eq('user_id', user.id)
+      .eq('product_id', productId)
+      .in('status', ['active', 'trial'])
+      .gte('access_end_at', new Date().toISOString())
+      .limit(1)
+      .maybeSingle();
+
+    if (existingSub) {
+      console.log(`User already has active subscription ${existingSub.id} for this product, skipping`);
+      return new Response(JSON.stringify({
+        success: true,
+        message: 'Already subscribed',
+        subscriptionId: existingSub.id,
+        accessEndsAt: existingSub.access_end_at,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Get bePaid settings
     const { data: settings } = await supabase
       .from('payment_settings')
