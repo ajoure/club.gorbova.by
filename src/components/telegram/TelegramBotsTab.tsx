@@ -21,7 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, RefreshCw, Trash2, Eye, EyeOff, Webhook, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, Eye, EyeOff, Webhook, CheckCircle, XCircle, Loader2, Star } from 'lucide-react';
 import { 
   useTelegramBots, 
   useCreateTelegramBot, 
@@ -104,6 +104,20 @@ export function TelegramBotsTab() {
       id: bot.id,
       status: bot.status === 'active' ? 'inactive' : 'active',
     });
+  };
+
+  const handleSetPrimary = async (botId: string) => {
+    // First, unset all primary flags
+    if (bots) {
+      for (const bot of bots) {
+        if (bot.is_primary) {
+          await updateBot.mutateAsync({ id: bot.id, is_primary: false });
+        }
+      }
+    }
+    // Set the new primary
+    await updateBot.mutateAsync({ id: botId, is_primary: true });
+    toast.success('Бот назначен основным для привязки в ЛК');
   };
 
   const handleDelete = async (botId: string) => {
@@ -214,6 +228,7 @@ export function TelegramBotsTab() {
                 <TableHead>Бот</TableHead>
                 <TableHead>Токен</TableHead>
                 <TableHead>Статус</TableHead>
+                <TableHead>Для ЛК</TableHead>
                 <TableHead>Проверка</TableHead>
                 <TableHead className="text-right">Действия</TableHead>
               </TableRow>
@@ -251,6 +266,25 @@ export function TelegramBotsTab() {
                     </Badge>
                     {bot.error_message && (
                       <div className="text-xs text-destructive mt-1">{bot.error_message}</div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {bot.is_primary ? (
+                      <Badge variant="outline" className="text-amber-500 border-amber-500/30 bg-amber-500/10">
+                        <Star className="h-3 w-3 mr-1 fill-current" />
+                        Основной
+                      </Badge>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleSetPrimary(bot.id)}
+                        disabled={bot.status !== 'active'}
+                        className="text-muted-foreground hover:text-amber-500"
+                        title="Назначить основным для привязки в ЛК"
+                      >
+                        <Star className="h-4 w-4" />
+                      </Button>
                     )}
                   </TableCell>
                   <TableCell>

@@ -284,7 +284,7 @@ Deno.serve(async (req) => {
           .from('telegram_link_tokens')
           .select('*')
           .eq('token', param)
-          .is('used_at', null)
+          .eq('status', 'pending')
           .gt('expires_at', new Date().toISOString())
           .single();
 
@@ -301,25 +301,39 @@ Deno.serve(async (req) => {
             return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           }
 
-          // Link telegram account
+          // Link telegram account with new status fields
           await supabase.from('profiles').update({
             telegram_user_id: telegramUserId,
             telegram_username: telegramUsername,
             telegram_linked_at: new Date().toISOString(),
+            telegram_link_status: 'active',
+            telegram_link_bot_id: tokenData.bot_id || botId,
+            telegram_last_check_at: new Date().toISOString(),
+            telegram_last_error: null,
           }).eq('user_id', tokenData.user_id);
 
-          // Mark token as used
+          // Mark token as confirmed
           await supabase.from('telegram_link_tokens').update({
             used_at: new Date().toISOString(),
+            status: 'confirmed',
           }).eq('id', tokenData.id);
 
-          // Log
+          // Log to telegram_logs
           await supabase.from('telegram_logs').insert({
             user_id: tokenData.user_id,
-            action: 'LINK_SUCCESS',
+            action: tokenData.action_type === 'relink' ? 'RELINK_SUCCESS' : 'LINK_SUCCESS',
             target: 'profile',
             status: 'ok',
             meta: { telegram_user_id: telegramUserId, telegram_username: telegramUsername },
+          });
+
+          // Log to audit
+          await supabase.from('telegram_access_audit').insert({
+            user_id: tokenData.user_id,
+            telegram_user_id: telegramUserId,
+            event_type: tokenData.action_type === 'relink' ? 'telegram_relink' : 'telegram_link_confirmed',
+            actor_type: 'user',
+            meta: { telegram_username: telegramUsername, bot_id: botId },
           });
 
           await sendMessage(botToken, chatId, MESSAGES.linkSuccess);

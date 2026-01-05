@@ -92,3 +92,6 @@ verify_jwt = false
 
 [functions.cancel-trial]
 verify_jwt = true
+
+[functions.telegram-link-manage]
+verify_jwt = true

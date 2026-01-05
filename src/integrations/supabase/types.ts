@@ -1518,6 +1518,10 @@ export type Database = {
           phone: string | null
           primary_in_group: boolean | null
           status: string
+          telegram_last_check_at: string | null
+          telegram_last_error: string | null
+          telegram_link_bot_id: string | null
+          telegram_link_status: string | null
           telegram_linked_at: string | null
           telegram_user_id: number | null
           telegram_username: string | null
@@ -1538,6 +1542,10 @@ export type Database = {
           phone?: string | null
           primary_in_group?: boolean | null
           status?: string
+          telegram_last_check_at?: string | null
+          telegram_last_error?: string | null
+          telegram_link_bot_id?: string | null
+          telegram_link_status?: string | null
           telegram_linked_at?: string | null
           telegram_user_id?: number | null
           telegram_username?: string | null
@@ -1558,13 +1566,25 @@ export type Database = {
           phone?: string | null
           primary_in_group?: boolean | null
           status?: string
+          telegram_last_check_at?: string | null
+          telegram_last_error?: string | null
+          telegram_link_bot_id?: string | null
+          telegram_link_status?: string | null
           telegram_linked_at?: string | null
           telegram_user_id?: number | null
           telegram_username?: string | null
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "profiles_telegram_link_bot_id_fkey"
+            columns: ["telegram_link_bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       role_permissions: {
         Row: {
@@ -2196,6 +2216,7 @@ export type Database = {
           created_at: string
           error_message: string | null
           id: string
+          is_primary: boolean | null
           last_check_at: string | null
           status: string
           updated_at: string
@@ -2208,6 +2229,7 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           id?: string
+          is_primary?: boolean | null
           last_check_at?: string | null
           status?: string
           updated_at?: string
@@ -2220,6 +2242,7 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           id?: string
+          is_primary?: boolean | null
           last_check_at?: string | null
           status?: string
           updated_at?: string
@@ -2451,30 +2474,47 @@ export type Database = {
       }
       telegram_link_tokens: {
         Row: {
+          action_type: string | null
+          bot_id: string | null
           created_at: string
           expires_at: string
           id: string
+          status: string | null
           token: string
           used_at: string | null
           user_id: string
         }
         Insert: {
+          action_type?: string | null
+          bot_id?: string | null
           created_at?: string
           expires_at: string
           id?: string
+          status?: string | null
           token: string
           used_at?: string | null
           user_id: string
         }
         Update: {
+          action_type?: string | null
+          bot_id?: string | null
           created_at?: string
           expires_at?: string
           id?: string
+          status?: string | null
           token?: string
           used_at?: string | null
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "telegram_link_tokens_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       telegram_logs: {
         Row: {

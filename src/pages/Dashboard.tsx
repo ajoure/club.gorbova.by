@@ -1,9 +1,8 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { TelegramLinkButton } from "@/components/telegram/TelegramLinkButton";
+import { TelegramCard } from "@/components/telegram/TelegramCard";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
-import { HelpIcon } from "@/components/help/HelpComponents";
 import { 
   Calculator, 
   Briefcase, 
@@ -93,39 +92,38 @@ export default function Dashboard() {
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto space-y-6 md:space-y-8">
-        {/* Welcome section */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1 truncate">
-                Добро пожаловать, {user?.user_metadata?.full_name || "Пользователь"}!
-              </h1>
-              {isStaff && effectiveRole && (
-                <p className="text-sm text-muted-foreground">
-                  Роль: <span className="text-primary font-medium">{getRoleDisplayName(effectiveRole.code)}</span>
-                </p>
-              )}
-            </div>
-            <div className="flex items-center gap-1 shrink-0">
-              <TelegramLinkButton />
-              <HelpIcon helpKey="user.telegram_link" alwaysShow className="text-muted-foreground" />
-            </div>
+        {/* Welcome section + Telegram card */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+          {/* Welcome */}
+          <div className="lg:col-span-2 flex flex-col justify-center">
+            <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-1 truncate">
+              Добро пожаловать, {user?.user_metadata?.full_name || "Пользователь"}!
+            </h1>
+            {isStaff && effectiveRole && (
+              <p className="text-sm text-muted-foreground">
+                Роль: <span className="text-primary font-medium">{getRoleDisplayName(effectiveRole.code)}</span>
+              </p>
+            )}
+            {showAdmin && (
+              <Link
+                to="/admin/users"
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors mt-2 inline-flex items-center gap-1 w-fit"
+              >
+                Перейти в админ-панель
+                <ArrowUpRight className="h-3.5 w-3.5" />
+              </Link>
+            )}
+          </div>
+
+          {/* Telegram Card */}
+          <div className="lg:col-span-1">
+            <TelegramCard />
           </div>
         </div>
 
         {/* Quick links grid */}
         <div>
-          <div className="flex items-center justify-between gap-3 mb-3 md:mb-4">
-            <h2 className="text-lg sm:text-xl font-semibold text-foreground">Разделы</h2>
-            {showAdmin && (
-              <Link
-                to="/admin/users"
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Админ-панель
-              </Link>
-            )}
-          </div>
+          <h2 className="text-lg sm:text-xl font-semibold text-foreground mb-3 md:mb-4">Разделы</h2>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
             {quickLinks.map((link) => (
               <Link key={link.url} to={link.url}>
@@ -152,16 +150,9 @@ export default function Dashboard() {
 
         {/* Leader tools */}
         <div>
-          <div className="flex items-center gap-2 mb-3 md:mb-4">
-            <h2 className="text-lg sm:text-xl font-semibold text-foreground">
-              Инструменты лидера
-            </h2>
-            <HelpIcon 
-              helpKey="tools.balance_wheel" 
-              customText={{ short: "Инструменты", full: "Колесо баланса и матрица Эйзенхауэра — инструменты для планирования и приоритизации.", link: "/help#tools" }}
-              alwaysShow 
-            />
-          </div>
+          <h2 className="text-lg sm:text-xl font-semibold text-foreground mb-3 md:mb-4">
+            Инструменты лидера
+          </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4">
             {leaderTools.map((tool) => (
               <Link key={tool.url} to={tool.url}>

@@ -10,6 +10,7 @@ export interface TelegramBot {
   bot_token_encrypted: string;
   bot_id: number | null;
   status: string;
+  is_primary?: boolean;
   last_check_at: string | null;
   error_message: string | null;
   created_at: string;
