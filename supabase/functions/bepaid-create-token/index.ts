@@ -15,6 +15,8 @@ interface CreateTokenRequest {
   description?: string;
   tariffCode?: string; // For GetCourse integration: 'chat', 'full', 'business'
   skipRedirect?: boolean; // For admin test payments - just create order, don't create bePaid subscription
+  isTrial?: boolean; // Trial payment flag
+  trialDays?: number; // Trial duration in days
 }
 
 function generatePassword(length = 12): string {
@@ -65,7 +67,9 @@ Deno.serve(async (req) => {
       existingUserId,
       description,
       tariffCode,
-      skipRedirect
+      skipRedirect,
+      isTrial,
+      trialDays
     }: CreateTokenRequest = await req.json();
 
     if (!productId || !customerEmail) {
@@ -172,13 +176,45 @@ Deno.serve(async (req) => {
     // Get origin from request for URLs
     const origin = req.headers.get('origin') || 'https://lovable.app';
 
+    // If this is a trial payment, get trial settings from tariff_offers
+    let paymentAmount = product.price_byn;
+    let trialConfig: { trial_days: number; auto_charge_amount: number } | null = null;
+    
+    if (isTrial && tariffCode) {
+      // Get tariff and trial offer
+      const { data: tariff } = await supabase
+        .from('tariffs')
+        .select('id, original_price')
+        .eq('code', tariffCode)
+        .maybeSingle();
+      
+      if (tariff) {
+        const { data: trialOffer } = await supabase
+          .from('tariff_offers')
+          .select('amount, trial_days, auto_charge_amount')
+          .eq('tariff_id', tariff.id)
+          .eq('offer_type', 'trial')
+          .eq('is_active', true)
+          .maybeSingle();
+        
+        if (trialOffer) {
+          paymentAmount = trialOffer.amount * 100; // Convert to kopecks if needed
+          trialConfig = {
+            trial_days: trialOffer.trial_days || trialDays || 5,
+            auto_charge_amount: trialOffer.auto_charge_amount || tariff.original_price || product.price_byn,
+          };
+          console.log('Trial payment configured:', trialConfig);
+        }
+      }
+    }
+
     // Create order in database
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .insert({
         user_id: userId,
         product_id: productId,
-        amount: product.price_byn,
+        amount: paymentAmount,
         currency: product.currency,
         status: 'pending',
         customer_email: emailLower,
@@ -192,6 +228,9 @@ Deno.serve(async (req) => {
           new_user_created: newUserCreated,
           new_user_password: newUserCreated ? newUserPassword : null,
           tariff_code: tariffCode || null, // For GetCourse integration
+          is_trial: isTrial || false,
+          trial_days: trialConfig?.trial_days || null,
+          auto_charge_amount: trialConfig?.auto_charge_amount || null,
         }
       })
       .select()
@@ -220,14 +259,41 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Create bePaid subscription (recurring every 30 days)
-    // IMPORTANT: subscriptions are created via the Subscriptions API, not /checkouts
+    // Create bePaid subscription (recurring)
+    // For trial: first payment is trial amount, then recurring at full price after trial_days
+    // For regular: recurring every 30 days at full price
     
     // Get client IP address for bePaid
     const customerIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() 
                     || req.headers.get('cf-connecting-ip') 
                     || req.headers.get('x-real-ip')
                     || '127.0.0.1';
+
+    // Build subscription plan based on trial or regular payment
+    const planConfig = isTrial && trialConfig ? {
+      title: `${product.name} (Trial)`,
+      currency: product.currency,
+      shop_id: Number(shopId),
+      plan: {
+        amount: trialConfig.auto_charge_amount, // Full amount for recurring
+        interval: 30,
+        interval_unit: 'day',
+      },
+      trial: {
+        amount: paymentAmount, // Trial amount (e.g., 1 BYN)
+        interval: trialConfig.trial_days,
+        interval_unit: 'day',
+      },
+    } : {
+      title: product.name,
+      currency: product.currency,
+      shop_id: Number(shopId),
+      plan: {
+        amount: paymentAmount,
+        interval: 30,
+        interval_unit: 'day',
+      },
+    };
 
     const subscriptionPayload = {
       customer: {
@@ -237,16 +303,7 @@ Deno.serve(async (req) => {
         phone: customerPhone || undefined,
         ip: customerIp, // Required by bePaid subscriptions API
       },
-      plan: {
-        title: product.name,
-        currency: product.currency,
-        shop_id: Number(shopId),
-        plan: {
-          amount: product.price_byn,
-          interval: 30,
-          interval_unit: 'day',
-        },
-      },
+      plan: planConfig,
       tracking_id: order.id,
       return_url: `${origin}${successUrl}`,
       notification_url: `${supabaseUrl}/functions/v1/bepaid-webhook`,
@@ -258,6 +315,7 @@ Deno.serve(async (req) => {
         product_id: productId,
         tariff_code: tariffCode || null,
         description: description || null,
+        is_trial: isTrial || false,
       },
     };
 

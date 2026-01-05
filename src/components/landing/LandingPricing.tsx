@@ -4,10 +4,23 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Check, Star, CreditCard, Gift } from "lucide-react";
+import { Check, Star, CreditCard, Gift, Zap } from "lucide-react";
 import { AnimatedSection } from "./AnimatedSection";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { isFeatureVisible, type TariffFeature } from "@/hooks/useTariffFeatures";
+
+interface TariffOffer {
+  id: string;
+  tariff_id: string;
+  offer_type: "pay_now" | "trial";
+  button_label: string;
+  amount: number;
+  trial_days: number | null;
+  auto_charge_after_trial: boolean;
+  auto_charge_amount: number | null;
+  requires_card_tokenization: boolean;
+  sort_order: number;
+}
 
 interface Tariff {
   id: string;
@@ -22,7 +35,9 @@ interface Tariff {
   display_order: number | null;
   product_id: string;
   original_price: number | null;
+  current_price?: number | null;
   features: TariffFeature[];
+  offers: TariffOffer[];
 }
 
 interface Product {
@@ -87,9 +102,11 @@ export function LandingPricing() {
     name: string;
     price: string;
     tariffCode: string;
+    isTrial?: boolean;
+    trialDays?: number;
   } | null>(null);
 
-  // Fetch product with tariffs and features from DB
+  // Fetch product with tariffs, features and offers from DB
   const { data: productData, isLoading } = useQuery({
     queryKey: ["landing-pricing"],
     queryFn: async () => {
@@ -127,6 +144,16 @@ export function LandingPricing() {
 
       if (featuresError) throw featuresError;
 
+      // Get offers for all tariffs
+      const { data: offers, error: offersError } = await supabase
+        .from("tariff_offers")
+        .select("*")
+        .in("tariff_id", tariffIds)
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true });
+
+      if (offersError) throw offersError;
+
       // Get prices from tariff_prices (current pricing stage)
       const { data: pricingStages } = await supabase
         .from("pricing_stages")
@@ -155,15 +182,17 @@ export function LandingPricing() {
         }
       }
 
-      // Merge features into tariffs
+      // Merge features and offers into tariffs
       const featuresArray = ((features || []) as unknown) as TariffFeature[];
-      const tariffsWithFeatures = tariffs.map((tariff) => ({
+      const offersArray = ((offers || []) as unknown) as TariffOffer[];
+      const tariffsWithData: Tariff[] = tariffs.map((tariff) => ({
         ...tariff,
         features: featuresArray.filter((f) => f.tariff_id === tariff.id),
+        offers: offersArray.filter((o) => o.tariff_id === tariff.id),
         current_price: pricesMap[tariff.id] || tariff.original_price,
       }));
 
-      return { product, tariffs: tariffsWithFeatures };
+      return { product, tariffs: tariffsWithData };
     },
     staleTime: 5 * 60 * 1000, // 5 minutes cache
   });
@@ -187,9 +216,11 @@ export function LandingPricing() {
     planName: string,
     planPrice: string,
     tariffCode: string,
-    productId?: string
+    productId?: string,
+    isTrial?: boolean,
+    trialDays?: number
   ) => {
-    console.log(`[Analytics] click_pricing_plan_${planName.toLowerCase()}`);
+    console.log(`[Analytics] click_pricing_plan_${planName.toLowerCase()}${isTrial ? '_trial' : ''}`);
 
     // Try to find legacy product for payment compatibility
     const legacyProduct = legacyProducts?.find((p) =>
@@ -201,9 +232,13 @@ export function LandingPricing() {
     if (finalProductId) {
       setSelectedPlan({
         productId: finalProductId,
-        name: `${planName} — Месячная подписка`,
+        name: isTrial 
+          ? `${planName} — Trial ${trialDays || 5} дней`
+          : `${planName} — Месячная подписка`,
         price: `${planPrice} BYN`,
         tariffCode,
+        isTrial,
+        trialDays,
       });
     } else {
       navigate("/auth?mode=signup");
@@ -242,6 +277,8 @@ export function LandingPricing() {
               tariffs.map((tariff, index) => {
                 const visibleFeatures = tariff.features.filter(isFeatureVisible);
                 const price = tariff.current_price || tariff.original_price || 0;
+                const payOffer = tariff.offers?.find((o) => o.offer_type === "pay_now");
+                const trialOffer = tariff.offers?.find((o) => o.offer_type === "trial");
 
                 return (
                   <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 150}>
@@ -321,21 +358,62 @@ export function LandingPricing() {
                         ))}
                       </ul>
 
-                      <Button
-                        onClick={() =>
-                          handleSelectPlan(
-                            tariff.name,
-                            String(price),
-                            tariff.code,
-                            productData?.product?.id
-                          )
-                        }
-                        className="w-full gap-2"
-                        variant={tariff.is_popular ? "default" : "outline"}
-                      >
-                        <CreditCard size={16} />
-                        Оплатить
-                      </Button>
+                      {/* Buttons from tariff_offers */}
+                      <div className="space-y-2">
+                        {payOffer && (
+                          <Button
+                            onClick={() =>
+                              handleSelectPlan(
+                                tariff.name,
+                                String(payOffer.amount),
+                                tariff.code,
+                                productData?.product?.id
+                              )
+                            }
+                            className="w-full gap-2"
+                            variant={tariff.is_popular ? "default" : "outline"}
+                          >
+                            <CreditCard size={16} />
+                            {payOffer.button_label}
+                          </Button>
+                        )}
+                        {trialOffer && (
+                          <Button
+                            onClick={() =>
+                              handleSelectPlan(
+                                tariff.name,
+                                String(trialOffer.amount),
+                                tariff.code,
+                                productData?.product?.id,
+                                true,
+                                trialOffer.trial_days || 5
+                              )
+                            }
+                            className="w-full gap-2"
+                            variant="secondary"
+                          >
+                            <Zap size={16} />
+                            {trialOffer.button_label}
+                          </Button>
+                        )}
+                        {!payOffer && !trialOffer && (
+                          <Button
+                            onClick={() =>
+                              handleSelectPlan(
+                                tariff.name,
+                                String(price),
+                                tariff.code,
+                                productData?.product?.id
+                              )
+                            }
+                            className="w-full gap-2"
+                            variant={tariff.is_popular ? "default" : "outline"}
+                          >
+                            <CreditCard size={16} />
+                            Оплатить
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </AnimatedSection>
                 );
@@ -414,6 +492,8 @@ export function LandingPricing() {
           productName={selectedPlan.name}
           price={selectedPlan.price}
           tariffCode={selectedPlan.tariffCode}
+          isTrial={selectedPlan.isTrial}
+          trialDays={selectedPlan.trialDays}
         />
       )}
     </section>

@@ -6,21 +6,15 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// GetCourse Offer ID mapping
-const GETCOURSE_OFFER_IDS: Record<string, number> = {
-  'chat': 6744625,
-  'full': 6744626,
-  'business': 6744628,
-  // 'web': 6744634, // Reserved, not used now
-};
-
 // Send order to GetCourse
+// Now uses getcourse_offer_id from tariffs table instead of hardcoded mapping
 async function sendToGetCourse(
   email: string,
   phone: string | null,
-  offerCode: string,
+  offerId: number,
   orderId: string,
-  amount: number
+  amount: number,
+  tariffCode: string
 ): Promise<{ success: boolean; error?: string; gcOrderId?: string }> {
   const apiKey = Deno.env.get('GETCOURSE_API_KEY');
   const accountName = 'gorbova';
@@ -30,10 +24,9 @@ async function sendToGetCourse(
     return { success: false, error: 'API key not configured' };
   }
   
-  const offerId = GETCOURSE_OFFER_IDS[offerCode];
   if (!offerId) {
-    console.log(`Unknown tariff code: ${offerCode}, skipping GetCourse sync`);
-    return { success: false, error: `Unknown tariff code: ${offerCode}` };
+    console.log(`No getcourse_offer_id for tariff: ${tariffCode}, skipping GetCourse sync`);
+    return { success: false, error: `No GetCourse offer ID for tariff: ${tariffCode}` };
   }
   
   try {
@@ -651,32 +644,47 @@ Deno.serve(async (req) => {
       
       if (tariffCode && order.customer_email) {
         console.log(`Sending order to GetCourse: tariff=${tariffCode}, email=${order.customer_email}`);
-        gcSyncResult = await sendToGetCourse(
-          order.customer_email,
-          meta.customer_phone || null,
-          tariffCode,
-          internalOrderId,
-          order.amount
-        );
         
-        // Update order with GetCourse sync status
-        await supabase
-          .from('orders')
-          .update({
-            meta: {
-              ...meta,
-              gc_sync_status: gcSyncResult.success ? 'success' : 'failed',
-              gc_sync_error: gcSyncResult.error || null,
-              gc_order_id: gcSyncResult.gcOrderId || null,
-              gc_sync_at: new Date().toISOString(),
-            },
-          })
-          .eq('id', internalOrderId);
+        // Get getcourse_offer_id from tariffs table
+        const { data: tariffData } = await supabase
+          .from('tariffs')
+          .select('getcourse_offer_id')
+          .eq('code', tariffCode)
+          .maybeSingle();
         
-        if (gcSyncResult.success) {
-          console.log('GetCourse sync successful');
+        const getcourseOfferId = tariffData?.getcourse_offer_id;
+        
+        if (getcourseOfferId) {
+          gcSyncResult = await sendToGetCourse(
+            order.customer_email,
+            meta.customer_phone || null,
+            getcourseOfferId,
+            internalOrderId,
+            order.amount,
+            tariffCode
+          );
+          
+          // Update order with GetCourse sync status
+          await supabase
+            .from('orders')
+            .update({
+              meta: {
+                ...meta,
+                gc_sync_status: gcSyncResult.success ? 'success' : 'failed',
+                gc_sync_error: gcSyncResult.error || null,
+                gc_order_id: gcSyncResult.gcOrderId || null,
+                gc_sync_at: new Date().toISOString(),
+              },
+            })
+            .eq('id', internalOrderId);
+          
+          if (gcSyncResult.success) {
+            console.log('GetCourse sync successful');
+          } else {
+            console.error('GetCourse sync failed:', gcSyncResult.error);
+          }
         } else {
-          console.error('GetCourse sync failed:', gcSyncResult.error);
+          console.log(`No getcourse_offer_id for tariff ${tariffCode}, skipping GetCourse sync`);
         }
       } else {
         console.log('GetCourse sync skipped: no tariff_code or email');

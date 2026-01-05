@@ -23,6 +23,8 @@ interface PaymentDialogProps {
   productName: string;
   price: string;
   tariffCode?: string;
+  isTrial?: boolean;
+  trialDays?: number;
 }
 
 const emailSchema = z.string().email("Введите корректный email");
@@ -52,6 +54,8 @@ export function PaymentDialog({
   productName,
   price,
   tariffCode,
+  isTrial,
+  trialDays,
 }: PaymentDialogProps) {
   const { user, session } = useAuth();
   const { isSuperAdmin, isAdmin } = usePermissions();
@@ -263,6 +267,8 @@ export function PaymentDialog({
           existingUserId,
           description: productName,
           tariffCode,
+          isTrial,
+          trialDays,
         },
       });
 
@@ -309,6 +315,8 @@ export function PaymentDialog({
           existingUserId,
           description: productName,
           tariffCode,
+          isTrial,
+          trialDays,
           skipRedirect: true,
         },
       });

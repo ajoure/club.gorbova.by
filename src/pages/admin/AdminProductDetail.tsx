@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { useParams, useNavigate } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
@@ -52,6 +54,32 @@ export default function AdminProductDetail() {
   const { data: pricingStages } = usePricingStages(productId);
   const { data: flows } = useFlows(productId);
   const { data: offers, refetch: refetchOffers } = useProductOffers(productId);
+  
+  // Fetch tariff features for preview
+  const { data: allTariffFeatures } = useQuery({
+    queryKey: ["preview-tariff-features", productId],
+    queryFn: async () => {
+      if (!productId) return [];
+      
+      const { data: tariffList } = await supabase
+        .from("tariffs")
+        .select("id")
+        .eq("product_id", productId);
+      
+      if (!tariffList?.length) return [];
+      
+      const tariffIds = tariffList.map(t => t.id);
+      const { data, error } = await supabase
+        .from("tariff_features" as any)
+        .select("*")
+        .in("tariff_id", tariffIds)
+        .order("sort_order", { ascending: true });
+      
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!productId,
+  });
 
   // Offer mutations
   const createOffer = useCreateTariffOffer();
@@ -733,6 +761,8 @@ export default function AdminProductDetail() {
                   const tariffOffers = offers?.filter((o: any) => o.tariff_id === tariff.id && o.is_active) || [];
                   const mainOffer = tariffOffers.find((o: any) => o.offer_type === "pay_now");
                   const trialOffer = tariffOffers.find((o: any) => o.offer_type === "trial");
+                  // Get features from tariff_features table
+                  const features = (allTariffFeatures || []).filter((f: any) => f.tariff_id === tariff.id);
 
                   return (
                     <Card key={tariff.id} className="relative overflow-hidden">
@@ -749,18 +779,18 @@ export default function AdminProductDetail() {
                       </CardHeader>
                       <CardContent className="space-y-4">
                         <div className="text-3xl font-bold">
-                          {tariff.price_monthly || "—"} 
+                          {tariff.original_price || tariff.price_monthly || "—"} 
                           <span className="text-sm font-normal text-muted-foreground ml-1">
                             {tariff.period_label || "BYN/мес"}
                           </span>
                         </div>
                         
-                        {tariff.features && Array.isArray(tariff.features) && (
+                        {features.length > 0 && (
                           <ul className="space-y-2">
-                            {(tariff.features as string[]).map((feature, i) => (
-                              <li key={i} className="flex items-start gap-2 text-sm">
+                            {features.map((feature: any) => (
+                              <li key={feature.id} className="flex items-start gap-2 text-sm">
                                 <Check className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
-                                <span>{feature}</span>
+                                <span>{feature.text}</span>
                               </li>
                             ))}
                           </ul>
