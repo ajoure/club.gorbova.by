@@ -109,7 +109,7 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.payment-methods-tokenize]
-verify_jwt = true
+verify_jwt = false
 
 [functions.payment-methods-webhook]
 verify_jwt = false
