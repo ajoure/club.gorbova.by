@@ -41,6 +41,20 @@ serve(async (req) => {
 
     switch (action) {
       case 'create-session': {
+        // Get shop_id from settings
+        const { data: settings } = await supabase
+          .from('payment_settings')
+          .select('key, value')
+          .in('key', ['bepaid_shop_id', 'bepaid_test_mode']);
+        
+        const settingsMap: Record<string, string> = settings?.reduce(
+          (acc: Record<string, string>, s: { key: string; value: string }) => ({ ...acc, [s.key]: s.value }), 
+          {}
+        ) || {};
+        
+        const shopId = settingsMap['bepaid_shop_id'] || '33524';
+        const testMode = settingsMap['bepaid_test_mode'] === 'true';
+        
         // Create bePaid tokenization checkout
         const returnUrl = `${req.headers.get('origin') || 'https://gorbova.club'}/settings/payment-methods?tokenize=success`;
         const cancelUrl = `${req.headers.get('origin') || 'https://gorbova.club'}/settings/payment-methods?tokenize=cancel`;
@@ -54,7 +68,7 @@ serve(async (req) => {
 
         const checkoutData = {
           checkout: {
-            test: true, // Set to false for production
+            test: testMode,
             transaction_type: 'tokenization',
             settings: {
               return_url: returnUrl,
@@ -73,11 +87,14 @@ serve(async (req) => {
 
         console.log('Creating tokenization checkout:', JSON.stringify(checkoutData));
 
+        // bePaid auth: shop_id:secret_key
+        const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+        
         const response = await fetch('https://checkout.bepaid.by/ctp/api/checkouts', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': 'Basic ' + btoa(`${bepaidSecretKey}:`),
+            'Authorization': `Basic ${bepaidAuth}`,
           },
           body: JSON.stringify(checkoutData),
         });
@@ -85,9 +102,12 @@ serve(async (req) => {
         const result = await response.json();
         console.log('bePaid tokenization response:', JSON.stringify(result));
 
-        if (!response.ok || result.errors) {
+        if (!response.ok || result.errors || result.response?.status === 'error') {
           console.error('bePaid error:', result);
-          return new Response(JSON.stringify({ error: 'Failed to create tokenization session' }), {
+          return new Response(JSON.stringify({ 
+            error: 'Failed to create tokenization session',
+            details: result.response?.message || result.errors || 'Unknown error'
+          }), {
             status: 500,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
