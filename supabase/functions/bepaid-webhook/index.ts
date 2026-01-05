@@ -307,17 +307,30 @@ Deno.serve(async (req) => {
     const body = JSON.parse(bodyText);
     console.log('bePaid webhook received:', JSON.stringify(body, null, 2));
 
-    const subscription = body.subscription || null;
+    // bePaid sends subscription webhooks with data directly in body (not nested in .subscription)
+    // Check if this is a subscription webhook (has 'state' and 'plan' fields directly in body)
+    const isSubscriptionWebhook = body.state && body.plan;
+    
+    // For subscription webhooks, the subscription data IS the body
+    const subscription = isSubscriptionWebhook ? body : (body.subscription || null);
+    
     // bePaid can send either transaction webhooks or subscription webhooks
     const transaction = body.transaction || subscription?.last_transaction || null;
 
-    const orderId = transaction?.tracking_id || subscription?.tracking_id || null;
+    // Get tracking_id from multiple possible locations
+    const orderId = body.tracking_id || 
+                    body.additional_data?.order_id || 
+                    transaction?.tracking_id || 
+                    subscription?.tracking_id || 
+                    null;
+    
     const transactionStatus = transaction?.status || null;
     const transactionUid = transaction?.uid || null;
     const paymentMethod = transaction?.payment_method_type || transaction?.payment_method || null;
-    const subscriptionId = subscription?.id || null;
+    const subscriptionId = body.id || subscription?.id || null;
+    const subscriptionState = body.state || subscription?.state || null;
 
-    console.log(`Processing bePaid webhook: order=${orderId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}`);
+    console.log(`Processing bePaid webhook: order=${orderId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}, state=${subscriptionState}`);
 
     if (!orderId && !subscriptionId) {
       console.error('No tracking_id nor subscription id in webhook payload');
@@ -381,14 +394,21 @@ Deno.serve(async (req) => {
         default:
           orderStatus = 'processing';
       }
-    } else if (subscription?.state) {
-      // Subscription webhooks might not include transaction object
-      if (subscription.state === 'active') orderStatus = 'completed';
-      else if (subscription.state === 'failed' || subscription.state === 'canceled') orderStatus = 'failed';
-      else orderStatus = 'processing';
+    } else if (subscriptionState) {
+      // Subscription webhooks - check subscription state
+      // 'trial' and 'active' mean successful subscription
+      if (subscriptionState === 'active' || subscriptionState === 'trial') {
+        orderStatus = 'completed';
+      } else if (subscriptionState === 'failed' || subscriptionState === 'canceled' || subscriptionState === 'expired') {
+        orderStatus = 'failed';
+      } else {
+        orderStatus = 'processing';
+      }
     } else {
       orderStatus = 'processing';
     }
+    
+    console.log(`Determined order status: ${orderStatus} (from transactionStatus=${transactionStatus}, subscriptionState=${subscriptionState})`);
 
     // Update order
     const { error: updateError } = await supabase
