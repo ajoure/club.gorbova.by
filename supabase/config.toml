@@ -37,7 +37,7 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.integration-healthcheck]
-verify_jwt = true
+verify_jwt = false
 
 [functions.getcourse-webhook]
 verify_jwt = false
