@@ -6,7 +6,7 @@ import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGrou
 import { NavLink } from "@/components/NavLink";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen } from "lucide-react";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User } from "lucide-react";
 const mainMenuItems = [{
   title: "Обзор",
   url: "/dashboard",
@@ -44,6 +44,19 @@ const leaderToolsItems = [{
   title: "Документация",
   url: "/docs",
   icon: BookOpen
+}];
+const settingsItems = [{
+  title: "Профиль",
+  url: "/settings/profile",
+  icon: User
+}, {
+  title: "Оплата и карты",
+  url: "/settings/payment-methods",
+  icon: ShoppingBag
+}, {
+  title: "Подписки",
+  url: "/settings/subscriptions",
+  icon: Target
 }];
 export function AppSidebar() {
   const {
@@ -137,6 +150,24 @@ export function AppSidebar() {
                       <item.icon className="h-5 w-5 shrink-0" />
                       {!collapsed && <span>{item.title}</span>}
                       {!collapsed && <ChevronRight className="ml-auto h-4 w-4 opacity-50" />}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>)}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-wider px-3">
+            {!collapsed && "Настройки"}
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {settingsItems.map(item => <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton asChild isActive={location.pathname === item.url} tooltip={collapsed ? item.title : undefined}>
+                    <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
+                      <item.icon className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>{item.title}</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>)}

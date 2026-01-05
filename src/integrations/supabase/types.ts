@@ -1126,6 +1126,54 @@ export type Database = {
           },
         ]
       }
+      payment_methods: {
+        Row: {
+          brand: string | null
+          created_at: string
+          exp_month: number | null
+          exp_year: number | null
+          id: string
+          is_default: boolean
+          last4: string | null
+          meta: Json | null
+          provider: string
+          provider_token: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          brand?: string | null
+          created_at?: string
+          exp_month?: number | null
+          exp_year?: number | null
+          id?: string
+          is_default?: boolean
+          last4?: string | null
+          meta?: Json | null
+          provider?: string
+          provider_token: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          brand?: string | null
+          created_at?: string
+          exp_month?: number | null
+          exp_year?: number | null
+          id?: string
+          is_default?: boolean
+          last4?: string | null
+          meta?: Json | null
+          provider?: string
+          provider_token?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       payment_plans: {
         Row: {
           created_at: string
@@ -1551,9 +1599,11 @@ export type Database = {
           duplicate_flag: string | null
           duplicate_group_id: string | null
           email: string | null
+          first_name: string | null
           full_name: string | null
           id: string
           is_archived: boolean | null
+          last_name: string | null
           last_seen_at: string | null
           merged_to_profile_id: string | null
           phone: string | null
@@ -1575,9 +1625,11 @@ export type Database = {
           duplicate_flag?: string | null
           duplicate_group_id?: string | null
           email?: string | null
+          first_name?: string | null
           full_name?: string | null
           id?: string
           is_archived?: boolean | null
+          last_name?: string | null
           last_seen_at?: string | null
           merged_to_profile_id?: string | null
           phone?: string | null
@@ -1599,9 +1651,11 @@ export type Database = {
           duplicate_flag?: string | null
           duplicate_group_id?: string | null
           email?: string | null
+          first_name?: string | null
           full_name?: string | null
           id?: string
           is_archived?: boolean | null
+          last_name?: string | null
           last_seen_at?: string | null
           merged_to_profile_id?: string | null
           phone?: string | null
@@ -1754,6 +1808,7 @@ export type Database = {
         Row: {
           access_end_at: string | null
           access_start_at: string
+          cancel_at: string | null
           cancel_reason: string | null
           canceled_at: string | null
           charge_attempts: number | null
@@ -1765,6 +1820,7 @@ export type Database = {
           meta: Json | null
           next_charge_at: string | null
           order_id: string | null
+          payment_method_id: string | null
           payment_token: string | null
           product_id: string
           status: Database["public"]["Enums"]["subscription_status"]
@@ -1778,6 +1834,7 @@ export type Database = {
         Insert: {
           access_end_at?: string | null
           access_start_at?: string
+          cancel_at?: string | null
           cancel_reason?: string | null
           canceled_at?: string | null
           charge_attempts?: number | null
@@ -1789,6 +1846,7 @@ export type Database = {
           meta?: Json | null
           next_charge_at?: string | null
           order_id?: string | null
+          payment_method_id?: string | null
           payment_token?: string | null
           product_id: string
           status?: Database["public"]["Enums"]["subscription_status"]
@@ -1802,6 +1860,7 @@ export type Database = {
         Update: {
           access_end_at?: string | null
           access_start_at?: string
+          cancel_at?: string | null
           cancel_reason?: string | null
           canceled_at?: string | null
           charge_attempts?: number | null
@@ -1813,6 +1872,7 @@ export type Database = {
           meta?: Json | null
           next_charge_at?: string | null
           order_id?: string | null
+          payment_method_id?: string | null
           payment_token?: string | null
           product_id?: string
           status?: Database["public"]["Enums"]["subscription_status"]
@@ -1836,6 +1896,13 @@ export type Database = {
             columns: ["order_id"]
             isOneToOne: false
             referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscriptions_v2_payment_method_id_fkey"
+            columns: ["payment_method_id"]
+            isOneToOne: false
+            referencedRelation: "payment_methods"
             referencedColumns: ["id"]
           },
           {

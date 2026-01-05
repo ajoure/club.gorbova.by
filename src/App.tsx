@@ -53,6 +53,9 @@ import Purchases from "./pages/Purchases";
 import Pay from "./pages/Pay";
 import Documentation from "./pages/Documentation";
 import Help from "./pages/Help";
+import ProfileSettings from "./pages/settings/Profile";
+import PaymentMethodsSettings from "./pages/settings/PaymentMethods";
+import SubscriptionsSettings from "./pages/settings/Subscriptions";
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -90,6 +93,12 @@ const App = () => (
               <Route path="/tools/eisenhower" element={<ProtectedRoute><EisenhowerMatrix /></ProtectedRoute>} />
               <Route path="/tools/balance-wheel" element={<ProtectedRoute><BalanceWheel /></ProtectedRoute>} />
               <Route path="/docs" element={<ProtectedRoute><Documentation /></ProtectedRoute>} />
+              
+              {/* Settings routes */}
+              <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
+              <Route path="/settings/profile" element={<ProtectedRoute><ProfileSettings /></ProtectedRoute>} />
+              <Route path="/settings/payment-methods" element={<ProtectedRoute><PaymentMethodsSettings /></ProtectedRoute>} />
+              <Route path="/settings/subscriptions" element={<ProtectedRoute><SubscriptionsSettings /></ProtectedRoute>} />
               
               {/* Admin routes - New CRM-style */}
               <Route path="/admin" element={<Navigate to="/admin/contacts" replace />} />

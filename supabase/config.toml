@@ -104,3 +104,15 @@ verify_jwt = false
 
 [functions.auth-check-email]
 verify_jwt = false
+
+[functions.subscription-actions]
+verify_jwt = true
+
+[functions.payment-methods-tokenize]
+verify_jwt = true
+
+[functions.payment-methods-webhook]
+verify_jwt = false
+
+[functions.subscriptions-reconcile]
+verify_jwt = false
