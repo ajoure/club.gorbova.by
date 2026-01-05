@@ -25,6 +25,8 @@ import Contacts from "./pages/Contacts";
 import NotFound from "./pages/NotFound";
 import { AdminLayout } from "./components/layout/AdminLayout";
 import AdminUsers from "./pages/admin/AdminUsers";
+import AdminContacts from "./pages/admin/AdminContacts";
+import AdminDeals from "./pages/admin/AdminDeals";
 import AdminRoles from "./pages/admin/AdminRoles";
 import AdminAudit from "./pages/admin/AdminAudit";
 import AdminEntitlements from "./pages/admin/AdminEntitlements";
@@ -85,14 +87,16 @@ const App = () => (
               <Route path="/tools/balance-wheel" element={<ProtectedRoute><BalanceWheel /></ProtectedRoute>} />
               <Route path="/docs" element={<ProtectedRoute><Documentation /></ProtectedRoute>} />
               
-              {/* Admin routes */}
-              <Route path="/admin/users" element={<ProtectedRoute><AdminLayout><AdminUsers /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/users/duplicates" element={<ProtectedRoute><AdminLayout><AdminDuplicates /></AdminLayout></ProtectedRoute>} />
+              {/* Admin routes - New CRM-style */}
+              <Route path="/admin" element={<Navigate to="/admin/contacts" replace />} />
+              <Route path="/admin/contacts" element={<ProtectedRoute><AdminLayout><AdminContacts /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/contacts/duplicates" element={<ProtectedRoute><AdminLayout><AdminDuplicates /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/deals" element={<ProtectedRoute><AdminLayout><AdminDeals /></AdminLayout></ProtectedRoute>} />
+              
+              {/* Admin routes - Service */}
               <Route path="/admin/roles" element={<ProtectedRoute><AdminLayout><AdminRoles /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/audit" element={<ProtectedRoute><AdminLayout><AdminAudit /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/content" element={<ProtectedRoute><AdminLayout><AdminContent /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/products" element={<ProtectedRoute><AdminLayout><AdminProducts /></AdminLayout></ProtectedRoute>} />
               
               {/* Integrations routes */}
               <Route path="/admin/integrations" element={<Navigate to="/admin/integrations/crm" replace />} />
@@ -105,15 +109,22 @@ const App = () => (
               <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><ProductClubMappings /></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/mtproto" element={<ProtectedRoute><TelegramMTProto /></ProtectedRoute>} />
               <Route path="/admin/fields" element={<ProtectedRoute><AdminFieldRegistry /></ProtectedRoute>} />
+              
+              {/* Legacy admin routes - hidden from menu but still accessible */}
+              <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
+              <Route path="/admin/users/duplicates" element={<Navigate to="/admin/contacts/duplicates" replace />} />
+              <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/products" element={<ProtectedRoute><AdminLayout><AdminProducts /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/products-v2" element={<ProtectedRoute><AdminProductsV2 /></ProtectedRoute>} />
               <Route path="/admin/products-v2/:productId" element={<ProtectedRoute><AdminProductDetail /></ProtectedRoute>} />
               <Route path="/admin/orders-v2" element={<ProtectedRoute><AdminOrdersV2 /></ProtectedRoute>} />
               <Route path="/admin/payments-v2" element={<ProtectedRoute><AdminPaymentsV2 /></ProtectedRoute>} />
               <Route path="/admin/subscriptions-v2" element={<ProtectedRoute><AdminSubscriptionsV2 /></ProtectedRoute>} />
+              
               {/* Legacy redirects */}
               <Route path="/admin/payments" element={<Navigate to="/admin/integrations/payments" replace />} />
               <Route path="/admin/amocrm" element={<Navigate to="/admin/integrations/crm" replace />} />
-              <Route path="/admin/duplicates" element={<Navigate to="/admin/users/duplicates" replace />} />
+              <Route path="/admin/duplicates" element={<Navigate to="/admin/contacts/duplicates" replace />} />
               
               <Route path="*" element={<NotFound />} />
               </Routes>
