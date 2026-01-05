@@ -8,6 +8,7 @@ import { HelpModeProvider } from "@/contexts/HelpModeContext";
 import { ImpersonationBar } from "@/components/layout/ImpersonationBar";
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
+import { GlobalPaymentHandler } from "@/components/payment/GlobalPaymentHandler";
 import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
@@ -62,6 +63,7 @@ const App = () => (
         <AuthProvider>
           <HelpModeProvider>
             <ScrollToTop />
+            <GlobalPaymentHandler />
             <ImpersonationBar />
             <div className="impersonation-offset">
               <Routes>
