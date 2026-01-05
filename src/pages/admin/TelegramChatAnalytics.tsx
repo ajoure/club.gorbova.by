@@ -240,6 +240,27 @@ export default function TelegramChatAnalytics() {
   const selectedSummary = summaries.find(s => s.date === formattedDate);
   const analyticsClubs = clubs.filter(c => c.chat_analytics_enabled);
 
+  // Generate all summaries for all clubs
+  const generateAllSummaries = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('telegram-daily-summary', {
+        body: { 
+          date: format(new Date(), 'yyyy-MM-dd'),
+          force: true,
+        },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Резюме сгенерировано: ${data?.processed || 0} клубов`);
+      queryClient.invalidateQueries({ queryKey: ['tg-daily-summaries'] });
+    },
+    onError: (error) => {
+      toast.error('Ошибка генерации: ' + String(error));
+    },
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -249,6 +270,18 @@ export default function TelegramChatAnalytics() {
         </div>
         
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => generateAllSummaries.mutate()}
+            disabled={generateAllSummaries.isPending}
+          >
+            {generateAllSummaries.isPending ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            Сгенерировать все
+          </Button>
           <Select value={selectedClub} onValueChange={setSelectedClub}>
             <SelectTrigger className="w-[200px]">
               <SelectValue placeholder="Выберите клуб" />
@@ -265,6 +298,40 @@ export default function TelegramChatAnalytics() {
           </Select>
         </div>
       </div>
+
+      {/* Cron configuration info */}
+      <Card className="border-dashed">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Clock className="h-4 w-4" />
+            Автоматическая генерация
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <p className="text-muted-foreground">
+            Резюме можно генерировать автоматически каждый день в 23:55. 
+            Для этого настройте cron job в Supabase Dashboard:
+          </p>
+          <div className="bg-muted rounded p-3 font-mono text-xs overflow-x-auto">
+            <code>
+{`-- SQL Editor → New Query
+SELECT cron.schedule(
+  'telegram-daily-summary',
+  '55 23 * * *',
+  $$SELECT net.http_post(
+    url := 'https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/telegram-daily-summary',
+    headers := '{"Content-Type":"application/json","Authorization":"Bearer YOUR_SERVICE_KEY"}'::jsonb,
+    body := '{}'::jsonb
+  )$$
+);`}
+            </code>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Замените YOUR_SERVICE_KEY на сервисный ключ из Settings → API → service_role key.
+            Убедитесь, что включены расширения <strong>pg_cron</strong> и <strong>pg_net</strong> в Database → Extensions.
+          </p>
+        </CardContent>
+      </Card>
 
       {analyticsClubs.length === 0 && (
         <Card>
