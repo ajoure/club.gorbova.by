@@ -543,6 +543,59 @@ export type Database = {
         }
         Relationships: []
       }
+      flows: {
+        Row: {
+          code: string
+          created_at: string
+          end_date: string | null
+          id: string
+          is_active: boolean
+          is_default: boolean
+          max_participants: number | null
+          meta: Json | null
+          name: string
+          product_id: string
+          start_date: string | null
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          end_date?: string | null
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          max_participants?: number | null
+          meta?: Json | null
+          name: string
+          product_id: string
+          start_date?: string | null
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          end_date?: string | null
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          max_participants?: number | null
+          meta?: Json | null
+          name?: string
+          product_id?: string
+          start_date?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "flows_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       impersonation_sessions: {
         Row: {
           actor_user_id: string
@@ -959,6 +1012,167 @@ export type Database = {
           },
         ]
       }
+      orders_v2: {
+        Row: {
+          base_price: number
+          created_at: string
+          currency: string
+          customer_email: string | null
+          customer_ip: string | null
+          customer_phone: string | null
+          discount_percent: number | null
+          final_price: number
+          flow_id: string | null
+          id: string
+          is_trial: boolean
+          meta: Json | null
+          order_number: string
+          paid_amount: number | null
+          payment_plan_id: string | null
+          pricing_stage_id: string | null
+          product_id: string | null
+          status: Database["public"]["Enums"]["order_status"]
+          tariff_id: string | null
+          trial_end_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          base_price: number
+          created_at?: string
+          currency?: string
+          customer_email?: string | null
+          customer_ip?: string | null
+          customer_phone?: string | null
+          discount_percent?: number | null
+          final_price: number
+          flow_id?: string | null
+          id?: string
+          is_trial?: boolean
+          meta?: Json | null
+          order_number: string
+          paid_amount?: number | null
+          payment_plan_id?: string | null
+          pricing_stage_id?: string | null
+          product_id?: string | null
+          status?: Database["public"]["Enums"]["order_status"]
+          tariff_id?: string | null
+          trial_end_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          base_price?: number
+          created_at?: string
+          currency?: string
+          customer_email?: string | null
+          customer_ip?: string | null
+          customer_phone?: string | null
+          discount_percent?: number | null
+          final_price?: number
+          flow_id?: string | null
+          id?: string
+          is_trial?: boolean
+          meta?: Json | null
+          order_number?: string
+          paid_amount?: number | null
+          payment_plan_id?: string | null
+          pricing_stage_id?: string | null
+          product_id?: string | null
+          status?: Database["public"]["Enums"]["order_status"]
+          tariff_id?: string | null
+          trial_end_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_v2_flow_id_fkey"
+            columns: ["flow_id"]
+            isOneToOne: false
+            referencedRelation: "flows"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_v2_payment_plan_id_fkey"
+            columns: ["payment_plan_id"]
+            isOneToOne: false
+            referencedRelation: "payment_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_v2_pricing_stage_id_fkey"
+            columns: ["pricing_stage_id"]
+            isOneToOne: false
+            referencedRelation: "pricing_stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_v2_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_v2_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_plans: {
+        Row: {
+          created_at: string
+          display_order: number | null
+          first_payment_percent: number | null
+          grants_access_immediately: boolean
+          id: string
+          installments_count: number | null
+          is_active: boolean
+          name: string
+          plan_type: Database["public"]["Enums"]["payment_plan_type"]
+          tariff_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_order?: number | null
+          first_payment_percent?: number | null
+          grants_access_immediately?: boolean
+          id?: string
+          installments_count?: number | null
+          is_active?: boolean
+          name: string
+          plan_type: Database["public"]["Enums"]["payment_plan_type"]
+          tariff_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_order?: number | null
+          first_payment_percent?: number | null
+          grants_access_immediately?: boolean
+          id?: string
+          installments_count?: number | null
+          is_active?: boolean
+          name?: string
+          plan_type?: Database["public"]["Enums"]["payment_plan_type"]
+          tariff_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_plans_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_settings: {
         Row: {
           created_at: string
@@ -986,6 +1200,80 @@ export type Database = {
         }
         Relationships: []
       }
+      payments_v2: {
+        Row: {
+          amount: number
+          card_brand: string | null
+          card_last4: string | null
+          created_at: string
+          currency: string
+          error_message: string | null
+          id: string
+          installment_number: number | null
+          is_recurring: boolean | null
+          meta: Json | null
+          order_id: string
+          paid_at: string | null
+          payment_token: string | null
+          provider: string | null
+          provider_payment_id: string | null
+          provider_response: Json | null
+          status: Database["public"]["Enums"]["payment_status"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          card_brand?: string | null
+          card_last4?: string | null
+          created_at?: string
+          currency?: string
+          error_message?: string | null
+          id?: string
+          installment_number?: number | null
+          is_recurring?: boolean | null
+          meta?: Json | null
+          order_id: string
+          paid_at?: string | null
+          payment_token?: string | null
+          provider?: string | null
+          provider_payment_id?: string | null
+          provider_response?: Json | null
+          status?: Database["public"]["Enums"]["payment_status"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          card_brand?: string | null
+          card_last4?: string | null
+          created_at?: string
+          currency?: string
+          error_message?: string | null
+          id?: string
+          installment_number?: number | null
+          is_recurring?: boolean | null
+          meta?: Json | null
+          order_id?: string
+          paid_at?: string | null
+          payment_token?: string | null
+          provider?: string | null
+          provider_payment_id?: string | null
+          provider_response?: Json | null
+          status?: Database["public"]["Enums"]["payment_status"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payments_v2_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       permissions: {
         Row: {
           category: string | null
@@ -1009,6 +1297,53 @@ export type Database = {
           name?: string
         }
         Relationships: []
+      }
+      pricing_stages: {
+        Row: {
+          created_at: string
+          display_order: number | null
+          end_date: string | null
+          id: string
+          is_active: boolean
+          name: string
+          product_id: string
+          stage_type: Database["public"]["Enums"]["pricing_stage_type"]
+          start_date: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_order?: number | null
+          end_date?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          product_id: string
+          stage_type: Database["public"]["Enums"]["pricing_stage_type"]
+          start_date?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_order?: number | null
+          end_date?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          product_id?: string
+          stage_type?: Database["public"]["Enums"]["pricing_stage_type"]
+          start_date?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pricing_stages_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       product_club_mappings: {
         Row: {
@@ -1099,6 +1434,50 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      products_v2: {
+        Row: {
+          code: string
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          meta: Json | null
+          name: string
+          telegram_club_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          meta?: Json | null
+          name: string
+          telegram_club_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          meta?: Json | null
+          name?: string
+          telegram_club_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "products_v2_telegram_club_id_fkey"
+            columns: ["telegram_club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
@@ -1285,6 +1664,223 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      subscriptions_v2: {
+        Row: {
+          access_end_at: string | null
+          access_start_at: string
+          cancel_reason: string | null
+          canceled_at: string | null
+          charge_attempts: number | null
+          created_at: string
+          flow_id: string | null
+          id: string
+          is_trial: boolean
+          meta: Json | null
+          next_charge_at: string | null
+          order_id: string | null
+          payment_token: string | null
+          product_id: string
+          status: Database["public"]["Enums"]["subscription_status"]
+          tariff_id: string | null
+          trial_end_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          access_end_at?: string | null
+          access_start_at?: string
+          cancel_reason?: string | null
+          canceled_at?: string | null
+          charge_attempts?: number | null
+          created_at?: string
+          flow_id?: string | null
+          id?: string
+          is_trial?: boolean
+          meta?: Json | null
+          next_charge_at?: string | null
+          order_id?: string | null
+          payment_token?: string | null
+          product_id: string
+          status?: Database["public"]["Enums"]["subscription_status"]
+          tariff_id?: string | null
+          trial_end_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          access_end_at?: string | null
+          access_start_at?: string
+          cancel_reason?: string | null
+          canceled_at?: string | null
+          charge_attempts?: number | null
+          created_at?: string
+          flow_id?: string | null
+          id?: string
+          is_trial?: boolean
+          meta?: Json | null
+          next_charge_at?: string | null
+          order_id?: string | null
+          payment_token?: string | null
+          product_id?: string
+          status?: Database["public"]["Enums"]["subscription_status"]
+          tariff_id?: string | null
+          trial_end_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subscriptions_v2_flow_id_fkey"
+            columns: ["flow_id"]
+            isOneToOne: false
+            referencedRelation: "flows"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscriptions_v2_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscriptions_v2_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscriptions_v2_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tariff_prices: {
+        Row: {
+          created_at: string
+          currency: string
+          discount_enabled: boolean
+          discount_percent: number | null
+          final_price: number | null
+          id: string
+          is_active: boolean
+          price: number
+          pricing_stage_id: string | null
+          tariff_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          currency?: string
+          discount_enabled?: boolean
+          discount_percent?: number | null
+          final_price?: number | null
+          id?: string
+          is_active?: boolean
+          price: number
+          pricing_stage_id?: string | null
+          tariff_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          currency?: string
+          discount_enabled?: boolean
+          discount_percent?: number | null
+          final_price?: number | null
+          id?: string
+          is_active?: boolean
+          price?: number
+          pricing_stage_id?: string | null
+          tariff_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tariff_prices_pricing_stage_id_fkey"
+            columns: ["pricing_stage_id"]
+            isOneToOne: false
+            referencedRelation: "pricing_stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tariff_prices_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tariffs: {
+        Row: {
+          access_days: number
+          code: string
+          created_at: string
+          description: string | null
+          display_order: number | null
+          features: Json | null
+          id: string
+          is_active: boolean
+          meta: Json | null
+          name: string
+          product_id: string
+          trial_auto_charge: boolean | null
+          trial_days: number | null
+          trial_enabled: boolean
+          trial_price: number | null
+          updated_at: string
+        }
+        Insert: {
+          access_days?: number
+          code: string
+          created_at?: string
+          description?: string | null
+          display_order?: number | null
+          features?: Json | null
+          id?: string
+          is_active?: boolean
+          meta?: Json | null
+          name: string
+          product_id: string
+          trial_auto_charge?: boolean | null
+          trial_days?: number | null
+          trial_enabled?: boolean
+          trial_price?: number | null
+          updated_at?: string
+        }
+        Update: {
+          access_days?: number
+          code?: string
+          created_at?: string
+          description?: string | null
+          display_order?: number | null
+          features?: Json | null
+          id?: string
+          is_active?: boolean
+          meta?: Json | null
+          name?: string
+          product_id?: string
+          trial_auto_charge?: boolean | null
+          trial_days?: number | null
+          trial_enabled?: boolean
+          trial_price?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tariffs_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       task_categories: {
         Row: {
@@ -1996,6 +2592,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      generate_order_number: { Args: never; Returns: string }
       get_user_permissions: { Args: { _user_id: string }; Returns: string[] }
       get_user_role: {
         Args: { _user_id: string }
@@ -2037,6 +2634,34 @@ export type Database = {
         | "company"
         | "telegram_member"
         | "custom"
+      order_status:
+        | "draft"
+        | "pending"
+        | "paid"
+        | "partial"
+        | "failed"
+        | "refunded"
+        | "canceled"
+      payment_plan_type: "full" | "installment" | "bank_installment" | "trial"
+      payment_status:
+        | "pending"
+        | "processing"
+        | "succeeded"
+        | "failed"
+        | "refunded"
+        | "canceled"
+      pricing_stage_type:
+        | "early_bird"
+        | "stage1"
+        | "stage2"
+        | "stage3"
+        | "regular"
+      subscription_status:
+        | "active"
+        | "trial"
+        | "past_due"
+        | "canceled"
+        | "expired"
       subscription_tier: "free" | "pro" | "premium" | "webinar"
     }
     CompositeTypes: {
@@ -2188,6 +2813,38 @@ export const Constants = {
         "company",
         "telegram_member",
         "custom",
+      ],
+      order_status: [
+        "draft",
+        "pending",
+        "paid",
+        "partial",
+        "failed",
+        "refunded",
+        "canceled",
+      ],
+      payment_plan_type: ["full", "installment", "bank_installment", "trial"],
+      payment_status: [
+        "pending",
+        "processing",
+        "succeeded",
+        "failed",
+        "refunded",
+        "canceled",
+      ],
+      pricing_stage_type: [
+        "early_bird",
+        "stage1",
+        "stage2",
+        "stage3",
+        "regular",
+      ],
+      subscription_status: [
+        "active",
+        "trial",
+        "past_due",
+        "canceled",
+        "expired",
       ],
       subscription_tier: ["free", "pro", "premium", "webinar"],
     },

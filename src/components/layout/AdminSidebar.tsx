@@ -190,7 +190,7 @@ export function AdminSidebar() {
                     <SidebarMenuButton
                       asChild
                       isActive={location.pathname === "/admin/products"}
-                      tooltip={collapsed ? "Продукты" : undefined}
+                      tooltip={collapsed ? "Продукты (legacy)" : undefined}
                     >
                       <NavLink
                         to="/admin/products"
@@ -199,7 +199,23 @@ export function AdminSidebar() {
                         activeClassName="bg-sidebar-accent text-sidebar-primary"
                       >
                         <ShoppingCart className="h-5 w-5 shrink-0" />
-                        {!collapsed && <span>Продукты</span>}
+                        {!collapsed && <span>Продукты (legacy)</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname.startsWith("/admin/products-v2")}
+                      tooltip={collapsed ? "Продукты v2" : undefined}
+                    >
+                      <NavLink
+                        to="/admin/products-v2"
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                        activeClassName="bg-sidebar-accent text-sidebar-primary"
+                      >
+                        <Package className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span>Продукты v2</span>}
                       </NavLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

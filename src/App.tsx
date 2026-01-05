@@ -37,6 +37,8 @@ import TelegramInvites from "./pages/admin/TelegramInvites";
 import ProductClubMappings from "./pages/admin/ProductClubMappings";
 import TelegramMTProto from "./pages/admin/TelegramMTProto";
 import AdminFieldRegistry from "./pages/admin/AdminFieldRegistry";
+import AdminProductsV2 from "./pages/admin/AdminProductsV2";
+import AdminProductDetail from "./pages/admin/AdminProductDetail";
 import MnsResponseService from "./pages/audits/MnsResponseService";
 import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
 import Purchases from "./pages/Purchases";
@@ -100,6 +102,8 @@ const App = () => (
               <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><ProductClubMappings /></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/mtproto" element={<ProtectedRoute><TelegramMTProto /></ProtectedRoute>} />
               <Route path="/admin/fields" element={<ProtectedRoute><AdminFieldRegistry /></ProtectedRoute>} />
+              <Route path="/admin/products-v2" element={<ProtectedRoute><AdminProductsV2 /></ProtectedRoute>} />
+              <Route path="/admin/products-v2/:productId" element={<ProtectedRoute><AdminProductDetail /></ProtectedRoute>} />
               
               {/* Legacy redirects */}
               <Route path="/admin/payments" element={<Navigate to="/admin/integrations/payments" replace />} />
