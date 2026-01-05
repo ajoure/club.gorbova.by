@@ -30,6 +30,7 @@ import {
   FileText,
   Plug,
   Handshake,
+  Package,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -76,6 +77,7 @@ export function AdminSidebar() {
   const isIntegrationsActive = location.pathname.startsWith("/admin/integrations");
   const isContactsActive = location.pathname === "/admin/contacts" || location.pathname.startsWith("/admin/contacts/");
   const isDealsActive = location.pathname === "/admin/deals" || location.pathname.startsWith("/admin/deals/");
+  const isProductsActive = location.pathname.startsWith("/admin/products-v2");
 
   return (
     <Sidebar
@@ -160,6 +162,26 @@ export function AdminSidebar() {
                     >
                       <Handshake className="h-5 w-5 shrink-0" />
                       {!collapsed && <span>Сделки</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* Продукты */}
+              {hasEntitlementsPermission && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isProductsActive}
+                    tooltip={collapsed ? "Продукты" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/products-v2"
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
+                    >
+                      <Package className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>Продукты</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

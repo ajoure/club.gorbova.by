@@ -82,9 +82,6 @@ export default function AdminFieldRegistry() {
     is_required: false,
     default_value: '',
     description: '',
-    external_id_amo: '',
-    external_id_gc: '',
-    external_id_b24: '',
   });
   
   const { data: fields, isLoading } = useFields();
@@ -120,9 +117,6 @@ export default function AdminFieldRegistry() {
       is_required: false,
       default_value: '',
       description: '',
-      external_id_amo: '',
-      external_id_gc: '',
-      external_id_b24: '',
     });
     setEditingField(null);
     setShowCreateDialog(true);
@@ -137,9 +131,6 @@ export default function AdminFieldRegistry() {
       is_required: field.is_required,
       default_value: field.default_value || '',
       description: field.description || '',
-      external_id_amo: field.external_id_amo || '',
-      external_id_gc: field.external_id_gc || '',
-      external_id_b24: field.external_id_b24 || '',
     });
     setEditingField(field);
     setShowCreateDialog(true);
@@ -157,9 +148,6 @@ export default function AdminFieldRegistry() {
         ...formData,
         default_value: formData.default_value || null,
         description: formData.description || null,
-        external_id_amo: formData.external_id_amo || null,
-        external_id_gc: formData.external_id_gc || null,
-        external_id_b24: formData.external_id_b24 || null,
       });
     } else {
       await createField.mutateAsync({
@@ -171,9 +159,9 @@ export default function AdminFieldRegistry() {
         validation_rules: null,
         default_value: formData.default_value || null,
         description: formData.description || null,
-        external_id_amo: formData.external_id_amo || null,
-        external_id_gc: formData.external_id_gc || null,
-        external_id_b24: formData.external_id_b24 || null,
+        external_id_amo: null,
+        external_id_gc: null,
+        external_id_b24: null,
       });
     }
     
@@ -207,7 +195,7 @@ export default function AdminFieldRegistry() {
         </div>
 
         {/* Stats */}
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-3">
           <Card>
             <CardHeader className="pb-2">
               <CardDescription>Всего полей</CardDescription>
@@ -233,16 +221,6 @@ export default function AdminFieldRegistry() {
             <CardContent>
               <div className="text-2xl font-bold">
                 {fields?.filter(f => !f.is_system).length || 0}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>С маппингом CRM</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {fields?.filter(f => f.external_id_amo || f.external_id_gc || f.external_id_b24).length || 0}
               </div>
             </CardContent>
           </Card>
@@ -295,7 +273,6 @@ export default function AdminFieldRegistry() {
                       <TableHead>Тип данных</TableHead>
                       <TableHead>Сущность</TableHead>
                       <TableHead className="text-center">Обязательное</TableHead>
-                      <TableHead>Интеграции</TableHead>
                       <TableHead className="text-right">Действия</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -328,34 +305,6 @@ export default function AdminFieldRegistry() {
                           ) : (
                             <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />
                           )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            {field.external_id_amo && (
-                              <Tooltip>
-                                <TooltipTrigger>
-                                  <Badge variant="outline" className="text-xs">amo</Badge>
-                                </TooltipTrigger>
-                                <TooltipContent>amoCRM: {field.external_id_amo}</TooltipContent>
-                              </Tooltip>
-                            )}
-                            {field.external_id_gc && (
-                              <Tooltip>
-                                <TooltipTrigger>
-                                  <Badge variant="outline" className="text-xs">GC</Badge>
-                                </TooltipTrigger>
-                                <TooltipContent>GetCourse: {field.external_id_gc}</TooltipContent>
-                              </Tooltip>
-                            )}
-                            {field.external_id_b24 && (
-                              <Tooltip>
-                                <TooltipTrigger>
-                                  <Badge variant="outline" className="text-xs">B24</Badge>
-                                </TooltipTrigger>
-                                <TooltipContent>Bitrix24: {field.external_id_b24}</TooltipContent>
-                              </Tooltip>
-                            )}
-                          </div>
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
@@ -507,38 +456,9 @@ export default function AdminFieldRegistry() {
               <Label htmlFor="is_required">Обязательное поле</Label>
             </div>
 
-            <div className="border-t pt-4">
-              <Label className="text-sm text-muted-foreground mb-2 block">Маппинг интеграций</Label>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">amoCRM ID</Label>
-                  <Input
-                    value={formData.external_id_amo}
-                    onChange={(e) => setFormData({ ...formData, external_id_amo: e.target.value })}
-                    placeholder="ID поля"
-                    className="text-sm"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">GetCourse ID</Label>
-                  <Input
-                    value={formData.external_id_gc}
-                    onChange={(e) => setFormData({ ...formData, external_id_gc: e.target.value })}
-                    placeholder="ID поля"
-                    className="text-sm"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Bitrix24 ID</Label>
-                  <Input
-                    value={formData.external_id_b24}
-                    onChange={(e) => setFormData({ ...formData, external_id_b24: e.target.value })}
-                    placeholder="ID поля"
-                    className="text-sm"
-                  />
-                </div>
-              </div>
-            </div>
+            <p className="text-xs text-muted-foreground border-t pt-4">
+              Маппинг полей с внешними CRM настраивается в разделе <strong>Интеграции</strong>.
+            </p>
           </div>
 
           <DialogFooter>
