@@ -181,10 +181,14 @@ Deno.serve(async (req) => {
         const offerId = GETCOURSE_OFFER_IDS[tariffCode];
         
         if (apiKey && offerId) {
+          const customerFirstName = meta.customer_first_name as string || '';
+          const customerLastName = meta.customer_last_name as string || '';
           const params = {
             user: {
               email: order.customer_email,
               phone: meta.customer_phone || undefined,
+              first_name: customerFirstName || undefined,
+              last_name: customerLastName || undefined,
             },
             system: {
               refresh_if_exists: 1,
