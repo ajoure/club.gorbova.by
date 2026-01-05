@@ -1,7 +1,6 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { TelegramCard } from "@/components/telegram/TelegramCard";
-import { PaymentSuccessDialog } from "@/components/payment/PaymentSuccessDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { 
@@ -92,7 +91,6 @@ export default function Dashboard() {
 
   return (
     <DashboardLayout>
-      <PaymentSuccessDialog />
       <div className="max-w-7xl mx-auto space-y-6 md:space-y-8">
         {/* Welcome section + Telegram card */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">

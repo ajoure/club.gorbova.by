@@ -2,7 +2,6 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { PaymentFailedDialog } from "@/components/payment/PaymentFailedDialog";
 import { Check, Sparkles, Zap, Crown, Video } from "lucide-react";
 import { useSubscription } from "@/hooks/useSubscription";
 
@@ -86,7 +85,6 @@ export default function Pricing() {
 
   return (
     <DashboardLayout>
-      <PaymentFailedDialog />
       <div className="max-w-6xl mx-auto space-y-8">
         <div className="text-center mb-12">
           <h1 className="text-3xl font-bold text-foreground mb-3">Тарифы</h1>
