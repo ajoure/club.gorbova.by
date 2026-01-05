@@ -537,25 +537,27 @@ Deno.serve(async (req) => {
           console.log('Extended existing subscription:', existingSub.id);
         } else {
           // Create new subscription
+          // Note: order_id references orders_v2, but we're using legacy orders table
+          // So we store the order reference in meta instead
           const { error: subError } = await supabase
             .from('subscriptions_v2')
             .insert({
               user_id: order.user_id,
               product_id: productV2.id,
               tariff_id: tariffData.id,
-              order_id: internalOrderId,
               status: 'active',
               is_trial: meta.is_trial || false,
               access_start_at: now.toISOString(),
               access_end_at: accessEndAt.toISOString(),
               trial_end_at: meta.is_trial ? accessEndAt.toISOString() : null,
               next_charge_at: meta.is_trial ? accessEndAt.toISOString() : null,
-              payment_token: subscription?.token || null,
+              payment_token: subscription?.card?.token || subscription?.token || null,
               meta: {
                 tariff_code: meta.tariff_code,
                 tariff_name: tariffData.name,
                 bepaid_subscription_id: subscriptionId,
                 auto_charge_amount: meta.auto_charge_amount,
+                legacy_order_id: internalOrderId,
               },
             });
           
