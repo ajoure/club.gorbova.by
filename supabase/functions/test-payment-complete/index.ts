@@ -195,7 +195,7 @@ Deno.serve(async (req) => {
               deal_cost: order.amount / 100,
               deal_status: 'payed',
               deal_is_paid: 1,
-              payment_type: 'SITE',
+              payment_type: 'CARD',
               manager_email: 'info@ajoure.by',
               deal_comment: `ТЕСТ: Оплата через сайт club.gorbova.by. Order ID: ${orderId}`,
             },
