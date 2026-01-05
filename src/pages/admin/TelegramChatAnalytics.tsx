@@ -299,39 +299,6 @@ export default function TelegramChatAnalytics() {
         </div>
       </div>
 
-      {/* Cron configuration info */}
-      <Card className="border-dashed">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Clock className="h-4 w-4" />
-            Автоматическая генерация
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <p className="text-muted-foreground">
-            Резюме можно генерировать автоматически каждый день в 23:55. 
-            Для этого настройте cron job в Supabase Dashboard:
-          </p>
-          <div className="bg-muted rounded p-3 font-mono text-xs overflow-x-auto">
-            <code>
-{`-- SQL Editor → New Query
-SELECT cron.schedule(
-  'telegram-daily-summary',
-  '55 23 * * *',
-  $$SELECT net.http_post(
-    url := 'https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/telegram-daily-summary',
-    headers := '{"Content-Type":"application/json","Authorization":"Bearer YOUR_SERVICE_KEY"}'::jsonb,
-    body := '{}'::jsonb
-  )$$
-);`}
-            </code>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Замените YOUR_SERVICE_KEY на сервисный ключ из Settings → API → service_role key.
-            Убедитесь, что включены расширения <strong>pg_cron</strong> и <strong>pg_net</strong> в Database → Extensions.
-          </p>
-        </CardContent>
-      </Card>
 
       {analyticsClubs.length === 0 && (
         <Card>
