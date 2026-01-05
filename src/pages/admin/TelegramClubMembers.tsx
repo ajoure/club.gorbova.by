@@ -556,13 +556,9 @@ export default function TelegramClubMembers() {
   // Telegram status display - CHAT is master, CHANNEL is derived
   const getTelegramStatus = (member: TelegramClubMember) => {
     const inChat = member.in_chat;
+    const inChannel = member.in_channel;
     const hasTelegramId = !!member.telegram_user_id;
     const lastCheck = member.last_telegram_check_at || member.last_synced_at;
-    
-    // Channel status is derived from chat (master)
-    // If in chat = true, channel is considered accessible
-    // If in chat = false, channel is also inaccessible
-    const derivedChannelStatus = inChat;
     
     const getChatIcon = () => {
       if (inChat === true) return <CheckCircle className="h-4 w-4 text-green-600" />;
@@ -572,37 +568,36 @@ export default function TelegramClubMembers() {
     };
     
     const getChannelIcon = () => {
-      // Channel is derived from chat - show same status
       if (!hasTelegramId) return <HelpCircle className="h-4 w-4 text-muted-foreground" />;
-      if (derivedChannelStatus === true) return <CheckCircle className="h-4 w-4 text-green-600" />;
-      if (derivedChannelStatus === false) return <XCircle className="h-4 w-4 text-destructive" />;
+      if (inChannel === true) return <CheckCircle className="h-4 w-4 text-green-600" />;
+      if (inChannel === false) return <XCircle className="h-4 w-4 text-destructive" />;
       return <HelpCircle className="h-4 w-4 text-yellow-500" />;
     };
 
     const getChatTooltip = () => {
       if (!hasTelegramId) return 'Telegram не привязан';
-      if (inChat === true) return 'В чате (подтверждено)';
+      if (inChat === true) return 'В чате';
       if (inChat === false) return 'Не в чате';
       return 'Статус неизвестен - проверьте';
     };
     
     const getChannelTooltip = () => {
       if (!hasTelegramId) return 'Telegram не привязан';
-      if (derivedChannelStatus === true) return 'В канале (чат = master)';
-      if (derivedChannelStatus === false) return 'Не в канале (чат = master)';
-      return 'Зависит от статуса чата';
+      if (inChannel === true) return 'В канале';
+      if (inChannel === false) return 'Не в канале';
+      return 'Статус неизвестен - проверьте';
     };
 
     const lastCheckInfo = lastCheck ? 
       `Проверено: ${format(new Date(lastCheck), 'dd.MM.yy HH:mm', { locale: ru })}` : 
-      'Не проверялось через getChatMember';
+      'Не проверялось';
 
     return (
       <div className="flex items-center justify-center gap-1">
         <Tooltip>
           <TooltipTrigger>{getChatIcon()}</TooltipTrigger>
           <TooltipContent>
-            <p className="font-medium">Чат (master)</p>
+            <p className="font-medium">Чат</p>
             <p>{getChatTooltip()}</p>
             <p className="text-xs text-muted-foreground mt-1">{lastCheckInfo}</p>
           </TooltipContent>
@@ -611,9 +606,9 @@ export default function TelegramClubMembers() {
         <Tooltip>
           <TooltipTrigger>{getChannelIcon()}</TooltipTrigger>
           <TooltipContent>
-            <p className="font-medium">Канал (derived)</p>
+            <p className="font-medium">Канал</p>
             <p>{getChannelTooltip()}</p>
-            <p className="text-xs text-muted-foreground mt-1">Статус канала = статус чата</p>
+            <p className="text-xs text-muted-foreground mt-1">{lastCheckInfo}</p>
           </TooltipContent>
         </Tooltip>
       </div>
