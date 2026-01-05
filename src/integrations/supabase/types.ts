@@ -2049,6 +2049,7 @@ export type Database = {
           discount_percent: number | null
           display_order: number | null
           features: Json | null
+          getcourse_offer_id: number | null
           id: string
           is_active: boolean
           is_popular: boolean | null
@@ -2078,6 +2079,7 @@ export type Database = {
           discount_percent?: number | null
           display_order?: number | null
           features?: Json | null
+          getcourse_offer_id?: number | null
           id?: string
           is_active?: boolean
           is_popular?: boolean | null
@@ -2107,6 +2109,7 @@ export type Database = {
           discount_percent?: number | null
           display_order?: number | null
           features?: Json | null
+          getcourse_offer_id?: number | null
           id?: string
           is_active?: boolean
           is_popular?: boolean | null
