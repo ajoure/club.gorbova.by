@@ -23,6 +23,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,12 +38,14 @@ import {
   Package,
   CreditCard,
   Clock,
+  CheckCircle,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const ORDER_STATUS_LABELS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
   draft: { label: "Черновик", variant: "secondary" },
@@ -57,6 +60,35 @@ const ORDER_STATUS_LABELS: Record<string, { label: string; variant: "default" | 
 export default function AdminOrdersV2() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const { isSuperAdmin } = usePermissions();
+  const queryClient = useQueryClient();
+
+  // Mutation for test payment completion
+  const testPaymentMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not authenticated');
+
+      const { data, error } = await supabase.functions.invoke('test-payment-complete', {
+        body: { orderId },
+      });
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success('Оплата успешно подтверждена (тест)', {
+        description: `GetCourse: ${data.results?.getcourse_sync || 'N/A'}, Telegram: ${data.results?.telegram_access_granted || 0} клубов`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['orders-v2'] });
+      refetch();
+    },
+    onError: (error: any) => {
+      toast.error('Ошибка подтверждения оплаты', {
+        description: error.message,
+      });
+    },
+  });
 
   const { data: orders, isLoading, refetch } = useQuery({
     queryKey: ["orders-v2", statusFilter],
@@ -305,6 +337,19 @@ export default function AdminOrdersV2() {
                                 <CreditCard className="h-4 w-4 mr-2" />
                                 Платежи
                               </DropdownMenuItem>
+                              {isSuperAdmin() && order.status !== 'paid' && order.status !== 'refunded' && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem 
+                                    onClick={() => testPaymentMutation.mutate(order.id)}
+                                    disabled={testPaymentMutation.isPending}
+                                    className="text-green-600"
+                                  >
+                                    <CheckCircle className="h-4 w-4 mr-2" />
+                                    {testPaymentMutation.isPending ? 'Обработка...' : 'Оплата получена (тест)'}
+                                  </DropdownMenuItem>
+                                </>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>
