@@ -136,6 +136,7 @@ export default function TelegramClubMembers() {
   const [sendingMessage, setSendingMessage] = useState(false);
 
   // Calculate counts for tabs
+  // Нарушитель = без доступа (не ok) И реально находится в чате или канале
   const counts = useMemo(() => {
     if (!members) return { all: 0, clients: 0, with_access: 0, violators: 0, removed: 0 };
     
@@ -143,8 +144,10 @@ export default function TelegramClubMembers() {
       all: members.length,
       clients: members.filter(m => m.link_status === 'linked').length,
       with_access: members.filter(m => m.access_status === 'ok').length,
-      violators: members.filter(m => m.access_status !== 'ok' && m.access_status !== 'removed').length,
-      removed: members.filter(m => m.access_status === 'removed').length,
+      violators: members.filter(m => 
+        m.access_status !== 'ok' && (m.in_chat === true || m.in_channel === true)
+      ).length,
+      removed: members.filter(m => m.access_status === 'removed' && !m.in_chat && !m.in_channel).length,
     };
   }, [members]);
 
@@ -173,9 +176,11 @@ export default function TelegramClubMembers() {
         case 'with_access':
           return member.access_status === 'ok';
         case 'violators':
-          return member.access_status !== 'ok' && member.access_status !== 'removed';
+          // Нарушитель = без доступа И реально в чате/канале
+          return member.access_status !== 'ok' && (member.in_chat === true || member.in_channel === true);
         case 'removed':
-          return member.access_status === 'removed';
+          // Удалённые = статус removed И реально не в чате/канале
+          return member.access_status === 'removed' && !member.in_chat && !member.in_channel;
         default:
           return true;
       }
