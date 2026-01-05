@@ -47,11 +47,15 @@ serve(async (req) => {
       });
     }
 
-    // Find user by email
-    const { data: authUsers } = await supabase.auth.admin.listUsers();
-    const authUser = authUsers?.users?.find(u => u.email === customerEmail);
-    
-    if (!authUser) {
+    // Find user by email in profiles table (more reliable than listUsers which paginates)
+    const emailLower = customerEmail?.toLowerCase().trim();
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('user_id')
+      .ilike('email', emailLower || '')
+      .single();
+
+    if (!profile?.user_id) {
       console.error('User not found for email:', customerEmail);
       return new Response(JSON.stringify({ error: 'User not found' }), {
         status: 404,
@@ -59,11 +63,13 @@ serve(async (req) => {
       });
     }
 
+    const userId = profile.user_id;
+
     // Check if this card already exists for the user
     const { data: existingCard } = await supabase
       .from('payment_methods')
       .select('id')
-      .eq('user_id', authUser.id)
+      .eq('user_id', userId)
       .eq('last4', cardLast4)
       .eq('exp_month', cardExpMonth)
       .eq('exp_year', cardExpYear)
@@ -79,7 +85,7 @@ serve(async (req) => {
           updated_at: new Date().toISOString(),
         })
         .eq('id', existingCard.id);
-      
+
       return new Response(JSON.stringify({ status: 'updated' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -89,7 +95,7 @@ serve(async (req) => {
     const { count } = await supabase
       .from('payment_methods')
       .select('id', { count: 'exact', head: true })
-      .eq('user_id', authUser.id)
+      .eq('user_id', userId)
       .eq('status', 'active');
 
     const isFirstCard = (count || 0) === 0;
@@ -98,7 +104,7 @@ serve(async (req) => {
     const { error: insertError } = await supabase
       .from('payment_methods')
       .insert({
-        user_id: authUser.id,
+        user_id: userId,
         provider: 'bepaid',
         provider_token: cardToken,
         brand: cardBrand,
@@ -123,12 +129,12 @@ serve(async (req) => {
 
     // Log the action
     await supabase.from('audit_logs').insert({
-      actor_user_id: authUser.id,
+      actor_user_id: userId,
       action: 'payment_method.added',
       meta: { brand: cardBrand, last4: cardLast4, is_default: isFirstCard },
     });
 
-    console.log(`Payment method saved for user ${authUser.id}: ${cardBrand} **** ${cardLast4}`);
+    console.log(`Payment method saved for user ${userId}: ${cardBrand} **** ${cardLast4}`);
     
     return new Response(JSON.stringify({ status: 'created' }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
