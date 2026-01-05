@@ -207,12 +207,20 @@ Deno.serve(async (req) => {
 
     // Create bePaid subscription (recurring every 30 days)
     // IMPORTANT: subscriptions are created via the Subscriptions API, not /checkouts
+    
+    // Get client IP address for bePaid
+    const customerIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() 
+                    || req.headers.get('cf-connecting-ip') 
+                    || req.headers.get('x-real-ip')
+                    || '127.0.0.1';
+
     const subscriptionPayload = {
       customer: {
         email: emailLower,
         first_name: customerFirstName || undefined,
         last_name: customerLastName || undefined,
         phone: customerPhone || undefined,
+        ip: customerIp, // Required by bePaid subscriptions API
       },
       plan: {
         title: product.name,
