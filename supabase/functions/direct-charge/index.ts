@@ -1,0 +1,454 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+interface DirectChargeRequest {
+  productId: string;
+  tariffCode: string;
+  isTrial?: boolean;
+  trialDays?: number;
+  paymentMethodId?: string; // If not provided, use default card
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Auth check
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ success: false, error: 'Not authorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    
+    if (userError || !user) {
+      return new Response(JSON.stringify({ success: false, error: 'Invalid token' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const body: DirectChargeRequest = await req.json();
+    const { productId, tariffCode, isTrial, trialDays, paymentMethodId } = body;
+
+    console.log(`Direct charge for user ${user.id}: product=${productId}, tariff=${tariffCode}, trial=${isTrial}`);
+
+    // Get user's payment method
+    let paymentMethodQuery = supabase
+      .from('payment_methods')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('status', 'active');
+    
+    if (paymentMethodId) {
+      paymentMethodQuery = paymentMethodQuery.eq('id', paymentMethodId);
+    } else {
+      paymentMethodQuery = paymentMethodQuery.eq('is_default', true);
+    }
+
+    const { data: paymentMethod } = await paymentMethodQuery.single();
+
+    if (!paymentMethod) {
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: 'No payment method found',
+        requiresTokenization: true,
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    console.log(`Using payment method: ${paymentMethod.brand} **** ${paymentMethod.last4}`);
+
+    // Get product and tariff info
+    const { data: product } = await supabase
+      .from('products_v2')
+      .select('id, name, currency, telegram_club_id')
+      .eq('id', productId)
+      .eq('is_active', true)
+      .single();
+
+    if (!product) {
+      return new Response(JSON.stringify({ success: false, error: 'Product not found' }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { data: tariff } = await supabase
+      .from('tariffs')
+      .select('id, name, code, access_days, original_price, trial_days, trial_price, trial_auto_charge')
+      .eq('code', tariffCode)
+      .eq('product_id', productId)
+      .eq('is_active', true)
+      .single();
+
+    if (!tariff) {
+      return new Response(JSON.stringify({ success: false, error: 'Tariff not found' }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Get offer data
+    const offerType = isTrial ? 'trial' : 'pay_now';
+    const { data: offer } = await supabase
+      .from('tariff_offers')
+      .select('*')
+      .eq('tariff_id', tariff.id)
+      .eq('offer_type', offerType)
+      .eq('is_active', true)
+      .order('is_primary', { ascending: false })
+      .limit(1)
+      .single();
+
+    const amount = offer?.amount ?? (isTrial ? tariff.trial_price : tariff.original_price) ?? 0;
+    const effectiveTrialDays = offer?.trial_days ?? trialDays ?? tariff.trial_days ?? 5;
+    const autoChargeAmount = offer?.auto_charge_amount ?? tariff.original_price ?? 0;
+    const autoChargeAfterTrial = offer?.auto_charge_after_trial ?? tariff.trial_auto_charge ?? true;
+
+    console.log(`Charge amount: ${amount} ${product.currency}, trial=${isTrial}, days=${effectiveTrialDays}`);
+
+    // Get bePaid settings
+    const { data: settings } = await supabase
+      .from('payment_settings')
+      .select('key, value')
+      .in('key', ['bepaid_shop_id', 'bepaid_test_mode']);
+
+    const settingsMap: Record<string, string> = settings?.reduce(
+      (acc: Record<string, string>, s: { key: string; value: string }) => ({ ...acc, [s.key]: s.value }),
+      {}
+    ) || {};
+
+    const shopId = settingsMap['bepaid_shop_id'] || '33524';
+    const testMode = settingsMap['bepaid_test_mode'] === 'true';
+
+    // Generate order number
+    const orderNumber = `ORD-${new Date().getFullYear().toString().slice(-2)}-${Date.now().toString(36).toUpperCase()}`;
+
+    // Create order
+    const { data: order, error: orderError } = await supabase
+      .from('orders_v2')
+      .insert({
+        order_number: orderNumber,
+        user_id: user.id,
+        product_id: productId,
+        tariff_id: tariff.id,
+        customer_email: user.email,
+        base_price: amount,
+        final_price: amount,
+        currency: product.currency,
+        is_trial: isTrial || false,
+        trial_end_at: isTrial ? new Date(Date.now() + effectiveTrialDays * 24 * 60 * 60 * 1000).toISOString() : null,
+        status: 'pending',
+        meta: {
+          payment_method_id: paymentMethod.id,
+          direct_charge: true,
+          auto_charge_after_trial: autoChargeAfterTrial,
+          auto_charge_amount: autoChargeAmount,
+        },
+      })
+      .select()
+      .single();
+
+    if (orderError) {
+      console.error('Order creation error:', orderError);
+      return new Response(JSON.stringify({ success: false, error: 'Failed to create order' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    console.log(`Created order ${order.id}`);
+
+    // For trial with 0 amount, just activate without charging
+    if (isTrial && amount === 0) {
+      console.log('Trial with 0 amount - activating without charge');
+
+      // Create subscription
+      const trialEndAt = new Date(Date.now() + effectiveTrialDays * 24 * 60 * 60 * 1000);
+      const nextChargeAt = autoChargeAfterTrial 
+        ? new Date(trialEndAt.getTime() - 24 * 60 * 60 * 1000) // 1 day before trial ends
+        : null;
+
+      const { data: subscription, error: subError } = await supabase
+        .from('subscriptions_v2')
+        .insert({
+          user_id: user.id,
+          product_id: productId,
+          tariff_id: tariff.id,
+          order_id: order.id,
+          status: 'trial',
+          is_trial: true,
+          access_start_at: new Date().toISOString(),
+          access_end_at: trialEndAt.toISOString(),
+          trial_end_at: trialEndAt.toISOString(),
+          payment_method_id: paymentMethod.id,
+          payment_token: paymentMethod.provider_token,
+          next_charge_at: nextChargeAt?.toISOString() || null,
+        })
+        .select()
+        .single();
+
+      if (subError) {
+        console.error('Subscription creation error:', subError);
+        return new Response(JSON.stringify({ success: false, error: 'Failed to create subscription' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Update order status
+      await supabase
+        .from('orders_v2')
+        .update({ status: 'completed' })
+        .eq('id', order.id);
+
+      // Grant Telegram access
+      if (product.telegram_club_id) {
+        await supabase.functions.invoke('telegram-grant-access', {
+          body: {
+            user_id: user.id,
+            duration_days: effectiveTrialDays,
+          },
+        });
+      }
+
+      // Audit log
+      await supabase.from('audit_logs').insert({
+        actor_user_id: user.id,
+        action: 'subscription.trial_activated',
+        meta: {
+          order_id: order.id,
+          subscription_id: subscription.id,
+          product_id: productId,
+          tariff_code: tariffCode,
+          trial_days: effectiveTrialDays,
+          payment_method: `${paymentMethod.brand} **** ${paymentMethod.last4}`,
+        },
+      });
+
+      console.log(`Trial activated: subscription ${subscription.id}`);
+
+      return new Response(JSON.stringify({
+        success: true,
+        orderId: order.id,
+        subscriptionId: subscription.id,
+        isTrial: true,
+        trialEndsAt: trialEndAt.toISOString(),
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // For paid transactions, charge the card
+    console.log(`Charging ${amount} ${product.currency} using token ${paymentMethod.provider_token.substring(0, 8)}...`);
+
+    // Create payment record
+    const { data: payment, error: paymentError } = await supabase
+      .from('payments_v2')
+      .insert({
+        order_id: order.id,
+        user_id: user.id,
+        amount,
+        currency: product.currency,
+        status: 'processing',
+        provider: 'bepaid',
+        payment_token: paymentMethod.provider_token,
+        is_recurring: false,
+        meta: { payment_method_id: paymentMethod.id },
+      })
+      .select()
+      .single();
+
+    if (paymentError) {
+      console.error('Payment record error:', paymentError);
+      return new Response(JSON.stringify({ success: false, error: 'Failed to create payment' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Call bePaid to charge the token
+    const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+    const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${bepaidAuth}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        request: {
+          amount: Math.round(amount * 100), // Convert to cents
+          currency: product.currency,
+          description: isTrial 
+            ? `Trial: ${product.name} - ${tariff.name}` 
+            : `${product.name} - ${tariff.name}`,
+          tracking_id: payment.id,
+          test: testMode,
+          credit_card: {
+            token: paymentMethod.provider_token,
+          },
+        },
+      }),
+    });
+
+    const chargeResult = await chargeResponse.json();
+    console.log('bePaid charge response:', JSON.stringify(chargeResult));
+
+    const txStatus = chargeResult.transaction?.status;
+
+    if (txStatus === 'successful') {
+      // Update payment
+      await supabase
+        .from('payments_v2')
+        .update({
+          status: 'completed',
+          paid_at: new Date().toISOString(),
+          provider_payment_id: chargeResult.transaction.uid,
+          provider_response: chargeResult,
+          card_last4: chargeResult.transaction.credit_card?.last_4 || paymentMethod.last4,
+          card_brand: chargeResult.transaction.credit_card?.brand || paymentMethod.brand,
+        })
+        .eq('id', payment.id);
+
+      // Update order
+      await supabase
+        .from('orders_v2')
+        .update({ 
+          status: 'completed',
+          paid_amount: amount,
+        })
+        .eq('id', order.id);
+
+      // Create subscription
+      const accessDays = isTrial ? effectiveTrialDays : tariff.access_days;
+      const accessEndAt = new Date(Date.now() + accessDays * 24 * 60 * 60 * 1000);
+      
+      let nextChargeAt: Date | null = null;
+      if (isTrial && autoChargeAfterTrial) {
+        nextChargeAt = new Date(accessEndAt.getTime() - 24 * 60 * 60 * 1000);
+      } else if (!isTrial) {
+        nextChargeAt = new Date(accessEndAt.getTime() - 3 * 24 * 60 * 60 * 1000);
+      }
+
+      const { data: subscription, error: subError } = await supabase
+        .from('subscriptions_v2')
+        .insert({
+          user_id: user.id,
+          product_id: productId,
+          tariff_id: tariff.id,
+          order_id: order.id,
+          status: isTrial ? 'trial' : 'active',
+          is_trial: isTrial || false,
+          access_start_at: new Date().toISOString(),
+          access_end_at: accessEndAt.toISOString(),
+          trial_end_at: isTrial ? accessEndAt.toISOString() : null,
+          payment_method_id: paymentMethod.id,
+          payment_token: paymentMethod.provider_token,
+          next_charge_at: nextChargeAt?.toISOString() || null,
+        })
+        .select()
+        .single();
+
+      if (subError) {
+        console.error('Subscription creation error:', subError);
+      }
+
+      // Grant Telegram access
+      if (product.telegram_club_id) {
+        await supabase.functions.invoke('telegram-grant-access', {
+          body: {
+            user_id: user.id,
+            duration_days: accessDays,
+          },
+        });
+      }
+
+      // Audit log
+      await supabase.from('audit_logs').insert({
+        actor_user_id: user.id,
+        action: isTrial ? 'subscription.trial_paid' : 'subscription.purchased',
+        meta: {
+          order_id: order.id,
+          payment_id: payment.id,
+          subscription_id: subscription?.id,
+          amount,
+          currency: product.currency,
+          tariff_code: tariffCode,
+        },
+      });
+
+      console.log(`Payment successful: ${payment.id}, subscription: ${subscription?.id}`);
+
+      return new Response(JSON.stringify({
+        success: true,
+        orderId: order.id,
+        paymentId: payment.id,
+        subscriptionId: subscription?.id,
+        isTrial: isTrial || false,
+        accessEndsAt: accessEndAt.toISOString(),
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+
+    } else {
+      // Payment failed
+      const errorMessage = chargeResult.transaction?.message 
+        || chargeResult.errors?.base?.[0] 
+        || 'Payment failed';
+
+      await supabase
+        .from('payments_v2')
+        .update({
+          status: 'failed',
+          error_message: errorMessage,
+          provider_response: chargeResult,
+        })
+        .eq('id', payment.id);
+
+      await supabase
+        .from('orders_v2')
+        .update({ status: 'failed' })
+        .eq('id', order.id);
+
+      console.error('Payment failed:', errorMessage);
+
+      return new Response(JSON.stringify({
+        success: false,
+        error: errorMessage,
+        orderId: order.id,
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+  } catch (error) {
+    console.error('Direct charge error:', error);
+    return new Response(JSON.stringify({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+});
