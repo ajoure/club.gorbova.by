@@ -205,11 +205,12 @@ Deno.serve(async (req) => {
 
     console.log('Created order:', order.id, 'for user:', userId);
 
-    // Create bePaid checkout token
+    // Create bePaid checkout token for recurring/subscription payment
+    // Using 'tokenization' transaction type to save card for recurring charges
     const bepaidPayload = {
       checkout: {
         test: testMode,
-        transaction_type: 'payment',
+        transaction_type: 'tokenization', // Changed from 'payment' to enable recurring
         attempts: 3,
         settings: {
           return_url: `${origin}${successUrl}`,
@@ -219,6 +220,9 @@ Deno.serve(async (req) => {
           language: 'ru',
           customer_fields: {
             read_only: ['email'],
+          },
+          save_card_toggle: {
+            display: false, // Don't show toggle, always save for subscriptions
           },
         },
         order: {
