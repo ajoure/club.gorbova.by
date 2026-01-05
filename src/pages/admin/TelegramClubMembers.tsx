@@ -940,38 +940,19 @@ export default function TelegramClubMembers() {
                               </DropdownMenuItem>
                             )}
                             {member.profiles && member.access_status === 'ok' && (
-                              <>
-                                <DropdownMenuItem onClick={() => setSelectedMember(member)}>
-                                  <Clock className="h-4 w-4 mr-2" />
-                                  Продлить доступ
-                                </DropdownMenuItem>
-                                <DropdownMenuItem 
-                                  onClick={() => {
-                                    revokeAccess.mutate({
-                                      userId: member.profiles?.user_id,
-                                      telegramUserId: member.telegram_user_id,
-                                      clubId: clubId!,
-                                      reason: 'Ручной отзыв',
-                                      isManual: true,
-                                    }, {
-                                      onSuccess: () => refetch()
-                                    });
-                                  }}
-                                  className="text-destructive"
-                                >
-                                  <MinusCircle className="h-4 w-4 mr-2" />
-                                  Отозвать доступ
-                                </DropdownMenuItem>
-                              </>
+                              <DropdownMenuItem onClick={() => setSelectedMember(member)}>
+                                <Clock className="h-4 w-4 mr-2" />
+                                Продлить доступ
+                              </DropdownMenuItem>
                             )}
-                            {/* Kick by ID regardless of status */}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem 
                               onClick={() => {
                                 revokeAccess.mutate({
+                                  userId: member.profiles?.user_id,
                                   telegramUserId: member.telegram_user_id,
                                   clubId: clubId!,
-                                  reason: 'Ручное удаление',
+                                  reason: 'Ручной отзыв',
                                   isManual: true,
                                 }, {
                                   onSuccess: () => refetch()
@@ -980,7 +961,7 @@ export default function TelegramClubMembers() {
                               className="text-destructive"
                             >
                               <Ban className="h-4 w-4 mr-2" />
-                              Удалить из чата/канала
+                              Отозвать доступ и удалить
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
