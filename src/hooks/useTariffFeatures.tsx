@@ -2,6 +2,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
+// Note: tariff_features table is not yet in the generated types,
+// so we use explicit type casting
+
 export interface TariffFeature {
   id: string;
   tariff_id: string;
@@ -28,7 +31,7 @@ export function useTariffFeatures(tariffId?: string) {
     queryKey: ["tariff-features", tariffId],
     queryFn: async () => {
       let query = supabase
-        .from("tariff_features")
+        .from("tariff_features" as any)
         .select("*")
         .order("sort_order", { ascending: true });
       
@@ -38,7 +41,7 @@ export function useTariffFeatures(tariffId?: string) {
       
       const { data, error } = await query;
       if (error) throw error;
-      return data as TariffFeature[];
+      return (data as unknown) as TariffFeature[];
     },
     enabled: !!tariffId,
   });
@@ -62,13 +65,13 @@ export function useProductTariffFeatures(productId?: string) {
       const tariffIds = tariffs.map(t => t.id);
       
       const { data, error } = await supabase
-        .from("tariff_features")
+        .from("tariff_features" as any)
         .select("*")
         .in("tariff_id", tariffIds)
         .order("sort_order", { ascending: true });
       
       if (error) throw error;
-      return data as TariffFeature[];
+      return (data as unknown) as TariffFeature[];
     },
     enabled: !!productId,
   });
@@ -80,15 +83,15 @@ export function useCreateTariffFeature() {
   return useMutation({
     mutationFn: async (feature: TariffFeatureInsert) => {
       const { data, error } = await supabase
-        .from("tariff_features")
-        .insert(feature)
+        .from("tariff_features" as any)
+        .insert(feature as any)
         .select()
         .single();
       
       if (error) throw error;
-      return data as TariffFeature;
+      return (data as unknown) as TariffFeature;
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tariff-features"] });
       queryClient.invalidateQueries({ queryKey: ["product-tariff-features"] });
       toast.success("Пункт добавлен");
@@ -105,14 +108,14 @@ export function useUpdateTariffFeature() {
   return useMutation({
     mutationFn: async ({ id, ...feature }: TariffFeatureUpdate) => {
       const { data, error } = await supabase
-        .from("tariff_features")
-        .update(feature)
+        .from("tariff_features" as any)
+        .update(feature as any)
         .eq("id", id)
         .select()
         .single();
       
       if (error) throw error;
-      return data as TariffFeature;
+      return (data as unknown) as TariffFeature;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tariff-features"] });
@@ -131,7 +134,7 @@ export function useDeleteTariffFeature() {
   return useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase
-        .from("tariff_features")
+        .from("tariff_features" as any)
         .delete()
         .eq("id", id);
       
@@ -156,8 +159,8 @@ export function useBulkUpdateTariffFeatures() {
       const results = await Promise.all(
         features.map(async ({ id, ...feature }) => {
           const { data, error } = await supabase
-            .from("tariff_features")
-            .update(feature)
+            .from("tariff_features" as any)
+            .update(feature as any)
             .eq("id", id)
             .select()
             .single();
