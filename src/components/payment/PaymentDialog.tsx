@@ -73,10 +73,12 @@ export function PaymentDialog({
   const [existingUserId, setExistingUserId] = useState<string | null>(null);
   const [emailCheckResult, setEmailCheckResult] = useState<EmailCheckResult | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [savedCard, setSavedCard] = useState<{ id: string; brand: string; last4: string } | null>(null);
 
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
+      setSavedCard(null);
       if (user && session) {
         // User is authenticated - use their data
         setFormData({
@@ -88,6 +90,20 @@ export function PaymentDialog({
         });
         setExistingUserId(user.id);
         setStep("ready");
+        
+        // Check for saved payment method
+        supabase
+          .from("payment_methods")
+          .select("id, brand, last4")
+          .eq("user_id", user.id)
+          .eq("status", "active")
+          .eq("is_default", true)
+          .maybeSingle()
+          .then(({ data }) => {
+            if (data) {
+              setSavedCard({ id: data.id, brand: data.brand || "", last4: data.last4 || "" });
+            }
+          });
       } else {
         // User is not authenticated - start with email step
         setFormData({ email: "", firstName: "", lastName: "", phone: "", password: "" });
@@ -257,6 +273,44 @@ export function PaymentDialog({
     setStep("processing");
 
     try {
+      // If user has a saved card and tariffCode is provided, use direct charge
+      if (savedCard && tariffCode && user) {
+        const { data, error } = await supabase.functions.invoke("direct-charge", {
+          body: {
+            productId,
+            tariffCode,
+            isTrial,
+            trialDays,
+            paymentMethodId: savedCard.id,
+          },
+        });
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        if (!data.success) {
+          // If no payment method or requires tokenization, fall back to redirect
+          if (data.requiresTokenization) {
+            console.log("Falling back to redirect flow");
+          } else {
+            throw new Error(data.error || "Ошибка при оплате");
+          }
+        } else {
+          // Payment successful
+          toast.success(
+            isTrial
+              ? `Триал активирован! Доступ до ${new Date(data.accessEndsAt || data.trialEndsAt).toLocaleDateString("ru-RU")}`
+              : "Оплата прошла успешно!"
+          );
+          onOpenChange(false);
+          // Redirect to success page
+          window.location.href = `/dashboard?payment=success&order=${data.orderId}`;
+          return;
+        }
+      }
+
+      // Fallback: redirect to bePaid checkout
       const { data, error } = await supabase.functions.invoke("bepaid-create-token", {
         body: {
           productId,
@@ -628,9 +682,21 @@ export function PaymentDialog({
               )}
             </div>
 
-            <div className="rounded-lg bg-primary/10 p-3 text-sm">
-              <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.</p>
-            </div>
+            {savedCard ? (
+              <div className="rounded-lg bg-primary/10 border border-primary/20 p-3 space-y-1">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <CreditCard className="h-4 w-4 text-primary" />
+                  <span>Оплата сохранённой картой</span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {savedCard.brand?.toUpperCase()} •••• {savedCard.last4}
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-lg bg-primary/10 p-3 text-sm">
+                <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.</p>
+              </div>
+            )}
 
             <div className="flex gap-2">
               <Button
@@ -650,7 +716,10 @@ export function PaymentDialog({
               </Button>
               <Button onClick={handlePayment} disabled={isLoading || isTestPaymentLoading} className="flex-1">
                 <CreditCard className="mr-2 h-4 w-4" />
-                Оплатить {price}
+                {savedCard 
+                  ? (isTrial ? "Активировать триал" : `Оплатить ${price}`)
+                  : `Оплатить ${price}`
+                }
               </Button>
             </div>
 
