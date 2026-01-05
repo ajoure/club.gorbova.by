@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import { DashboardBreadcrumbs } from "./DashboardBreadcrumbs";
-import { Loader2, Menu } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -26,9 +26,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         <AppSidebar />
         <SidebarInset className="flex-1 flex flex-col min-w-0">
           <header className="sticky top-0 z-40 h-14 md:h-16 border-b border-border/50 bg-background/80 backdrop-blur-xl flex items-center px-3 md:px-4">
-            <SidebarTrigger className="mr-3 md:mr-4">
-              <Menu className="h-5 w-5" />
-            </SidebarTrigger>
+            <SidebarTrigger className="mr-3 md:mr-4 h-9 w-9" />
             <DashboardBreadcrumbs />
             <div className="flex-1" />
           </header>
