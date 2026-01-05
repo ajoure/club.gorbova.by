@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Loader2, CreditCard, CheckCircle, ShieldCheck } from "lucide-react";
+import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound } from "lucide-react";
 import { z } from "zod";
 
 interface PaymentDialogProps {
@@ -22,20 +22,28 @@ interface PaymentDialogProps {
   productId: string;
   productName: string;
   price: string;
-  tariffCode?: string; // For GetCourse integration: 'chat', 'full', 'business'
+  tariffCode?: string;
 }
 
 const emailSchema = z.string().email("Введите корректный email");
 const phoneSchema = z.string().min(10, "Введите корректный номер телефона");
+const passwordSchema = z.string().min(6, "Пароль должен быть не менее 6 символов");
 
 interface UserFormData {
   email: string;
   firstName: string;
   lastName: string;
   phone: string;
+  password: string;
 }
 
-type Step = "email" | "additional_info" | "processing" | "ready";
+type Step = "email" | "login" | "additional_info" | "processing" | "ready";
+
+interface EmailCheckResult {
+  exists: boolean;
+  hasPassword: boolean;
+  maskedName?: string;
+}
 
 export function PaymentDialog({
   open,
@@ -54,11 +62,13 @@ export function PaymentDialog({
     firstName: "",
     lastName: "",
     phone: "",
+    password: "",
   });
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Partial<UserFormData>>({});
   const [existingUserId, setExistingUserId] = useState<string | null>(null);
-  const [needsAdditionalInfo, setNeedsAdditionalInfo] = useState(false);
+  const [emailCheckResult, setEmailCheckResult] = useState<EmailCheckResult | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -70,23 +80,26 @@ export function PaymentDialog({
           firstName: user.user_metadata?.full_name?.split(" ")[0] || "",
           lastName: user.user_metadata?.full_name?.split(" ").slice(1).join(" ") || "",
           phone: user.user_metadata?.phone || "",
+          password: "",
         });
         setExistingUserId(user.id);
         setStep("ready");
       } else {
         // User is not authenticated - start with email step
-        setFormData({ email: "", firstName: "", lastName: "", phone: "" });
+        setFormData({ email: "", firstName: "", lastName: "", phone: "", password: "" });
         setExistingUserId(null);
         setStep("email");
       }
       setErrors({});
-      setNeedsAdditionalInfo(false);
+      setEmailCheckResult(null);
+      setLoginError(null);
     }
   }, [open, user, session]);
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
+    setLoginError(null);
 
     const validation = emailSchema.safeParse(formData.email);
     if (!validation.success) {
@@ -97,51 +110,116 @@ export function PaymentDialog({
     setIsLoading(true);
 
     try {
-      // Check if user exists by email
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("user_id, full_name, phone")
-        .eq("email", formData.email.toLowerCase())
-        .maybeSingle();
+      // Call edge function to check email
+      const { data, error } = await supabase.functions.invoke("auth-check-email", {
+        body: { email: formData.email.toLowerCase().trim() },
+      });
 
-      if (profile) {
-        // User exists
-        setExistingUserId(profile.user_id);
-        
-        // Check if we need additional info (phone or name missing)
-        const nameParts = profile.full_name?.split(" ") || [];
-        const hasName = nameParts.length >= 2;
-        const hasPhone = !!profile.phone;
+      if (error) {
+        console.error("Error checking email:", error);
+        // Fallback to old behavior on error
+        setStep("additional_info");
+        return;
+      }
 
-        if (!hasName || !hasPhone) {
-          setFormData(prev => ({
-            ...prev,
-            firstName: nameParts[0] || "",
-            lastName: nameParts.slice(1).join(" ") || "",
-            phone: profile.phone || "",
-          }));
-          setNeedsAdditionalInfo(true);
-          setStep("additional_info");
-        } else {
-          // All info present, proceed to payment
-          setFormData(prev => ({
-            ...prev,
-            firstName: nameParts[0] || "",
-            lastName: nameParts.slice(1).join(" ") || "",
-            phone: profile.phone || "",
-          }));
-          setStep("ready");
-        }
+      setEmailCheckResult(data);
+
+      if (data.exists) {
+        // User exists - show login step
+        setStep("login");
       } else {
-        // New user - need to collect all info
-        setExistingUserId(null);
-        setNeedsAdditionalInfo(false);
+        // New user - collect info
         setStep("additional_info");
       }
     } catch (error) {
-      console.error("Error checking user:", error);
+      console.error("Error checking email:", error);
       // On error, proceed to collect all info
       setStep("additional_info");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    setErrors({});
+
+    const passwordValidation = passwordSchema.safeParse(formData.password);
+    if (!passwordValidation.success) {
+      setErrors({ password: passwordValidation.error.errors[0].message });
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: formData.email.toLowerCase().trim(),
+        password: formData.password,
+      });
+
+      if (error) {
+        if (error.message.includes("Invalid login credentials")) {
+          setLoginError("Неверный пароль");
+        } else {
+          setLoginError(error.message);
+        }
+        return;
+      }
+
+      if (data.user) {
+        // Successfully logged in
+        setExistingUserId(data.user.id);
+        
+        // Get profile data
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("full_name, phone")
+          .eq("user_id", data.user.id)
+          .maybeSingle();
+
+        if (profile) {
+          const nameParts = profile.full_name?.split(" ") || [];
+          setFormData(prev => ({
+            ...prev,
+            firstName: nameParts[0] || "",
+            lastName: nameParts.slice(1).join(" ") || "",
+            phone: profile.phone || "",
+          }));
+        }
+
+        toast.success("Вход выполнен успешно");
+        setStep("ready");
+      }
+    } catch (error) {
+      console.error("Login error:", error);
+      setLoginError("Произошла ошибка при входе");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    setIsLoading(true);
+    setLoginError(null);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        formData.email.toLowerCase().trim(),
+        {
+          redirectTo: `${window.location.origin}/auth?mode=reset`,
+        }
+      );
+
+      if (error) {
+        setLoginError(error.message);
+      } else {
+        toast.success("Письмо для восстановления пароля отправлено на ваш email");
+      }
+    } catch (error) {
+      console.error("Password reset error:", error);
+      setLoginError("Ошибка отправки письма");
     } finally {
       setIsLoading(false);
     }
@@ -184,7 +262,7 @@ export function PaymentDialog({
           customerLastName: formData.lastName,
           existingUserId,
           description: productName,
-          tariffCode, // For GetCourse integration
+          tariffCode,
         },
       });
 
@@ -212,7 +290,7 @@ export function PaymentDialog({
     }
   };
 
-  // Admin test payment - simulates successful bePaid webhook
+  // Admin test payment
   const handleTestPayment = async () => {
     if (!isSuperAdmin() && !isAdmin()) {
       toast.error("Только администраторы могут использовать эту функцию");
@@ -221,7 +299,6 @@ export function PaymentDialog({
 
     setIsTestPaymentLoading(true);
     try {
-      // First create an order in draft status
       const { data: createData, error: createError } = await supabase.functions.invoke("bepaid-create-token", {
         body: {
           productId,
@@ -232,7 +309,7 @@ export function PaymentDialog({
           existingUserId,
           description: productName,
           tariffCode,
-          skipRedirect: true, // Just create order, don't redirect
+          skipRedirect: true,
         },
       });
 
@@ -245,7 +322,6 @@ export function PaymentDialog({
         throw new Error("Не удалось получить ID заказа");
       }
 
-      // Now simulate payment completion
       const { data, error } = await supabase.functions.invoke("test-payment-complete", {
         body: { orderId },
       });
@@ -258,7 +334,6 @@ export function PaymentDialog({
         throw new Error(data.error || "Ошибка симуляции оплаты");
       }
 
-      // Build detailed success message
       const results = data.results || {};
       const successDetails: string[] = [];
       
@@ -276,7 +351,6 @@ export function PaymentDialog({
         successDetails.push("⚠ GetCourse: ошибка синхронизации");
       }
 
-      // Show detailed toast
       toast.success(
         <div className="space-y-2">
           <div className="font-semibold">Тестовая оплата выполнена!</div>
@@ -290,8 +364,6 @@ export function PaymentDialog({
       );
       
       onOpenChange(false);
-      
-      // Reload page to show updated status
       setTimeout(() => window.location.reload(), 2000);
     } catch (error) {
       console.error("Test payment error:", error);
@@ -305,6 +377,14 @@ export function PaymentDialog({
     } finally {
       setIsTestPaymentLoading(false);
     }
+  };
+
+  const handleChangeEmail = () => {
+    setFormData(prev => ({ ...prev, password: "" }));
+    setEmailCheckResult(null);
+    setLoginError(null);
+    setErrors({});
+    setStep("email");
   };
 
   const renderStep = () => {
@@ -351,6 +431,85 @@ export function PaymentDialog({
           </form>
         );
 
+      case "login":
+        return (
+          <form onSubmit={handleLoginSubmit} className="space-y-4">
+            {/* Show account info */}
+            <div className="rounded-lg bg-primary/5 border border-primary/20 p-4 space-y-2">
+              <div className="flex items-center gap-2 text-primary">
+                <User className="h-5 w-5" />
+                <span className="font-medium">Это ваш аккаунт</span>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {emailCheckResult?.maskedName 
+                  ? `${emailCheckResult.maskedName}, введите пароль, чтобы продолжить оплату`
+                  : "Введите пароль, чтобы продолжить оплату"
+                }
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-muted/50 p-3 text-sm">
+              <p className="flex items-center gap-2">
+                <CheckCircle className="h-4 w-4 text-primary" />
+                Email: {formData.email}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="password">Пароль</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="••••••••"
+                value={formData.password}
+                onChange={(e) => {
+                  setFormData(prev => ({ ...prev, password: e.target.value }));
+                  setErrors(prev => ({ ...prev, password: undefined }));
+                  setLoginError(null);
+                }}
+                required
+                disabled={isLoading}
+                autoFocus
+              />
+              {errors.password && (
+                <p className="text-sm text-destructive">{errors.password}</p>
+              )}
+              {loginError && (
+                <p className="text-sm text-destructive">{loginError}</p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleForgotPassword}
+              className="text-sm text-primary hover:underline"
+              disabled={isLoading}
+            >
+              Забыли пароль?
+            </button>
+
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleChangeEmail}
+                disabled={isLoading}
+                className="flex-1"
+              >
+                Изменить email
+              </Button>
+              <Button type="submit" disabled={isLoading} className="flex-1">
+                {isLoading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <KeyRound className="mr-2 h-4 w-4" />
+                )}
+                Войти и продолжить
+              </Button>
+            </div>
+          </form>
+        );
+
       case "additional_info":
         return (
           <form onSubmit={handleAdditionalInfoSubmit} className="space-y-4">
@@ -360,6 +519,10 @@ export function PaymentDialog({
                 Email: {formData.email}
               </p>
             </div>
+
+            <p className="text-sm text-muted-foreground">
+              Заполним данные — и создадим личный кабинет после оплаты
+            </p>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -414,17 +577,15 @@ export function PaymentDialog({
               )}
             </div>
 
-            {!existingUserId && (
-              <div className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
-                <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на email.</p>
-              </div>
-            )}
+            <div className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
+              <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на email.</p>
+            </div>
 
             <div className="flex gap-2">
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setStep("email")}
+                onClick={handleChangeEmail}
                 disabled={isLoading}
                 className="flex-1"
               >
@@ -471,7 +632,7 @@ export function PaymentDialog({
                   if (user && session) {
                     onOpenChange(false);
                   } else {
-                    setStep("email");
+                    handleChangeEmail();
                   }
                 }}
                 disabled={isLoading || isTestPaymentLoading}
@@ -524,8 +685,10 @@ export function PaymentDialog({
     switch (step) {
       case "email":
         return "Введите email";
+      case "login":
+        return "Вход в аккаунт";
       case "additional_info":
-        return existingUserId ? "Дополните данные" : "Данные для покупки";
+        return "Данные для покупки";
       case "ready":
       case "processing":
         return "Подтверждение оплаты";
