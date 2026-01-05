@@ -65,6 +65,7 @@ export function LandingPricing() {
     productId: string;
     name: string;
     price: string;
+    tariffCode: string;
   } | null>(null);
 
   // Fetch products to get their IDs
@@ -90,6 +91,13 @@ export function LandingPricing() {
     console.log(`[Analytics] click_pricing_plan_${planName.toLowerCase()}`);
     
     const product = getProductForPlan(planName);
+    // Map plan name to tariff code for GetCourse
+    const tariffCodeMap: Record<string, string> = {
+      'CHAT': 'chat',
+      'FULL': 'full',
+      'BUSINESS': 'business',
+    };
+    const tariffCode = tariffCodeMap[planName.toUpperCase()] || planName.toLowerCase();
     
     if (product) {
       // Open payment dialog
@@ -97,6 +105,7 @@ export function LandingPricing() {
         productId: product.id,
         name: `${planName} — Месячная подписка`,
         price: `${planPrice} BYN`,
+        tariffCode,
       });
     } else {
       // No product found, redirect to signup
@@ -196,6 +205,7 @@ export function LandingPricing() {
           productId={selectedPlan.productId}
           productName={selectedPlan.name}
           price={selectedPlan.price}
+          tariffCode={selectedPlan.tariffCode}
         />
       )}
     </section>
