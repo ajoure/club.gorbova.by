@@ -101,8 +101,53 @@ Deno.serve(async (req) => {
       console.error("[public-product] Error fetching tariffs:", tariffsError);
     }
 
-    // Fetch active offers for each tariff
+    // Fetch tariff features
     const tariffIds = tariffs?.map((t) => t.id) || [];
+    let tariffFeatures: any[] = [];
+
+    if (tariffIds.length > 0) {
+      const { data: featuresData, error: featuresError } = await supabase
+        .from("tariff_features")
+        .select(`
+          id,
+          tariff_id,
+          text,
+          icon,
+          is_bonus,
+          is_highlighted,
+          sort_order,
+          visibility_mode,
+          active_from,
+          active_to,
+          label,
+          link_url
+        `)
+        .in("tariff_id", tariffIds)
+        .order("sort_order", { ascending: true });
+
+      if (featuresError) {
+        console.error("[public-product] Error fetching features:", featuresError);
+      } else {
+        // Filter features by visibility
+        tariffFeatures = (featuresData || []).filter((f) => {
+          if (f.visibility_mode === "always") return true;
+          const now = new Date();
+          if (f.visibility_mode === "until_date" && f.active_to) {
+            return now <= new Date(f.active_to);
+          }
+          if (f.visibility_mode === "date_range") {
+            const from = f.active_from ? new Date(f.active_from) : null;
+            const to = f.active_to ? new Date(f.active_to) : null;
+            if (from && now < from) return false;
+            if (to && now > to) return false;
+            return true;
+          }
+          return true;
+        });
+      }
+    }
+
+    // Fetch active offers for each tariff
     let offers: any[] = [];
 
     if (tariffIds.length > 0) {
@@ -134,9 +179,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Map offers to tariffs
+    // Map features and offers to tariffs
     const tariffsWithOffers = tariffs?.map((tariff) => ({
       ...tariff,
+      features: tariffFeatures.filter((f) => f.tariff_id === tariff.id),
       offers: offers.filter((o) => o.tariff_id === tariff.id),
     })) || [];
 

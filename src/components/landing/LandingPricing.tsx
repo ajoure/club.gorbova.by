@@ -120,7 +120,7 @@ export function LandingPricing() {
       // Get features for all tariffs
       const tariffIds = tariffs.map((t) => t.id);
       const { data: features, error: featuresError } = await supabase
-        .from("tariff_features")
+        .from("tariff_features" as any)
         .select("*")
         .in("tariff_id", tariffIds)
         .order("sort_order", { ascending: true });
@@ -156,9 +156,10 @@ export function LandingPricing() {
       }
 
       // Merge features into tariffs
+      const featuresArray = ((features || []) as unknown) as TariffFeature[];
       const tariffsWithFeatures = tariffs.map((tariff) => ({
         ...tariff,
-        features: (features || []).filter((f) => f.tariff_id === tariff.id) as TariffFeature[],
+        features: featuresArray.filter((f) => f.tariff_id === tariff.id),
         current_price: pricesMap[tariff.id] || tariff.original_price,
       }));
 
