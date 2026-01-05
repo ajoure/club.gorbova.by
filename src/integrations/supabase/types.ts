@@ -2458,6 +2458,7 @@ export type Database = {
           channel_id: number | null
           channel_invite_link: string | null
           channel_status: string | null
+          chat_analytics_enabled: boolean | null
           chat_id: number | null
           chat_invite_link: string | null
           chat_status: string | null
@@ -2484,6 +2485,7 @@ export type Database = {
           channel_id?: number | null
           channel_invite_link?: string | null
           channel_status?: string | null
+          chat_analytics_enabled?: boolean | null
           chat_id?: number | null
           chat_invite_link?: string | null
           chat_status?: string | null
@@ -2510,6 +2512,7 @@ export type Database = {
           channel_id?: number | null
           channel_invite_link?: string | null
           channel_status?: string | null
+          chat_analytics_enabled?: boolean | null
           chat_id?: number | null
           chat_invite_link?: string | null
           chat_status?: string | null
@@ -2760,6 +2763,177 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      tg_chat_messages: {
+        Row: {
+          chat_id: number
+          club_id: string
+          created_at: string
+          from_display_name: string | null
+          from_tg_user_id: number
+          has_media: boolean | null
+          id: string
+          message_id: number
+          message_ts: string
+          raw_payload: Json | null
+          reply_to_message_id: number | null
+          text: string | null
+        }
+        Insert: {
+          chat_id: number
+          club_id: string
+          created_at?: string
+          from_display_name?: string | null
+          from_tg_user_id: number
+          has_media?: boolean | null
+          id?: string
+          message_id: number
+          message_ts: string
+          raw_payload?: Json | null
+          reply_to_message_id?: number | null
+          text?: string | null
+        }
+        Update: {
+          chat_id?: number
+          club_id?: string
+          created_at?: string
+          from_display_name?: string | null
+          from_tg_user_id?: number
+          has_media?: boolean | null
+          id?: string
+          message_id?: number
+          message_ts?: string
+          raw_payload?: Json | null
+          reply_to_message_id?: number | null
+          text?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tg_chat_messages_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tg_daily_summaries: {
+        Row: {
+          action_items: Json | null
+          chat_id: number
+          club_id: string
+          created_at: string
+          date: string
+          generated_at: string
+          id: string
+          key_topics: Json | null
+          messages_count: number | null
+          model_meta: Json | null
+          summary_text: string | null
+          support_issues: Json | null
+          unique_users_count: number | null
+        }
+        Insert: {
+          action_items?: Json | null
+          chat_id: number
+          club_id: string
+          created_at?: string
+          date: string
+          generated_at?: string
+          id?: string
+          key_topics?: Json | null
+          messages_count?: number | null
+          model_meta?: Json | null
+          summary_text?: string | null
+          support_issues?: Json | null
+          unique_users_count?: number | null
+        }
+        Update: {
+          action_items?: Json | null
+          chat_id?: number
+          club_id?: string
+          created_at?: string
+          date?: string
+          generated_at?: string
+          id?: string
+          key_topics?: Json | null
+          messages_count?: number | null
+          model_meta?: Json | null
+          summary_text?: string | null
+          support_issues?: Json | null
+          unique_users_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tg_daily_summaries_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tg_support_signals: {
+        Row: {
+          category: string | null
+          club_id: string
+          created_at: string
+          date: string
+          excerpt: string | null
+          id: string
+          message_id: number | null
+          notes: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          severity: string | null
+          status: string | null
+          tg_user_id: number | null
+          tg_username: string | null
+          updated_at: string
+        }
+        Insert: {
+          category?: string | null
+          club_id: string
+          created_at?: string
+          date: string
+          excerpt?: string | null
+          id?: string
+          message_id?: number | null
+          notes?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity?: string | null
+          status?: string | null
+          tg_user_id?: number | null
+          tg_username?: string | null
+          updated_at?: string
+        }
+        Update: {
+          category?: string | null
+          club_id?: string
+          created_at?: string
+          date?: string
+          excerpt?: string | null
+          id?: string
+          message_id?: number | null
+          notes?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity?: string | null
+          status?: string | null
+          tg_user_id?: number | null
+          tg_username?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tg_support_signals_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_roles: {
         Row: {

@@ -84,6 +84,7 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
     autokick_no_access: false,
     auto_resync_enabled: true,
     auto_resync_interval_minutes: 60,
+    chat_analytics_enabled: false,
   });
 
   useEffect(() => {
@@ -102,6 +103,7 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
         autokick_no_access: (club as any).autokick_no_access || false,
         auto_resync_enabled: (club as any).auto_resync_enabled ?? true,
         auto_resync_interval_minutes: (club as any).auto_resync_interval_minutes || 60,
+        chat_analytics_enabled: (club as any).chat_analytics_enabled || false,
       });
       setActiveTab('settings');
       setMembersView('all');
@@ -127,6 +129,7 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
       autokick_no_access: formData.autokick_no_access,
       auto_resync_enabled: formData.auto_resync_enabled,
       auto_resync_interval_minutes: formData.auto_resync_interval_minutes,
+      chat_analytics_enabled: formData.chat_analytics_enabled,
     } as any);
     onClose();
   };
@@ -476,6 +479,32 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
                     </SelectContent>
                   </Select>
                 </div>
+              )}
+
+              {/* Chat Analytics */}
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="space-y-1">
+                  <Label htmlFor="chat_analytics_enabled" className="font-medium">
+                    Аналитика чата
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Сбор сообщений из чата для ежедневных итогов и поддержки
+                  </p>
+                </div>
+                <Switch
+                  id="chat_analytics_enabled"
+                  checked={formData.chat_analytics_enabled}
+                  onCheckedChange={(checked) => setFormData({ ...formData, chat_analytics_enabled: checked })}
+                />
+              </div>
+
+              {formData.chat_analytics_enabled && (
+                <Alert>
+                  <Info className="h-4 w-4" />
+                  <AlertDescription>
+                    Для работы аналитики отключите "Group Privacy" в настройках бота (@BotFather → Bot Settings → Group Privacy → Turn off).
+                  </AlertDescription>
+                </Alert>
               )}
 
               <div className="flex flex-col sm:flex-row gap-2 pt-4 border-t">
