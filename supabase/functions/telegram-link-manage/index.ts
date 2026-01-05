@@ -18,11 +18,18 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    
+    // Admin client for DB operations
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    
+    // Auth client for token validation
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
 
     // Get user from auth header
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
+      console.log('[telegram-link-manage] No auth header');
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -30,9 +37,12 @@ Deno.serve(async (req) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    console.log('[telegram-link-manage] Validating token...');
+    
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser(token);
     
     if (authError || !user) {
+      console.log('[telegram-link-manage] Auth error:', authError?.message || 'No user');
       return new Response(
         JSON.stringify({ error: 'Invalid token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
