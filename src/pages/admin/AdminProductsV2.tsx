@@ -112,10 +112,16 @@ export default function AdminProductsV2() {
 
     if (editingProduct) {
       await updateMutation.mutateAsync({ id: editingProduct, ...payload });
+      handleCloseDialog();
     } else {
-      await createMutation.mutateAsync(payload);
+      const newProduct = await createMutation.mutateAsync(payload);
+      handleCloseDialog();
+      // Navigate to product detail page to add tariffs
+      if (newProduct?.id) {
+        navigate(`/admin/products-v2/${newProduct.id}`);
+        toast.info("Теперь добавьте тарифы для продукта");
+      }
     }
-    handleCloseDialog();
   };
 
   const handleDelete = async () => {
@@ -335,7 +341,7 @@ export default function AdminProductsV2() {
             <DialogDescription>
               {editingProduct
                 ? "Измените данные продукта"
-                : "Заполните данные нового продукта"}
+                : "Заполните данные продукта. После создания вы перейдёте к настройке тарифов и цен."}
             </DialogDescription>
           </DialogHeader>
 
