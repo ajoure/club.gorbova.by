@@ -191,7 +191,7 @@ Deno.serve(async (req) => {
             },
             deal: {
               offer_code: offerId.toString(),
-              deal_number: orderId,
+              deal_number: Date.now(),
               deal_cost: order.amount / 100,
               deal_status: 'payed',
               deal_is_paid: 1,
