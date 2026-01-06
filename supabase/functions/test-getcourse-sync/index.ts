@@ -6,9 +6,15 @@ const corsHeaders = {
 };
 
 // Send order to GetCourse - same logic as direct-charge
+interface GetCourseUserData {
+  email: string;
+  phone?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}
+
 async function sendToGetCourse(
-  email: string,
-  phone: string | null,
+  userData: GetCourseUserData,
   offerId: number,
   orderNumber: string,
   amount: number,
@@ -28,12 +34,14 @@ async function sendToGetCourse(
   }
   
   try {
-    console.log(`Sending order to GetCourse: email=${email}, offerId=${offerId}, orderNumber=${orderNumber}`);
+    console.log(`Sending order to GetCourse: email=${userData.email}, offerId=${offerId}, orderNumber=${orderNumber}`);
     
     const params = {
       user: {
-        email: email,
-        phone: phone || undefined,
+        email: userData.email,
+        phone: userData.phone || undefined,
+        first_name: userData.firstName || undefined,
+        last_name: userData.lastName || undefined,
       },
       system: {
         refresh_if_exists: 1,
@@ -101,7 +109,7 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { orderId, email, tariffCode, offerId, amount } = await req.json();
+    const { orderId, email, firstName, lastName, phone, tariffCode, offerId, amount } = await req.json();
     
     // If orderId provided, get order data from database
     if (orderId) {
@@ -118,10 +126,21 @@ Deno.serve(async (req) => {
         );
       }
       
+      // Get profile data for first/last name
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('first_name, last_name, phone')
+        .eq('user_id', order.user_id)
+        .maybeSingle();
+      
       const tariff = order.tariffs as any;
       const gcResult = await sendToGetCourse(
-        order.customer_email || email,
-        null,
+        {
+          email: order.customer_email || email,
+          phone: profile?.phone || order.customer_phone || null,
+          firstName: profile?.first_name || null,
+          lastName: profile?.last_name || null,
+        },
         tariff?.getcourse_offer_id || offerId,
         order.order_number,
         order.final_price,
@@ -169,8 +188,12 @@ Deno.serve(async (req) => {
     
     const testOrderNumber = `TEST-${Date.now().toString(36).toUpperCase()}`;
     const gcResult = await sendToGetCourse(
-      email,
-      null,
+      {
+        email,
+        phone: phone || null,
+        firstName: firstName || null,
+        lastName: lastName || null,
+      },
       offerId,
       testOrderNumber,
       amount || 100,

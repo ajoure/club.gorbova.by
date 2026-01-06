@@ -6,9 +6,15 @@ const corsHeaders = {
 };
 
 // Send order to GetCourse
+interface GetCourseUserData {
+  email: string;
+  phone?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}
+
 async function sendToGetCourse(
-  email: string,
-  phone: string | null,
+  userData: GetCourseUserData,
   offerId: number,
   orderNumber: string,
   amount: number,
@@ -28,12 +34,14 @@ async function sendToGetCourse(
   }
   
   try {
-    console.log(`Sending order to GetCourse: email=${email}, offerId=${offerId}, orderNumber=${orderNumber}`);
+    console.log(`Sending order to GetCourse: email=${userData.email}, offerId=${offerId}, orderNumber=${orderNumber}`);
     
     const params = {
       user: {
-        email: email,
-        phone: phone || undefined,
+        email: userData.email,
+        phone: userData.phone || undefined,
+        first_name: userData.firstName || undefined,
+        last_name: userData.lastName || undefined,
       },
       system: {
         refresh_if_exists: 1,
@@ -48,6 +56,8 @@ async function sendToGetCourse(
         deal_comment: `Оплата через сайт club.gorbova.by. Order: ${orderNumber}`,
       },
     };
+    
+    console.log('GetCourse params:', JSON.stringify(params, null, 2));
     
     const formData = new URLSearchParams();
     formData.append('action', 'add');
@@ -696,14 +706,18 @@ Deno.serve(async (req) => {
         
         const { data: profile } = await supabase
           .from('profiles')
-          .select('email, phone')
+          .select('email, phone, first_name, last_name')
           .eq('user_id', user.id)
           .maybeSingle();
         
         if (profile?.email) {
           const gcResult = await sendToGetCourse(
-            profile.email,
-            profile.phone || null,
+            {
+              email: profile.email,
+              phone: profile.phone || null,
+              firstName: profile.first_name || null,
+              lastName: profile.last_name || null,
+            },
             parseInt(getcourseOfferId, 10) || 0,
             order.order_number,
             amount,

@@ -8,9 +8,15 @@ const corsHeaders = {
 
 // Send order to GetCourse
 // Now uses getcourse_offer_id from tariffs table instead of hardcoded mapping
+interface GetCourseUserData {
+  email: string;
+  phone?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}
+
 async function sendToGetCourse(
-  email: string,
-  phone: string | null,
+  userData: GetCourseUserData,
   offerId: number,
   orderNumber: string,
   amount: number,
@@ -30,13 +36,15 @@ async function sendToGetCourse(
   }
   
   try {
-    console.log(`Sending order to GetCourse: email=${email}, offerId=${offerId}, orderNumber=${orderNumber}`);
+    console.log(`Sending order to GetCourse: email=${userData.email}, offerId=${offerId}, orderNumber=${orderNumber}`);
     
     // GetCourse API expects form-encoded data with action and params
     const params = {
       user: {
-        email: email,
-        phone: phone || undefined,
+        email: userData.email,
+        phone: userData.phone || undefined,
+        first_name: userData.firstName || undefined,
+        last_name: userData.lastName || undefined,
       },
       system: {
         refresh_if_exists: 1,
@@ -51,6 +59,8 @@ async function sendToGetCourse(
         deal_comment: `Оплата через сайт club.gorbova.by. Order: ${orderNumber}`,
       },
     };
+    
+    console.log('GetCourse params:', JSON.stringify(params, null, 2));
     
     const formData = new URLSearchParams();
     formData.append('action', 'add');
@@ -528,18 +538,22 @@ Deno.serve(async (req) => {
             if (getcourseOfferId && orderV2.customer_email) {
               console.log(`Syncing to GetCourse: offer_id=${getcourseOfferId}, email=${orderV2.customer_email}`);
               
-              // Get customer phone from profile
+              // Get customer data from profile
               const { data: profile } = await supabase
                 .from('profiles')
-                .select('phone')
+                .select('phone, first_name, last_name')
                 .eq('user_id', orderV2.user_id)
                 .maybeSingle();
 
               const gcResult = await sendToGetCourse(
-                orderV2.customer_email,
-                profile?.phone || orderV2.customer_phone || null,
+                {
+                  email: orderV2.customer_email,
+                  phone: profile?.phone || orderV2.customer_phone || null,
+                  firstName: profile?.first_name || null,
+                  lastName: profile?.last_name || null,
+                },
                 parseInt(getcourseOfferId, 10) || 0,
-                orderV2.id,
+                orderV2.order_number,
                 paymentV2.amount,
                 tariff.code || tariff.name
               );
@@ -1188,8 +1202,12 @@ Deno.serve(async (req) => {
         
         if (getcourseOfferId) {
           gcSyncResult = await sendToGetCourse(
-            order.customer_email,
-            meta.customer_phone || null,
+            {
+              email: order.customer_email,
+              phone: meta.customer_phone || null,
+              firstName: meta.customer_first_name || null,
+              lastName: meta.customer_last_name || null,
+            },
             getcourseOfferId,
             orderNumber,
             order.amount,
