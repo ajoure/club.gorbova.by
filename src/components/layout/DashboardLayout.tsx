@@ -25,12 +25,25 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       <div className="min-h-screen flex w-full">
         <AppSidebar />
         <SidebarInset className="flex-1 flex flex-col min-w-0">
-          <header className="sticky top-0 z-40 h-14 md:h-16 border-b border-border/50 bg-background/80 backdrop-blur-xl flex items-center px-3 md:px-4">
+          <header 
+            className="sticky top-0 z-40 border-b border-border/50 bg-background/80 backdrop-blur-xl flex items-center px-3 md:px-4"
+            style={{ 
+              paddingTop: 'env(safe-area-inset-top, 0px)',
+              minHeight: 'calc(3.5rem + env(safe-area-inset-top, 0px))'
+            }}
+          >
             <SidebarTrigger className="mr-3 md:mr-4 h-9 w-9" />
             <DashboardBreadcrumbs />
             <div className="flex-1" />
           </header>
-          <main className="flex-1 p-4 md:p-6 bg-gradient-to-br from-background via-muted/30 to-background overflow-x-hidden">
+          <main 
+            className="flex-1 p-4 md:p-6 bg-gradient-to-br from-background via-muted/30 to-background overflow-x-hidden"
+            style={{
+              paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
+              paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
+              paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))'
+            }}
+          >
             {children}
           </main>
         </SidebarInset>
