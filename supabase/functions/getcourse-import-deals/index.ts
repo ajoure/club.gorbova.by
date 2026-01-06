@@ -443,13 +443,24 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { action, instanceId, offerIds, dateFrom, dateTo } = await req.json();
+    const body = await req.json();
+    
+    // Поддерживаем оба формата именования параметров
+    const action = body.action;
+    const instanceId = body.instanceId || body.instance_id;
+    const offerIds = body.offerIds || body.offer_ids;
+    const dateFrom = body.dateFrom || body.date_from;
+    const dateTo = body.dateTo || body.date_to;
     
     console.log(`\n========== GetCourse Import ==========`);
     console.log(`Action: ${action}`);
     console.log(`Instance ID: ${instanceId}`);
     console.log(`Offer IDs: ${JSON.stringify(offerIds)}`);
     console.log(`Date range: ${dateFrom || 'not set'} - ${dateTo || 'not set'}`);
+
+    if (!instanceId) {
+      throw new Error('instance_id обязателен');
+    }
 
     // Получаем конфигурацию интеграции
     const { data: instance, error: instanceError } = await supabase
