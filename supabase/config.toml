@@ -122,3 +122,6 @@ verify_jwt = false
 
 [functions.subscription-admin-actions]
 verify_jwt = false
+
+[functions.test-getcourse-sync]
+verify_jwt = false
