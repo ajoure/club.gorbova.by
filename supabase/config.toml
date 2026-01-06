@@ -119,3 +119,6 @@ verify_jwt = false
 
 [functions.direct-charge]
 verify_jwt = false
+
+[functions.subscription-admin-actions]
+verify_jwt = false

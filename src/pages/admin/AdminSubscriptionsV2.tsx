@@ -31,24 +31,29 @@ import {
   AlertTriangle,
   Calendar,
   CreditCard,
+  Settings,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { format, formatDistanceToNow, isBefore } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
+import { SubscriptionActionsSheet } from "@/components/admin/SubscriptionActionsSheet";
 
 const SUBSCRIPTION_STATUS_CONFIG: Record<string, { label: string; icon: typeof CheckCircle; className: string }> = {
   active: { label: "Активна", icon: CheckCircle, className: "text-green-600" },
   trial: { label: "Пробный период", icon: Clock, className: "text-blue-600" },
   past_due: { label: "Просрочена", icon: AlertTriangle, className: "text-amber-600" },
+  paused: { label: "Приостановлена", icon: Clock, className: "text-orange-600" },
   cancelled: { label: "Отменена", icon: XCircle, className: "text-muted-foreground" },
+  canceled: { label: "Отменена", icon: XCircle, className: "text-muted-foreground" },
   expired: { label: "Истекла", icon: XCircle, className: "text-destructive" },
 };
 
 export default function AdminSubscriptionsV2() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
 
   const { data: subscriptions, isLoading, refetch } = useQuery({
     queryKey: ["subscriptions-v2", statusFilter],
@@ -213,6 +218,7 @@ export default function AdminSubscriptionsV2() {
                     <TableHead>Период доступа</TableHead>
                     <TableHead>Следующее списание</TableHead>
                     <TableHead>Дата создания</TableHead>
+                    <TableHead className="w-[80px]">Действия</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -298,6 +304,15 @@ export default function AdminSubscriptionsV2() {
                             {format(new Date(sub.created_at), "dd.MM.yy HH:mm", { locale: ru })}
                           </div>
                         </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setSelectedSubscription(sub)}
+                          >
+                            <Settings className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     );
                   })}
@@ -307,6 +322,13 @@ export default function AdminSubscriptionsV2() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Subscription Actions Sheet */}
+      <SubscriptionActionsSheet
+        open={!!selectedSubscription}
+        onOpenChange={(open) => !open && setSelectedSubscription(null)}
+        subscription={selectedSubscription}
+      />
     </AdminLayout>
   );
 }
