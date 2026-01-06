@@ -12,7 +12,7 @@ async function sendToGetCourse(
   email: string,
   phone: string | null,
   offerId: number,
-  orderId: string,
+  orderNumber: string,
   amount: number,
   tariffCode: string
 ): Promise<{ success: boolean; error?: string; gcOrderId?: string }> {
@@ -30,7 +30,7 @@ async function sendToGetCourse(
   }
   
   try {
-    console.log(`Sending order to GetCourse: email=${email}, offerId=${offerId}, orderId=${orderId}`);
+    console.log(`Sending order to GetCourse: email=${email}, offerId=${offerId}, orderNumber=${orderNumber}`);
     
     // GetCourse API expects form-encoded data with action and params
     const params = {
@@ -43,13 +43,12 @@ async function sendToGetCourse(
       },
       deal: {
         offer_code: offerId.toString(),
-        deal_number: orderId,
         deal_cost: amount / 100, // Convert from kopecks
         deal_status: 'payed',
         deal_is_paid: 1,
         payment_type: 'CARD',
         manager_email: 'info@ajoure.by',
-        deal_comment: `Оплата через сайт club.gorbova.by. Order ID: ${orderId}`,
+        deal_comment: `Оплата через сайт club.gorbova.by. Order: ${orderNumber}`,
       },
     };
     
@@ -77,11 +76,12 @@ async function sendToGetCourse(
       return { success: false, error: `Invalid response: ${responseText.substring(0, 200)}` };
     }
     
-    if (data.success || data.result?.success) {
-      console.log('Order successfully sent to GetCourse');
+    // Check result.success, not top-level success (which is just API call status)
+    if (data.result?.success === true) {
+      console.log('Order successfully sent to GetCourse, deal_id:', data.result?.deal_id);
       return { success: true, gcOrderId: data.result?.deal_id?.toString() };
     } else {
-      const errorMsg = data.error_message || data.result?.error_message || 'Unknown error';
+      const errorMsg = data.result?.error_message || data.error_message || 'Unknown error';
       console.error('GetCourse error:', errorMsg);
       return { success: false, error: errorMsg };
     }
@@ -1166,6 +1166,17 @@ Deno.serve(async (req) => {
       if (tariffCode && order.customer_email) {
         console.log(`Sending order to GetCourse: tariff=${tariffCode}, email=${order.customer_email}`);
         
+        // Get order_v2 record to retrieve order_number
+        const { data: orderV2Data } = await supabase
+          .from('orders_v2')
+          .select('id, order_number, meta')
+          .or(`id.eq.${internalOrderId},meta->>legacy_order_id.eq.${internalOrderId}`)
+          .maybeSingle();
+        
+        const orderV2Id = orderV2Data?.id || internalOrderId;
+        const orderNumber = orderV2Data?.order_number || `ORD-LEGACY-${internalOrderId.substring(0, 8)}`;
+        const orderV2Meta = (orderV2Data?.meta as Record<string, unknown>) || {};
+        
         // Get getcourse_offer_id from tariffs table
         const { data: tariffData } = await supabase
           .from('tariffs')
@@ -1180,7 +1191,7 @@ Deno.serve(async (req) => {
             order.customer_email,
             meta.customer_phone || null,
             getcourseOfferId,
-            internalOrderId,
+            orderNumber,
             order.amount,
             tariffCode
           );
@@ -1190,14 +1201,14 @@ Deno.serve(async (req) => {
             .from('orders_v2')
             .update({
               meta: {
-                ...meta,
+                ...orderV2Meta,
                 gc_sync_status: gcSyncResult.success ? 'success' : 'failed',
                 gc_sync_error: gcSyncResult.error || null,
                 gc_order_id: gcSyncResult.gcOrderId || null,
                 gc_sync_at: new Date().toISOString(),
               },
             })
-            .eq('id', internalOrderId);
+            .eq('id', orderV2Id);
           
           if (gcSyncResult.success) {
             console.log('GetCourse sync successful');

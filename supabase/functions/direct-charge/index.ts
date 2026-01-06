@@ -10,7 +10,7 @@ async function sendToGetCourse(
   email: string,
   phone: string | null,
   offerId: number,
-  orderId: string,
+  orderNumber: string,
   amount: number,
   tariffCode: string
 ): Promise<{ success: boolean; error?: string; gcOrderId?: string }> {
@@ -28,7 +28,7 @@ async function sendToGetCourse(
   }
   
   try {
-    console.log(`Sending order to GetCourse: email=${email}, offerId=${offerId}, orderId=${orderId}`);
+    console.log(`Sending order to GetCourse: email=${email}, offerId=${offerId}, orderNumber=${orderNumber}`);
     
     const params = {
       user: {
@@ -40,13 +40,12 @@ async function sendToGetCourse(
       },
       deal: {
         offer_code: offerId.toString(),
-        deal_number: orderId,
-        deal_cost: amount / 100, // Convert from kopecks if needed
+        deal_cost: amount / 100, // Convert from kopecks
         deal_status: 'payed',
         deal_is_paid: 1,
         payment_type: 'CARD',
         manager_email: 'info@ajoure.by',
-        deal_comment: `Оплата через сайт club.gorbova.by. Order ID: ${orderId}`,
+        deal_comment: `Оплата через сайт club.gorbova.by. Order: ${orderNumber}`,
       },
     };
     
@@ -74,11 +73,12 @@ async function sendToGetCourse(
       return { success: false, error: `Invalid response: ${responseText.substring(0, 200)}` };
     }
     
-    if (data.success || data.result?.success) {
-      console.log('Order successfully sent to GetCourse');
+    // Check result.success, not top-level success (which is just API call status)
+    if (data.result?.success === true) {
+      console.log('Order successfully sent to GetCourse, deal_id:', data.result?.deal_id);
       return { success: true, gcOrderId: data.result?.deal_id?.toString() };
     } else {
-      const errorMsg = data.error_message || data.result?.error_message || 'Unknown error';
+      const errorMsg = data.result?.error_message || data.error_message || 'Unknown error';
       console.error('GetCourse error:', errorMsg);
       return { success: false, error: errorMsg };
     }
@@ -705,7 +705,7 @@ Deno.serve(async (req) => {
             profile.email,
             profile.phone || null,
             parseInt(getcourseOfferId, 10) || 0,
-            order.id,
+            order.order_number,
             amount,
             tariff.code || tariff.name
           );
