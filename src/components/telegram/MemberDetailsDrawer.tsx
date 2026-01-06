@@ -341,9 +341,9 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
     <>
       <Sheet open={!!member} onOpenChange={(open) => !open && onClose()}>
         <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
-          <SheetHeader>
+          <SheetHeader className="pr-10">
             <SheetTitle className="flex items-center gap-2">
-              <User className="h-5 w-5" />
+              <User className="h-5 w-5 shrink-0" />
               Карточка участника
             </SheetTitle>
           </SheetHeader>

@@ -75,8 +75,8 @@ export function EditIntegrationDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Настройки: {instance.alias}</DialogTitle>
+        <DialogHeader className="pr-8">
+          <DialogTitle className="truncate">Настройки: {instance.alias}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">

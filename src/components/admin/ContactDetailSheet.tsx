@@ -430,19 +430,19 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-xl p-0 flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden">
-        {/* Compact header for mobile */}
-        <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 border-b flex-shrink-0">
+        {/* Compact header for mobile - with padding-right for close button */}
+        <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 border-b flex-shrink-0">
           <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
               <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center flex-shrink-0">
                 <User className="w-5 h-5 sm:w-7 sm:h-7 text-primary" />
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <SheetTitle className="text-lg sm:text-xl truncate">{contact.full_name || "Без имени"}</SheetTitle>
                 <p className="text-xs sm:text-sm text-muted-foreground truncate">{contact.email}</p>
               </div>
             </div>
-            <Badge variant={contact.status === "active" ? "default" : "secondary"} className="flex-shrink-0 text-xs">
+            <Badge variant={contact.status === "active" ? "default" : "secondary"} className="flex-shrink-0 text-xs mt-1">
               {contact.status === "active" ? (
                 <><CheckCircle className="w-3 h-3 mr-1" />Активен</>
               ) : contact.status === "blocked" ? (

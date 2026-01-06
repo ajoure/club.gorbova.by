@@ -160,20 +160,20 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetai
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-xl p-0 flex flex-col">
-        <SheetHeader className="p-6 pb-4 border-b">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
-                <Handshake className="w-7 h-7 text-primary" />
+        <SheetHeader className="p-4 sm:p-6 pb-4 pr-14 sm:pr-16 border-b">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center shrink-0">
+                <Handshake className="w-5 h-5 sm:w-7 sm:h-7 text-primary" />
               </div>
-              <div>
-                <SheetTitle className="text-xl">Сделка #{deal.order_number}</SheetTitle>
-                <p className="text-sm text-muted-foreground">
+              <div className="min-w-0">
+                <SheetTitle className="text-lg sm:text-xl truncate">Сделка #{deal.order_number}</SheetTitle>
+                <p className="text-xs sm:text-sm text-muted-foreground">
                   {format(new Date(deal.created_at), "dd MMMM yyyy, HH:mm", { locale: ru })}
                 </p>
               </div>
             </div>
-            <Badge className={statusConfig.color}>
+            <Badge className={`${statusConfig.color} shrink-0 mt-1 text-xs`}>
               <StatusIcon className="w-3 h-3 mr-1" />
               {statusConfig.label}
             </Badge>

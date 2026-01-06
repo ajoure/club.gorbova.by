@@ -701,7 +701,7 @@ export default function AdminProductDetailV2() {
       {/* Offer Dialog */}
       <Dialog open={offerDialog.open} onOpenChange={(open) => setOfferDialog({ ...offerDialog, open })}>
         <DialogContent className="max-w-lg">
-          <DialogHeader>
+          <DialogHeader className="pr-8">
             <DialogTitle>
               {offerDialog.editing ? "Редактировать кнопку" : "Новая кнопка оплаты"}
             </DialogTitle>

@@ -53,8 +53,8 @@ export function IntegrationLogsSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="sm:max-w-lg">
-        <SheetHeader>
-          <SheetTitle>Логи: {instance?.alias}</SheetTitle>
+        <SheetHeader className="pr-10">
+          <SheetTitle className="truncate">Логи: {instance?.alias}</SheetTitle>
         </SheetHeader>
 
         <ScrollArea className="h-[calc(100vh-100px)] mt-4">

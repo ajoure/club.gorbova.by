@@ -123,7 +123,7 @@ export function SubscriptionActionsSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="sm:max-w-lg overflow-y-auto">
-        <SheetHeader>
+        <SheetHeader className="pr-10">
           <SheetTitle className="flex items-center gap-2">
             <CreditCard className="h-5 w-5" />
             Управление подпиской

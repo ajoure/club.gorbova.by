@@ -128,10 +128,10 @@ export function AccessHistorySheet({ open, onOpenChange, userId }: AccessHistory
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-lg">
-        <SheetHeader className="pb-4 border-b">
+        <SheetHeader className="pb-4 pr-12 border-b">
           <SheetTitle className="flex items-center gap-2">
-            <History className="w-5 h-5" />
-            История действий с доступами
+            <History className="w-5 h-5 shrink-0" />
+            <span className="truncate">История действий с доступами</span>
           </SheetTitle>
         </SheetHeader>
 
