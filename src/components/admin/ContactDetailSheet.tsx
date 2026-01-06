@@ -50,6 +50,7 @@ import {
   BookOpen,
   History,
   Undo2,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
@@ -102,7 +103,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         .select(`
           *,
           products_v2(id, name, code),
-          tariffs(id, name, code)
+          tariffs(id, name, code),
+          payments_v2(id, status, provider_response)
         `)
         .eq("user_id", contact.user_id)
         .order("created_at", { ascending: false });
@@ -797,6 +799,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
               ) : (
                 deals.map(deal => {
                   const isPaid = deal.status === "paid";
+                  const payments = (deal as any).payments_v2 as any[] | undefined;
+                  const successfulPayment = payments?.find((p: any) => p.status === "succeeded");
+                  const receiptUrl = successfulPayment?.provider_response?.transaction?.receipt_url as string | undefined;
+                  
                   return (
                     <Card 
                       key={deal.id} 
@@ -829,6 +835,21 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                               <CreditCard className="w-3 h-3" />
                               {new Intl.NumberFormat("ru-BY", { style: "currency", currency: deal.currency }).format(Number(deal.final_price))}
                             </span>
+                            
+                            {receiptUrl && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.open(receiptUrl, '_blank');
+                                }}
+                              >
+                                <Download className="w-3 h-3" />
+                              </Button>
+                            )}
+                            
                             {isPaid && (
                               <Button
                                 size="sm"
