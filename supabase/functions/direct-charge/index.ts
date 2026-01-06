@@ -430,6 +430,52 @@ Deno.serve(async (req) => {
     }
 
     const txStatus = chargeResult.transaction?.status;
+    const txUid = chargeResult.transaction?.uid;
+    const redirectUrl = chargeResult.transaction?.redirect_url;
+
+    // 3-D Secure / additional verification required.
+    // bePaid returns status=incomplete and provides redirect_url to complete the payment.
+    if (txStatus === 'incomplete' && redirectUrl) {
+      console.log('Transaction requires 3-D Secure verification, redirecting:', redirectUrl);
+
+      // Persist provider details so the webhook can finalize the order later.
+      await supabase
+        .from('payments_v2')
+        .update({
+          status: 'processing',
+          provider_payment_id: txUid || null,
+          provider_response: chargeResult,
+          error_message: chargeResult.transaction?.message || null,
+        })
+        .eq('id', payment.id);
+
+      await supabase
+        .from('orders_v2')
+        .update({
+          status: 'pending',
+          meta: {
+            ...(order.meta || {}),
+            bepaid_uid: txUid,
+            payment_id: payment.id,
+            requires_3ds: true,
+          },
+        })
+        .eq('id', order.id);
+
+      return new Response(
+        JSON.stringify({
+          success: false,
+          requiresRedirect: true,
+          redirectUrl,
+          orderId: order.id,
+          paymentId: payment.id,
+        }),
+        {
+          // Important: return 200 so the client does not treat this as a function error.
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
 
     if (txStatus === 'successful') {
       // Update payment
@@ -455,6 +501,11 @@ Deno.serve(async (req) => {
         .update({
           status: 'paid',
           paid_amount: amount,
+          meta: {
+            ...(order.meta || {}),
+            bepaid_uid: txUid,
+            payment_id: payment.id,
+          },
         })
         .eq('id', order.id);
 
@@ -467,7 +518,7 @@ Deno.serve(async (req) => {
       // If extending existing subscription, start from its end date
       const baseDate = extendFromDate || new Date();
       const accessEndAt = new Date(baseDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
-      
+
       let nextChargeAt: Date | null = null;
       if (isTrial && autoChargeAfterTrial) {
         nextChargeAt = new Date(accessEndAt.getTime() - 24 * 60 * 60 * 1000);
@@ -489,7 +540,7 @@ Deno.serve(async (req) => {
           .eq('id', existingSub.id)
           .select()
           .single();
-        
+
         if (updateError) {
           console.error('Subscription update error:', updateError);
         }
@@ -543,53 +594,58 @@ Deno.serve(async (req) => {
           amount,
           currency: product.currency,
           tariff_code: tariffCode,
+          bepaid_uid: txUid,
         },
       });
 
       console.log(`Payment successful: ${payment.id}, subscription: ${subscription?.id}`);
 
-      return new Response(JSON.stringify({
-        success: true,
-        orderId: order.id,
-        paymentId: payment.id,
-        subscriptionId: subscription?.id,
-        isTrial: isTrial || false,
-        accessEndsAt: accessEndAt.toISOString(),
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          orderId: order.id,
+          paymentId: payment.id,
+          subscriptionId: subscription?.id,
+          isTrial: isTrial || false,
+          accessEndsAt: accessEndAt.toISOString(),
+        }),
+        {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
 
-    } else {
-      // Payment failed
-      const errorMessage = chargeResult.transaction?.message 
-        || chargeResult.errors?.base?.[0] 
-        || 'Payment failed';
+    // Treat all other statuses as failure (but respond with 200 so the UI doesn't blank-screen)
+    const errorMessage =
+      chargeResult.transaction?.message || chargeResult.errors?.base?.[0] || 'Payment failed';
 
-      await supabase
-        .from('payments_v2')
-        .update({
-          status: 'failed',
-          error_message: errorMessage,
-          provider_response: chargeResult,
-        })
-        .eq('id', payment.id);
+    await supabase
+      .from('payments_v2')
+      .update({
+        status: 'failed',
+        error_message: errorMessage,
+        provider_response: chargeResult,
+        provider_payment_id: txUid || null,
+      })
+      .eq('id', payment.id);
 
-      await supabase
-        .from('orders_v2')
-        .update({ status: 'failed' })
-        .eq('id', order.id);
+    await supabase
+      .from('orders_v2')
+      .update({ status: 'failed' })
+      .eq('id', order.id);
 
-      console.error('Payment failed:', errorMessage);
+    console.error('Payment failed:', errorMessage);
 
-      return new Response(JSON.stringify({
+    return new Response(
+      JSON.stringify({
         success: false,
         error: errorMessage,
         orderId: order.id,
-      }), {
-        status: 400,
+      }),
+      {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+      }
+    );
 
   } catch (error) {
     console.error('Direct charge error:', error);

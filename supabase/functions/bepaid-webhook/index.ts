@@ -318,12 +318,12 @@ Deno.serve(async (req) => {
     const transaction = body.transaction || subscription?.last_transaction || null;
 
     // Get tracking_id from multiple possible locations
-    const orderId = body.tracking_id || 
-                    body.additional_data?.order_id || 
-                    transaction?.tracking_id || 
-                    subscription?.tracking_id || 
+    const orderId = body.tracking_id ||
+                    body.additional_data?.order_id ||
+                    transaction?.tracking_id ||
+                    subscription?.tracking_id ||
                     null;
-    
+
     const transactionStatus = transaction?.status || null;
     const transactionUid = transaction?.uid || null;
     const paymentMethod = transaction?.payment_method_type || transaction?.payment_method || null;
@@ -331,6 +331,225 @@ Deno.serve(async (req) => {
     const subscriptionState = body.state || subscription?.state || null;
 
     console.log(`Processing bePaid webhook: order=${orderId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}, state=${subscriptionState}`);
+
+    // ---------------------------------------------------------------------
+    // V2 direct-charge support
+    // In direct-charge we send tracking_id = payments_v2.id (UUID).
+    // This block finalizes orders_v2/payments_v2/subscriptions_v2 for 3DS flows.
+    // ---------------------------------------------------------------------
+    let paymentV2: any = null;
+    if (orderId) {
+      const { data: p2, error: p2Err } = await supabase
+        .from('payments_v2')
+        .select('*')
+        .eq('id', orderId)
+        .maybeSingle();
+
+      if (!p2Err && p2) paymentV2 = p2;
+    }
+
+    if (paymentV2) {
+      const now = new Date();
+
+      // Keep provider response for debugging
+      const basePaymentUpdate: Record<string, any> = {
+        provider_payment_id: transactionUid || paymentV2.provider_payment_id || null,
+        provider_response: body,
+        error_message: transaction?.message || null,
+        card_brand: transaction?.credit_card?.brand || paymentV2.card_brand || null,
+        card_last4: transaction?.credit_card?.last_4 || paymentV2.card_last4 || null,
+      };
+
+      if (transactionStatus === 'successful') {
+        await supabase
+          .from('payments_v2')
+          .update({
+            ...basePaymentUpdate,
+            status: 'succeeded',
+            paid_at: now.toISOString(),
+          })
+          .eq('id', paymentV2.id);
+
+        // Update order
+        const { data: orderV2 } = await supabase
+          .from('orders_v2')
+          .select('*')
+          .eq('id', paymentV2.order_id)
+          .maybeSingle();
+
+        if (orderV2 && orderV2.status !== 'paid') {
+          await supabase
+            .from('orders_v2')
+            .update({
+              status: 'paid',
+              paid_amount: paymentV2.amount,
+              meta: {
+                ...(orderV2.meta || {}),
+                bepaid_uid: transactionUid,
+                payment_id: paymentV2.id,
+              },
+            })
+            .eq('id', orderV2.id);
+
+          // Fetch product + tariff for access calculation
+          const { data: productV2 } = await supabase
+            .from('products_v2')
+            .select('id, name, currency, telegram_club_id')
+            .eq('id', orderV2.product_id)
+            .maybeSingle();
+
+          const { data: tariff } = await supabase
+            .from('tariffs')
+            .select('id, name, access_days')
+            .eq('id', orderV2.tariff_id)
+            .maybeSingle();
+
+          if (productV2 && tariff) {
+            // Extend existing subscription (if any) for non-trial purchases
+            let extendFromDate: Date | null = null;
+            if (!orderV2.is_trial) {
+              const { data: existingSub } = await supabase
+                .from('subscriptions_v2')
+                .select('id, access_end_at')
+                .eq('user_id', orderV2.user_id)
+                .eq('product_id', orderV2.product_id)
+                .in('status', ['active', 'trial'])
+                .gte('access_end_at', now.toISOString())
+                .order('access_end_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+              if (existingSub?.access_end_at) {
+                extendFromDate = new Date(existingSub.access_end_at);
+              }
+            }
+
+            const accessDays = orderV2.is_trial
+              ? Math.max(1, Math.ceil((new Date(orderV2.trial_end_at).getTime() - new Date(orderV2.created_at).getTime()) / (24 * 60 * 60 * 1000)))
+              : (tariff.access_days || 30);
+
+            const baseDate = extendFromDate || new Date();
+            const accessEndAt = orderV2.is_trial
+              ? new Date(orderV2.trial_end_at)
+              : new Date(baseDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
+
+            const nextChargeAt = orderV2.is_trial
+              ? new Date(accessEndAt.getTime() - 24 * 60 * 60 * 1000)
+              : new Date(accessEndAt.getTime() - 3 * 24 * 60 * 60 * 1000);
+
+            // Upsert subscription
+            const { data: existing } = await supabase
+              .from('subscriptions_v2')
+              .select('id, access_end_at')
+              .eq('user_id', orderV2.user_id)
+              .eq('product_id', orderV2.product_id)
+              .in('status', ['active', 'trial'])
+              .order('access_end_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (existing && !orderV2.is_trial) {
+              await supabase
+                .from('subscriptions_v2')
+                .update({
+                  status: 'active',
+                  is_trial: false,
+                  access_end_at: accessEndAt.toISOString(),
+                  next_charge_at: nextChargeAt.toISOString(),
+                  payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
+                  payment_token: paymentV2.payment_token || null,
+                  updated_at: now.toISOString(),
+                })
+                .eq('id', existing.id);
+            } else {
+              await supabase
+                .from('subscriptions_v2')
+                .insert({
+                  user_id: orderV2.user_id,
+                  product_id: orderV2.product_id,
+                  tariff_id: orderV2.tariff_id,
+                  order_id: orderV2.id,
+                  status: orderV2.is_trial ? 'trial' : 'active',
+                  is_trial: !!orderV2.is_trial,
+                  access_start_at: now.toISOString(),
+                  access_end_at: accessEndAt.toISOString(),
+                  trial_end_at: orderV2.is_trial ? accessEndAt.toISOString() : null,
+                  next_charge_at: nextChargeAt.toISOString(),
+                  payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
+                  payment_token: paymentV2.payment_token || null,
+                });
+            }
+
+            // Telegram access
+            if (productV2.telegram_club_id) {
+              await supabase.functions.invoke('telegram-grant-access', {
+                body: {
+                  user_id: orderV2.user_id,
+                  duration_days: accessDays,
+                },
+              });
+            }
+
+            // Audit
+            await supabase.from('audit_logs').insert({
+              actor_user_id: orderV2.user_id,
+              action: orderV2.is_trial ? 'subscription.trial_paid' : 'subscription.purchased',
+              meta: {
+                order_id: orderV2.id,
+                payment_id: paymentV2.id,
+                amount: paymentV2.amount,
+                currency: paymentV2.currency,
+                tariff_id: orderV2.tariff_id,
+                product_id: orderV2.product_id,
+                bepaid_uid: transactionUid,
+              },
+            });
+          }
+        }
+
+        return new Response(JSON.stringify({ ok: true, mode: 'v2', status: 'successful' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (transactionStatus === 'incomplete') {
+        await supabase
+          .from('payments_v2')
+          .update({
+            ...basePaymentUpdate,
+            status: 'processing',
+          })
+          .eq('id', paymentV2.id);
+
+        return new Response(JSON.stringify({ ok: true, mode: 'v2', status: 'incomplete' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // failed / expired / other
+      await supabase
+        .from('payments_v2')
+        .update({
+          ...basePaymentUpdate,
+          status: 'failed',
+        })
+        .eq('id', paymentV2.id);
+
+      if (paymentV2.order_id) {
+        await supabase
+          .from('orders_v2')
+          .update({ status: 'failed' })
+          .eq('id', paymentV2.order_id);
+      }
+
+      return new Response(JSON.stringify({ ok: true, mode: 'v2', status: transactionStatus || 'unknown' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // ---------------------------------------------------------------------
+    // Legacy flow (orders table)
+    // ---------------------------------------------------------------------
 
     if (!orderId && !subscriptionId) {
       console.error('No tracking_id nor subscription id in webhook payload');
