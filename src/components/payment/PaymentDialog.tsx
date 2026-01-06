@@ -322,17 +322,11 @@ export function PaymentDialog({
             throw new Error(data.error || "Ошибка при оплате");
           }
         } else {
-          // Payment successful
-          toast.success(
-            isTrial
-              ? `Триал активирован! Доступ до ${new Date(data.accessEndsAt || data.trialEndsAt).toLocaleDateString("ru-RU")}`
-              : "Оплата прошла успешно!"
-          );
+          // Payment status will be confirmed in UI (and purchases) based on the real provider result
           onOpenChange(false);
-          // Redirect to success page
           const redirectUrl = data.orderId
-            ? `/dashboard?payment=success&order=${data.orderId}`
-            : `/dashboard?payment=success`;
+            ? `/purchases?payment=processing&order=${data.orderId}`
+            : `/purchases?payment=processing`;
           window.location.href = redirectUrl;
           return;
         }

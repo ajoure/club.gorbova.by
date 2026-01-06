@@ -278,8 +278,8 @@ Deno.serve(async (req) => {
 
     const settingsMap: Record<string, string> = settings?.reduce((acc: Record<string, string>, s: { key: string; value: string }) => ({ ...acc, [s.key]: s.value }), {}) || {};
     const shopId = settingsMap['bepaid_shop_id'] || '14588';
-    const successUrl = settingsMap['bepaid_success_url'] || '/dashboard?payment=success';
-    const failUrl = settingsMap['bepaid_fail_url'] || '/pricing?payment=failed';
+    const successUrl = settingsMap['bepaid_success_url'] || '/purchases?payment=processing';
+    const failUrl = settingsMap['bepaid_fail_url'] || '/purchases?payment=failed';
     
     // Get origin from request for URLs
     const origin = req.headers.get('origin') || 'https://lovable.app';
@@ -447,6 +447,13 @@ Deno.serve(async (req) => {
       },
     };
 
+    const buildReturnUrl = (basePath: string, paymentParam: string) => {
+      const url = new URL(basePath.startsWith('http') ? basePath : `${origin}${basePath}`);
+      url.searchParams.set('payment', paymentParam);
+      url.searchParams.set('order', order.id);
+      return url.toString();
+    };
+
     const subscriptionPayload = {
       customer: {
         email: emailLower,
@@ -457,7 +464,8 @@ Deno.serve(async (req) => {
       },
       plan: planConfig,
       tracking_id: order.id,
-      return_url: `${origin}${successUrl}`,
+      // Always return to a "processing" state; UI will show success ONLY after confirmed provider status.
+      return_url: buildReturnUrl(successUrl, 'processing'),
       notification_url: `${supabaseUrl}/functions/v1/bepaid-webhook`,
       settings: {
         language: 'ru',
@@ -468,6 +476,8 @@ Deno.serve(async (req) => {
         tariff_code: tariffCode || null,
         description: description || null,
         is_trial: isTrial || false,
+        // Keep failUrl for audit/debug (bePaid subscriptions API has single return_url).
+        fail_return_url: buildReturnUrl(failUrl, 'failed'),
       },
     };
 

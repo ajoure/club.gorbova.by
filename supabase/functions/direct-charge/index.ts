@@ -370,7 +370,8 @@ Deno.serve(async (req) => {
     // bePaid webhook receiver (so we can finalize payment after 3DS)
     const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
 
-    const returnUrl = `${origin}/dashboard?payment=success&order=${order.id}`;
+    // Return to purchases with "processing" state. UI will show success ONLY after confirmed provider status.
+    const returnUrl = `${origin}/purchases?payment=processing&order=${order.id}`;
 
     const chargePayload = {
       request: {
