@@ -390,7 +390,7 @@ Deno.serve(async (req) => {
       .from('integration_instances')
       .select('*')
       .eq('provider', 'getcourse')
-      .eq('status', 'active');
+      .in('status', ['active', 'connected']);
     
     if (instance_id) {
       instanceQuery = instanceQuery.eq('id', instance_id);
@@ -404,7 +404,7 @@ Deno.serve(async (req) => {
       .from('integration_instances')
       .select('*')
       .eq('provider', 'getcourse')
-      .eq('status', 'active')
+      .in('status', ['active', 'connected'])
       .limit(1)
       .maybeSingle()).data;
 
