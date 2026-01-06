@@ -406,14 +406,16 @@ Deno.serve(async (req) => {
 
           if (productV2 && tariff) {
             // Extend existing subscription (if any) for non-trial purchases
+            // IMPORTANT: exclude canceled subscriptions (canceled_at IS NOT NULL)
             let extendFromDate: Date | null = null;
             if (!orderV2.is_trial) {
               const { data: existingSub } = await supabase
                 .from('subscriptions_v2')
-                .select('id, access_end_at')
+                .select('id, access_end_at, canceled_at')
                 .eq('user_id', orderV2.user_id)
                 .eq('product_id', orderV2.product_id)
                 .in('status', ['active', 'trial'])
+                .is('canceled_at', null) // Only extend non-canceled subscriptions
                 .gte('access_end_at', now.toISOString())
                 .order('access_end_at', { ascending: false })
                 .limit(1)
@@ -437,13 +439,14 @@ Deno.serve(async (req) => {
               ? new Date(accessEndAt.getTime() - 24 * 60 * 60 * 1000)
               : new Date(accessEndAt.getTime() - 3 * 24 * 60 * 60 * 1000);
 
-            // Upsert subscription
+            // Upsert subscription - exclude canceled subscriptions
             const { data: existing } = await supabase
               .from('subscriptions_v2')
-              .select('id, access_end_at')
+              .select('id, access_end_at, canceled_at')
               .eq('user_id', orderV2.user_id)
               .eq('product_id', orderV2.product_id)
               .in('status', ['active', 'trial'])
+              .is('canceled_at', null) // Only reuse non-canceled subscriptions
               .order('access_end_at', { ascending: false })
               .limit(1)
               .maybeSingle();
