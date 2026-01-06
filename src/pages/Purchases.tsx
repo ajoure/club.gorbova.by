@@ -70,6 +70,7 @@ interface SubscriptionV2 {
   canceled_at: string | null;
   next_charge_at: string | null;
   created_at: string;
+  order_id: string | null;
   products_v2: {
     id: string;
     name: string;
@@ -83,6 +84,20 @@ interface SubscriptionV2 {
   payment_methods: {
     brand: string | null;
     last4: string | null;
+  } | null;
+  orders_v2: {
+    id: string;
+    order_number: string;
+    final_price: number;
+    currency: string;
+    created_at: string;
+    payments_v2: Array<{
+      id: string;
+      status: string;
+      provider_payment_id: string | null;
+      card_brand: string | null;
+      card_last4: string | null;
+    }>;
   } | null;
 }
 
@@ -126,10 +141,14 @@ export default function Purchases() {
       const { data, error } = await supabase
         .from("subscriptions_v2")
         .select(`
-          id, status, is_trial, access_start_at, access_end_at, trial_end_at, cancel_at, canceled_at, next_charge_at, created_at,
+          id, status, is_trial, access_start_at, access_end_at, trial_end_at, cancel_at, canceled_at, next_charge_at, created_at, order_id,
           products_v2(id, name, code),
           tariffs(id, name, code),
-          payment_methods(brand, last4)
+          payment_methods(brand, last4),
+          orders_v2!subscriptions_v2_order_id_fkey(
+            id, order_number, final_price, currency, created_at,
+            payments_v2(id, status, provider_payment_id, card_brand, card_last4)
+          )
         `)
         .eq("user_id", user.id)
         .order("access_end_at", { ascending: false });
@@ -332,6 +351,130 @@ export default function Purchases() {
     toast.success("PDF-чек скачан");
   };
 
+  // Download receipt for subscription (uses related order)
+  const downloadSubscriptionReceipt = (sub: SubscriptionV2) => {
+    const order = sub.orders_v2;
+    if (!order) {
+      toast.error("Заказ не найден для этой подписки");
+      return;
+    }
+    
+    const priceFormatted = `${order.final_price.toFixed(2)} ${order.currency}`;
+    const dateFormatted = format(new Date(order.created_at), "d MMMM yyyy, HH:mm", { locale: ru });
+    const payment = order.payments_v2?.[0];
+    
+    const doc = new jsPDF();
+    
+    // Header background
+    doc.setFillColor(102, 126, 234);
+    doc.rect(0, 0, 210, 45, "F");
+    
+    // Logo text
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(24);
+    doc.setFont("helvetica", "bold");
+    doc.text("Gorbova Club", 105, 22, { align: "center" });
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "normal");
+    doc.text("КВИТАНЦИЯ ОБ ОПЛАТЕ", 105, 35, { align: "center" });
+    
+    // Reset text color
+    doc.setTextColor(51, 51, 51);
+    
+    // Order info section
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.text("ИНФОРМАЦИЯ О ЗАКАЗЕ", 20, 60);
+    doc.setDrawColor(102, 126, 234);
+    doc.line(20, 63, 190, 63);
+    
+    doc.setFont("helvetica", "normal");
+    let y = 73;
+    
+    doc.text("Номер заказа:", 20, y);
+    doc.text(order.order_number, 80, y);
+    y += 8;
+    
+    doc.text("ID транзакции:", 20, y);
+    doc.text(payment?.provider_payment_id || "—", 80, y);
+    y += 8;
+    
+    doc.text("Дата и время:", 20, y);
+    doc.text(dateFormatted, 80, y);
+    y += 15;
+    
+    // Product section
+    doc.setFont("helvetica", "bold");
+    doc.text("ДЕТАЛИ ЗАКАЗА", 20, y);
+    doc.line(20, y + 3, 190, y + 3);
+    y += 13;
+    
+    const productName = sub.products_v2?.name && sub.tariffs?.name
+      ? `${sub.products_v2.name} — ${sub.tariffs.name}`
+      : sub.products_v2?.name || "Подписка";
+    
+    doc.setFont("helvetica", "normal");
+    doc.text("Продукт:", 20, y);
+    doc.text(productName, 80, y);
+    y += 8;
+    
+    doc.text("Тип:", 20, y);
+    doc.text(sub.is_trial ? "Пробный период" : "Подписка", 80, y);
+    y += 15;
+    
+    // Payment section
+    doc.setFont("helvetica", "bold");
+    doc.text("ИНФОРМАЦИЯ ОБ ОПЛАТЕ", 20, y);
+    doc.line(20, y + 3, 190, y + 3);
+    y += 13;
+    
+    doc.setFont("helvetica", "normal");
+    const paymentMethod = payment?.card_brand && payment?.card_last4
+      ? `${payment.card_brand} **** ${payment.card_last4}`
+      : sub.is_trial && order.final_price === 0
+        ? "Пробный период"
+        : "Банковская карта";
+    
+    doc.text("Способ оплаты:", 20, y);
+    doc.text(paymentMethod, 80, y);
+    y += 8;
+    
+    doc.text("Статус:", 20, y);
+    doc.setTextColor(16, 185, 129);
+    doc.text("Оплачено", 80, y);
+    doc.setTextColor(51, 51, 51);
+    y += 20;
+    
+    // Total section
+    doc.setFillColor(245, 247, 250);
+    doc.roundedRect(20, y - 5, 170, 25, 3, 3, "F");
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text("ИТОГО:", 30, y + 10);
+    doc.setTextColor(102, 126, 234);
+    doc.text(priceFormatted, 180, y + 10, { align: "right" });
+    doc.setTextColor(51, 51, 51);
+    y += 35;
+    
+    // Footer
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(107, 114, 128);
+    doc.text("Исполнитель: ЗАО «АЖУР инкам»", 105, y, { align: "center" });
+    doc.text("УНП: 193405000", 105, y + 5, { align: "center" });
+    doc.text("Адрес: 220035, г. Минск, ул. Панфилова, 2, офис 49Л", 105, y + 10, { align: "center" });
+    doc.text("Email: info@ajoure.by", 105, y + 15, { align: "center" });
+    y += 25;
+    
+    doc.setFontSize(8);
+    doc.text("Данный документ сформирован автоматически и является подтверждением оплаты.", 105, y, { align: "center" });
+    
+    // Save the PDF
+    doc.save(`receipt_${order.order_number}_${format(new Date(order.created_at), "yyyyMMdd")}.pdf`);
+    
+    toast.success("PDF-чек скачан");
+  };
+
   // Filter active subscriptions (current ones, not expired and not canceled)
   // Show only the latest subscription per product
   const activeSubscriptions = subscriptions?.filter(s => {
@@ -496,6 +639,7 @@ export default function Purchases() {
         onOpenChange={setDetailSheetOpen}
         onCancel={openCancelDialog}
         onResume={handleResumeSubscription}
+        onDownloadReceipt={downloadSubscriptionReceipt}
         isProcessing={isProcessing}
       />
 

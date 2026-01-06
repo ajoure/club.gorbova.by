@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { AlertTriangle, CreditCard } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { AlertTriangle, CreditCard, Ban, Calendar } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -25,6 +26,8 @@ interface RefundDialogProps {
   onSuccess?: () => void;
 }
 
+type AccessAction = "revoke" | "reduce" | "keep";
+
 export function RefundDialog({
   open,
   onOpenChange,
@@ -37,6 +40,27 @@ export function RefundDialog({
   const [reason, setReason] = useState("");
   const [refundAmount, setRefundAmount] = useState(amount);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [accessAction, setAccessAction] = useState<AccessAction>("revoke");
+  const [reduceDays, setReduceDays] = useState(30);
+
+  // Reset state when dialog opens
+  useEffect(() => {
+    if (open) {
+      setRefundAmount(amount);
+      setReason("");
+      setAccessAction(refundAmount >= amount ? "revoke" : "reduce");
+      setReduceDays(30);
+    }
+  }, [open, amount]);
+
+  // Auto-set access action based on refund amount
+  useEffect(() => {
+    if (refundAmount >= amount) {
+      setAccessAction("revoke");
+    }
+  }, [refundAmount, amount]);
+
+  const isFullRefund = refundAmount >= amount;
 
   const handleRefund = async () => {
     if (!reason.trim()) {
@@ -49,6 +73,11 @@ export function RefundDialog({
       return;
     }
 
+    if (accessAction === "reduce" && reduceDays <= 0) {
+      toast.error("Укажите количество дней для сокращения");
+      return;
+    }
+
     setIsProcessing(true);
     try {
       const { data, error } = await supabase.functions.invoke("subscription-admin-actions", {
@@ -57,13 +86,21 @@ export function RefundDialog({
           order_id: orderId,
           refund_amount: refundAmount,
           refund_reason: reason.trim(),
+          access_action: accessAction,
+          reduce_days: accessAction === "reduce" ? reduceDays : undefined,
         },
       });
 
       if (error) throw error;
       if (!data.success) throw new Error(data.error);
 
-      toast.success("Возврат оформлен");
+      const messages: Record<string, string> = {
+        revoke: "Возврат оформлен, доступ аннулирован",
+        reduce: `Возврат оформлен, доступ сокращён на ${reduceDays} дней`,
+        keep: "Возврат оформлен, доступ сохранён",
+      };
+
+      toast.success(messages[accessAction]);
       setReason("");
       setRefundAmount(amount);
       onOpenChange(false);
@@ -85,7 +122,7 @@ export function RefundDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <CreditCard className="w-5 h-5" />
@@ -100,7 +137,7 @@ export function RefundDialog({
           <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
             <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
             <p className="text-sm text-amber-800 dark:text-amber-200">
-              Возврат будет записан в историю. Убедитесь, что причина указана корректно.
+              Возврат будет проведён через платёжную систему и записан в историю.
             </p>
           </div>
 
@@ -119,6 +156,73 @@ export function RefundDialog({
               Максимум: {formatAmount(amount)}
             </p>
           </div>
+
+          <div className="space-y-3">
+            <Label>Действие с доступом</Label>
+            <RadioGroup
+              value={accessAction}
+              onValueChange={(val) => setAccessAction(val as AccessAction)}
+              className="space-y-2"
+            >
+              <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                <RadioGroupItem value="revoke" id="revoke" disabled={!isFullRefund} />
+                <Label
+                  htmlFor="revoke"
+                  className={`flex-1 cursor-pointer ${!isFullRefund ? "opacity-50" : ""}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Ban className="w-4 h-4 text-red-500" />
+                    <span className="font-medium">Аннулировать доступ</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Полный возврат — доступ будет немедленно отозван
+                  </p>
+                </Label>
+              </div>
+
+              <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                <RadioGroupItem value="reduce" id="reduce" />
+                <Label htmlFor="reduce" className="flex-1 cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-amber-500" />
+                    <span className="font-medium">Сократить срок доступа</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Частичный возврат — уменьшить срок на указанное количество дней
+                  </p>
+                </Label>
+              </div>
+
+              {!isFullRefund && (
+                <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                  <RadioGroupItem value="keep" id="keep" />
+                  <Label htmlFor="keep" className="flex-1 cursor-pointer">
+                    <div className="flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-green-500" />
+                      <span className="font-medium">Сохранить доступ</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Только возврат денег, без изменения доступа
+                    </p>
+                  </Label>
+                </div>
+              )}
+            </RadioGroup>
+          </div>
+
+          {accessAction === "reduce" && (
+            <div className="space-y-2 p-3 rounded-lg bg-muted/50">
+              <Label htmlFor="reduce-days">Сократить на (дней)</Label>
+              <Input
+                id="reduce-days"
+                type="number"
+                value={reduceDays}
+                onChange={(e) => setReduceDays(parseInt(e.target.value) || 0)}
+                min={1}
+                max={365}
+              />
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="refund-reason">

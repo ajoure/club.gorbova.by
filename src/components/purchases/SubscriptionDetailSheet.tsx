@@ -56,6 +56,7 @@ interface SubscriptionDetailSheetProps {
   onOpenChange: (open: boolean) => void;
   onCancel: (sub: Subscription) => void;
   onResume: (sub: Subscription) => void;
+  onDownloadReceipt: (sub: Subscription) => void;
   isProcessing: boolean;
 }
 
@@ -65,6 +66,7 @@ export function SubscriptionDetailSheet({
   onOpenChange,
   onCancel,
   onResume,
+  onDownloadReceipt,
   isProcessing,
 }: SubscriptionDetailSheetProps) {
   if (!subscription) return null;
@@ -229,8 +231,12 @@ export function SubscriptionDetailSheet({
 
           {/* Actions */}
           <div className="space-y-2 pt-4">
-            {/* Download receipt placeholder */}
-            <Button variant="outline" className="w-full gap-2" disabled>
+            {/* Download receipt */}
+            <Button 
+              variant="outline" 
+              className="w-full gap-2"
+              onClick={() => onDownloadReceipt(subscription)}
+            >
               <Download className="h-4 w-4" />
               Скачать чек
             </Button>

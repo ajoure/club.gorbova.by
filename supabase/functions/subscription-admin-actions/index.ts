@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { action, subscription_id, order_id, days, new_end_date, refund_amount, refund_reason } = body;
+    const { action, subscription_id, order_id, days, new_end_date, refund_amount, refund_reason, access_action, reduce_days } = body;
 
     console.log(`Admin ${adminUserId} performing ${action}`);
 
@@ -76,10 +76,10 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Get order
+      // Get order with related payment
       const { data: order, error: orderError } = await supabase
         .from('orders_v2')
-        .select('*')
+        .select('*, payments_v2(*)')
         .eq('id', order_id)
         .single();
 
@@ -98,6 +98,70 @@ Deno.serve(async (req) => {
       }
 
       const actualRefundAmount = refund_amount || order.final_price;
+      const payments = order.payments_v2 as any[];
+      const successfulPayment = payments?.find((p: any) => p.status === 'succeeded' && p.provider_payment_id);
+      
+      let bepaidRefundResult: any = null;
+      let bepaidRefundError: string | null = null;
+
+      // Process refund through bePaid if we have a payment UID
+      if (successfulPayment?.provider_payment_id) {
+        const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY');
+        
+        // Get shop ID from settings
+        const { data: settings } = await supabase
+          .from('payment_settings')
+          .select('key, value')
+          .eq('key', 'bepaid_shop_id')
+          .single();
+        
+        const shopId = settings?.value || '33524';
+
+        if (bepaidSecretKey) {
+          try {
+            const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+            const refundPayload = {
+              request: {
+                parent_uid: successfulPayment.provider_payment_id,
+                amount: Math.round(actualRefundAmount * 100), // Convert to minimal units
+                reason: refund_reason.trim().slice(0, 255),
+              },
+            };
+
+            console.log(`Sending refund to bePaid: parent_uid=${successfulPayment.provider_payment_id}, amount=${refundPayload.request.amount}`);
+
+            const bepaidResponse = await fetch('https://gateway.bepaid.by/transactions/refunds', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Basic ${bepaidAuth}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+              },
+              body: JSON.stringify(refundPayload),
+            });
+
+            bepaidRefundResult = await bepaidResponse.json();
+            console.log('bePaid refund response:', JSON.stringify(bepaidRefundResult));
+
+            if (bepaidRefundResult.transaction?.status === 'successful') {
+              console.log(`bePaid refund successful: uid=${bepaidRefundResult.transaction.uid}`);
+            } else if (bepaidRefundResult.transaction?.status === 'failed') {
+              bepaidRefundError = bepaidRefundResult.transaction.message || 'Refund failed';
+              console.error('bePaid refund failed:', bepaidRefundError);
+            } else if (bepaidRefundResult.errors) {
+              bepaidRefundError = bepaidRefundResult.message || JSON.stringify(bepaidRefundResult.errors);
+              console.error('bePaid refund error:', bepaidRefundError);
+            }
+          } catch (err) {
+            bepaidRefundError = err instanceof Error ? err.message : String(err);
+            console.error('bePaid API error:', bepaidRefundError);
+          }
+        } else {
+          console.log('BEPAID_SECRET_KEY not configured, skipping payment gateway refund');
+        }
+      } else {
+        console.log('No successful payment found with provider_payment_id, skipping bePaid refund');
+      }
 
       // Update order status
       await supabase
@@ -110,10 +174,72 @@ Deno.serve(async (req) => {
             refund_reason: refund_reason,
             refunded_at: new Date().toISOString(),
             refunded_by: adminUserId,
+            bepaid_refund: bepaidRefundResult?.transaction || null,
+            bepaid_refund_error: bepaidRefundError,
+            access_action: access_action || 'revoke',
+            reduce_days: reduce_days || null,
           },
           updated_at: new Date().toISOString(),
         })
         .eq('id', order_id);
+
+      // Handle access action
+      const effectiveAccessAction = access_action || 'revoke';
+      
+      // Find related subscription
+      const { data: relatedSubscription } = await supabase
+        .from('subscriptions_v2')
+        .select('*, products_v2(telegram_club_id)')
+        .eq('order_id', order_id)
+        .maybeSingle();
+
+      if (relatedSubscription) {
+        const product = relatedSubscription.products_v2 as any;
+
+        if (effectiveAccessAction === 'revoke') {
+          // Revoke access immediately
+          await supabase
+            .from('subscriptions_v2')
+            .update({
+              status: 'canceled',
+              access_end_at: new Date().toISOString(),
+              cancel_at: new Date().toISOString(),
+              canceled_at: new Date().toISOString(),
+              cancel_reason: `Возврат: ${refund_reason}`,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', relatedSubscription.id);
+
+          // Revoke Telegram access
+          if (product?.telegram_club_id) {
+            await supabase.functions.invoke('telegram-revoke-access', {
+              body: { user_id: order.user_id },
+            });
+          }
+
+          console.log(`Access revoked for subscription ${relatedSubscription.id}`);
+        } else if (effectiveAccessAction === 'reduce' && reduce_days > 0) {
+          // Reduce access period
+          const currentEnd = relatedSubscription.access_end_at 
+            ? new Date(relatedSubscription.access_end_at) 
+            : new Date();
+          const newEndDate = new Date(currentEnd.getTime() - reduce_days * 24 * 60 * 60 * 1000);
+          
+          // Don't let access end in the past
+          const finalEndDate = newEndDate < new Date() ? new Date() : newEndDate;
+
+          await supabase
+            .from('subscriptions_v2')
+            .update({
+              access_end_at: finalEndDate.toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', relatedSubscription.id);
+
+          console.log(`Access reduced by ${reduce_days} days for subscription ${relatedSubscription.id}`);
+        }
+        // 'keep' action = do nothing with access
+      }
 
       // Log the refund action
       await supabase.from('audit_logs').insert({
@@ -127,6 +253,11 @@ Deno.serve(async (req) => {
           refund_reason: refund_reason,
           currency: order.currency,
           original_amount: order.final_price,
+          access_action: effectiveAccessAction,
+          reduce_days: reduce_days || null,
+          bepaid_success: bepaidRefundResult?.transaction?.status === 'successful',
+          bepaid_refund_uid: bepaidRefundResult?.transaction?.uid || null,
+          bepaid_error: bepaidRefundError,
         },
       });
 
@@ -136,6 +267,9 @@ Deno.serve(async (req) => {
         success: true, 
         refund_amount: actualRefundAmount,
         order_number: order.order_number,
+        bepaid_success: bepaidRefundResult?.transaction?.status === 'successful',
+        bepaid_error: bepaidRefundError,
+        access_action: effectiveAccessAction,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

@@ -337,10 +337,25 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
     toast.success(`${label} скопирован`);
   };
 
+  const getStatusLabel = (status: string) => {
+    const labels: Record<string, string> = {
+      draft: "Черновик",
+      pending: "Ожидает оплаты",
+      paid: "Оплачен",
+      partial: "Частично оплачен",
+      cancelled: "Отменён",
+      refunded: "Возврат",
+      expired: "Истёк",
+      failed: "Ошибка",
+    };
+    return labels[status] || status;
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "paid": return "bg-green-500/20 text-green-600";
       case "pending": return "bg-amber-500/20 text-amber-600";
+      case "refunded": return "bg-orange-500/20 text-orange-600";
       case "cancelled": 
       case "failed": return "bg-red-500/20 text-red-600";
       default: return "bg-muted text-muted-foreground";
@@ -801,7 +816,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                             )}
                           </div>
                           <div className="flex items-center gap-2">
-                            <Badge className={getStatusColor(deal.status)}>{deal.status}</Badge>
+                            <Badge className={getStatusColor(deal.status)}>{getStatusLabel(deal.status)}</Badge>
                             <Eye className="w-4 h-4 text-muted-foreground" />
                           </div>
                         </div>
