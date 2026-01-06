@@ -226,7 +226,7 @@ Deno.serve(async (req) => {
     // IMPORTANT: exclude canceled subscriptions (canceled_at IS NOT NULL) - they should not be reused
     const { data: existingSub } = await supabase
       .from('subscriptions_v2')
-      .select('id, status, access_end_at, is_trial, canceled_at, tariff_id')
+      .select('id, status, access_end_at, access_start_at, is_trial, canceled_at, tariff_id, order_id')
       .eq('user_id', user.id)
       .eq('product_id', productId)
       .in('status', ['active', 'trial'])
@@ -261,15 +261,72 @@ Deno.serve(async (req) => {
     }
 
     // For regular purchase with active subscription of SAME tariff - extend access period
-    // If different tariff (upgrade/downgrade) - create new subscription
+    // If different tariff (upgrade/downgrade) - create new subscription with proration
     let extendFromDate: Date | null = null;
     const isSameTariff = existingSub && existingSub.tariff_id === tariff.id;
+    
+    // Proration calculation for tariff change
+    interface ProrationResult {
+      bonusDays: number;
+      unusedValue: number;
+      oldDailyRate: number;
+      newDailyRate: number;
+      remainingDays: number;
+      oldTariffId: string;
+    }
+    let prorationResult: ProrationResult | null = null;
     
     if (existingSub && isSameTariff && !isTrial) {
       extendFromDate = new Date(existingSub.access_end_at);
       console.log(`User has active subscription for same tariff until ${extendFromDate.toISOString()}, will extend from that date`);
-    } else if (existingSub && !isSameTariff) {
-      console.log(`User is upgrading/changing tariff from ${existingSub.tariff_id} to ${tariff.id}, will create new subscription`);
+    } else if (existingSub && !isSameTariff && !isTrial) {
+      console.log(`User is upgrading/changing tariff from ${existingSub.tariff_id} to ${tariff.id}, calculating proration...`);
+      
+      // Calculate proration: convert unused days from old tariff to bonus days on new tariff
+      // 1. Get paid amount from old order
+      const { data: oldOrder } = await supabase
+        .from('orders_v2')
+        .select('paid_amount, final_price')
+        .eq('id', existingSub.order_id)
+        .single();
+      
+      // 2. Get access_days from old tariff
+      const { data: oldTariff } = await supabase
+        .from('tariffs')
+        .select('access_days')
+        .eq('id', existingSub.tariff_id)
+        .single();
+      
+      if (oldOrder && oldTariff?.access_days) {
+        const oldPaidAmount = oldOrder.paid_amount || oldOrder.final_price || 0;
+        const now = new Date();
+        const accessEnd = new Date(existingSub.access_end_at);
+        const remainingMs = accessEnd.getTime() - now.getTime();
+        const remainingDays = Math.max(0, remainingMs / (24 * 60 * 60 * 1000));
+        
+        if (remainingDays > 0 && oldPaidAmount > 0) {
+          // Calculate daily rates (in kopecks)
+          const oldDailyRate = oldPaidAmount / oldTariff.access_days;
+          const unusedValue = oldDailyRate * remainingDays;
+          const newDailyRate = amount / tariff.access_days;
+          
+          // Bonus days = unused value / new daily rate
+          const bonusDays = newDailyRate > 0 ? Math.floor(unusedValue / newDailyRate) : 0;
+          
+          prorationResult = {
+            bonusDays,
+            unusedValue,
+            oldDailyRate,
+            newDailyRate,
+            remainingDays,
+            oldTariffId: existingSub.tariff_id,
+          };
+          
+          console.log(`Proration calculated: ${remainingDays.toFixed(1)} days remaining, ` +
+            `unused value: ${(unusedValue / 100).toFixed(2)} ${product.currency}, ` +
+            `bonus days: ${bonusDays}`);
+        }
+      }
     }
 
     // Get bePaid settings
@@ -633,7 +690,15 @@ Deno.serve(async (req) => {
       }
 
       // Create or update subscription
-      const accessDays = isTrial ? effectiveTrialDays : tariff.access_days;
+      // Apply proration bonus days if upgrading/downgrading tariff
+      const baseAccessDays = isTrial ? effectiveTrialDays : tariff.access_days;
+      const prorationBonusDays = prorationResult?.bonusDays || 0;
+      const accessDays = baseAccessDays + prorationBonusDays;
+      
+      if (prorationBonusDays > 0) {
+        console.log(`Total access days: ${baseAccessDays} + ${prorationBonusDays} (proration) = ${accessDays}`);
+      }
+      
       // If extending existing subscription, start from its end date
       const baseDate = extendFromDate || new Date();
       const accessEndAt = new Date(baseDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
@@ -668,7 +733,18 @@ Deno.serve(async (req) => {
         subscription = updatedSub;
         console.log(`Extended subscription ${existingSub.id} until ${accessEndAt.toISOString()}`);
       } else {
-        // Create new subscription (new tariff or upgrade)
+        // Create new subscription (new tariff or upgrade/downgrade with proration)
+        const subscriptionMeta = prorationResult ? {
+          proration: {
+            from_tariff_id: prorationResult.oldTariffId,
+            remaining_days: Math.round(prorationResult.remainingDays * 10) / 10,
+            unused_value: Math.round(prorationResult.unusedValue),
+            bonus_days: prorationResult.bonusDays,
+            old_daily_rate: Math.round(prorationResult.oldDailyRate * 100) / 100,
+            new_daily_rate: Math.round(prorationResult.newDailyRate * 100) / 100,
+          }
+        } : undefined;
+        
         const { data: newSub, error: subError } = await supabase
           .from('subscriptions_v2')
           .insert({
@@ -684,6 +760,7 @@ Deno.serve(async (req) => {
             payment_method_id: paymentMethod.id,
             payment_token: paymentMethod.provider_token,
             next_charge_at: nextChargeAt?.toISOString() || null,
+            meta: subscriptionMeta,
           })
           .select()
           .single();
@@ -693,15 +770,15 @@ Deno.serve(async (req) => {
         }
         subscription = newSub;
         
-        // If upgrading - optionally cancel old subscription
+        // If upgrading/downgrading - cancel old subscription
         if (existingSub && !isSameTariff) {
-          console.log(`Canceling old subscription ${existingSub.id} due to tariff upgrade`);
+          console.log(`Canceling old subscription ${existingSub.id} due to tariff change`);
           await supabase
             .from('subscriptions_v2')
             .update({
               status: 'canceled',
               canceled_at: new Date().toISOString(),
-              cancel_reason: `Upgraded to tariff: ${tariff.code}`,
+              cancel_reason: `Changed to tariff: ${tariff.code}. Proration: ${prorationBonusDays} bonus days applied.`,
             })
             .eq('id', existingSub.id);
         }

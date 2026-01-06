@@ -431,15 +431,14 @@ Deno.serve(async (req) => {
           const autoChargeAfterTrial = offer?.auto_charge_after_trial ?? true;
 
           if (productV2 && tariff) {
-            // Find existing active subscription to extend (if any) for non-trial purchases
+            // Find existing active subscription to check for tariff change (proration)
             // IMPORTANT: exclude canceled subscriptions (canceled_at IS NOT NULL)
-            // We use one query and reuse the result for both calculation and upsert
-            let existingSub: { id: string; access_end_at: string; canceled_at: string | null } | null = null;
+            let existingSub: { id: string; access_end_at: string; canceled_at: string | null; tariff_id: string; order_id: string | null } | null = null;
             
             if (!orderV2.is_trial) {
               const { data } = await supabase
                 .from('subscriptions_v2')
-                .select('id, access_end_at, canceled_at')
+                .select('id, access_end_at, canceled_at, tariff_id, order_id')
                 .eq('user_id', orderV2.user_id)
                 .eq('product_id', orderV2.product_id)
                 .in('status', ['active', 'trial'])
@@ -452,12 +451,67 @@ Deno.serve(async (req) => {
               existingSub = data;
             }
 
-            const accessDays = orderV2.is_trial
+            const isSameTariff = existingSub && existingSub.tariff_id === orderV2.tariff_id;
+            
+            // Calculate proration for tariff change
+            interface ProrationResult {
+              bonusDays: number;
+              unusedValue: number;
+              remainingDays: number;
+              oldTariffId: string;
+            }
+            let prorationResult: ProrationResult | null = null;
+            
+            if (existingSub && !isSameTariff && !orderV2.is_trial && existingSub.order_id) {
+              console.log(`Webhook: User is changing tariff from ${existingSub.tariff_id} to ${orderV2.tariff_id}, calculating proration...`);
+              
+              // Get paid amount from old order
+              const { data: oldOrder } = await supabase
+                .from('orders_v2')
+                .select('paid_amount, final_price')
+                .eq('id', existingSub.order_id)
+                .single();
+              
+              // Get access_days from old tariff
+              const { data: oldTariff } = await supabase
+                .from('tariffs')
+                .select('access_days')
+                .eq('id', existingSub.tariff_id)
+                .single();
+              
+              if (oldOrder && oldTariff?.access_days) {
+                const oldPaidAmount = oldOrder.paid_amount || oldOrder.final_price || 0;
+                const accessEnd = new Date(existingSub.access_end_at);
+                const remainingMs = accessEnd.getTime() - now.getTime();
+                const remainingDays = Math.max(0, remainingMs / (24 * 60 * 60 * 1000));
+                
+                if (remainingDays > 0 && oldPaidAmount > 0) {
+                  const oldDailyRate = oldPaidAmount / oldTariff.access_days;
+                  const unusedValue = oldDailyRate * remainingDays;
+                  const newDailyRate = paymentV2.amount / tariff.access_days;
+                  const bonusDays = newDailyRate > 0 ? Math.floor(unusedValue / newDailyRate) : 0;
+                  
+                  prorationResult = {
+                    bonusDays,
+                    unusedValue,
+                    remainingDays,
+                    oldTariffId: existingSub.tariff_id,
+                  };
+                  
+                  console.log(`Webhook proration: ${remainingDays.toFixed(1)} days remaining, bonus: ${bonusDays} days`);
+                }
+              }
+            }
+
+            const baseAccessDays = orderV2.is_trial
               ? Math.max(1, Math.ceil((new Date(orderV2.trial_end_at).getTime() - new Date(orderV2.created_at).getTime()) / (24 * 60 * 60 * 1000)))
               : (tariff.access_days || 30);
+            
+            const prorationBonusDays = prorationResult?.bonusDays || 0;
+            const accessDays = baseAccessDays + prorationBonusDays;
 
-            // For non-trial: extend from existing subscription end date, or start from now
-            const extendFromDate = existingSub?.access_end_at ? new Date(existingSub.access_end_at) : null;
+            // For same tariff non-trial: extend from existing subscription end date
+            const extendFromDate = (existingSub && isSameTariff && !orderV2.is_trial) ? new Date(existingSub.access_end_at) : null;
             const baseDate = extendFromDate || new Date();
             const accessEndAt = orderV2.is_trial
               ? new Date(orderV2.trial_end_at)
@@ -475,21 +529,23 @@ Deno.serve(async (req) => {
             console.log('Subscription upsert logic:', {
               existingSubId: existingSub?.id,
               existingEndAt: existingSub?.access_end_at,
+              isSameTariff,
               extendFromDate: extendFromDate?.toISOString(),
-              accessDays,
+              baseAccessDays,
+              prorationBonusDays,
+              totalAccessDays: accessDays,
               newAccessEndAt: accessEndAt.toISOString(),
               nextChargeAt: nextChargeAt?.toISOString(),
               isRecurringSubscription,
             });
 
-            if (existingSub && !orderV2.is_trial) {
-              // Update existing active subscription - extend it
+            if (existingSub && isSameTariff && !orderV2.is_trial) {
+              // Update existing active subscription - extend it (same tariff)
               await supabase
                 .from('subscriptions_v2')
                 .update({
                   status: 'active',
                   is_trial: false,
-                  tariff_id: orderV2.tariff_id, // Update tariff in case it changed
                   access_end_at: accessEndAt.toISOString(),
                   next_charge_at: nextChargeAt?.toISOString() || null,
                   payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
@@ -500,7 +556,16 @@ Deno.serve(async (req) => {
               
               console.log('Updated existing subscription:', existingSub.id);
             } else {
-              // Create new subscription
+              // Create new subscription (new tariff or upgrade/downgrade with proration)
+              const subscriptionMeta = prorationResult ? {
+                proration: {
+                  from_tariff_id: prorationResult.oldTariffId,
+                  remaining_days: Math.round(prorationResult.remainingDays * 10) / 10,
+                  unused_value: Math.round(prorationResult.unusedValue),
+                  bonus_days: prorationResult.bonusDays,
+                }
+              } : undefined;
+              
               const { data: newSub } = await supabase
                 .from('subscriptions_v2')
                 .insert({
@@ -516,11 +581,25 @@ Deno.serve(async (req) => {
                   next_charge_at: nextChargeAt?.toISOString() || null,
                   payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
                   payment_token: paymentV2.payment_token || null,
+                  meta: subscriptionMeta,
                 })
                 .select('id')
                 .single();
               
               console.log('Created new subscription:', newSub?.id);
+              
+              // If tariff changed - cancel old subscription
+              if (existingSub && !isSameTariff) {
+                console.log(`Canceling old subscription ${existingSub.id} due to tariff change`);
+                await supabase
+                  .from('subscriptions_v2')
+                  .update({
+                    status: 'canceled',
+                    canceled_at: now.toISOString(),
+                    cancel_reason: `Changed to tariff. Proration: ${prorationBonusDays} bonus days applied.`,
+                  })
+                  .eq('id', existingSub.id);
+              }
             }
 
             // Telegram access
