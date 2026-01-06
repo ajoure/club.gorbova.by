@@ -57,8 +57,45 @@ const STATUS_MAP: Record<string, string> = {
   'part_payed': 'pending',
 };
 
-// GetCourse API helper - использует формат как в direct-charge
-async function gcRequest(
+// GetCourse API helper - с action в FormData
+async function gcRequestSimple(
+  config: GetCourseConfig,
+  endpoint: string,
+  params: Record<string, unknown> = {},
+  action: string = 'getList'
+): Promise<any> {
+  const url = `https://${config.account_name}.getcourse.ru/pl/api/${endpoint}`;
+  
+  const formData = new FormData();
+  formData.append('key', config.secret_key);
+  formData.append('action', action);
+  
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      formData.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+    }
+  }
+
+  console.log(`GC Request: ${url} action=${action} params=${JSON.stringify(params)}`);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const text = await response.text();
+  console.log(`GC Response: ${text.slice(0, 1000)}`);
+  
+  try {
+    return JSON.parse(text);
+  } catch {
+    console.error('GetCourse response not JSON:', text.slice(0, 500));
+    throw new Error('Invalid response from GetCourse');
+  }
+}
+
+// GetCourse API helper - формат с action и base64 params
+async function gcRequestWithAction(
   config: GetCourseConfig,
   endpoint: string,
   action: string,
@@ -74,7 +111,7 @@ async function gcRequest(
   formData.append('key', config.secret_key);
   formData.append('params', paramsEncoded);
 
-  console.log(`GC Request: ${url} action=${action} params=${JSON.stringify(params)}`);
+  console.log(`GC Request Action: ${url} action=${action} params=${JSON.stringify(params)}`);
 
   const response = await fetch(url, {
     method: 'POST',
@@ -111,19 +148,30 @@ async function fetchAllDeals(
     console.log(`Fetching deals for offer ${offerId}...`);
     
     while (hasMore) {
+      // Формируем фильтры - ОБЯЗАТЕЛЬНО нужны фильтры для GetCourse
       const requestParams: Record<string, unknown> = {
-        offer_id: parseInt(offerId),
         page,
         per_page: 100,
+        // Фильтр по предложению
+        offer_id: parseInt(offerId),
+        // Фильтр по статусу - только оплаченные
+        status: 'payed',
       };
       
+      // Добавляем даты если указаны
       if (dateFrom) requestParams.created_at_from = dateFrom;
       if (dateTo) requestParams.created_at_to = dateTo;
       
-      const response = await gcRequest(config, 'deals', 'getList', requestParams);
+      // Пробуем простой формат без action (как в getcourse-sync)
+      const response = await gcRequestSimple(config, 'deals', requestParams);
       
       if (!response.success) {
-        console.error(`Error fetching deals for offer ${offerId}:`, response.error_message);
+        console.error(`Error fetching deals for offer ${offerId}:`, response.error_message || response.error);
+        
+        // Если deals не работает, пробуем через users (импорт пользователей с заказами)
+        console.log('Trying users endpoint with deals info...');
+        const usersDeals = await fetchDealsViaUsers(config, offerId);
+        allDeals.push(...usersDeals);
         break;
       }
       
@@ -133,19 +181,19 @@ async function fetchAllDeals(
       for (const deal of deals) {
         allDeals.push({
           id: deal.id,
-          deal_number: deal.deal_number || String(deal.id),
-          deal_created_at: deal.created_at,
-          deal_payed_at: deal.payed_at,
-          deal_finished_at: deal.finished_at,
-          deal_cost: parseFloat(deal.cost) || 0,
-          deal_status: deal.status,
+          deal_number: deal.deal_number || deal.number || String(deal.id),
+          deal_created_at: deal.created_at || deal.deal_created_at,
+          deal_payed_at: deal.payed_at || deal.finished_at || deal.deal_finished_at,
+          deal_finished_at: deal.finished_at || deal.deal_finished_at,
+          deal_cost: parseFloat(deal.cost || deal.deal_cost) || 0,
+          deal_status: deal.status || 'payed',
           offer_id: parseInt(offerId),
           offer_code: deal.offer_code,
-          user_email: deal.user_email?.toLowerCase(),
-          user_id: deal.user_id,
-          user_first_name: deal.user?.first_name,
-          user_last_name: deal.user?.last_name,
-          user_phone: deal.user?.phone,
+          user_email: (deal.user_email || deal.email || deal.user?.email)?.toLowerCase(),
+          user_id: deal.user_id || deal.user?.id,
+          user_first_name: deal.user?.first_name || deal.first_name,
+          user_last_name: deal.user?.last_name || deal.last_name,
+          user_phone: deal.user?.phone || deal.phone,
         });
       }
       
@@ -162,6 +210,80 @@ async function fetchAllDeals(
   
   console.log(`Total deals fetched: ${allDeals.length}`);
   return allDeals;
+}
+
+// Получить сделки через endpoint users с информацией о заказах
+async function fetchDealsViaUsers(
+  config: GetCourseConfig,
+  offerId: string
+): Promise<GCDeal[]> {
+  const deals: GCDeal[] = [];
+  
+  // Получаем пользователей с фильтром по group_id
+  // В GetCourse при оплате пользователь добавляется в группу, связанную с предложением
+  
+  let page = 1;
+  let hasMore = true;
+  
+  console.log(`Fetching users for offer ${offerId}...`);
+  
+  while (hasMore && page <= 20) { // Ограничение на всякий случай
+    const response = await gcRequestSimple(config, 'users', {
+      page,
+      per_page: 100,
+      // Добавляем обязательный фильтр - created_at за последний год
+      created_at_from: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    });
+    
+    if (!response.success) {
+      console.error('Error fetching users:', response.error_message || response.error);
+      break;
+    }
+    
+    const users = response.result?.items || [];
+    console.log(`Users page ${page}: ${users.length} users`);
+    
+    if (users.length === 0) {
+      break;
+    }
+    
+    // Для каждого пользователя проверяем есть ли заказы на нужный offer
+    for (const user of users) {
+      if (user.deals && Array.isArray(user.deals)) {
+        for (const deal of user.deals) {
+          // Фильтруем по offer_id и статусу
+          if (String(deal.offer_id) === offerId && deal.status === 'payed') {
+            deals.push({
+              id: deal.id,
+              deal_number: deal.deal_number || String(deal.id),
+              deal_created_at: deal.created_at,
+              deal_payed_at: deal.payed_at || deal.finished_at,
+              deal_finished_at: deal.finished_at,
+              deal_cost: parseFloat(deal.cost) || 0,
+              deal_status: 'payed',
+              offer_id: parseInt(offerId),
+              offer_code: deal.offer_code,
+              user_email: user.email?.toLowerCase(),
+              user_id: user.id,
+              user_first_name: user.first_name,
+              user_last_name: user.last_name,
+              user_phone: user.phone,
+            });
+          }
+        }
+      }
+    }
+    
+    if (users.length < 100) {
+      hasMore = false;
+    } else {
+      page++;
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+  
+  console.log(`Fetched ${deals.length} deals via users for offer ${offerId}`);
+  return deals;
 }
 
 // Найти или создать профиль
