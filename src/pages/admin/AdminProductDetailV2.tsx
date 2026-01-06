@@ -452,8 +452,7 @@ export default function AdminProductDetailV2() {
                   const tariffOffers = getOffersForTariff(tariff.id);
                   if (!tariffOffers.length) return null;
                   
-                  const hasPrimary = tariffOffers.some((o: any) => o.is_primary && o.offer_type === 'pay_now');
-                  const hasNoPrimaryWarning = tariffOffers.some((o: any) => o.offer_type === 'pay_now' && o.is_active) && !hasPrimary;
+                  const hasActivePayOffer = tariffOffers.some((o: any) => o.offer_type === 'pay_now' && o.is_active);
                   
                   return (
                     <GlassCard key={tariff.id} className="p-4">
@@ -461,7 +460,7 @@ export default function AdminProductDetailV2() {
                         <Tag className="h-4 w-4 text-muted-foreground" />
                         <span className="font-medium">{tariff.name}</span>
                         <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{tariff.code}</code>
-                        {hasNoPrimaryWarning && (
+                        {!hasActivePayOffer && (
                           <Badge variant="destructive" className="text-xs">
                             Нет основной цены
                           </Badge>
@@ -477,7 +476,7 @@ export default function AdminProductDetailV2() {
                             onSetPrimary={(offerId) => setPrimaryOffer.mutate({ offerId, tariffId: tariff.id })}
                             onEdit={() => openOfferDialog(offer)}
                             onDelete={() => setDeleteConfirm({ type: "offer", id: offer.id })}
-                            hasPrimaryInTariff={hasPrimary}
+                            hasPrimaryInTariff={hasActivePayOffer}
                           />
                         ))}
                       </div>
