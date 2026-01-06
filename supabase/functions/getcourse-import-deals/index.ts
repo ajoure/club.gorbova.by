@@ -48,6 +48,8 @@ const OFFER_TARIFF_MAP: Record<string, string> = {
 // Маппинг статусов
 const STATUS_MAP: Record<string, string> = {
   'payed': 'paid',
+  'finished': 'paid', // завершён
+  'completed': 'paid',
   'new': 'pending',
   'cancelled': 'canceled',
   'in_work': 'pending',
@@ -55,22 +57,25 @@ const STATUS_MAP: Record<string, string> = {
   'part_payed': 'pending',
 };
 
-// GetCourse API helper with pagination
+// GetCourse API helper - использует формат запроса GetCourse
 async function gcRequest(
   config: GetCourseConfig,
   endpoint: string,
+  action: string,
   params: Record<string, unknown> = {}
 ): Promise<any> {
   const url = `https://${config.account_name}.getcourse.ru/pl/api/${endpoint}`;
   
   const formData = new FormData();
   formData.append('key', config.secret_key);
+  formData.append('action', action);
   
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null) {
-      formData.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
-    }
+  // GetCourse требует params как JSON объект
+  if (Object.keys(params).length > 0) {
+    formData.append('params', JSON.stringify(params));
   }
+
+  console.log(`GC Request: ${endpoint} action=${action} params=${JSON.stringify(params)}`);
 
   const response = await fetch(url, {
     method: 'POST',
@@ -78,6 +83,7 @@ async function gcRequest(
   });
 
   const text = await response.text();
+  console.log(`GC Response (${endpoint}): ${text.slice(0, 500)}`);
   
   try {
     return JSON.parse(text);
@@ -103,17 +109,16 @@ async function fetchAllDeals(
     console.log(`Fetching deals for offer ${offerId}...`);
     
     while (hasMore) {
-      const params: Record<string, unknown> = {
-        action: 'getList',
-        offer_id: offerId,
+      const requestParams: Record<string, unknown> = {
+        offer_id: parseInt(offerId),
         page,
         per_page: 100,
       };
       
-      if (dateFrom) params.created_at_from = dateFrom;
-      if (dateTo) params.created_at_to = dateTo;
+      if (dateFrom) requestParams.created_at_from = dateFrom;
+      if (dateTo) requestParams.created_at_to = dateTo;
       
-      const response = await gcRequest(config, 'deals', params);
+      const response = await gcRequest(config, 'deals', 'getList', requestParams);
       
       if (!response.success) {
         console.error(`Error fetching deals for offer ${offerId}:`, response.error_message);
