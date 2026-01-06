@@ -4,7 +4,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Link2, CreditCard, Mail, Send, Users } from "lucide-react";
+import { Plus, Link2, CreditCard, Mail, Send, Users, Download } from "lucide-react";
 import {
   useIntegrations,
   PROVIDERS,
@@ -18,6 +18,7 @@ import { AddIntegrationDialog } from "@/components/integrations/AddIntegrationDi
 import { EditIntegrationDialog } from "@/components/integrations/EditIntegrationDialog";
 import { IntegrationLogsSheet } from "@/components/integrations/IntegrationLogsSheet";
 import { IntegrationSyncSettingsDialog } from "@/components/integrations/IntegrationSyncSettingsDialog";
+import { GetCourseImportDialog } from "@/components/integrations/GetCourseImportDialog";
 import { TelegramBotsTab } from "@/components/telegram/TelegramBotsTab";
 import { TelegramClubsTab } from "@/components/telegram/TelegramClubsTab";
 import { TelegramLogsTab } from "@/components/telegram/TelegramLogsTab";
@@ -47,6 +48,7 @@ export default function AdminIntegrations() {
   const [syncSettingsInstance, setSyncSettingsInstance] = useState<IntegrationInstance | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
   const [massBroadcastOpen, setMassBroadcastOpen] = useState(false);
+  const [getcourseImportOpen, setGetcourseImportOpen] = useState(false);
 
   // Determine active tab from URL
   const getActiveTab = (): IntegrationCategory => {
@@ -121,12 +123,20 @@ export default function AdminIntegrations() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-2xl font-bold">Интеграции</h1>
-        <Button onClick={() => handleAddNew(activeTab)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Добавить подключение
-        </Button>
+        <div className="flex gap-2">
+          {activeTab === "crm" && (
+            <Button variant="outline" onClick={() => setGetcourseImportOpen(true)}>
+              <Download className="h-4 w-4 mr-2" />
+              Импорт из GetCourse
+            </Button>
+          )}
+          <Button onClick={() => handleAddNew(activeTab)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Добавить подключение
+          </Button>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
@@ -299,6 +309,12 @@ export default function AdminIntegrations() {
       <MassBroadcastDialog
         open={massBroadcastOpen}
         onOpenChange={setMassBroadcastOpen}
+      />
+
+      <GetCourseImportDialog
+        open={getcourseImportOpen}
+        onOpenChange={setGetcourseImportOpen}
+        instanceId={instances?.find(i => i.provider === 'getcourse')?.id}
       />
     </div>
   );
