@@ -768,6 +768,24 @@ export default function AdminProductDetailV2() {
               </div>
             </div>
 
+            {offerForm.offer_type === "pay_now" && (
+              <div className="border-t pt-4">
+                <h4 className="font-medium mb-3 text-sm">Настройки оплаты</h4>
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={offerForm.requires_card_tokenization}
+                    onCheckedChange={(checked) => setOfferForm({ ...offerForm, requires_card_tokenization: checked })}
+                  />
+                  <Label>Подписка (автопродление)</Label>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {offerForm.requires_card_tokenization 
+                    ? "Карта будет сохранена для автоматического продления" 
+                    : "Разовый платёж без сохранения карты"}
+                </p>
+              </div>
+            )}
+
             {offerForm.offer_type === "trial" && (
               <>
                 <div className="border-t pt-4">
