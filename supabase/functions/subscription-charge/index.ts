@@ -90,29 +90,37 @@ async function chargeSubscription(
       throw new Error('bePaid not configured');
     }
 
-    const baseUrl = testMode 
-      ? 'https://checkout.bepaid.by/ctp/api' 
-      : 'https://checkout.bepaid.by/ctp/api';
+    // Use bePaid Gateway API for token charges
+    const bepaidAuth = btoa(`${shopId}:${secretKey}`);
 
-    // Charge using token
-    const chargeResponse = await fetch(`${baseUrl}/charges`, {
+    const chargePayload = {
+      request: {
+        amount: Math.round(amount * 100), // Convert to cents
+        currency,
+        description: `Subscription renewal - ${tariff.name}`,
+        tracking_id: payment.id,
+        test: testMode,
+        credit_card: {
+          token: payment_token,
+        },
+        additional_data: {
+          contract: ["recurring"],
+        },
+      },
+    };
+
+    console.log('Sending recurring charge to bePaid Gateway');
+
+    // Charge using token via Gateway API
+    const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
       method: 'POST',
       headers: {
-        'Authorization': 'Basic ' + btoa(`${shopId}:${secretKey}`),
+        'Authorization': `Basic ${bepaidAuth}`,
         'Content-Type': 'application/json',
+        'Accept': 'application/json',
         'X-API-Version': '2',
       },
-      body: JSON.stringify({
-        request: {
-          amount: Math.round(amount * 100), // Convert to cents
-          currency,
-          description: `Subscription renewal - ${tariff.name}`,
-          tracking_id: payment.id,
-          credit_card: {
-            token: payment_token,
-          },
-        },
-      }),
+      body: JSON.stringify(chargePayload),
     });
 
     const chargeResult = await chargeResponse.json();

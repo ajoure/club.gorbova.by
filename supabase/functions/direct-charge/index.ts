@@ -356,11 +356,33 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Call bePaid to charge the token
-    const baseUrl = 'https://checkout.bepaid.by/ctp/api';
+    // Call bePaid Gateway API to charge the token
+    // Important: For token charges, use gateway.bepaid.by/transactions/payments with additional_data.contract
     const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+    const returnUrl = `https://gorbova.club/dashboard?payment=success&order=${order.id}`;
 
-    const chargeResponse = await fetch(`${baseUrl}/charges`, {
+    const chargePayload = {
+      request: {
+        amount: Math.round(amount * 100), // minimal currency units
+        currency: product.currency,
+        description: isTrial
+          ? `Trial: ${product.name} - ${tariff.name}`
+          : `${product.name} - ${tariff.name}`,
+        tracking_id: payment.id,
+        test: testMode,
+        return_url: returnUrl,
+        credit_card: {
+          token: paymentMethod.provider_token,
+        },
+        additional_data: {
+          contract: ["recurring", "unscheduled"],
+        },
+      },
+    };
+
+    console.log('Sending charge to bePaid Gateway:', JSON.stringify(chargePayload));
+
+    const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
       method: 'POST',
       headers: {
         'Authorization': `Basic ${bepaidAuth}`,
@@ -368,19 +390,7 @@ Deno.serve(async (req) => {
         'Accept': 'application/json',
         'X-API-Version': '2',
       },
-      body: JSON.stringify({
-        request: {
-          amount: Math.round(amount * 100), // minimal currency units
-          currency: product.currency,
-          description: isTrial
-            ? `Trial: ${product.name} - ${tariff.name}`
-            : `${product.name} - ${tariff.name}`,
-          tracking_id: payment.id,
-          credit_card: {
-            token: paymentMethod.provider_token,
-          },
-        },
-      }),
+      body: JSON.stringify(chargePayload),
     });
 
     // Log response status for debugging
