@@ -237,6 +237,9 @@ Deno.serve(async (req) => {
             .eq('id', relatedSubscription.id);
 
           console.log(`Access reduced by ${reduce_days} days for subscription ${relatedSubscription.id}`);
+        } else if (effectiveAccessAction === 'keep_subscription') {
+          // Keep subscription active with scheduled charges - do nothing
+          console.log(`Subscription ${relatedSubscription.id} kept active, scheduled charges continue`);
         }
         // 'keep' action = do nothing with access
       }

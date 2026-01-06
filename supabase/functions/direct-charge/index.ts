@@ -5,6 +5,90 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Send order to GetCourse
+async function sendToGetCourse(
+  email: string,
+  phone: string | null,
+  offerId: number,
+  orderId: string,
+  amount: number,
+  tariffCode: string
+): Promise<{ success: boolean; error?: string; gcOrderId?: string }> {
+  const apiKey = Deno.env.get('GETCOURSE_API_KEY');
+  const accountName = 'gorbova';
+  
+  if (!apiKey) {
+    console.log('GetCourse API key not configured, skipping');
+    return { success: false, error: 'API key not configured' };
+  }
+  
+  if (!offerId) {
+    console.log(`No getcourse_offer_id for tariff: ${tariffCode}, skipping GetCourse sync`);
+    return { success: false, error: `No GetCourse offer ID for tariff: ${tariffCode}` };
+  }
+  
+  try {
+    console.log(`Sending order to GetCourse: email=${email}, offerId=${offerId}, orderId=${orderId}`);
+    
+    const params = {
+      user: {
+        email: email,
+        phone: phone || undefined,
+      },
+      system: {
+        refresh_if_exists: 1,
+      },
+      deal: {
+        offer_code: offerId.toString(),
+        deal_number: orderId,
+        deal_cost: amount / 100, // Convert from kopecks if needed
+        deal_status: 'payed',
+        deal_is_paid: 1,
+        payment_type: 'CARD',
+        manager_email: 'info@ajoure.by',
+        deal_comment: `Оплата через сайт club.gorbova.by. Order ID: ${orderId}`,
+      },
+    };
+    
+    const formData = new URLSearchParams();
+    formData.append('action', 'add');
+    formData.append('key', apiKey);
+    formData.append('params', btoa(unescape(encodeURIComponent(JSON.stringify(params)))));
+    
+    const response = await fetch(`https://${accountName}.getcourse.ru/pl/api/deals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData.toString(),
+    });
+    
+    const responseText = await response.text();
+    console.log('GetCourse response:', responseText);
+    
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      console.error('Failed to parse GetCourse response:', responseText);
+      return { success: false, error: `Invalid response: ${responseText.substring(0, 200)}` };
+    }
+    
+    if (data.success || data.result?.success) {
+      console.log('Order successfully sent to GetCourse');
+      return { success: true, gcOrderId: data.result?.deal_id?.toString() };
+    } else {
+      const errorMsg = data.error_message || data.result?.error_message || 'Unknown error';
+      console.error('GetCourse error:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error('GetCourse API error:', errorMsg);
+    return { success: false, error: errorMsg };
+  }
+}
+
 interface DirectChargeRequest {
   productId: string;
   tariffCode: string;
@@ -93,7 +177,7 @@ Deno.serve(async (req) => {
 
     const { data: tariff } = await supabase
       .from('tariffs')
-      .select('id, name, code, access_days, original_price, trial_days, trial_price, trial_auto_charge')
+      .select('id, name, code, access_days, original_price, trial_days, trial_price, trial_auto_charge, getcourse_offer_id')
       .eq('code', tariffCode)
       .eq('product_id', productId)
       .eq('is_active', true)
@@ -603,6 +687,29 @@ Deno.serve(async (req) => {
             duration_days: accessDays,
           },
         });
+      }
+
+      // GetCourse sync
+      if (tariff.getcourse_offer_id) {
+        console.log(`Syncing to GetCourse: offer_id=${tariff.getcourse_offer_id}`);
+        
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('email, phone')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        
+        if (profile?.email) {
+          const gcResult = await sendToGetCourse(
+            profile.email,
+            profile.phone || null,
+            tariff.getcourse_offer_id,
+            order.id,
+            amount,
+            tariff.code || tariff.name
+          );
+          console.log('GetCourse sync result (direct-charge):', gcResult);
+        }
       }
 
       // Audit log
