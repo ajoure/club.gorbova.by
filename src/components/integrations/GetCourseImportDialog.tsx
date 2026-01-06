@@ -18,9 +18,12 @@ interface GetCourseImportDialogProps {
 
 interface PreviewResult {
   success: boolean;
-  total: number;
-  summary: Record<string, Record<string, number>>;
-  sample: any[];
+  result: {
+    total: number;
+    byOffer: Record<string, number>;
+    byStatus: Record<string, number>;
+    sample: any[];
+  };
 }
 
 interface ImportResult {
@@ -218,38 +221,48 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-5 w-5 text-green-500" />
                 <span className="font-medium">
-                  Найдено сделок: {previewResult.total}
+                  Найдено сделок: {previewResult.result?.total || 0}
                 </span>
               </div>
               
               {/* Разбивка по офферам */}
-              <div className="space-y-2">
-                {Object.entries(previewResult.summary).map(([offerId, statuses]) => (
-                  <div key={offerId} className="text-sm">
-                    <span className="font-medium">
-                      {OFFERS.find(o => o.id === offerId)?.name || offerId}:
-                    </span>
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      {Object.entries(statuses).map(([status, count]) => (
-                        <Badge key={status} variant="secondary">
-                          {STATUS_LABELS[status] || status}: {count}
-                        </Badge>
-                      ))}
-                    </div>
+              {previewResult.result?.byOffer && (
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">По офферам:</div>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(previewResult.result.byOffer).map(([offerId, count]) => (
+                      <Badge key={offerId} variant="secondary">
+                        {OFFERS.find(o => o.id === offerId)?.name || offerId}: {count}
+                      </Badge>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
+
+              {/* Разбивка по статусам */}
+              {previewResult.result?.byStatus && (
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">По статусам:</div>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(previewResult.result.byStatus).map(([status, count]) => (
+                      <Badge key={status} variant="outline">
+                        {STATUS_LABELS[status] || status}: {count}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Пример данных */}
-              {previewResult.sample.length > 0 && (
+              {previewResult.result?.sample && previewResult.result.sample.length > 0 && (
                 <details className="text-sm">
                   <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                    Примеры сделок ({previewResult.sample.length})
+                    Примеры сделок ({previewResult.result.sample.length})
                   </summary>
                   <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
-                    {previewResult.sample.map((deal, i) => (
+                    {previewResult.result.sample.map((deal, i) => (
                       <div key={i} className="text-xs p-2 bg-background rounded">
-                        {deal.user_email} - {deal.deal_cost} BYN - {STATUS_LABELS[deal.deal_status] || deal.deal_status}
+                        {deal.email} - {deal.cost} BYN - {STATUS_LABELS[deal.status] || deal.status}
                       </div>
                     ))}
                   </div>
