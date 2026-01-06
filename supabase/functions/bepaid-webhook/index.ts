@@ -421,31 +421,33 @@ Deno.serve(async (req) => {
           const autoChargeAfterTrial = offer?.auto_charge_after_trial ?? true;
 
           if (productV2 && tariff) {
-            // Extend existing subscription (if any) for non-trial purchases
+            // Find existing active subscription to extend (if any) for non-trial purchases
             // IMPORTANT: exclude canceled subscriptions (canceled_at IS NOT NULL)
-            let extendFromDate: Date | null = null;
+            // We use one query and reuse the result for both calculation and upsert
+            let existingSub: { id: string; access_end_at: string; canceled_at: string | null } | null = null;
+            
             if (!orderV2.is_trial) {
-              const { data: existingSub } = await supabase
+              const { data } = await supabase
                 .from('subscriptions_v2')
                 .select('id, access_end_at, canceled_at')
                 .eq('user_id', orderV2.user_id)
                 .eq('product_id', orderV2.product_id)
                 .in('status', ['active', 'trial'])
                 .is('canceled_at', null) // Only extend non-canceled subscriptions
-                .gte('access_end_at', now.toISOString())
+                .gte('access_end_at', now.toISOString()) // Only extend subscriptions still in the future
                 .order('access_end_at', { ascending: false })
                 .limit(1)
                 .maybeSingle();
-
-              if (existingSub?.access_end_at) {
-                extendFromDate = new Date(existingSub.access_end_at);
-              }
+              
+              existingSub = data;
             }
 
             const accessDays = orderV2.is_trial
               ? Math.max(1, Math.ceil((new Date(orderV2.trial_end_at).getTime() - new Date(orderV2.created_at).getTime()) / (24 * 60 * 60 * 1000)))
               : (tariff.access_days || 30);
 
+            // For non-trial: extend from existing subscription end date, or start from now
+            const extendFromDate = existingSub?.access_end_at ? new Date(existingSub.access_end_at) : null;
             const baseDate = extendFromDate || new Date();
             const accessEndAt = orderV2.is_trial
               ? new Date(orderV2.trial_end_at)
@@ -460,33 +462,36 @@ Deno.serve(async (req) => {
             }
             // If not recurring subscription (one-time payment), next_charge_at stays null
 
-            // Upsert subscription - exclude canceled subscriptions
-            const { data: existing } = await supabase
-              .from('subscriptions_v2')
-              .select('id, access_end_at, canceled_at')
-              .eq('user_id', orderV2.user_id)
-              .eq('product_id', orderV2.product_id)
-              .in('status', ['active', 'trial'])
-              .is('canceled_at', null) // Only reuse non-canceled subscriptions
-              .order('access_end_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
+            console.log('Subscription upsert logic:', {
+              existingSubId: existingSub?.id,
+              existingEndAt: existingSub?.access_end_at,
+              extendFromDate: extendFromDate?.toISOString(),
+              accessDays,
+              newAccessEndAt: accessEndAt.toISOString(),
+              nextChargeAt: nextChargeAt?.toISOString(),
+              isRecurringSubscription,
+            });
 
-            if (existing && !orderV2.is_trial) {
+            if (existingSub && !orderV2.is_trial) {
+              // Update existing active subscription - extend it
               await supabase
                 .from('subscriptions_v2')
                 .update({
                   status: 'active',
                   is_trial: false,
+                  tariff_id: orderV2.tariff_id, // Update tariff in case it changed
                   access_end_at: accessEndAt.toISOString(),
                   next_charge_at: nextChargeAt?.toISOString() || null,
                   payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
                   payment_token: paymentV2.payment_token || null,
                   updated_at: now.toISOString(),
                 })
-                .eq('id', existing.id);
+                .eq('id', existingSub.id);
+              
+              console.log('Updated existing subscription:', existingSub.id);
             } else {
-              await supabase
+              // Create new subscription
+              const { data: newSub } = await supabase
                 .from('subscriptions_v2')
                 .insert({
                   user_id: orderV2.user_id,
@@ -501,7 +506,11 @@ Deno.serve(async (req) => {
                   next_charge_at: nextChargeAt?.toISOString() || null,
                   payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
                   payment_token: paymentV2.payment_token || null,
-                });
+                })
+                .select('id')
+                .single();
+              
+              console.log('Created new subscription:', newSub?.id);
             }
 
             // Telegram access
