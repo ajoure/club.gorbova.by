@@ -123,6 +123,17 @@ export default function PaymentMethodsSettings() {
           .update({ is_default: true })
           .eq("id", otherMethods[0].id);
       }
+
+      // Log the action
+      await supabase.from("audit_logs").insert({
+        actor_user_id: user.id,
+        action: "payment_method.removed",
+        meta: { 
+          payment_method_id: methodId,
+          brand: method?.brand, 
+          last4: method?.last4 
+        },
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["user-payment-methods"] });
