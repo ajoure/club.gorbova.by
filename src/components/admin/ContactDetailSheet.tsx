@@ -375,19 +375,20 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-xl p-0 flex flex-col h-full overflow-hidden">
-        <SheetHeader className="p-6 pb-4 border-b flex-shrink-0">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">
-                <User className="w-7 h-7 text-primary" />
+      <SheetContent className="w-full sm:max-w-xl p-0 flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden">
+        {/* Compact header for mobile */}
+        <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 border-b flex-shrink-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center flex-shrink-0">
+                <User className="w-5 h-5 sm:w-7 sm:h-7 text-primary" />
               </div>
-              <div>
-                <SheetTitle className="text-xl">{contact.full_name || "Без имени"}</SheetTitle>
-                <p className="text-sm text-muted-foreground">{contact.email}</p>
+              <div className="min-w-0">
+                <SheetTitle className="text-lg sm:text-xl truncate">{contact.full_name || "Без имени"}</SheetTitle>
+                <p className="text-xs sm:text-sm text-muted-foreground truncate">{contact.email}</p>
               </div>
             </div>
-            <Badge variant={contact.status === "active" ? "default" : "secondary"}>
+            <Badge variant={contact.status === "active" ? "default" : "secondary"} className="flex-shrink-0 text-xs">
               {contact.status === "active" ? (
                 <><CheckCircle className="w-3 h-3 mr-1" />Активен</>
               ) : contact.status === "blocked" ? (
@@ -399,23 +400,26 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           </div>
         </SheetHeader>
 
-        <Tabs defaultValue="profile" className="flex-1 flex flex-col min-h-0">
-          <TabsList className="mx-6 mt-4 justify-start flex-wrap flex-shrink-0">
-            <TabsTrigger value="profile">Профиль</TabsTrigger>
-            <TabsTrigger value="access">
-              Доступы {activeSubscriptions.length > 0 && <Badge variant="secondary" className="ml-1">{activeSubscriptions.length}</Badge>}
-            </TabsTrigger>
-            <TabsTrigger value="deals">
-              Сделки {deals && deals.length > 0 && <Badge variant="secondary" className="ml-1">{deals.length}</Badge>}
-            </TabsTrigger>
-            <TabsTrigger value="communications">События</TabsTrigger>
-            {contact.duplicate_flag && (
-              <TabsTrigger value="duplicates">Дубли</TabsTrigger>
-            )}
-          </TabsList>
+        <Tabs defaultValue="profile" className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* Scrollable tabs for mobile */}
+          <div className="flex-shrink-0 border-b overflow-x-auto">
+            <TabsList className="mx-4 sm:mx-6 my-2 sm:my-3 inline-flex w-auto whitespace-nowrap">
+              <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
+              <TabsTrigger value="access" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                Доступы {activeSubscriptions.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{activeSubscriptions.length}</Badge>}
+              </TabsTrigger>
+              <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                Сделки {deals && deals.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.length}</Badge>}
+              </TabsTrigger>
+              <TabsTrigger value="communications" className="text-xs sm:text-sm px-2.5 sm:px-3">События</TabsTrigger>
+              {contact.duplicate_flag && (
+                <TabsTrigger value="duplicates" className="text-xs sm:text-sm px-2.5 sm:px-3">Дубли</TabsTrigger>
+              )}
+            </TabsList>
+          </div>
 
-          <ScrollArea className="flex-1 min-h-0 px-6 py-4">
-            {/* Profile Tab */}
+          <ScrollArea className="flex-1 overflow-auto">
+            <div className="px-4 sm:px-6 py-4">
             <TabsContent value="profile" className="m-0 space-y-4">
               <Card>
                 <CardHeader className="pb-2">
@@ -899,6 +903,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                 )}
               </TabsContent>
             )}
+            </div>
           </ScrollArea>
         </Tabs>
 
