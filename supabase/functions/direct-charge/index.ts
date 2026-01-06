@@ -383,8 +383,41 @@ Deno.serve(async (req) => {
       }),
     });
 
+    // Log response status for debugging
+    console.log(`bePaid charge response status: ${chargeResponse.status}`);
+    
     const chargeResult = await chargeResponse.json();
     console.log('bePaid charge response:', JSON.stringify(chargeResult));
+
+    // Handle non-200 responses from bePaid
+    if (!chargeResponse.ok) {
+      const errorMessage = chargeResult.message || chargeResult.error || `bePaid API error: ${chargeResponse.status}`;
+      console.error('bePaid API error:', errorMessage, chargeResult);
+      
+      await supabase
+        .from('payments_v2')
+        .update({
+          status: 'failed',
+          error_message: errorMessage,
+          provider_response: chargeResult,
+        })
+        .eq('id', payment.id);
+
+      await supabase
+        .from('orders_v2')
+        .update({ status: 'failed' })
+        .eq('id', order.id);
+
+      return new Response(JSON.stringify({
+        success: false,
+        error: errorMessage,
+        orderId: order.id,
+        details: chargeResult,
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     const txStatus = chargeResult.transaction?.status;
 
