@@ -45,94 +45,148 @@ const OFFER_TARIFF_MAP: Record<string, string> = {
   '6744628': '7c748940-dcad-4c7c-a92e-76a2344622d3', // BUSINESS
 };
 
-// Маппинг статусов
+// Маппинг статусов GetCourse -> наши статусы
 const STATUS_MAP: Record<string, string> = {
   'payed': 'paid',
-  'finished': 'paid', // завершён
+  'Завершён': 'paid',
+  'finished': 'paid',
   'completed': 'paid',
   'new': 'pending',
   'cancelled': 'canceled',
   'in_work': 'pending',
   'payment_waiting': 'pending',
   'part_payed': 'pending',
+  'Новый': 'pending',
+  'В работе': 'pending',
+  'Ожидает оплаты': 'pending',
+  'Отменён': 'canceled',
+  'Ложный': 'canceled',
 };
 
-// GetCourse API helper - с action в FormData
-async function gcRequestSimple(
+// Задержка для rate limiting
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * GetCourse Export API - двухэтапный процесс
+ * Шаг 1: Инициировать экспорт через /pl/api/account/deals
+ * Шаг 2: Получить результаты через /pl/api/account/exports/{export_id}
+ */
+async function exportDeals(
   config: GetCourseConfig,
-  endpoint: string,
-  params: Record<string, unknown> = {},
-  action: string = 'getList'
-): Promise<any> {
-  const url = `https://${config.account_name}.getcourse.ru/pl/api/${endpoint}`;
+  filters: Record<string, string>
+): Promise<GCDeal[]> {
+  // Шаг 1: Инициировать экспорт
+  const params = new URLSearchParams({
+    key: config.secret_key,
+    ...filters
+  });
   
-  const formData = new FormData();
-  formData.append('key', config.secret_key);
-  formData.append('action', action);
+  const initUrl = `https://${config.account_name}.getcourse.ru/pl/api/account/deals?${params}`;
+  console.log(`[Export Step 1] Initiating export: ${initUrl.replace(config.secret_key, '***')}`);
   
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null) {
-      formData.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+  const initResponse = await fetch(initUrl);
+  const initText = await initResponse.text();
+  console.log(`[Export Step 1] Response: ${initText.slice(0, 500)}`);
+  
+  let initData;
+  try {
+    initData = JSON.parse(initText);
+  } catch {
+    console.error('[Export Step 1] Invalid JSON response');
+    throw new Error('Не удалось распарсить ответ GetCourse');
+  }
+  
+  if (!initData.success) {
+    console.error('[Export Step 1] Error:', initData.error_message || initData.error);
+    throw new Error(initData.error_message || 'Не удалось запустить экспорт');
+  }
+  
+  const exportId = initData.info?.export_id;
+  if (!exportId) {
+    console.error('[Export Step 1] No export_id in response:', JSON.stringify(initData));
+    throw new Error('Не получен export_id от GetCourse');
+  }
+  
+  console.log(`[Export Step 1] Export started, export_id: ${exportId}`);
+  
+  // Шаг 2: Ожидание и получение результатов (polling)
+  let attempts = 0;
+  const maxAttempts = 60; // 2 минуты максимум
+  
+  while (attempts < maxAttempts) {
+    await delay(2000); // Ждём 2 секунды между запросами
+    
+    const resultUrl = `https://${config.account_name}.getcourse.ru/pl/api/account/exports/${exportId}?key=${config.secret_key}`;
+    console.log(`[Export Step 2] Polling attempt ${attempts + 1}: ${resultUrl.replace(config.secret_key, '***')}`);
+    
+    const resultResponse = await fetch(resultUrl);
+    const resultText = await resultResponse.text();
+    console.log(`[Export Step 2] Response: ${resultText.slice(0, 1000)}`);
+    
+    let resultData;
+    try {
+      resultData = JSON.parse(resultText);
+    } catch {
+      console.error('[Export Step 2] Invalid JSON response');
+      attempts++;
+      continue;
     }
+    
+    // Проверяем успешность
+    if (!resultData.success) {
+      console.log(`[Export Step 2] Not ready yet, status: ${resultData.error_message || 'processing'}`);
+      attempts++;
+      continue;
+    }
+    
+    // Данные готовы - возвращаем
+    const items = resultData.info?.items || resultData.info || [];
+    console.log(`[Export Step 2] Export complete, items: ${Array.isArray(items) ? items.length : 'not array'}`);
+    
+    if (Array.isArray(items)) {
+      return items.map(normalizeDeal);
+    }
+    
+    // Если items не массив, проверяем другие форматы
+    if (typeof items === 'object') {
+      const values = Object.values(items);
+      if (values.length > 0) {
+        return values.map(normalizeDeal);
+      }
+    }
+    
+    console.log('[Export Step 2] No items found in response');
+    return [];
   }
-
-  console.log(`GC Request: ${url} action=${action} params=${JSON.stringify(params)}`);
-
-  const response = await fetch(url, {
-    method: 'POST',
-    body: formData,
-  });
-
-  const text = await response.text();
-  console.log(`GC Response: ${text.slice(0, 1000)}`);
   
-  try {
-    return JSON.parse(text);
-  } catch {
-    console.error('GetCourse response not JSON:', text.slice(0, 500));
-    throw new Error('Invalid response from GetCourse');
-  }
+  throw new Error('Таймаут ожидания экспорта (2 минуты)');
 }
 
-// GetCourse API helper - формат с action и base64 params
-async function gcRequestWithAction(
-  config: GetCourseConfig,
-  endpoint: string,
-  action: string,
-  params: Record<string, unknown> = {}
-): Promise<any> {
-  const url = `https://${config.account_name}.getcourse.ru/pl/api/${endpoint}`;
-  
-  // GetCourse требует params в base64
-  const paramsEncoded = btoa(unescape(encodeURIComponent(JSON.stringify(params))));
-  
-  const formData = new URLSearchParams();
-  formData.append('action', action);
-  formData.append('key', config.secret_key);
-  formData.append('params', paramsEncoded);
-
-  console.log(`GC Request Action: ${url} action=${action} params=${JSON.stringify(params)}`);
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: formData.toString(),
-  });
-
-  const text = await response.text();
-  console.log(`GC Response: ${text.slice(0, 1000)}`);
-  
-  try {
-    return JSON.parse(text);
-  } catch {
-    console.error('GetCourse response not JSON:', text.slice(0, 500));
-    throw new Error('Invalid response from GetCourse');
-  }
+/**
+ * Нормализация сделки из разных форматов GetCourse
+ */
+function normalizeDeal(deal: any): GCDeal {
+  return {
+    id: deal.id || deal.deal_id,
+    deal_number: deal.number || deal.deal_number || String(deal.id || deal.deal_id),
+    deal_created_at: deal.created_at || deal.deal_created_at || new Date().toISOString(),
+    deal_payed_at: deal.payed_at || deal.finished_at || deal.deal_payed_at || deal.deal_finished_at,
+    deal_finished_at: deal.finished_at || deal.deal_finished_at,
+    deal_cost: parseFloat(deal.cost || deal.deal_cost || deal.cost_money || '0') || 0,
+    deal_status: deal.status || deal.status_name || 'payed',
+    offer_id: parseInt(deal.offer_id || deal.position_id || '0'),
+    offer_code: deal.offer_code || deal.position_code,
+    user_email: (deal.user_email || deal.email || deal.user?.email || '')?.toLowerCase(),
+    user_id: deal.user_id || deal.user?.id || 0,
+    user_first_name: deal.user_first_name || deal.first_name || deal.user?.first_name,
+    user_last_name: deal.user_last_name || deal.last_name || deal.user?.last_name,
+    user_phone: deal.user_phone || deal.phone || deal.user?.phone,
+  };
 }
 
-// Получить все сделки из GetCourse с пагинацией
+/**
+ * Получить все сделки из GetCourse через Export API
+ */
 async function fetchAllDeals(
   config: GetCourseConfig,
   offerIds: string[],
@@ -142,148 +196,43 @@ async function fetchAllDeals(
   const allDeals: GCDeal[] = [];
   
   for (const offerId of offerIds) {
-    let page = 1;
-    let hasMore = true;
+    console.log(`\n=== Fetching deals for offer ${offerId} ===`);
     
-    console.log(`Fetching deals for offer ${offerId}...`);
-    
-    while (hasMore) {
-      // Формируем фильтры - ОБЯЗАТЕЛЬНО нужны фильтры для GetCourse
-      const requestParams: Record<string, unknown> = {
-        page,
-        per_page: 100,
-        // Фильтр по предложению
-        offer_id: parseInt(offerId),
-        // Фильтр по статусу - только оплаченные
-        status: 'payed',
+    try {
+      // Формируем фильтры согласно документации
+      const filters: Record<string, string> = {
+        status: 'payed', // Только оплаченные
+        offer_id: offerId,
       };
       
       // Добавляем даты если указаны
-      if (dateFrom) requestParams.created_at_from = dateFrom;
-      if (dateTo) requestParams.created_at_to = dateTo;
+      if (dateFrom) filters['created_at[from]'] = dateFrom;
+      if (dateTo) filters['created_at[to]'] = dateTo;
       
-      // Пробуем простой формат без action (как в getcourse-sync)
-      const response = await gcRequestSimple(config, 'deals', requestParams);
+      console.log(`Filters: ${JSON.stringify(filters)}`);
       
-      if (!response.success) {
-        console.error(`Error fetching deals for offer ${offerId}:`, response.error_message || response.error);
-        
-        // Если deals не работает, пробуем через users (импорт пользователей с заказами)
-        console.log('Trying users endpoint with deals info...');
-        const usersDeals = await fetchDealsViaUsers(config, offerId);
-        allDeals.push(...usersDeals);
-        break;
-      }
+      const deals = await exportDeals(config, filters);
+      console.log(`Fetched ${deals.length} deals for offer ${offerId}`);
       
-      const deals = response.result?.items || [];
-      console.log(`Page ${page}: fetched ${deals.length} deals`);
-      
+      // Добавляем offer_id к каждой сделке (на случай если его нет в данных)
       for (const deal of deals) {
-        allDeals.push({
-          id: deal.id,
-          deal_number: deal.deal_number || deal.number || String(deal.id),
-          deal_created_at: deal.created_at || deal.deal_created_at,
-          deal_payed_at: deal.payed_at || deal.finished_at || deal.deal_finished_at,
-          deal_finished_at: deal.finished_at || deal.deal_finished_at,
-          deal_cost: parseFloat(deal.cost || deal.deal_cost) || 0,
-          deal_status: deal.status || 'payed',
-          offer_id: parseInt(offerId),
-          offer_code: deal.offer_code,
-          user_email: (deal.user_email || deal.email || deal.user?.email)?.toLowerCase(),
-          user_id: deal.user_id || deal.user?.id,
-          user_first_name: deal.user?.first_name || deal.first_name,
-          user_last_name: deal.user?.last_name || deal.last_name,
-          user_phone: deal.user?.phone || deal.phone,
-        });
+        if (!deal.offer_id) {
+          deal.offer_id = parseInt(offerId);
+        }
+        allDeals.push(deal);
       }
       
-      // Проверяем есть ли еще страницы
-      if (deals.length < 100) {
-        hasMore = false;
-      } else {
-        page++;
-        // Rate limiting
-        await new Promise(r => setTimeout(r, 200));
-      }
+      // Rate limiting - не более 100 запросов в 2 часа
+      await delay(500);
+      
+    } catch (error) {
+      console.error(`Error fetching deals for offer ${offerId}:`, error);
+      // Продолжаем с другими офферами
     }
   }
   
-  console.log(`Total deals fetched: ${allDeals.length}`);
+  console.log(`\n=== Total deals fetched: ${allDeals.length} ===`);
   return allDeals;
-}
-
-// Получить сделки через endpoint users с информацией о заказах
-async function fetchDealsViaUsers(
-  config: GetCourseConfig,
-  offerId: string
-): Promise<GCDeal[]> {
-  const deals: GCDeal[] = [];
-  
-  // Получаем пользователей с фильтром по group_id
-  // В GetCourse при оплате пользователь добавляется в группу, связанную с предложением
-  
-  let page = 1;
-  let hasMore = true;
-  
-  console.log(`Fetching users for offer ${offerId}...`);
-  
-  while (hasMore && page <= 20) { // Ограничение на всякий случай
-    const response = await gcRequestSimple(config, 'users', {
-      page,
-      per_page: 100,
-      // Добавляем обязательный фильтр - created_at за последний год
-      created_at_from: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    });
-    
-    if (!response.success) {
-      console.error('Error fetching users:', response.error_message || response.error);
-      break;
-    }
-    
-    const users = response.result?.items || [];
-    console.log(`Users page ${page}: ${users.length} users`);
-    
-    if (users.length === 0) {
-      break;
-    }
-    
-    // Для каждого пользователя проверяем есть ли заказы на нужный offer
-    for (const user of users) {
-      if (user.deals && Array.isArray(user.deals)) {
-        for (const deal of user.deals) {
-          // Фильтруем по offer_id и статусу
-          if (String(deal.offer_id) === offerId && deal.status === 'payed') {
-            deals.push({
-              id: deal.id,
-              deal_number: deal.deal_number || String(deal.id),
-              deal_created_at: deal.created_at,
-              deal_payed_at: deal.payed_at || deal.finished_at,
-              deal_finished_at: deal.finished_at,
-              deal_cost: parseFloat(deal.cost) || 0,
-              deal_status: 'payed',
-              offer_id: parseInt(offerId),
-              offer_code: deal.offer_code,
-              user_email: user.email?.toLowerCase(),
-              user_id: user.id,
-              user_first_name: user.first_name,
-              user_last_name: user.last_name,
-              user_phone: user.phone,
-            });
-          }
-        }
-      }
-    }
-    
-    if (users.length < 100) {
-      hasMore = false;
-    } else {
-      page++;
-      await new Promise(r => setTimeout(r, 200));
-    }
-  }
-  
-  console.log(`Fetched ${deals.length} deals via users for offer ${offerId}`);
-  return deals;
 }
 
 // Найти или создать профиль
@@ -291,6 +240,10 @@ async function findOrCreateProfile(
   supabase: any,
   deal: GCDeal
 ): Promise<{ id: string; user_id: string | null; isNew: boolean }> {
+  if (!deal.user_email) {
+    throw new Error('Email обязателен для создания профиля');
+  }
+  
   // Ищем существующий профиль по email
   const { data: existing } = await supabase
     .from('profiles')
@@ -302,21 +255,8 @@ async function findOrCreateProfile(
     return { id: existing.id, user_id: existing.user_id, isNew: false };
   }
   
-  // Ищем существующий профиль по gc_user_id в meta
-  const { data: byGcId } = await supabase
-    .from('profiles')
-    .select('id, user_id')
-    .contains('meta', { gc_user_id: deal.user_id })
-    .maybeSingle();
-  
-  if (byGcId) {
-    return { id: byGcId.id, user_id: byGcId.user_id, isNew: false };
-  }
-  
   // Создаем ghost профиль
   const fullName = [deal.user_first_name, deal.user_last_name].filter(Boolean).join(' ') || null;
-  
-  // Генерируем временный UUID для user_id (ghost профиль)
   const ghostUserId = crypto.randomUUID();
   
   const { data: newProfile, error } = await supabase
@@ -438,7 +378,8 @@ async function createSubscription(
   productId: string
 ): Promise<{ id: string; isNew: boolean } | null> {
   // Только для оплаченных сделок
-  if (deal.deal_status !== 'payed') {
+  const isPaid = deal.deal_status === 'payed' || deal.deal_status === 'Завершён' || deal.deal_status === 'finished';
+  if (!isPaid) {
     return null;
   }
   
@@ -457,7 +398,7 @@ async function createSubscription(
   const accessStartAt = deal.deal_payed_at || deal.deal_created_at;
   const startDate = new Date(accessStartAt);
   const endDate = new Date(startDate);
-  endDate.setDate(endDate.getDate() + 30); // 30 дней доступа
+  endDate.setDate(endDate.getDate() + 30);
   
   // Определяем статус
   const now = new Date();
@@ -499,89 +440,78 @@ Deno.serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const body = await req.json();
-    const { 
-      action = 'import',
-      offer_ids = Object.keys(OFFER_TARIFF_MAP), // По умолчанию все офферы клуба
-      date_from,
-      date_to,
-      dry_run = false, // Если true - только подсчет без создания записей
-      instance_id,
-    } = body;
-
-    console.log(`GetCourse Import Deals: action=${action}, offers=${offer_ids.join(',')}, dry_run=${dry_run}`);
-
-    // Получаем конфиг GetCourse
-    let instanceQuery = supabase
-      .from('integration_instances')
-      .select('*')
-      .eq('provider', 'getcourse')
-      .in('status', ['active', 'connected']);
+    const { action, instanceId, offerIds, dateFrom, dateTo } = await req.json();
     
-    if (instance_id) {
-      instanceQuery = instanceQuery.eq('id', instance_id);
-    } else {
-      instanceQuery = instanceQuery.eq('is_default', true);
-    }
+    console.log(`\n========== GetCourse Import ==========`);
+    console.log(`Action: ${action}`);
+    console.log(`Instance ID: ${instanceId}`);
+    console.log(`Offer IDs: ${JSON.stringify(offerIds)}`);
+    console.log(`Date range: ${dateFrom || 'not set'} - ${dateTo || 'not set'}`);
 
-    const { data: instance } = await instanceQuery.maybeSingle();
-    
-    const finalInstance = instance || (await supabase
+    // Получаем конфигурацию интеграции
+    const { data: instance, error: instanceError } = await supabase
       .from('integration_instances')
-      .select('*')
-      .eq('provider', 'getcourse')
-      .in('status', ['active', 'connected'])
-      .limit(1)
-      .maybeSingle()).data;
+      .select('config')
+      .eq('id', instanceId)
+      .single();
 
-    if (!finalInstance) {
-      return new Response(JSON.stringify({ error: 'GetCourse not configured' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    if (instanceError || !instance) {
+      throw new Error('Интеграция не найдена');
     }
 
     const config: GetCourseConfig = {
-      account_name: (finalInstance.config as any)?.account_name || '',
-      secret_key: (finalInstance.config as any)?.secret_key || '',
+      account_name: (instance.config as any).account_name,
+      secret_key: (instance.config as any).secret_key,
     };
 
     if (!config.account_name || !config.secret_key) {
-      return new Response(JSON.stringify({ error: 'GetCourse credentials not configured' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      throw new Error('Не настроены параметры интеграции GetCourse');
     }
 
-    // Если action = preview - только получаем данные без импорта
+    console.log(`GetCourse account: ${config.account_name}`);
+
+    // Получаем сделки
+    const deals = await fetchAllDeals(config, offerIds, dateFrom, dateTo);
+
     if (action === 'preview') {
-      const deals = await fetchAllDeals(config, offer_ids, date_from, date_to);
+      // Группируем по offer_id и статусу
+      const byOffer: Record<string, number> = {};
+      const byStatus: Record<string, number> = {};
       
-      // Группируем по офферам и статусам
-      const summary: Record<string, Record<string, number>> = {};
       for (const deal of deals) {
         const offerId = String(deal.offer_id);
-        if (!summary[offerId]) summary[offerId] = {};
-        if (!summary[offerId][deal.deal_status]) summary[offerId][deal.deal_status] = 0;
-        summary[offerId][deal.deal_status]++;
+        byOffer[offerId] = (byOffer[offerId] || 0) + 1;
+        byStatus[deal.deal_status] = (byStatus[deal.deal_status] || 0) + 1;
       }
       
-      return new Response(JSON.stringify({
-        success: true,
-        total: deals.length,
-        summary,
-        sample: deals.slice(0, 10), // Первые 10 для предпросмотра
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          result: {
+            total: deals.length,
+            byOffer,
+            byStatus,
+            sample: deals.slice(0, 5).map(d => ({
+              id: d.id,
+              number: d.deal_number,
+              email: d.user_email,
+              cost: d.deal_cost,
+              status: d.deal_status,
+              offer_id: d.offer_id,
+              created_at: d.deal_created_at,
+            })),
+          },
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    // Полный импорт
+    // Импорт
     const result: ImportResult = {
-      total_fetched: 0,
+      total_fetched: deals.length,
       profiles_created: 0,
       profiles_updated: 0,
       orders_created: 0,
@@ -591,31 +521,12 @@ Deno.serve(async (req) => {
       details: [],
     };
 
-    // Получаем все сделки
-    const deals = await fetchAllDeals(config, offer_ids, date_from, date_to);
-    result.total_fetched = deals.length;
-    result.details.push(`Fetched ${deals.length} deals from GetCourse`);
-
-    if (dry_run) {
-      result.details.push('DRY RUN - no changes made');
-      return new Response(JSON.stringify({ success: true, result }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Обрабатываем каждую сделку
     for (const deal of deals) {
       try {
-        // Проверяем что есть email
-        if (!deal.user_email) {
-          result.errors++;
-          continue;
-        }
-
-        // Получаем tariff_id
+        // Проверяем маппинг тарифа
         const tariffId = OFFER_TARIFF_MAP[String(deal.offer_id)];
         if (!tariffId) {
-          result.details.push(`Unknown offer_id: ${deal.offer_id}`);
+          result.details.push(`Offer ${deal.offer_id} не найден в маппинге`);
           result.errors++;
           continue;
         }
@@ -623,12 +534,12 @@ Deno.serve(async (req) => {
         // Получаем product_id
         const productId = await getProductIdByTariff(supabase, tariffId);
         if (!productId) {
-          result.details.push(`No product for tariff: ${tariffId}`);
+          result.details.push(`Product не найден для tariff ${tariffId}`);
           result.errors++;
           continue;
         }
 
-        // Создаем/находим профиль
+        // Создаём/находим профиль
         const profile = await findOrCreateProfile(supabase, deal);
         if (profile.isNew) {
           result.profiles_created++;
@@ -636,63 +547,59 @@ Deno.serve(async (req) => {
           result.profiles_updated++;
         }
 
-        // Создаем заказ
-        const order = await createOrder(
-          supabase, 
-          deal, 
-          profile.user_id!, 
-          tariffId, 
-          productId
-        );
-        
+        // Создаём заказ
+        const order = await createOrder(supabase, deal, profile.user_id!, tariffId, productId);
         if (order.isNew) {
           result.orders_created++;
         } else {
           result.orders_skipped++;
         }
 
-        // Создаем подписку (только для оплаченных)
+        // Создаём подписку
         const subscription = await createSubscription(
-          supabase,
-          deal,
-          profile.user_id!,
-          order.id,
-          tariffId,
-          productId
+          supabase, deal, profile.user_id!, order.id, tariffId, productId
         );
-        
         if (subscription?.isNew) {
           result.subscriptions_created++;
         }
 
-      } catch (err) {
+      } catch (error) {
+        console.error(`Error processing deal ${deal.id}:`, error);
+        result.details.push(`Ошибка для сделки ${deal.deal_number}: ${error instanceof Error ? error.message : String(error)}`);
         result.errors++;
-        console.error('Error processing deal:', deal.id, err);
       }
     }
 
     // Логируем результат
     await supabase.from('integration_logs').insert({
-      instance_id: finalInstance.id,
-      event_type: 'deals_import',
+      instance_id: instanceId,
+      event_type: 'import',
       result: result.errors > 0 ? 'partial' : 'success',
-      error_message: result.errors > 0 ? `${result.errors} errors` : null,
-      payload_meta: result,
+      payload_meta: {
+        action: 'import_deals',
+        offers: offerIds,
+        dateFrom,
+        dateTo,
+        stats: {
+          total_fetched: result.total_fetched,
+          profiles_created: result.profiles_created,
+          orders_created: result.orders_created,
+          subscriptions_created: result.subscriptions_created,
+          errors: result.errors,
+        },
+      },
     });
 
-    result.details.push(`Import completed: ${result.orders_created} orders, ${result.subscriptions_created} subscriptions`);
-
-    return new Response(JSON.stringify({ success: true, result }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({ success: true, result }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
 
   } catch (error) {
-    console.error('GetCourse import error:', error);
-    return new Response(JSON.stringify({ 
-      error: error instanceof Error ? error.message : 'Unknown error' 
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    console.error('Import error:', error);
+    return new Response(
+      JSON.stringify({ success: false, error: error instanceof Error ? error.message : String(error) }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 });
