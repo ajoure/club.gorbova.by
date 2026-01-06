@@ -300,7 +300,16 @@ export function PaymentDialog({
         });
 
         if (error) {
-          throw new Error(error.message);
+          // Check if the error response contains alreadyUsedTrial flag
+          const errorData = data || {};
+          if (errorData.alreadyUsedTrial) {
+            toast.warning("Вы уже использовали пробный период для этого продукта", {
+              duration: 8000,
+            });
+            setStep("ready");
+            return;
+          }
+          throw new Error(error.message || errorData.error || "Ошибка при оплате");
         }
 
         if (!data.success) {
