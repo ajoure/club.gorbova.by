@@ -54,7 +54,8 @@ export function TariffCardCompact({
   const mainOffer = offers.find(o => o.offer_type === "pay_now" && o.is_active && o.is_primary) 
     || offers.find(o => o.offer_type === "pay_now" && o.is_active);
   const trialOffer = offers.find(o => o.offer_type === "trial" && o.is_active);
-  const hasPrimaryPayOffer = offers.some(o => o.offer_type === "pay_now" && o.is_active && o.is_primary);
+  // Has main price if there's any active pay_now offer
+  const hasMainPayOffer = offers.some(o => o.offer_type === "pay_now" && o.is_active);
 
   const copyCode = () => {
     navigator.clipboard.writeText(tariff.code);
@@ -81,7 +82,7 @@ export function TariffCardCompact({
                 Trial {trialOffer.trial_days} дн.
               </Badge>
             )}
-            {!hasPrimaryPayOffer && mainOffer && (
+            {!hasMainPayOffer && (
               <Badge variant="destructive" className="shrink-0 text-xs">
                 Нет основной цены
               </Badge>
