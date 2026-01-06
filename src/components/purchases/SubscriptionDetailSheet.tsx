@@ -216,32 +216,47 @@ export function SubscriptionDetailSheet({
             <div>
               <h4 className="text-sm font-medium mb-3">История платежей</h4>
               <div className="space-y-2">
-                {subscription.payments.map((payment) => (
-                  <div
-                    key={payment.id}
-                    className="flex items-center justify-between py-2 px-3 rounded-md bg-muted/50"
-                  >
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium">
-                        {payment.amount.toFixed(2)} {payment.currency}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {formatShortDate(payment.created_at)}
-                      </span>
+                {subscription.payments.map((payment) => {
+                  const paymentReceiptUrl = payment.provider_response?.transaction?.receipt_url;
+                  return (
+                    <div
+                      key={payment.id}
+                      className="flex items-center justify-between py-2 px-3 rounded-md bg-muted/50"
+                    >
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium">
+                          {payment.amount.toFixed(2)} {payment.currency}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {formatShortDate(payment.created_at)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {paymentReceiptUrl && payment.status === "succeeded" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2"
+                            onClick={() => window.open(paymentReceiptUrl, '_blank')}
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {getPaymentStatusBadge(payment.status)}
+                      </div>
                     </div>
-                    {getPaymentStatusBadge(payment.status)}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
 
           {/* Actions */}
           <div className="space-y-2 pt-4">
-            {/* Download receipt from bePaid */}
+            {/* Download receipt - prioritize real bePaid receipt */}
             {receiptUrl ? (
               <Button 
-                variant="outline" 
+                variant="default" 
                 className="w-full gap-2"
                 onClick={() => window.open(receiptUrl, '_blank')}
               >
