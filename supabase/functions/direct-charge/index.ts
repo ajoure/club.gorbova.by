@@ -222,11 +222,11 @@ Deno.serve(async (req) => {
 
     // Check if user already has an active subscription for this product
     // For trial - block if already used trial for this product
-    // For regular purchase - allow and extend access
+    // For regular purchase - allow and extend access (only if same tariff)
     // IMPORTANT: exclude canceled subscriptions (canceled_at IS NOT NULL) - they should not be reused
     const { data: existingSub } = await supabase
       .from('subscriptions_v2')
-      .select('id, status, access_end_at, is_trial, canceled_at')
+      .select('id, status, access_end_at, is_trial, canceled_at, tariff_id')
       .eq('user_id', user.id)
       .eq('product_id', productId)
       .in('status', ['active', 'trial'])
@@ -260,11 +260,16 @@ Deno.serve(async (req) => {
       }
     }
 
-    // For regular purchase with active subscription - extend access period
+    // For regular purchase with active subscription of SAME tariff - extend access period
+    // If different tariff (upgrade/downgrade) - create new subscription
     let extendFromDate: Date | null = null;
-    if (existingSub && !isTrial) {
+    const isSameTariff = existingSub && existingSub.tariff_id === tariff.id;
+    
+    if (existingSub && isSameTariff && !isTrial) {
       extendFromDate = new Date(existingSub.access_end_at);
-      console.log(`User has active subscription until ${extendFromDate.toISOString()}, will extend from that date`);
+      console.log(`User has active subscription for same tariff until ${extendFromDate.toISOString()}, will extend from that date`);
+    } else if (existingSub && !isSameTariff) {
+      console.log(`User is upgrading/changing tariff from ${existingSub.tariff_id} to ${tariff.id}, will create new subscription`);
     }
 
     // Get bePaid settings
@@ -643,8 +648,8 @@ Deno.serve(async (req) => {
       // If not recurring subscription (one-time payment), next_charge_at stays null
 
       let subscription;
-      if (existingSub && !isTrial) {
-        // Update existing subscription with extended access
+      if (existingSub && isSameTariff && !isTrial) {
+        // Update existing subscription with extended access (same tariff)
         const { data: updatedSub, error: updateError } = await supabase
           .from('subscriptions_v2')
           .update({
@@ -663,7 +668,7 @@ Deno.serve(async (req) => {
         subscription = updatedSub;
         console.log(`Extended subscription ${existingSub.id} until ${accessEndAt.toISOString()}`);
       } else {
-        // Create new subscription
+        // Create new subscription (new tariff or upgrade)
         const { data: newSub, error: subError } = await supabase
           .from('subscriptions_v2')
           .insert({
@@ -687,6 +692,19 @@ Deno.serve(async (req) => {
           console.error('Subscription creation error:', subError);
         }
         subscription = newSub;
+        
+        // If upgrading - optionally cancel old subscription
+        if (existingSub && !isSameTariff) {
+          console.log(`Canceling old subscription ${existingSub.id} due to tariff upgrade`);
+          await supabase
+            .from('subscriptions_v2')
+            .update({
+              status: 'canceled',
+              canceled_at: new Date().toISOString(),
+              cancel_reason: `Upgraded to tariff: ${tariff.code}`,
+            })
+            .eq('id', existingSub.id);
+        }
       }
 
       // Grant Telegram access
