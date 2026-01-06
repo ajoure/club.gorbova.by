@@ -18,27 +18,23 @@ import Audits from "./pages/Audits";
 import SelfDevelopment from "./pages/SelfDevelopment";
 import EisenhowerMatrix from "./pages/tools/EisenhowerMatrix";
 import BalanceWheel from "./pages/tools/BalanceWheel";
-import Pricing from "./pages/Pricing";
 import OrderPayment from "./pages/OrderPayment";
 import Offer from "./pages/Offer";
 import Privacy from "./pages/Privacy";
 import Contacts from "./pages/Contacts";
 import NotFound from "./pages/NotFound";
 import { AdminLayout } from "./components/layout/AdminLayout";
-import AdminUsers from "./pages/admin/AdminUsers";
 import AdminContacts from "./pages/admin/AdminContacts";
 import AdminDeals from "./pages/admin/AdminDeals";
 import AdminRoles from "./pages/admin/AdminRoles";
 import AdminAudit from "./pages/admin/AdminAudit";
 import AdminEntitlements from "./pages/admin/AdminEntitlements";
 import AdminContent from "./pages/admin/AdminContent";
-import AdminProducts from "./pages/admin/AdminProducts";
 import AdminDuplicates from "./pages/admin/AdminDuplicates";
 import AdminIntegrations from "./pages/admin/AdminIntegrations";
 import TelegramClubMembers from "./pages/admin/TelegramClubMembers";
 import TelegramInvites from "./pages/admin/TelegramInvites";
 import ProductClubMappings from "./pages/admin/ProductClubMappings";
-
 import TelegramChatAnalytics from "./pages/admin/TelegramChatAnalytics";
 import AdminFieldRegistry from "./pages/admin/AdminFieldRegistry";
 import AdminProductsV2 from "./pages/admin/AdminProductsV2";
@@ -55,7 +51,7 @@ import Documentation from "./pages/Documentation";
 import Help from "./pages/Help";
 import ProfileSettings from "./pages/settings/Profile";
 import PaymentMethodsSettings from "./pages/settings/PaymentMethods";
-import SubscriptionsSettings from "./pages/settings/Subscriptions";
+
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -74,13 +70,14 @@ const App = () => (
               {/* Public routes */}
               <Route path="/" element={<Landing />} />
               <Route path="/auth" element={<Auth />} />
-              <Route path="/pricing" element={<Pricing />} />
+              <Route path="/pricing" element={<Navigate to="/#pricing" replace />} />
               <Route path="/order-payment" element={<OrderPayment />} />
               <Route path="/offer" element={<Offer />} />
               <Route path="/pay" element={<Pay />} />
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/contacts" element={<Contacts />} />
               <Route path="/help" element={<Help />} />
+              
               {/* Protected routes */}
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/purchases" element={<ProtectedRoute><Purchases /></ProtectedRoute>} />
@@ -101,7 +98,7 @@ const App = () => (
               <Route path="/settings/payment-methods" element={<ProtectedRoute><PaymentMethodsSettings /></ProtectedRoute>} />
               <Route path="/settings/subscriptions" element={<Navigate to="/purchases" replace />} />
               
-              {/* Admin routes - New CRM-style */}
+              {/* Admin routes - CRM */}
               <Route path="/admin" element={<Navigate to="/admin/contacts" replace />} />
               <Route path="/admin/contacts" element={<ProtectedRoute><AdminLayout><AdminContacts /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/contacts/duplicates" element={<ProtectedRoute><AdminLayout><AdminDuplicates /></AdminLayout></ProtectedRoute>} />
@@ -121,23 +118,22 @@ const App = () => (
               <Route path="/admin/integrations/telegram/clubs/:clubId/members" element={<ProtectedRoute><TelegramClubMembers /></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/invites" element={<ProtectedRoute><TelegramInvites /></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><ProductClubMappings /></ProtectedRoute>} />
-              
               <Route path="/admin/integrations/telegram/analytics" element={<ProtectedRoute><AdminLayout><TelegramChatAnalytics /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/fields" element={<ProtectedRoute><AdminFieldRegistry /></ProtectedRoute>} />
               <Route path="/admin/system/audit" element={<ProtectedRoute><AdminSystemAudit /></ProtectedRoute>} />
               
-              {/* Legacy admin routes - hidden from menu but still accessible */}
-              <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
-              <Route path="/admin/users/duplicates" element={<Navigate to="/admin/contacts/duplicates" replace />} />
-              <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/products" element={<ProtectedRoute><AdminLayout><AdminProducts /></AdminLayout></ProtectedRoute>} />
+              {/* Admin routes - V2 (Products, Orders, Payments, Subscriptions) */}
               <Route path="/admin/products-v2" element={<ProtectedRoute><AdminProductsV2 /></ProtectedRoute>} />
               <Route path="/admin/products-v2/:productId" element={<ProtectedRoute><AdminProductDetailV2 /></ProtectedRoute>} />
               <Route path="/admin/orders-v2" element={<ProtectedRoute><AdminOrdersV2 /></ProtectedRoute>} />
               <Route path="/admin/payments-v2" element={<ProtectedRoute><AdminPaymentsV2 /></ProtectedRoute>} />
               <Route path="/admin/subscriptions-v2" element={<ProtectedRoute><AdminSubscriptionsV2 /></ProtectedRoute>} />
+              <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
               
-              {/* Legacy redirects */}
+              {/* Legacy redirects - для обратной совместимости */}
+              <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
+              <Route path="/admin/users/duplicates" element={<Navigate to="/admin/contacts/duplicates" replace />} />
+              <Route path="/admin/products" element={<Navigate to="/admin/products-v2" replace />} />
               <Route path="/admin/payments" element={<Navigate to="/admin/integrations/payments" replace />} />
               <Route path="/admin/amocrm" element={<Navigate to="/admin/integrations/crm" replace />} />
               <Route path="/admin/duplicates" element={<Navigate to="/admin/contacts/duplicates" replace />} />
