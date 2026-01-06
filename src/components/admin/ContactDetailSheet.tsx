@@ -13,7 +13,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -433,7 +432,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
             </TabsList>
           </div>
 
-          <ScrollArea className="flex-1 overflow-auto">
+          <div className="flex-1 overflow-y-auto">
             <div className="px-4 sm:px-6 py-4">
             <TabsContent value="profile" className="m-0 space-y-4">
               <Card>
@@ -919,7 +918,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
               </TabsContent>
             )}
             </div>
-          </ScrollArea>
+          </div>
         </Tabs>
 
         {/* Deal Detail Sheet */}

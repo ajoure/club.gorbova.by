@@ -11,7 +11,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -27,6 +26,7 @@ import {
   XCircle,
   AlertTriangle,
   Copy,
+  Download,
   Shield,
   Handshake,
 } from "lucide-react";
@@ -142,7 +142,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetai
           </div>
         </SheetHeader>
 
-        <ScrollArea className="flex-1 p-6">
+        <div className="flex-1 overflow-y-auto p-6">
           <div className="space-y-6">
             {/* Deal Info */}
             <Card>
@@ -266,13 +266,24 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetai
                 ) : (
                   <div className="space-y-3">
                     {payments.map((payment) => {
-                      const paymentStatusConfig = PAYMENT_STATUS_CONFIG[payment.status] || { label: payment.status, color: "bg-muted" };
+                      const paymentStatusConfig =
+                        PAYMENT_STATUS_CONFIG[payment.status] || { label: payment.status, color: "bg-muted" };
+                      const receiptUrl = (payment as any)?.provider_response?.transaction?.receipt_url as
+                        | string
+                        | undefined;
+
                       return (
-                        <div key={payment.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                        <div
+                          key={payment.id}
+                          className="flex items-center justify-between gap-3 p-3 rounded-lg bg-muted/50"
+                        >
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-medium">
-                                {new Intl.NumberFormat("ru-BY", { style: "currency", currency: payment.currency }).format(Number(payment.amount))}
+                                {new Intl.NumberFormat("ru-BY", {
+                                  style: "currency",
+                                  currency: payment.currency,
+                                }).format(Number(payment.amount))}
                               </span>
                               <Badge className={cn("text-xs", paymentStatusConfig.color)}>
                                 {paymentStatusConfig.label}
@@ -283,8 +294,21 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetai
                               {payment.installment_number && ` • Платёж ${payment.installment_number}`}
                             </div>
                           </div>
-                          <div className="text-xs text-muted-foreground">
-                            {payment.paid_at ? format(new Date(payment.paid_at), "dd.MM.yy HH:mm") : format(new Date(payment.created_at), "dd.MM.yy HH:mm")}
+
+                          <div className="flex flex-col items-end gap-2">
+                            <div className="text-xs text-muted-foreground">
+                              {payment.paid_at
+                                ? format(new Date(payment.paid_at), "dd.MM.yy HH:mm")
+                                : format(new Date(payment.created_at), "dd.MM.yy HH:mm")}
+                            </div>
+                            {receiptUrl && (
+                              <Button variant="outline" size="sm" asChild>
+                                <a href={receiptUrl} target="_blank" rel="noopener noreferrer">
+                                  <Download className="w-4 h-4 mr-2" />
+                                  Чек
+                                </a>
+                              </Button>
+                            )}
                           </div>
                         </div>
                       );
@@ -386,7 +410,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetai
               </CardContent>
             </Card>
           </div>
-        </ScrollArea>
+        </div>
       </SheetContent>
     </Sheet>
   );
