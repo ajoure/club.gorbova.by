@@ -400,7 +400,7 @@ Deno.serve(async (req) => {
 
           const { data: tariff } = await supabase
             .from('tariffs')
-            .select('id, name, access_days')
+            .select('id, name, code, access_days, getcourse_offer_id')
             .eq('id', orderV2.tariff_id)
             .maybeSingle();
 
@@ -521,6 +521,29 @@ Deno.serve(async (req) => {
                   duration_days: accessDays,
                 },
               });
+            }
+
+            // GetCourse sync
+            if (tariff.getcourse_offer_id && orderV2.customer_email) {
+              console.log(`Syncing to GetCourse: offer_id=${tariff.getcourse_offer_id}, email=${orderV2.customer_email}`);
+              
+              // Get customer phone from profile
+              const { data: profile } = await supabase
+                .from('profiles')
+                .select('phone')
+                .eq('user_id', orderV2.user_id)
+                .maybeSingle();
+
+              const gcResult = await sendToGetCourse(
+                orderV2.customer_email,
+                profile?.phone || orderV2.customer_phone || null,
+                tariff.getcourse_offer_id,
+                orderV2.id,
+                paymentV2.amount,
+                tariff.code || tariff.name
+              );
+              
+              console.log('GetCourse sync result (V2):', gcResult);
             }
 
             // Audit

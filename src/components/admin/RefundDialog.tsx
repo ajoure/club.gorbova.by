@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { AlertTriangle, CreditCard, Ban, Calendar } from "lucide-react";
+import { AlertTriangle, CreditCard, Ban, Calendar, RefreshCcw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -26,7 +26,7 @@ interface RefundDialogProps {
   onSuccess?: () => void;
 }
 
-type AccessAction = "revoke" | "reduce" | "keep";
+type AccessAction = "revoke" | "reduce" | "keep" | "keep_subscription";
 
 export function RefundDialog({
   open,
@@ -98,6 +98,7 @@ export function RefundDialog({
         revoke: "Возврат оформлен, доступ аннулирован",
         reduce: `Возврат оформлен, доступ сокращён на ${reduceDays} дней`,
         keep: "Возврат оформлен, доступ сохранён",
+        keep_subscription: "Возврат оформлен, подписка сохранена, списания продолжатся",
       };
 
       toast.success(messages[accessAction]);
@@ -194,18 +195,33 @@ export function RefundDialog({
               </div>
 
               {!isFullRefund && (
-                <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
-                  <RadioGroupItem value="keep" id="keep" />
-                  <Label htmlFor="keep" className="flex-1 cursor-pointer">
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-green-500" />
-                      <span className="font-medium">Сохранить доступ</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Только возврат денег, без изменения доступа
-                    </p>
-                  </Label>
-                </div>
+                <>
+                  <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                    <RadioGroupItem value="keep" id="keep" />
+                    <Label htmlFor="keep" className="flex-1 cursor-pointer">
+                      <div className="flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-green-500" />
+                        <span className="font-medium">Сохранить доступ</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Только возврат денег, без изменения доступа
+                      </p>
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                    <RadioGroupItem value="keep_subscription" id="keep_subscription" />
+                    <Label htmlFor="keep_subscription" className="flex-1 cursor-pointer">
+                      <div className="flex items-center gap-2">
+                        <RefreshCcw className="w-4 h-4 text-blue-500" />
+                        <span className="font-medium">Сохранить подписку</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Возврат денег, подписка остаётся, следующее списание по графику
+                      </p>
+                    </Label>
+                  </div>
+                </>
               )}
             </RadioGroup>
           </div>
