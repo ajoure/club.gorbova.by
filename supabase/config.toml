@@ -125,3 +125,6 @@ verify_jwt = false
 
 [functions.test-getcourse-sync]
 verify_jwt = false
+
+[functions.getcourse-import-deals]
+verify_jwt = false
