@@ -128,12 +128,14 @@ Deno.serve(async (req) => {
     // Check if user already has an active subscription for this product
     // For trial - block if already used trial for this product
     // For regular purchase - allow and extend access
+    // IMPORTANT: exclude canceled subscriptions (canceled_at IS NOT NULL) - they should not be reused
     const { data: existingSub } = await supabase
       .from('subscriptions_v2')
-      .select('id, status, access_end_at, is_trial')
+      .select('id, status, access_end_at, is_trial, canceled_at')
       .eq('user_id', user.id)
       .eq('product_id', productId)
       .in('status', ['active', 'trial'])
+      .is('canceled_at', null) // Only extend subscriptions that are not canceled
       .gte('access_end_at', new Date().toISOString())
       .order('access_end_at', { ascending: false })
       .limit(1)

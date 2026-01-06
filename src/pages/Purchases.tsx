@@ -4,16 +4,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShoppingBag, CheckCircle, XCircle, Clock, CreditCard, Download, Ban, RotateCcw } from "lucide-react";
+import { CreditCard, ShoppingBag, History } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
 import { jsPDF } from "jspdf";
-import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +20,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { SubscriptionListItem } from "@/components/purchases/SubscriptionListItem";
+import { SubscriptionDetailSheet } from "@/components/purchases/SubscriptionDetailSheet";
+import { OrderListItem } from "@/components/purchases/OrderListItem";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface OrderV2 {
   id: string;
@@ -83,10 +83,11 @@ interface SubscriptionV2 {
 export default function Purchases() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const [renewProduct, setRenewProduct] = useState<{ id: string; name: string; price: number } | null>(null);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [subscriptionToCancel, setSubscriptionToCancel] = useState<SubscriptionV2 | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [selectedSubscription, setSelectedSubscription] = useState<SubscriptionV2 | null>(null);
+  const [detailSheetOpen, setDetailSheetOpen] = useState(false);
 
   // Fetch orders from orders_v2
   const { data: orders, isLoading: ordersLoading } = useQuery({
@@ -156,6 +157,7 @@ export default function Purchases() {
       });
       
       queryClient.invalidateQueries({ queryKey: ["user-subscriptions-v2"] });
+      setDetailSheetOpen(false);
     } catch (error) {
       console.error("Cancel error:", error);
       toast.error("Ошибка отмены подписки");
@@ -184,6 +186,7 @@ export default function Purchases() {
 
       toast.success("Подписка восстановлена");
       queryClient.invalidateQueries({ queryKey: ["user-subscriptions-v2"] });
+      setDetailSheetOpen(false);
     } catch (error) {
       console.error("Resume error:", error);
       toast.error("Ошибка восстановления подписки");
@@ -192,130 +195,19 @@ export default function Purchases() {
     }
   };
 
-  const getOrderStatusBadge = (order: OrderV2) => {
-    const payment = order.payments_v2?.[0];
-    
-    // Show trial badge for trial orders
-    if (order.is_trial) {
-      if (order.status === "paid" || payment?.status === "succeeded") {
-        return (
-          <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-            <Clock className="mr-1 h-3 w-3" />
-            Триал активирован
-          </Badge>
-        );
-      }
-    }
-    
-    if (order.status === "paid" || payment?.status === "succeeded") {
-      return (
-        <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-          <CheckCircle className="mr-1 h-3 w-3" />
-          Оплачено
-        </Badge>
-      );
-    }
-    if (order.status === "failed" || payment?.status === "failed") {
-      return (
-        <Badge variant="destructive">
-          <XCircle className="mr-1 h-3 w-3" />
-          Ошибка
-        </Badge>
-      );
-    }
-    if (order.status === "pending" || order.status === "processing") {
-      return (
-        <Badge variant="secondary">
-          <Clock className="mr-1 h-3 w-3" />
-          В обработке
-        </Badge>
-      );
-    }
-    return <Badge variant="outline">{order.status}</Badge>;
+  const openCancelDialog = (sub: SubscriptionV2) => {
+    setSubscriptionToCancel(sub);
+    setCancelDialogOpen(true);
   };
 
-  const getSubscriptionStatusBadge = (sub: SubscriptionV2) => {
-    const isExpired = sub.access_end_at && new Date(sub.access_end_at) < new Date();
-    
-    if (sub.status === "active" && !isExpired) {
-      return (
-        <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-          <CheckCircle className="mr-1 h-3 w-3" />
-          Активна
-        </Badge>
-      );
-    }
-    if (sub.status === "trial" && !isExpired) {
-      return (
-        <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-          <Clock className="mr-1 h-3 w-3" />
-          Пробный период
-        </Badge>
-      );
-    }
-    if (isExpired || sub.status === "expired") {
-      return (
-        <Badge variant="secondary">
-          <Clock className="mr-1 h-3 w-3" />
-          Истекла
-        </Badge>
-      );
-    }
-    if (sub.status === "canceled") {
-      return (
-        <Badge variant="outline">
-          <XCircle className="mr-1 h-3 w-3" />
-          Отменена
-        </Badge>
-      );
-    }
-    return <Badge variant="outline">{sub.status}</Badge>;
-  };
-
-  const formatPrice = (amount: number, currency: string) => {
-    return `${amount.toFixed(2)} ${currency}`;
-  };
-
-  const formatDate = (dateString: string) => {
-    return format(new Date(dateString), "d MMMM yyyy, HH:mm", { locale: ru });
-  };
-
-  const getOrderProductName = (order: OrderV2): string => {
-    const productName = order.products_v2?.name || order.purchase_snapshot?.product_name || "";
-    const tariffName = order.tariffs?.name || order.purchase_snapshot?.tariff_name || "";
-    
-    let prefix = "";
-    if (order.is_trial) {
-      prefix = "[Триал] ";
-    }
-    
-    if (productName && tariffName) {
-      return `${prefix}${order.products_v2?.code || ""} — ${tariffName}`;
-    }
-    if (productName) return `${prefix}${productName}`;
-    if (order.is_trial) return "Пробный период";
-    return "—";
-  };
-
-  const getPaymentMethod = (order: OrderV2): { label: string; icon: React.ReactNode } => {
-    if (order.is_trial && order.final_price === 0) {
-      return { label: "Пробный период", icon: <Clock className="h-3 w-3" /> };
-    }
-    
-    const payment = order.payments_v2?.[0];
-    if (payment?.card_brand && payment?.card_last4) {
-      return { 
-        label: `${payment.card_brand} **** ${payment.card_last4}`, 
-        icon: <CreditCard className="h-3 w-3" /> 
-      };
-    }
-    
-    return { label: "Банковская карта", icon: <CreditCard className="h-3 w-3" /> };
+  const openSubscriptionDetail = (sub: SubscriptionV2) => {
+    setSelectedSubscription(sub);
+    setDetailSheetOpen(true);
   };
 
   const downloadReceipt = (order: OrderV2) => {
-    const priceFormatted = formatPrice(order.final_price, order.currency);
-    const dateFormatted = formatDate(order.created_at);
+    const priceFormatted = `${order.final_price.toFixed(2)} ${order.currency}`;
+    const dateFormatted = format(new Date(order.created_at), "d MMMM yyyy, HH:mm", { locale: ru });
     const payment = order.payments_v2?.[0];
     
     const doc = new jsPDF();
@@ -364,9 +256,13 @@ export default function Purchases() {
     doc.line(20, y + 3, 190, y + 3);
     y += 13;
     
+    const productName = order.products_v2?.code && order.tariffs?.name
+      ? `${order.products_v2.code} — ${order.tariffs.name}`
+      : order.products_v2?.name || "Подписка";
+    
     doc.setFont("helvetica", "normal");
     doc.text("Продукт:", 20, y);
-    doc.text(getOrderProductName(order), 80, y);
+    doc.text(productName, 80, y);
     y += 8;
     
     doc.text("Тип:", 20, y);
@@ -380,9 +276,14 @@ export default function Purchases() {
     y += 13;
     
     doc.setFont("helvetica", "normal");
-    const paymentInfo = getPaymentMethod(order);
+    const paymentMethod = payment?.card_brand && payment?.card_last4
+      ? `${payment.card_brand} **** ${payment.card_last4}`
+      : order.is_trial && order.final_price === 0
+        ? "Пробный период"
+        : "Банковская карта";
+    
     doc.text("Способ оплаты:", 20, y);
-    doc.text(paymentInfo.label, 80, y);
+    doc.text(paymentMethod, 80, y);
     y += 8;
     
     doc.text("Статус:", 20, y);
@@ -425,224 +326,155 @@ export default function Purchases() {
     toast.success("PDF-чек скачан");
   };
 
-  // Filter active subscriptions
+  // Filter active subscriptions (current ones, not expired)
+  // Show only the latest subscription per product/tariff combo
   const activeSubscriptions = subscriptions?.filter(s => {
     const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
-    return (s.status === "active" || s.status === "trial") && !isExpired;
+    return !isExpired;
+  }) || [];
+
+  // Deduplicate: keep only the latest subscription per product
+  const uniqueActiveSubscriptions = activeSubscriptions.reduce((acc, sub) => {
+    const key = `${sub.products_v2?.id}-${sub.tariffs?.name}`;
+    const existing = acc.find(s => `${s.products_v2?.id}-${s.tariffs?.name}` === key);
+    if (!existing) {
+      acc.push(sub);
+    } else {
+      // Keep the one with later access_end_at or later created_at
+      const existingEnd = existing.access_end_at ? new Date(existing.access_end_at).getTime() : 0;
+      const currentEnd = sub.access_end_at ? new Date(sub.access_end_at).getTime() : 0;
+      if (currentEnd > existingEnd) {
+        const idx = acc.indexOf(existing);
+        acc[idx] = sub;
+      }
+    }
+    return acc;
+  }, [] as SubscriptionV2[]);
+
+  // History: expired subscriptions
+  const expiredSubscriptions = subscriptions?.filter(s => {
+    const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
+    return isExpired;
   }) || [];
 
   return (
     <DashboardLayout>
-      <div className="max-w-7xl mx-auto space-y-6">
+      <div className="max-w-4xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Мои покупки</h1>
-          <p className="text-muted-foreground">История заказов и активные подписки</p>
+          <p className="text-muted-foreground">Управление подписками и история платежей</p>
         </div>
 
         {/* Active Subscriptions */}
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-lg">
               <CreditCard className="h-5 w-5" />
-              Подписки
+              Активные подписки
             </CardTitle>
-            <CardDescription>
-              Ваши текущие подписки и продукты
-            </CardDescription>
           </CardHeader>
           <CardContent>
             {subscriptionsLoading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-12 w-full" />
-                <Skeleton className="h-12 w-full" />
+              <div className="space-y-3">
+                <Skeleton className="h-20 w-full" />
+                <Skeleton className="h-20 w-full" />
               </div>
-            ) : activeSubscriptions.length > 0 ? (
-              <div className="grid gap-4 md:grid-cols-2">
-                {activeSubscriptions.map((sub) => {
-                  const isExpiringSoon = sub.access_end_at && 
-                    new Date(sub.access_end_at) < new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-                  const isCanceled = !!sub.cancel_at;
-                  
-                  return (
-                    <div
-                      key={sub.id}
-                      className={`rounded-lg border p-4 ${
-                        isCanceled
-                          ? "bg-muted/30 border-muted"
-                          : isExpiringSoon 
-                            ? "bg-gradient-to-br from-amber-500/10 to-orange-500/10 border-amber-500/30"
-                            : "bg-gradient-to-br from-primary/5 to-accent/5"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <h3 className="font-semibold text-foreground">
-                            {sub.products_v2?.code || sub.products_v2?.name || "Подписка"} — {sub.tariffs?.name || (sub.is_trial ? "Пробный период" : "Подписка")}
-                          </h3>
-                          <p className="text-sm text-muted-foreground">
-                            Активирована: {formatDate(sub.access_start_at)}
-                          </p>
-                          {sub.access_end_at && (
-                            <p className={`text-sm ${isExpiringSoon ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}>
-                              Действует до: {formatDate(sub.access_end_at)}
-                            </p>
-                          )}
-                          {/* Show next charge info */}
-                          {sub.next_charge_at && !isCanceled && (
-                            <p className="text-sm text-muted-foreground flex items-center gap-1">
-                              <CreditCard className="h-3 w-3" />
-                              Следующее списание: {format(new Date(sub.next_charge_at), "d MMMM yyyy", { locale: ru })}
-                            </p>
-                          )}
-                          {/* Show payment method */}
-                          {sub.payment_methods?.brand && sub.payment_methods?.last4 && (
-                            <p className="text-sm text-muted-foreground flex items-center gap-1">
-                              <CreditCard className="h-3 w-3" />
-                              Карта: {sub.payment_methods.brand.toUpperCase()} **** {sub.payment_methods.last4}
-                            </p>
-                          )}
-                          {isCanceled && sub.cancel_at && (
-                            <p className="text-sm text-destructive">
-                              Отменена, доступ до: {format(new Date(sub.cancel_at), "d MMMM yyyy", { locale: ru })}
-                            </p>
-                          )}
-                        </div>
-                        {getSubscriptionStatusBadge(sub)}
-                      </div>
-                      
-                      {/* Cancel/Resume buttons */}
-                      <div className="flex gap-2 mt-2">
-                        {isCanceled ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleResumeSubscription(sub)}
-                            disabled={isProcessing}
-                            className="gap-1"
-                          >
-                            <RotateCcw className="h-3 w-3" />
-                            Восстановить
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setSubscriptionToCancel(sub);
-                              setCancelDialogOpen(true);
-                            }}
-                            disabled={isProcessing}
-                            className="gap-1 text-muted-foreground hover:text-destructive"
-                          >
-                            <Ban className="h-3 w-3" />
-                            Отменить
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+            ) : uniqueActiveSubscriptions.length > 0 ? (
+              <div className="space-y-3">
+                {uniqueActiveSubscriptions.map((sub) => (
+                  <SubscriptionListItem
+                    key={sub.id}
+                    subscription={sub}
+                    onClick={() => openSubscriptionDetail(sub)}
+                  />
+                ))}
               </div>
             ) : (
               <div className="text-center py-8 text-muted-foreground">
-                <CreditCard className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>У вас пока нет активных подписок</p>
+                <CreditCard className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                <p className="text-sm">У вас пока нет активных подписок</p>
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Order History */}
+        {/* History Section with Tabs */}
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ShoppingBag className="h-5 w-5" />
-              История заказов
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <History className="h-5 w-5" />
+              История
             </CardTitle>
-            <CardDescription>
-              Все ваши покупки и платежи
-            </CardDescription>
           </CardHeader>
           <CardContent>
-            {ordersLoading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-12 w-full" />
-                <Skeleton className="h-12 w-full" />
-                <Skeleton className="h-12 w-full" />
-              </div>
-            ) : orders && orders.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Дата</TableHead>
-                    <TableHead>Продукт</TableHead>
-                    <TableHead>Сумма</TableHead>
-                    <TableHead>Способ оплаты</TableHead>
-                    <TableHead>Статус</TableHead>
-                    <TableHead className="text-right">Действия</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {orders.map((order) => {
-                    const paymentInfo = getPaymentMethod(order);
-                    const isPaid = order.status === "paid" || order.payments_v2?.[0]?.status === "succeeded";
-                    
-                    return (
-                      <TableRow key={order.id}>
-                        <TableCell className="whitespace-nowrap">
-                          {formatDate(order.created_at)}
-                        </TableCell>
-                        <TableCell className="font-medium">
-                          {getOrderProductName(order)}
-                        </TableCell>
-                        <TableCell>
-                          {formatPrice(order.final_price, order.currency)}
-                        </TableCell>
-                        <TableCell>
-                          <span className="flex items-center gap-1">
-                            {paymentInfo.icon}
-                            {paymentInfo.label}
-                          </span>
-                        </TableCell>
-                        <TableCell>{getOrderStatusBadge(order)}</TableCell>
-                        <TableCell className="text-right">
-                          {isPaid && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => downloadReceipt(order)}
-                              className="gap-1"
-                            >
-                              <Download className="h-4 w-4" />
-                              <span className="hidden sm:inline">Чек</span>
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            ) : (
-              <div className="text-center py-8 text-muted-foreground">
-                <ShoppingBag className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>История покупок пуста</p>
-              </div>
-            )}
+            <Tabs defaultValue="orders" className="w-full">
+              <TabsList className="grid w-full grid-cols-2 mb-4">
+                <TabsTrigger value="orders">Платежи</TabsTrigger>
+                <TabsTrigger value="subscriptions">Прошлые подписки</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="orders">
+                {ordersLoading ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                  </div>
+                ) : orders && orders.length > 0 ? (
+                  <div className="space-y-3">
+                    {orders.map((order) => (
+                      <OrderListItem
+                        key={order.id}
+                        order={order}
+                        onDownloadReceipt={downloadReceipt}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <ShoppingBag className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                    <p className="text-sm">История платежей пуста</p>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="subscriptions">
+                {subscriptionsLoading ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                  </div>
+                ) : expiredSubscriptions.length > 0 ? (
+                  <div className="space-y-3">
+                    {expiredSubscriptions.map((sub) => (
+                      <SubscriptionListItem
+                        key={sub.id}
+                        subscription={sub}
+                        onClick={() => openSubscriptionDetail(sub)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <History className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                    <p className="text-sm">Нет прошлых подписок</p>
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
           </CardContent>
         </Card>
       </div>
 
-      {/* Payment Dialog for Renewal */}
-      {renewProduct && (
-        <PaymentDialog
-          open={!!renewProduct}
-          onOpenChange={(open) => !open && setRenewProduct(null)}
-          productId={renewProduct.id}
-          productName={renewProduct.name}
-          price={`${(renewProduct.price / 100).toFixed(2)} BYN`}
-        />
-      )}
+      {/* Subscription Detail Sheet */}
+      <SubscriptionDetailSheet
+        subscription={selectedSubscription}
+        open={detailSheetOpen}
+        onOpenChange={setDetailSheetOpen}
+        onCancel={openCancelDialog}
+        onResume={handleResumeSubscription}
+        isProcessing={isProcessing}
+      />
 
       {/* Cancel Subscription Dialog */}
       <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
