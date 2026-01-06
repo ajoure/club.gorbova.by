@@ -97,6 +97,11 @@ interface SubscriptionV2 {
       provider_payment_id: string | null;
       card_brand: string | null;
       card_last4: string | null;
+      provider_response: {
+        transaction?: {
+          receipt_url?: string;
+        };
+      } | null;
     }>;
   } | null;
 }
@@ -147,7 +152,7 @@ export default function Purchases() {
           payment_methods(brand, last4),
           orders_v2!subscriptions_v2_order_id_fkey(
             id, order_number, final_price, currency, created_at,
-            payments_v2(id, status, provider_payment_id, card_brand, card_last4)
+            payments_v2(id, status, provider_payment_id, card_brand, card_last4, provider_response)
           )
         `)
         .eq("user_id", user.id)
@@ -640,6 +645,7 @@ export default function Purchases() {
         onCancel={openCancelDialog}
         onResume={handleResumeSubscription}
         onDownloadReceipt={downloadSubscriptionReceipt}
+        receiptUrl={selectedSubscription?.orders_v2?.payments_v2?.[0]?.provider_response?.transaction?.receipt_url}
         isProcessing={isProcessing}
       />
 

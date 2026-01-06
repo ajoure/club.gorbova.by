@@ -21,6 +21,11 @@ interface Payment {
   paid_at: string | null;
   card_brand: string | null;
   card_last4: string | null;
+  provider_response?: {
+    transaction?: {
+      receipt_url?: string;
+    };
+  } | null;
 }
 
 interface Subscription {
@@ -57,6 +62,7 @@ interface SubscriptionDetailSheetProps {
   onCancel: (sub: Subscription) => void;
   onResume: (sub: Subscription) => void;
   onDownloadReceipt: (sub: Subscription) => void;
+  receiptUrl?: string | null;
   isProcessing: boolean;
 }
 
@@ -67,6 +73,7 @@ export function SubscriptionDetailSheet({
   onCancel,
   onResume,
   onDownloadReceipt,
+  receiptUrl,
   isProcessing,
 }: SubscriptionDetailSheetProps) {
   if (!subscription) return null;
@@ -231,15 +238,26 @@ export function SubscriptionDetailSheet({
 
           {/* Actions */}
           <div className="space-y-2 pt-4">
-            {/* Download receipt */}
-            <Button 
-              variant="outline" 
-              className="w-full gap-2"
-              onClick={() => onDownloadReceipt(subscription)}
-            >
-              <Download className="h-4 w-4" />
-              Скачать чек
-            </Button>
+            {/* Download receipt from bePaid */}
+            {receiptUrl ? (
+              <Button 
+                variant="outline" 
+                className="w-full gap-2"
+                onClick={() => window.open(receiptUrl, '_blank')}
+              >
+                <Download className="h-4 w-4" />
+                Скачать чек
+              </Button>
+            ) : (
+              <Button 
+                variant="outline" 
+                className="w-full gap-2"
+                onClick={() => onDownloadReceipt(subscription)}
+              >
+                <Download className="h-4 w-4" />
+                Скачать квитанцию
+              </Button>
+            )}
 
             {/* Cancel or Resume */}
             {isActive && !isCanceled && (
