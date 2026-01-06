@@ -166,19 +166,35 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
     enabled: !!grantProductId,
   });
 
-  // Fetch communication history (audit logs for this user)
+  // Fetch communication history (audit logs for this user) with actor profiles
   const { data: communications, isLoading: commsLoading } = useQuery({
     queryKey: ["contact-communications", contact?.user_id],
     queryFn: async () => {
       if (!contact?.user_id) return [];
-      const { data, error } = await supabase
+      const { data: logs, error } = await supabase
         .from("audit_logs")
         .select("*")
         .eq("target_user_id", contact.user_id)
         .order("created_at", { ascending: false })
         .limit(50);
       if (error) throw error;
-      return data;
+      
+      // Fetch actor profiles
+      const actorIds = [...new Set(logs.map(l => l.actor_user_id).filter(Boolean))];
+      if (actorIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("user_id, full_name, email")
+          .in("user_id", actorIds);
+        
+        const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
+        return logs.map(log => ({
+          ...log,
+          actor_profile: profileMap.get(log.actor_user_id) || null
+        }));
+      }
+      
+      return logs.map(log => ({ ...log, actor_profile: null }));
     },
     enabled: !!contact?.user_id,
   });
@@ -350,6 +366,28 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
       failed: "Ошибка",
     };
     return labels[status] || status;
+  };
+
+  const getActionLabel = (action: string) => {
+    const labels: Record<string, string> = {
+      "subscription.purchased": "Покупка подписки",
+      "subscription.created": "Подписка создана",
+      "subscription.activated": "Подписка активирована",
+      "subscription.canceled": "Подписка отменена",
+      "subscription.expired": "Подписка истекла",
+      "admin.subscription.refund": "Возврат средств",
+      "admin.subscription.extend": "Продление доступа",
+      "admin.subscription.cancel": "Отмена подписки",
+      "admin.grant_access": "Выдача доступа",
+      "admin.revoke_access": "Отзыв доступа",
+      "payment.success": "Успешная оплата",
+      "payment.failed": "Ошибка оплаты",
+      "trial.started": "Начало триала",
+      "trial.ended": "Окончание триала",
+      "telegram.access_granted": "Доступ в Telegram",
+      "telegram.access_revoked": "Отзыв доступа в Telegram",
+    };
+    return labels[action] || action;
   };
 
   const getStatusColor = (status: string) => {
@@ -875,7 +913,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
             </TabsContent>
 
             {/* Communications Tab */}
-            <TabsContent value="communications" className="m-0 space-y-4">
+            <TabsContent value="communications" className="m-0 space-y-3">
               {commsLoading ? (
                 <div className="space-y-3">
                   {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}
@@ -886,22 +924,38 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                   <p>Нет событий</p>
                 </div>
               ) : (
-                communications.map(comm => (
+                communications.map((comm: any) => (
                   <Card key={comm.id}>
-                    <CardContent className="p-4">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="font-medium text-sm">{comm.action}</div>
-                          {comm.meta && (
-                            <div className="text-xs text-muted-foreground mt-1">
-                              {JSON.stringify(comm.meta).slice(0, 100)}
-                            </div>
-                          )}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
+                    <CardContent className="p-4 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-medium text-sm">{getActionLabel(comm.action)}</span>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
                           {format(new Date(comm.created_at), "dd.MM.yy HH:mm")}
-                        </div>
+                        </span>
                       </div>
+                      {comm.actor_profile && (
+                        <div className="text-xs text-muted-foreground">
+                          <span>Выполнил: </span>
+                          <button
+                            onClick={() => {
+                              window.location.href = `/admin/contacts?user=${comm.actor_user_id}`;
+                            }}
+                            className="text-primary hover:underline inline-flex items-center gap-1"
+                          >
+                            {comm.actor_profile.full_name || comm.actor_profile.email || "Сотрудник"}
+                            <ExternalLink className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
+                      {comm.meta && Object.keys(comm.meta).length > 0 && (
+                        <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2 mt-1">
+                          {Object.entries(comm.meta).slice(0, 3).map(([key, value]) => (
+                            <div key={key} className="truncate">
+                              <span className="font-medium">{key}:</span> {String(value)}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 ))

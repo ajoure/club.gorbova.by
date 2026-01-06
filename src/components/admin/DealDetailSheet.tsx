@@ -29,6 +29,7 @@ import {
   Download,
   Shield,
   Handshake,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -55,6 +56,27 @@ const PAYMENT_STATUS_CONFIG: Record<string, { label: string; color: string }> = 
   paid: { label: "Оплачен", color: "bg-green-500/20 text-green-600" },
   failed: { label: "Ошибка", color: "bg-red-500/20 text-red-600" },
   refunded: { label: "Возврат", color: "bg-muted text-muted-foreground" },
+};
+
+const ACTION_LABELS: Record<string, string> = {
+  "subscription.purchased": "Покупка подписки",
+  "subscription.created": "Подписка создана",
+  "subscription.activated": "Подписка активирована",
+  "subscription.canceled": "Подписка отменена",
+  "subscription.expired": "Подписка истекла",
+  "admin.subscription.refund": "Возврат средств",
+  "admin.subscription.extend": "Продление доступа",
+  "admin.subscription.cancel": "Отмена подписки",
+  "admin.grant_access": "Выдача доступа",
+  "admin.revoke_access": "Отзыв доступа",
+  "payment.success": "Успешная оплата",
+  "payment.failed": "Ошибка оплаты",
+  "trial.started": "Начало триала",
+  "trial.ended": "Окончание триала",
+};
+
+const getActionLabel = (action: string): string => {
+  return ACTION_LABELS[action] || action;
 };
 
 export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetailSheetProps) {
@@ -90,19 +112,35 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetai
     enabled: !!deal?.id,
   });
 
-  // Fetch audit logs for this deal
+  // Fetch audit logs for this deal with actor info
   const { data: auditLogs, isLoading: auditLoading } = useQuery({
     queryKey: ["deal-audit", deal?.id],
     queryFn: async () => {
       if (!deal?.id) return [];
-      const { data, error } = await supabase
+      const { data: logs, error } = await supabase
         .from("audit_logs")
         .select("*")
         .or(`meta->>order_id.eq.${deal.id},meta->>orderId.eq.${deal.id}`)
         .order("created_at", { ascending: false })
         .limit(20);
       if (error) return [];
-      return data;
+      
+      // Fetch actor profiles for the logs
+      const actorIds = [...new Set(logs.map(l => l.actor_user_id).filter(Boolean))];
+      if (actorIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("user_id, full_name, email")
+          .in("user_id", actorIds);
+        
+        const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
+        return logs.map(log => ({
+          ...log,
+          actor_profile: profileMap.get(log.actor_user_id) || null
+        }));
+      }
+      
+      return logs.map(log => ({ ...log, actor_profile: null }));
     },
     enabled: !!deal?.id,
   });
@@ -372,7 +410,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetai
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
                   <Clock className="w-4 h-4" />
-                  Аудит
+                  История действий
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -384,12 +422,29 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetai
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {auditLogs.slice(0, 5).map((log) => (
-                      <div key={log.id} className="flex items-start justify-between text-sm p-2 rounded bg-muted/30">
-                        <span className="text-muted-foreground">{log.action}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {format(new Date(log.created_at), "dd.MM HH:mm")}
-                        </span>
+                    {auditLogs.slice(0, 5).map((log: any) => (
+                      <div key={log.id} className="p-3 rounded-lg bg-muted/30 space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-medium text-sm">{getActionLabel(log.action)}</span>
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">
+                            {format(new Date(log.created_at), "dd.MM HH:mm")}
+                          </span>
+                        </div>
+                        {log.actor_profile && (
+                          <div className="text-xs text-muted-foreground">
+                            <span>Выполнил: </span>
+                            <button
+                              onClick={() => {
+                                // Navigate to contact
+                                window.location.href = `/admin/contacts?user=${log.actor_user_id}`;
+                              }}
+                              className="text-primary hover:underline inline-flex items-center gap-1"
+                            >
+                              {log.actor_profile.full_name || log.actor_profile.email || "Сотрудник"}
+                              <ExternalLink className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
