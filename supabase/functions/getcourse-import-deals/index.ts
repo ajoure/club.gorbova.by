@@ -67,6 +67,74 @@ const STATUS_MAP: Record<string, string> = {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
+ * Преобразование табличного формата GetCourse (fields + items) в массив объектов
+ */
+function parseExportData(info: any, defaultOfferId?: string): any[] {
+  const fields = info.fields || [];
+  const items = info.items || [];
+  
+  if (!Array.isArray(fields) || !Array.isArray(items)) {
+    console.log('[parseExportData] Invalid format - fields or items not arrays');
+    return [];
+  }
+  
+  console.log(`[parseExportData] Fields: ${JSON.stringify(fields)}`);
+  console.log(`[parseExportData] First item: ${JSON.stringify(items[0])}`);
+  
+  // Создаём маппинг индексов колонок (поддержка разных названий)
+  const fieldMap: Record<string, number> = {};
+  fields.forEach((field: string, index: number) => {
+    fieldMap[field] = index;
+  });
+  
+  console.log(`[parseExportData] Field map: ${JSON.stringify(fieldMap)}`);
+  
+  // Преобразуем каждую строку в объект
+  return items.map((row: any[]) => {
+    // Получаем значения по известным названиям колонок
+    const id = row[fieldMap['ID заказа']] || row[fieldMap['id']] || row[fieldMap['ID']];
+    const number = row[fieldMap['Номер']] || row[fieldMap['number']];
+    const email = row[fieldMap['Email']] || row[fieldMap['email']] || row[fieldMap['E-mail']];
+    const phone = row[fieldMap['Телефон']] || row[fieldMap['phone']];
+    const userName = row[fieldMap['Пользователь']] || row[fieldMap['user']] || '';
+    const userId = row[fieldMap['ID пользователя']] || row[fieldMap['user_id']];
+    const createdAt = row[fieldMap['Дата создания']] || row[fieldMap['created_at']];
+    const payedAt = row[fieldMap['Дата оплаты']] || row[fieldMap['payed_at']];
+    const status = row[fieldMap['Статус']] || row[fieldMap['status']];
+    const offerName = row[fieldMap['Состав заказа']] || row[fieldMap['Предложение']] || row[fieldMap['offer']];
+    
+    // Стоимость может быть в разных форматах
+    const costRaw = row[fieldMap['Стоимость, BYN']] 
+      || row[fieldMap['Стоимость']] 
+      || row[fieldMap['cost']] 
+      || row[fieldMap['Сумма']]
+      || '0';
+    const cost = parseFloat(String(costRaw).replace(/[^\d.,]/g, '').replace(',', '.')) || 0;
+    
+    // Разделяем имя пользователя
+    const nameParts = String(userName).trim().split(/\s+/);
+    const firstName = nameParts[0] || '';
+    const lastName = nameParts.slice(1).join(' ') || '';
+    
+    return {
+      id,
+      deal_number: number || String(id),
+      user_id: userId,
+      user_email: String(email || '').toLowerCase().trim(),
+      user_phone: phone,
+      user_first_name: firstName,
+      user_last_name: lastName,
+      deal_created_at: createdAt,
+      deal_payed_at: payedAt,
+      deal_status: status,
+      deal_cost: cost,
+      offer_name: offerName,
+      offer_id: defaultOfferId ? parseInt(defaultOfferId) : null,
+    };
+  });
+}
+
+/**
  * GetCourse Export API - двухэтапный процесс
  * Шаг 1: Инициировать экспорт через /pl/api/account/deals
  * Шаг 2: Получить результаты через /pl/api/account/exports/{export_id}
@@ -112,6 +180,7 @@ async function exportDeals(
   // Шаг 2: Ожидание и получение результатов (polling)
   let attempts = 0;
   const maxAttempts = 60; // 2 минуты максимум
+  const offerId = filters.offer_id; // Запоминаем для привязки к сделкам
   
   while (attempts < maxAttempts) {
     await delay(2000); // Ждём 2 секунды между запросами
@@ -121,7 +190,7 @@ async function exportDeals(
     
     const resultResponse = await fetch(resultUrl);
     const resultText = await resultResponse.text();
-    console.log(`[Export Step 2] Response: ${resultText.slice(0, 1000)}`);
+    console.log(`[Export Step 2] Response length: ${resultText.length}, preview: ${resultText.slice(0, 1500)}`);
     
     let resultData;
     try {
@@ -139,8 +208,24 @@ async function exportDeals(
       continue;
     }
     
-    // Данные готовы - возвращаем
-    const items = resultData.info?.items || resultData.info || [];
+    // Данные готовы - парсим табличный формат
+    const info = resultData.info;
+    
+    // Проверяем формат: табличный (fields + items) или объектный
+    if (info && Array.isArray(info.fields) && Array.isArray(info.items)) {
+      console.log(`[Export Step 2] Tabular format detected, parsing...`);
+      const parsed = parseExportData(info, offerId);
+      console.log(`[Export Step 2] Parsed ${parsed.length} deals`);
+      
+      if (parsed.length > 0) {
+        console.log(`[Export Step 2] Sample parsed deal: ${JSON.stringify(parsed[0])}`);
+      }
+      
+      return parsed.map(normalizeDeal);
+    }
+    
+    // Fallback: старый формат (массив объектов)
+    const items = info?.items || info || [];
     console.log(`[Export Step 2] Export complete, items: ${Array.isArray(items) ? items.length : 'not array'}`);
     
     if (Array.isArray(items)) {
@@ -168,19 +253,19 @@ async function exportDeals(
 function normalizeDeal(deal: any): GCDeal {
   return {
     id: deal.id || deal.deal_id,
-    deal_number: deal.number || deal.deal_number || String(deal.id || deal.deal_id),
-    deal_created_at: deal.created_at || deal.deal_created_at || new Date().toISOString(),
-    deal_payed_at: deal.payed_at || deal.finished_at || deal.deal_payed_at || deal.deal_finished_at,
-    deal_finished_at: deal.finished_at || deal.deal_finished_at,
-    deal_cost: parseFloat(deal.cost || deal.deal_cost || deal.cost_money || '0') || 0,
-    deal_status: deal.status || deal.status_name || 'payed',
-    offer_id: parseInt(deal.offer_id || deal.position_id || '0'),
+    deal_number: deal.deal_number || deal.number || String(deal.id || deal.deal_id),
+    deal_created_at: deal.deal_created_at || deal.created_at || new Date().toISOString(),
+    deal_payed_at: deal.deal_payed_at || deal.payed_at || deal.finished_at || deal.deal_finished_at,
+    deal_finished_at: deal.deal_finished_at || deal.finished_at,
+    deal_cost: typeof deal.deal_cost === 'number' ? deal.deal_cost : (parseFloat(deal.cost || deal.deal_cost || '0') || 0),
+    deal_status: deal.deal_status || deal.status || deal.status_name || 'payed',
+    offer_id: deal.offer_id || parseInt(deal.position_id || '0') || 0,
     offer_code: deal.offer_code || deal.position_code,
-    user_email: (deal.user_email || deal.email || deal.user?.email || '')?.toLowerCase(),
-    user_id: deal.user_id || deal.user?.id || 0,
-    user_first_name: deal.user_first_name || deal.first_name || deal.user?.first_name,
-    user_last_name: deal.user_last_name || deal.last_name || deal.user?.last_name,
-    user_phone: deal.user_phone || deal.phone || deal.user?.phone,
+    user_email: (deal.user_email || deal.email || '')?.toLowerCase()?.trim(),
+    user_id: deal.user_id || 0,
+    user_first_name: deal.user_first_name || deal.first_name,
+    user_last_name: deal.user_last_name || deal.last_name,
+    user_phone: deal.user_phone || deal.phone,
   };
 }
 
