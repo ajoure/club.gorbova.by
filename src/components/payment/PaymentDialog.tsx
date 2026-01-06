@@ -304,9 +304,14 @@ export function PaymentDialog({
         }
 
         if (!data.success) {
-          // If no payment method or requires tokenization, fall back to redirect
+          // If payment requires tokenization, fall back to redirect flow below
           if (data.requiresTokenization) {
             console.log("Falling back to redirect flow");
+          } else if (data.requiresRedirect && data.redirectUrl) {
+            // 3-D Secure required for saved-card charge
+            console.log("3DS redirect required:", data.redirectUrl);
+            window.location.href = data.redirectUrl;
+            return;
           } else if (data.alreadyUsedTrial) {
             toast.warning("Вы уже использовали пробный период для этого продукта", {
               duration: 8000,
@@ -317,7 +322,6 @@ export function PaymentDialog({
             throw new Error(data.error || "Ошибка при оплате");
           }
         } else {
-          
           // Payment successful
           toast.success(
             isTrial
@@ -326,7 +330,7 @@ export function PaymentDialog({
           );
           onOpenChange(false);
           // Redirect to success page
-          const redirectUrl = data.orderId 
+          const redirectUrl = data.orderId
             ? `/dashboard?payment=success&order=${data.orderId}`
             : `/dashboard?payment=success`;
           window.location.href = redirectUrl;
