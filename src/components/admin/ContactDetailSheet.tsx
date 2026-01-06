@@ -466,7 +466,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                 Сделки {deals && deals.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.length}</Badge>}
               </TabsTrigger>
               <TabsTrigger value="communications" className="text-xs sm:text-sm px-2.5 sm:px-3">События</TabsTrigger>
-              {contact.duplicate_flag && (
+              {contact.duplicate_flag && contact.duplicate_flag !== 'none' && (
                 <TabsTrigger value="duplicates" className="text-xs sm:text-sm px-2.5 sm:px-3">Дубли</TabsTrigger>
               )}
             </TabsList>

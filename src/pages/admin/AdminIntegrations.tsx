@@ -130,35 +130,36 @@ export default function AdminIntegrations() {
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        <TabsList className="w-full grid grid-cols-2 sm:grid-cols-4 sm:max-w-lg">
-          {CATEGORIES.map((cat) => {
-            const Icon = CATEGORY_ICONS[cat.id] || Link2;
-            const count = cat.id === "telegram" ? 0 : (instances || []).filter(
-              (i) => i.category === cat.id
-            ).length;
-            const hasErrors = cat.id === "telegram" ? false : (instances || []).some(
-              (i) => i.category === cat.id && i.status === "error"
-            );
-            return (
-              <TabsTrigger key={cat.id} value={cat.id} className="flex items-center gap-1.5 text-xs sm:text-sm">
-                <Icon className="h-4 w-4" />
-                <span className="hidden sm:inline">{cat.label}</span>
-                <span className="sm:hidden">{cat.label.slice(0, 5)}{cat.label.length > 5 ? '' : ''}</span>
-                {count > 0 && (
-                  <span
-                    className={`text-xs px-1.5 py-0.5 rounded-full ${
-                      hasErrors
-                        ? "bg-destructive/10 text-destructive"
-                        : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {count}
-                  </span>
-                )}
-              </TabsTrigger>
-            );
-          })}
-        </TabsList>
+        <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+          <TabsList className="inline-flex w-auto min-w-max sm:grid sm:grid-cols-4 sm:max-w-lg">
+            {CATEGORIES.map((cat) => {
+              const Icon = CATEGORY_ICONS[cat.id] || Link2;
+              const count = cat.id === "telegram" ? 0 : (instances || []).filter(
+                (i) => i.category === cat.id
+              ).length;
+              const hasErrors = cat.id === "telegram" ? false : (instances || []).some(
+                (i) => i.category === cat.id && i.status === "error"
+              );
+              return (
+                <TabsTrigger key={cat.id} value={cat.id} className="flex items-center gap-1.5 text-xs sm:text-sm whitespace-nowrap px-3">
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span>{cat.label}</span>
+                  {count > 0 && (
+                    <span
+                      className={`text-xs px-1.5 py-0.5 rounded-full ${
+                        hasErrors
+                          ? "bg-destructive/10 text-destructive"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </TabsTrigger>
+              );
+            })}
+          </TabsList>
+        </div>
 
         {activeTab === "telegram" ? (
           <div className="mt-6 space-y-6">
