@@ -146,7 +146,7 @@ export function AppSidebar() {
                   <SidebarMenuButton asChild isActive={location.pathname === item.url} tooltip={collapsed ? item.title : undefined}>
                     <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
                       <item.icon className="h-5 w-5 shrink-0" />
-                      {!collapsed && <span className="truncate flex-1">{item.title}</span>}
+                      {!collapsed && <span className="text-sm leading-tight flex-1">{item.title}</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>)}
