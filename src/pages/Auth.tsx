@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
-import { Loader2, Mail, Lock, User, ArrowRight, Sparkles, ArrowLeft, Check, X } from "lucide-react";
+import { Loader2, Mail, Lock, User, ArrowRight, ArrowLeft, Check, X } from "lucide-react";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
+import logoImage from "@/assets/logo.png";
 
 const loginSchema = z.object({
   email: z.string().email("Введите корректный email"),
@@ -358,8 +359,8 @@ export default function Auth() {
         >
         {/* Header */}
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-accent mb-4">
-              <Sparkles className="w-8 h-8 text-primary-foreground" />
+            <div className="inline-flex items-center justify-center w-20 h-20 mb-4">
+              <img src={logoImage} alt="Буква Закона" className="w-full h-full object-contain" />
             </div>
             <h1 className="text-2xl font-bold text-foreground">
               {mode === "login" && "Добро пожаловать"}
