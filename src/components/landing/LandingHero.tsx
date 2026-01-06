@@ -61,10 +61,6 @@ export function LandingHero() {
 
           <AnimatedSection animation="fade-up" delay={400}>
             <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
-              <Button size="lg" onClick={handleTryFree} className="text-lg px-8 py-6">
-                Попробовать бесплатно
-                <ArrowRight className="ml-2" size={20} />
-              </Button>
               <Button size="lg" variant="outline" onClick={handleChoosePlan} className="text-lg px-8 py-6">
                 Выбрать тариф
               </Button>

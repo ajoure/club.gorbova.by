@@ -29,8 +29,11 @@ export function LandingCTA() {
               Присоединяйтесь к сообществу профессионалов, которые уверенно защищают 
               бизнес и растут в доходе
             </p>
-            <Button size="lg" onClick={handleTryFree} className="text-lg px-8 py-6">
-              Попробовать бесплатно
+            <Button size="lg" onClick={() => {
+              const pricingSection = document.getElementById("pricing");
+              pricingSection?.scrollIntoView({ behavior: "smooth" });
+            }} className="text-lg px-8 py-6">
+              Выбрать тариф
               <ArrowRight className="ml-2" size={20} />
             </Button>
           </div>
