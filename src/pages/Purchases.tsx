@@ -76,6 +76,7 @@ interface SubscriptionV2 {
     code: string;
   } | null;
   tariffs: {
+    id: string;
     name: string;
     code: string;
   } | null;
@@ -127,11 +128,11 @@ export default function Purchases() {
         .select(`
           id, status, is_trial, access_start_at, access_end_at, trial_end_at, cancel_at, canceled_at, next_charge_at, created_at,
           products_v2(id, name, code),
-          tariffs(name, code),
+          tariffs(id, name, code),
           payment_methods(brand, last4)
         `)
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
+        .order("access_end_at", { ascending: false });
       
       if (error) throw error;
       return data as SubscriptionV2[];
@@ -331,26 +332,42 @@ export default function Purchases() {
     toast.success("PDF-чек скачан");
   };
 
-  // Filter active subscriptions (current ones, not expired)
-  // Show only the latest subscription per product/tariff combo
+  // Filter active subscriptions (current ones, not expired and not canceled)
+  // Show only the latest subscription per product
   const activeSubscriptions = subscriptions?.filter(s => {
     const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
+    const isCanceled = s.canceled_at !== null;
+    // Show subscription if not expired, OR if canceled but still has access
     return !isExpired;
   }) || [];
 
-  // Deduplicate: keep only the latest subscription per product
+  // Deduplicate: keep only the subscription with the latest access_end_at per product
+  // Prioritize non-canceled subscriptions over canceled ones
   const uniqueActiveSubscriptions = activeSubscriptions.reduce((acc, sub) => {
-    const key = `${sub.products_v2?.id}-${sub.tariffs?.name}`;
-    const existing = acc.find(s => `${s.products_v2?.id}-${s.tariffs?.name}` === key);
+    const key = sub.products_v2?.id || 'unknown';
+    const existing = acc.find(s => (s.products_v2?.id || 'unknown') === key);
     if (!existing) {
       acc.push(sub);
     } else {
-      // Keep the one with later access_end_at or later created_at
-      const existingEnd = existing.access_end_at ? new Date(existing.access_end_at).getTime() : 0;
-      const currentEnd = sub.access_end_at ? new Date(sub.access_end_at).getTime() : 0;
-      if (currentEnd > existingEnd) {
+      // Prioritize non-canceled subscriptions
+      const existingCanceled = existing.canceled_at !== null;
+      const currentCanceled = sub.canceled_at !== null;
+      
+      if (existingCanceled && !currentCanceled) {
+        // Current is not canceled, prefer it
         const idx = acc.indexOf(existing);
         acc[idx] = sub;
+      } else if (!existingCanceled && currentCanceled) {
+        // Existing is not canceled, keep it
+        // Do nothing
+      } else {
+        // Both have same canceled status - keep the one with later access_end_at
+        const existingEnd = existing.access_end_at ? new Date(existing.access_end_at).getTime() : 0;
+        const currentEnd = sub.access_end_at ? new Date(sub.access_end_at).getTime() : 0;
+        if (currentEnd > existingEnd) {
+          const idx = acc.indexOf(existing);
+          acc[idx] = sub;
+        }
       }
     }
     return acc;
