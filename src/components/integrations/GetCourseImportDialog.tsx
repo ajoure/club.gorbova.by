@@ -259,10 +259,21 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
                   <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
                     Примеры сделок ({previewResult.result.sample.length})
                   </summary>
-                  <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                  <div className="mt-2 space-y-2 max-h-60 overflow-y-auto">
                     {previewResult.result.sample.map((deal, i) => (
-                      <div key={i} className="text-xs p-2 bg-background rounded">
-                        {deal.email} - {deal.cost} BYN - {STATUS_LABELS[deal.status] || deal.status}
+                      <div key={i} className="text-xs p-2 bg-background rounded border">
+                        <div className="font-medium">
+                          {[deal.firstName, deal.lastName].filter(Boolean).join(' ') || 'Без имени'}
+                        </div>
+                        <div className="text-muted-foreground">
+                          {deal.email} {deal.phone && `• ${deal.phone}`}
+                        </div>
+                        <div className="flex justify-between mt-1">
+                          <span>{deal.cost} BYN</span>
+                          <Badge variant="outline" className="text-xs">
+                            {STATUS_LABELS[deal.status] || deal.status}
+                          </Badge>
+                        </div>
                       </div>
                     ))}
                   </div>
