@@ -447,12 +447,14 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
         return settings.statusFilter.some(s => status.includes(s));
       })
       .filter((row) => {
-        // Skip rows where suggestion action is "skip" (unless overridden)
+        // Skip rows where user explicitly chose "skip"
         const offerName = String(row[columnMapping.offerName!] || "");
         const suggestion = tariffSuggestions.find(s => s.pattern === offerName);
-        if (suggestion?.userChoice === "skip" || (suggestion?.action === "skip" && !suggestion?.userChoice)) {
+        // Only skip if user explicitly chose skip
+        if (suggestion?.userChoice === "skip") {
           return false;
         }
+        // If no suggestion yet, include (will be unknown tariff)
         return true;
       })
       .map((row) => {
@@ -787,25 +789,27 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                             {suggestion ? (
                               <Badge 
                                 variant={
-                                  suggestion.userChoice === "skip" || suggestion.action === "skip" 
+                                  suggestion.userChoice === "skip" || (suggestion.action === "skip" && !suggestion.userChoice)
                                     ? "destructive" 
                                     : suggestion.userChoice === "archive_unknown" || suggestion.action === "archive_unknown"
-                                    ? "secondary"
-                                    : "default"
+                                    ? "outline"
+                                    : suggestion.targetTariffId || suggestion.userChoice
+                                    ? "default"
+                                    : "outline"
                                 }
                               >
-                                {suggestion.userChoice === "archive_unknown" 
+                                {suggestion.userChoice === "archive_unknown" || suggestion.action === "archive_unknown"
                                   ? "Не определён (архив)" 
-                                  : suggestion.userChoice === "skip" 
+                                  : suggestion.userChoice === "skip" || (suggestion.action === "skip" && !suggestion.userChoice)
                                   ? "Пропустить"
-                                  : suggestion.userChoice || suggestion.targetTariffCode || "Не определён"}
+                                  : suggestion.userChoice || suggestion.targetTariffCode || "Ожидает"}
                               </Badge>
                             ) : (
-                              <Badge variant="outline">Не определён</Badge>
+                              <Badge variant="outline">Ожидает анализа</Badge>
                             )}
-                            {suggestion?.suggestedPrice && (
+                            {offer.amount && (
                               <Badge variant="outline" className="text-xs">
-                                ~{suggestion.suggestedPrice} BYN
+                                ~{offer.amount.toFixed(0)} BYN
                               </Badge>
                             )}
                           </div>
@@ -821,36 +825,49 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                           <div className="flex items-center gap-2">
                             <span className="text-sm">Тариф:</span>
                             <Select
-                              value={suggestion?.userChoice || suggestion?.targetTariffId || "__none__"}
+                              value={suggestion?.userChoice || suggestion?.targetTariffId || ""}
                               onValueChange={(v) => {
-                                if (v === "__none__") return;
+                                const isSkip = v === "skip";
+                                const isArchive = v === "archive_unknown";
                                 const tariff = tariffs?.find(t => t.id === v);
+                                
                                 setTariffSuggestions(prev => {
                                   const idx = prev.findIndex(s => s.pattern === offer.name);
-                                  if (idx >= 0) {
-                                    const updated = [...prev];
-                                    updated[idx] = { ...updated[idx], userChoice: tariff?.code || v, targetTariffId: v === "skip" ? null : v };
-                                    return updated;
-                                  }
-                                  return [...prev, {
+                                  const newSuggestion: TariffSuggestion = {
                                     pattern: offer.name,
                                     count: offer.count,
-                                    action: v === "skip" ? "skip" : "map_to_tariff",
-                                    targetTariffId: v === "skip" ? null : v,
+                                    action: isSkip ? "skip" : isArchive ? "archive_unknown" : "map_to_tariff",
+                                    targetTariffId: isSkip || isArchive ? null : v,
                                     targetTariffCode: tariff?.code || null,
                                     secondaryField: null,
                                     confidence: 1,
                                     reason: "Выбрано вручную",
-                                    userChoice: v === "skip" ? "skip" : tariff?.code,
-                                  }];
+                                    userChoice: isSkip ? "skip" : isArchive ? "archive_unknown" : (tariff?.code || v),
+                                  };
+                                  
+                                  if (idx >= 0) {
+                                    const updated = [...prev];
+                                    updated[idx] = newSuggestion;
+                                    return updated;
+                                  }
+                                  return [...prev, newSuggestion];
                                 });
                               }}
                             >
-                              <SelectTrigger className="w-40">
-                                <SelectValue placeholder="Выбрать" />
+                            <SelectTrigger className="w-48">
+                                <SelectValue>
+                                  {suggestion?.userChoice === "skip" 
+                                    ? "🚫 Пропустить"
+                                    : suggestion?.userChoice === "archive_unknown"
+                                    ? "📦 Не определён"
+                                    : suggestion?.userChoice 
+                                    ? tariffs?.find(t => t.code === suggestion.userChoice || t.id === suggestion.userChoice)?.name || suggestion.userChoice
+                                    : suggestion?.targetTariffCode 
+                                    ? tariffs?.find(t => t.code === suggestion.targetTariffCode)?.name || suggestion.targetTariffCode
+                                    : "Выбрать тариф"}
+                                </SelectValue>
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="__none__">— Не выбрано —</SelectItem>
                                 <SelectItem value="skip">🚫 Пропустить</SelectItem>
                                 <SelectItem value="archive_unknown">📦 Не определён (архивный)</SelectItem>
                                 <Separator className="my-1" />
@@ -860,12 +877,12 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                               </SelectContent>
                             </Select>
                             
-                            {suggestion && suggestion.targetTariffId && (
+                            {suggestion && (suggestion.targetTariffId || suggestion.userChoice === "archive_unknown") && (
                               <Button 
                                 variant="ghost" 
                                 size="sm"
                                 onClick={() => saveMappingRule.mutate(suggestion)}
-                                disabled={saveMappingRule.isPending}
+                                disabled={saveMappingRule.isPending || !suggestion.targetTariffId}
                               >
                                 <Save className="h-4 w-4 mr-1" />
                                 Сохранить правило
