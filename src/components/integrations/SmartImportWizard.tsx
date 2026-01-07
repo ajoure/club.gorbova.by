@@ -73,6 +73,7 @@ interface ImportSettings {
   normalizeNames: boolean;
   dateField: "createdAt" | "paidAt";
   createGhostProfiles: boolean;
+  ignorePrices: boolean; // Ignore prices from file (set to 0)
 }
 
 const STEPS = [
@@ -109,6 +110,7 @@ const DEFAULT_SETTINGS: ImportSettings = {
   normalizeNames: true,
   dateField: "createdAt",
   createGhostProfiles: true,
+  ignorePrices: false, // Import prices by default
 };
 
 export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImportWizardProps) {
@@ -298,6 +300,16 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
     const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
     const capitalizedParts = parts.map(capitalize);
     
+    // Case 1: Two identical words (e.g., "Самохвалова Самохвалова" -> "Самохвалова")
+    if (capitalizedParts.length === 2 && capitalizedParts[0] === capitalizedParts[1]) {
+      return {
+        firstName: capitalizedParts[0],
+        lastName: "",
+        fullName: capitalizedParts[0],
+      };
+    }
+    
+    // Case 2: Four+ words with repeated halves
     const halfLen = Math.floor(capitalizedParts.length / 2);
     if (capitalizedParts.length >= 4 && capitalizedParts.length % 2 === 0) {
       const firstHalf = capitalizedParts.slice(0, halfLen).join(" ");
@@ -307,6 +319,25 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           firstName: capitalizedParts[0],
           lastName: capitalizedParts.slice(1, halfLen).join(" "),
           fullName: firstHalf,
+        };
+      }
+    }
+    
+    // Case 3: Smart detection of "Фамилия Имя" vs "Имя Фамилия" pattern
+    if (capitalizedParts.length === 2) {
+      const surnamePatterns = /^.+(ов|ова|ев|ева|ин|ина|ский|ская|ий|ая|ко|ец|ын|ына|их|ых|ук|юк|ич|вич|ович|евич)$/i;
+      const firstPart = capitalizedParts[0];
+      const secondPart = capitalizedParts[1];
+      
+      const firstIsSurname = surnamePatterns.test(firstPart);
+      const secondIsSurname = surnamePatterns.test(secondPart);
+      
+      // If first looks like surname and second doesn't, swap them
+      if (firstIsSurname && !secondIsSurname) {
+        return {
+          firstName: secondPart,
+          lastName: firstPart,
+          fullName: `${secondPart} ${firstPart}`,
         };
       }
     }
@@ -559,6 +590,11 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
             }
           }
 
+          // Calculate amount - respect ignorePrices setting
+          const rawAmount = columnMapping.amount ? String(row[columnMapping.amount] || "0") : "0";
+          const parsedAmount = parseFloat(rawAmount.replace(/[^\d.,]/g, '').replace(',', '.')) || 0;
+          const amount = settings.ignorePrices ? 0 : parsedAmount;
+
           return {
             user_email: String(row[columnMapping.email!] || "").toLowerCase().trim(),
             user_phone: String(row[columnMapping.phone!] || ""),
@@ -567,7 +603,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
             user_last_name: lastName,
             offerName,
             tariffCode,
-            amount: parseFloat(String(row[columnMapping.amount!] || "0")) || 0,
+            amount,
             status: String(row[columnMapping.status!] || ""),
             createdAt: String(row[columnMapping.createdAt!] || ""),
             paidAt: String(row[columnMapping.paidAt!] || ""),
@@ -1264,6 +1300,17 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                         />
                         <label htmlFor="ghost" className="text-sm">
                           Создавать ghost-профили
+                        </label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id="ignorePrices"
+                          checked={settings.ignorePrices}
+                          onCheckedChange={(checked) => setSettings(prev => ({ ...prev, ignorePrices: !!checked }))}
+                        />
+                        <label htmlFor="ignorePrices" className="text-sm flex flex-col">
+                          <span>Игнорировать цены</span>
+                          <span className="text-xs text-muted-foreground">Не импортировать суммы из файла (данные ГК могут быть неточными)</span>
                         </label>
                       </div>
                     </div>

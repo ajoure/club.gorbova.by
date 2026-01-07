@@ -396,7 +396,12 @@ async function fetchAllDeals(
 }
 
 /**
- * Нормализация имени - убирает дубли типа "Иван Иванов Иван Иванов" -> "Иван Иванов"
+ * Нормализация имени - убирает дубли и умно разделяет на имя/фамилию
+ * Примеры:
+ * - "Иван Иванов Иван Иванов" -> "Иван Иванов"
+ * - "Самохвалова Самохвалова" -> "Самохвалова" (одно слово)
+ * - "Writerbroskov Writerbroskov" -> "Writerbroskov"
+ * - "Иванько Юлия" -> firstName="Юлия", lastName="Иванько" (если похоже на фамилия+имя)
  */
 function normalizeName(name: string): { firstName: string; lastName: string; fullName: string } {
   if (!name) return { firstName: "", lastName: "", fullName: "" };
@@ -409,7 +414,16 @@ function normalizeName(name: string): { firstName: string; lastName: string; ful
   const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
   const capitalizedParts = parts.map(capitalize);
   
-  // Detect and remove duplicates (e.g., "Иван Иванов Иван Иванов" -> "Иван Иванов")
+  // Case 1: Two identical words (e.g., "Самохвалова Самохвалова" -> "Самохвалова")
+  if (capitalizedParts.length === 2 && capitalizedParts[0] === capitalizedParts[1]) {
+    return {
+      firstName: capitalizedParts[0],
+      lastName: "",
+      fullName: capitalizedParts[0],
+    };
+  }
+  
+  // Case 2: Four+ words with repeated halves (e.g., "Иван Иванов Иван Иванов" -> "Иван Иванов")
   const halfLen = Math.floor(capitalizedParts.length / 2);
   if (capitalizedParts.length >= 4 && capitalizedParts.length % 2 === 0) {
     const firstHalf = capitalizedParts.slice(0, halfLen).join(" ");
@@ -419,6 +433,27 @@ function normalizeName(name: string): { firstName: string; lastName: string; ful
         firstName: capitalizedParts[0],
         lastName: capitalizedParts.slice(1, halfLen).join(" "),
         fullName: firstHalf,
+      };
+    }
+  }
+  
+  // Case 3: Smart detection of "Фамилия Имя" vs "Имя Фамилия" pattern
+  // Russian surnames often end with: -ов, -ева, -ая, -ий, -ко, -ец, -ин, -ына
+  // Russian first names are often simpler
+  if (capitalizedParts.length === 2) {
+    const surnamePatterns = /^.+(ов|ова|ев|ева|ин|ина|ский|ская|ий|ая|ко|ец|ец|ын|ына|их|ых|ук|юк|ич|вич|ович|евич)$/i;
+    const firstPart = capitalizedParts[0];
+    const secondPart = capitalizedParts[1];
+    
+    const firstIsSurname = surnamePatterns.test(firstPart);
+    const secondIsSurname = surnamePatterns.test(secondPart);
+    
+    // If first looks like surname and second doesn't, swap them
+    if (firstIsSurname && !secondIsSurname) {
+      return {
+        firstName: secondPart,
+        lastName: firstPart,
+        fullName: `${secondPart} ${firstPart}`, // Proper order: Имя Фамилия
       };
     }
   }
