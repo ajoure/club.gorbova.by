@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -134,6 +134,8 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
     errors: { row: number; error: string }[];
   } | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [importCancelled, setImportCancelled] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Fetch existing tariffs
   const { data: tariffs } = useQuery({
@@ -421,6 +423,9 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       const dealsToImport = prepareDealsForImport();
       console.log(`[SmartImport] Sending ${dealsToImport.length} deals to import`);
       
+      // Create abort controller for this request
+      abortControllerRef.current = new AbortController();
+      
       const { data, error } = await supabase.functions.invoke("getcourse-import-deals", {
         body: {
           fileDeals: dealsToImport, // Edge function expects fileDeals for file import mode
@@ -433,15 +438,35 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       return data;
     },
     onSuccess: (data) => {
-      setImportResult(data);
-      queryClient.invalidateQueries({ queryKey: ["orders-v2"] });
-      toast.success(`Импортировано ${data.success} сделок`);
+      setIsImporting(false);
+      if (!importCancelled) {
+        setImportResult({
+          success: data.result?.orders_created || data.orders_created || 0,
+          skipped: data.result?.orders_skipped || 0,
+          errors: data.result?.details?.filter((d: string) => d.includes('Ошибка')).map((d: string, i: number) => ({ row: i, error: d })) || [],
+        });
+        queryClient.invalidateQueries({ queryKey: ["orders-v2"] });
+        toast.success(`Импортировано сделок: ${data.result?.orders_created || data.orders_created || 0}`);
+      }
     },
-    onError: (err) => {
-      toast.error("Ошибка импорта");
-      console.error(err);
+    onError: (err: any) => {
+      setIsImporting(false);
+      if (importCancelled) {
+        toast.info("Импорт отменён");
+      } else {
+        toast.error(`Ошибка импорта: ${err.message || 'Неизвестная ошибка'}`);
+        console.error(err);
+      }
     },
   });
+
+  // Cancel import handler
+  const handleCancelImport = useCallback(() => {
+    setImportCancelled(true);
+    setIsImporting(false);
+    setStep(4); // Go back to settings
+    toast.info("Импорт отменён. Данные на сервере могли быть частично обработаны.");
+  }, []);
 
   // Prepare deals for import based on mappings
   const prepareDealsForImport = useCallback(() => {
@@ -562,6 +587,8 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
     setTariffSuggestions([]);
     setSettings(DEFAULT_SETTINGS);
     setImportResult(null);
+    setIsImporting(false);
+    setImportCancelled(false);
   };
 
   // Drag and drop handlers
@@ -1100,7 +1127,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                   <p className="text-muted-foreground">
                     Будет импортировано {previewStats.total} сделок
                   </p>
-                  <Button onClick={() => { setIsImporting(true); importMutation.mutate(); }} size="lg">
+                  <Button onClick={() => { setImportCancelled(false); setIsImporting(true); importMutation.mutate(); }} size="lg">
                     <Upload className="h-4 w-4 mr-2" />
                     Начать импорт
                   </Button>
@@ -1111,6 +1138,17 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                 <div className="text-center space-y-4 py-8">
                   <Loader2 className="h-12 w-12 mx-auto animate-spin text-primary" />
                   <p className="text-muted-foreground">Импорт в процессе...</p>
+                  <p className="text-xs text-muted-foreground">
+                    Обработка может занять несколько минут для большого количества сделок
+                  </p>
+                  <Button 
+                    variant="outline" 
+                    onClick={handleCancelImport}
+                    className="mt-4"
+                  >
+                    <X className="h-4 w-4 mr-2" />
+                    Отменить
+                  </Button>
                 </div>
               )}
 
