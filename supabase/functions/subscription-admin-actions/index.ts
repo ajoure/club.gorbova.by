@@ -5,6 +5,85 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Cancel order in GetCourse
+async function cancelGetCourseOrder(
+  email: string,
+  offerId: number | string,
+  orderNumber: string,
+  reason: string
+): Promise<{ success: boolean; error?: string }> {
+  const apiKey = Deno.env.get('GETCOURSE_API_KEY');
+  const accountName = 'gorbova';
+  
+  if (!apiKey) {
+    console.log('GetCourse API key not configured, skipping cancel');
+    return { success: false, error: 'API key not configured' };
+  }
+  
+  if (!offerId) {
+    console.log('No offerId for GetCourse cancel, skipping');
+    return { success: false, error: 'No offer ID' };
+  }
+  
+  try {
+    console.log(`Canceling GetCourse order: email=${email}, offerId=${offerId}`);
+    
+    const params = {
+      user: {
+        email: email,
+      },
+      system: {
+        refresh_if_exists: 1,
+      },
+      deal: {
+        offer_code: offerId.toString(),
+        deal_status: 'cancelled', // Set status to cancelled
+        deal_is_paid: 0,
+        deal_comment: `Отменено администратором. ${reason}. Order: ${orderNumber}`,
+      },
+    };
+    
+    console.log('GetCourse cancel params:', JSON.stringify(params, null, 2));
+    
+    const formData = new URLSearchParams();
+    formData.append('action', 'add');
+    formData.append('key', apiKey);
+    formData.append('params', btoa(unescape(encodeURIComponent(JSON.stringify(params)))));
+    
+    const response = await fetch(`https://${accountName}.getcourse.ru/pl/api/deals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData.toString(),
+    });
+    
+    const responseText = await response.text();
+    console.log('GetCourse cancel response:', responseText);
+    
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      console.error('Failed to parse GetCourse response:', responseText);
+      return { success: false, error: `Invalid response: ${responseText.substring(0, 200)}` };
+    }
+    
+    if (data.result?.success === true) {
+      console.log('Order successfully cancelled in GetCourse');
+      return { success: true };
+    } else {
+      const errorMsg = data.result?.error_message || data.error_message || 'Unknown error';
+      console.error('GetCourse cancel error:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error('GetCourse cancel API error:', errorMsg);
+    return { success: false, error: errorMsg };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -286,10 +365,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get subscription
+    // Get subscription with related product, tariff and order data
     const { data: subscription, error: subError } = await supabase
       .from('subscriptions_v2')
-      .select('*, products_v2(telegram_club_id)')
+      .select('*, products_v2(telegram_club_id), tariffs(getcourse_offer_id, getcourse_offer_code), orders_v2(order_number, customer_email)')
       .eq('id', subscription_id)
       .single();
 
@@ -450,6 +529,20 @@ Deno.serve(async (req) => {
           });
           console.log('Telegram revoke result:', revokeResult.data);
         }
+
+        // Cancel in GetCourse
+        const tariffForRevoke = subscription.tariffs as any;
+        const gcOfferIdRevoke = tariffForRevoke?.getcourse_offer_id || tariffForRevoke?.getcourse_offer_code;
+        if (gcOfferIdRevoke && subscription.orders_v2?.customer_email) {
+          const gcResult = await cancelGetCourseOrder(
+            subscription.orders_v2.customer_email,
+            gcOfferIdRevoke,
+            subscription.orders_v2.order_number || subscription_id,
+            'Доступ отозван администратором'
+          );
+          console.log('GetCourse cancel result:', gcResult);
+          result.getcourse_cancel = gcResult;
+        }
         break;
       }
 
@@ -466,6 +559,20 @@ Deno.serve(async (req) => {
             },
           });
           console.log('Telegram revoke result:', revokeResult.data);
+        }
+
+        // Cancel in GetCourse before deletion
+        const tariffForDelete = subscription.tariffs as any;
+        const gcOfferIdDelete = tariffForDelete?.getcourse_offer_id || tariffForDelete?.getcourse_offer_code;
+        if (gcOfferIdDelete && subscription.orders_v2?.customer_email) {
+          const gcResult = await cancelGetCourseOrder(
+            subscription.orders_v2.customer_email,
+            gcOfferIdDelete,
+            subscription.orders_v2.order_number || subscription_id,
+            'Подписка удалена'
+          );
+          console.log('GetCourse cancel result:', gcResult);
+          result.getcourse_cancel = gcResult;
         }
 
         // Delete the subscription
