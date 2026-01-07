@@ -1,288 +1,276 @@
+import { GlassCard } from "@/components/ui/GlassCard";
 import { LandingHeader } from "@/components/landing/LandingHeader";
 import { LandingFooter } from "@/components/landing/LandingFooter";
-import { GlassCard } from "@/components/ui/GlassCard";
-import { Shield, FileText, Lock, Eye, Trash2, UserCheck, Globe, Mail, Building2 } from "lucide-react";
+import { Shield, Building2, Mail, Phone, MapPin, User, FileText, Database, Eye, Lock, UserCheck, Clock, AlertCircle } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 
 export default function Privacy() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
+    <div className="min-h-screen bg-background">
       <LandingHeader />
-      
-      <main className="container mx-auto px-4 py-24">
-        <div className="max-w-4xl mx-auto">
-          <h1 className="text-4xl font-bold text-center mb-4">ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ</h1>
-          <p className="text-muted-foreground text-center mb-2">
-            и обработки персональных данных
-          </p>
-          <p className="text-muted-foreground text-center mb-12">
-            Закрытое акционерное общество «АЖУР инкам» (далее — Оператор)
-          </p>
-          
-          <div className="space-y-6">
-            {/* 1. Общие положения */}
-            <GlassCard className="p-8">
-              <div className="flex items-start gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <Shield className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold mb-2">1. Общие положения</h2>
-                  <div className="text-muted-foreground space-y-3">
-                    <p>
-                      1.1. Настоящая Политика конфиденциальности и обработки персональных данных (далее — Политика) 
-                      определяет порядок обработки и защиты персональных данных пользователей сайта{" "}
-                      <a href="https://club.gorbova.by" className="text-primary hover:underline">club.gorbova.by</a>.
-                    </p>
-                    <p>
-                      1.2. Политика разработана в соответствии с:
-                    </p>
-                    <ul className="list-disc pl-5 space-y-1">
-                      <li>Законом Республики Беларусь от 07.05.2021 № 99-З «О защите персональных данных»;</li>
-                      <li>иными нормативными правовыми актами Республики Беларусь.</li>
-                    </ul>
-                    <p>
-                      1.3. <strong>Оператор персональных данных:</strong><br />
-                      Закрытое акционерное общество «АЖУР инкам»,<br />
-                      УНП 193405000,<br />
-                      юридический адрес: 220035, г. Минск, ул. Панфилова, 2, офис 49Л,<br />
-                      почтовый адрес: 220052, Республика Беларусь, г. Минск, а/я 63,<br />
-                      e-mail: <a href="mailto:info@ajoure.by" className="text-primary hover:underline">info@ajoure.by</a>,<br />
-                      телефон: <a href="tel:+375447594321" className="text-primary hover:underline">+375 44 759-43-21</a>
-                    </p>
-                    <p>
-                      1.4. Пользователь — физическое лицо, использующее Сайт.
-                    </p>
-                    <p>
-                      1.5. Использование Сайта означает согласие Пользователя с настоящей Политикой.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
 
-            {/* 2. Персональные данные */}
-            <GlassCard className="p-8">
-              <div className="flex items-start gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <FileText className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold mb-2">2. Персональные данные, подлежащие обработке</h2>
-                  <div className="text-muted-foreground space-y-3">
-                    <p>Оператор обрабатывает следующие персональные данные:</p>
-                    <ul className="list-disc pl-5 space-y-1">
-                      <li>фамилия, имя;</li>
-                      <li>адрес электронной почты;</li>
-                      <li>номер телефона;</li>
-                      <li>данные учетной записи (логин, идентификаторы);</li>
-                      <li>сведения о заказах, оплатах, подписках, тарифах;</li>
-                      <li>Telegram ID (при добровольной привязке);</li>
-                      <li>технические данные (IP-адрес, cookies, сведения о браузере и устройстве).</li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
-
-            {/* 3. Цели обработки */}
-            <GlassCard className="p-8">
-              <div className="flex items-start gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <Eye className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold mb-2">3. Цели обработки персональных данных</h2>
-                  <div className="text-muted-foreground space-y-3">
-                    <p>Персональные данные обрабатываются в целях:</p>
-                    <ul className="list-disc pl-5 space-y-1">
-                      <li>регистрации и авторизации Пользователя;</li>
-                      <li>предоставления доступа к услугам и продуктам;</li>
-                      <li>исполнения договоров и подписок;</li>
-                      <li>приема и обработки платежей, возвратов;</li>
-                      <li>взаимодействия с Пользователем (уведомления, поддержка);</li>
-                      <li>соблюдения требований законодательства;</li>
-                      <li>бухгалтерского и налогового учета;</li>
-                      <li>предотвращения мошенничества.</li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
-
-            {/* 4. Правовые основания */}
-            <GlassCard className="p-8">
-              <div className="flex items-start gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <Building2 className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold mb-2">4. Правовые основания обработки</h2>
-                  <div className="text-muted-foreground space-y-3">
-                    <p>Обработка персональных данных осуществляется на основании:</p>
-                    <ul className="list-disc pl-5 space-y-1">
-                      <li>согласия Пользователя;</li>
-                      <li>заключения и исполнения договора;</li>
-                      <li>требований законодательства Республики Беларусь.</li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
-
-            {/* 5. Порядок обработки и хранения */}
-            <GlassCard className="p-8">
-              <div className="flex items-start gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <Lock className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold mb-2">5. Порядок обработки и хранения</h2>
-                  <div className="text-muted-foreground space-y-3">
-                    <p>
-                      5.1. Обработка персональных данных осуществляется с использованием автоматизированных 
-                      и неавтоматизированных средств.
-                    </p>
-                    <p>
-                      5.2. Оператор принимает необходимые организационные и технические меры для защиты 
-                      персональных данных от несанкционированного доступа.
-                    </p>
-                    <p>
-                      5.3. Срок хранения персональных данных определяется целями обработки и требованиями законодательства.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
-
-            {/* 6. Передача третьим лицам */}
-            <GlassCard className="p-8">
-              <div className="flex items-start gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <Globe className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold mb-2">6. Передача персональных данных третьим лицам</h2>
-                  <div className="text-muted-foreground space-y-3">
-                    <p>6.1. Персональные данные могут передаваться:</p>
-                    <ul className="list-disc pl-5 space-y-1">
-                      <li>платежным системам (BePaid, ЕРИП);</li>
-                      <li>банкам-эквайерам (ОАО «Паритетбанк»);</li>
-                      <li>CRM-системам;</li>
-                      <li>сервисам уведомлений и рассылок;</li>
-                      <li>иным контрагентам, участвующим в оказании услуг.</li>
-                    </ul>
-                    <p>
-                      6.2. Передача осуществляется с соблюдением требований законодательства и договорных обязательств.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
-
-            {/* 7. Права пользователя */}
-            <GlassCard className="p-8">
-              <div className="flex items-start gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <UserCheck className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold mb-2">7. Права Пользователя</h2>
-                  <div className="text-muted-foreground space-y-3">
-                    <p>Пользователь имеет право:</p>
-                    <ul className="list-disc pl-5 space-y-1">
-                      <li>получать информацию о своих персональных данных;</li>
-                      <li>требовать их уточнения, блокирования или удаления;</li>
-                      <li>отзывать согласие на обработку персональных данных;</li>
-                      <li>обращаться с жалобами в уполномоченные органы.</li>
-                    </ul>
-                    <p className="mt-3">
-                      Запросы направляются на e-mail:{" "}
-                      <a href="mailto:info@ajoure.by" className="text-primary hover:underline">info@ajoure.by</a>.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
-
-            {/* 8. Сроки хранения */}
-            <GlassCard className="p-8">
-              <div className="flex items-start gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <Trash2 className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold mb-2">8. Сроки хранения и удаление данных</h2>
-                  <div className="text-muted-foreground space-y-3">
-                    <p>
-                      Персональные данные хранятся в течение срока, необходимого для достижения целей обработки, 
-                      но не менее сроков, установленных законодательством.
-                    </p>
-                    <p>
-                      После прекращения использования Сервиса данные могут храниться в архивных целях 
-                      в течение 3 лет, если иное не предусмотрено законодательством.
-                    </p>
-                    <p>
-                      Пользователь может запросить удаление своих данных, направив письмо на{" "}
-                      <a href="mailto:info@ajoure.by" className="text-primary hover:underline">info@ajoure.by</a>.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
-
-            {/* 9. Заключительные положения */}
-            <GlassCard className="p-8">
-              <div className="flex items-start gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <FileText className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold mb-2">9. Заключительные положения</h2>
-                  <div className="text-muted-foreground space-y-3">
-                    <p>
-                      9.1. Оператор вправе изменять Политику без предварительного уведомления.
-                    </p>
-                    <p>
-                      9.2. Актуальная версия Политики размещается на Сайте.
-                    </p>
-                    <p className="text-sm mt-4 pt-4 border-t border-border/50">
-                      <strong>Версия:</strong> v2026-01-07<br />
-                      <strong>Дата последнего обновления:</strong> 7 января 2026 года
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
-
-            {/* Контакты */}
-            <GlassCard className="p-8">
-              <div className="flex items-start gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <Mail className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold mb-2">Контактная информация</h2>
-                  <div className="text-muted-foreground space-y-3">
-                    <p><strong>ЗАО «АЖУР инкам»</strong></p>
-                    <p>УНП: 193405000</p>
-                    <p>Юридический адрес: 220035, г. Минск, ул. Панфилова, 2, офис 49Л</p>
-                    <p>Почтовый адрес: 220052, Республика Беларусь, г. Минск, а/я 63</p>
-                    <div className="flex flex-col sm:flex-row gap-4 mt-4">
-                      <a href="tel:+375447594321" className="text-primary hover:underline">
-                        +375 44 759-43-21
-                      </a>
-                      <a href="mailto:info@ajoure.by" className="text-primary hover:underline">
-                        info@ajoure.by
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
+      <main className="container mx-auto px-4 py-12 max-w-4xl">
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-4">
+            <Shield className="h-8 w-8 text-primary" />
           </div>
+          <h1 className="text-3xl md:text-4xl font-bold mb-3">
+            Согласие на обработку персональных данных
+          </h1>
+          <p className="text-muted-foreground">
+            Действует с 7 января 2026 года
+          </p>
         </div>
+
+        {/* Реквизиты оператора */}
+        <GlassCard className="p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+              <Building2 className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Оператор персональных данных</h2>
+              <div className="space-y-3 text-sm">
+                <p className="font-medium text-base">
+                  Закрытое акционерное общество «АЖУР инкам»
+                </p>
+                <div className="grid gap-2 text-muted-foreground">
+                  <p className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 shrink-0" />
+                    УНП 193405000
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 shrink-0" />
+                    220035, г. Минск, ул. Панфилова, 2, офис 49Л
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <Mail className="h-4 w-4 shrink-0" />
+                    Почтовый адрес: 220052, Республика Беларусь, г. Минск, а/я 63
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <Phone className="h-4 w-4 shrink-0" />
+                    +375 29 172-43-21
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <Mail className="h-4 w-4 shrink-0" />
+                    <a href="mailto:info@ajoure.by" className="text-primary hover:underline">
+                      info@ajoure.by
+                    </a>
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <User className="h-4 w-4 shrink-0" />
+                    Директор: Коврижкин Алексей Игоревич
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Согласие на обработку */}
+        <GlassCard className="p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+              <UserCheck className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Согласие на обработку персональных данных</h2>
+              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
+                <p>
+                  Настоящим принимаю решение о предоставлении моих персональных данных и даю 
+                  Оператору — ЗАО «АЖУР инкам», в лице Директора управляющей организации 
+                  Коврижкина Алексея Игоревича, действующего на основании Устава, в соответствии 
+                  со статьей 5 Закона Республики Беларусь от 07.05.2021 № 99-З «О защите 
+                  персональных данных», согласие на обработку персональных данных.
+                </p>
+                <p>
+                  Согласие на обработку персональных данных является конкретным, предметным, 
+                  информированным, сознательным и однозначным.
+                </p>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Способы обработки */}
+        <GlassCard className="p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+              <Database className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Способы обработки персональных данных</h2>
+              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
+                <p>
+                  Обработка персональных данных осуществляется следующими способами:
+                </p>
+                <ul className="list-disc list-inside space-y-1 ml-2">
+                  <li>Сбор</li>
+                  <li>Запись</li>
+                  <li>Систематизация</li>
+                  <li>Накопление</li>
+                  <li>Хранение</li>
+                  <li>Уточнение (обновление, изменение)</li>
+                  <li>Извлечение</li>
+                  <li>Использование</li>
+                  <li>Передача (распространение, предоставление, доступ)</li>
+                  <li>Обезличивание</li>
+                  <li>Блокирование</li>
+                  <li>Удаление</li>
+                  <li>Уничтожение</li>
+                </ul>
+                <p>
+                  Обработка осуществляется в информационных системах персональных данных с 
+                  использованием средств автоматизации или без использования таких средств.
+                </p>
+                <p>
+                  Обработка персональных данных Пользователей осуществляется в соответствии с 
+                  Законом Республики Беларусь от 07.05.2021 № 99-З «О защите персональных данных».
+                </p>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Cookies и аналитика */}
+        <GlassCard className="p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+              <Eye className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Сбор обезличенных данных</h2>
+              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
+                <p>
+                  Я соглашаюсь с тем, что на сайте происходит сбор и обработка обезличенных 
+                  данных о посетителях (в т.ч. файлов «cookies») с помощью сервисов 
+                  интернет-статистики (Яндекс Метрика и других).
+                </p>
+                <p>
+                  Собираемые обезличенные данные включают:
+                </p>
+                <ul className="list-disc list-inside space-y-1 ml-2">
+                  <li>Информация о браузере</li>
+                  <li>Время доступа</li>
+                  <li>Информация об устройстве, используемом для доступа к сайту</li>
+                  <li>Реферер (адрес предыдущей страницы)</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Порядок выражения согласия */}
+        <GlassCard className="p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+              <Lock className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Порядок выражения согласия</h2>
+              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
+                <p>
+                  Я соглашаюсь с тем, что считаюсь давшим(-ей) согласие на обработку своих 
+                  персональных данных, внесенных в поля формы, в момент проставления символа 
+                  в чек-боксе (в поле для ввода) в сети Интернет по адресам:
+                </p>
+                <ul className="list-disc list-inside space-y-1 ml-2">
+                  <li>
+                    <a href="https://gorbova.by" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                      gorbova.by
+                    </a>
+                  </li>
+                  <li>
+                    <a href="https://gorbova.pro" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                      gorbova.pro
+                    </a>
+                  </li>
+                  <li>
+                    <a href="https://club.gorbova.by" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                      club.gorbova.by
+                    </a>
+                  </li>
+                </ul>
+                <p>
+                  Согласие считается данным при проставлении отметки рядом с текстом: 
+                  «Я даю согласие на обработку моих персональных данных в соответствии с условиями 
+                  политики конфиденциальности» или иным аналогичным текстом, при условии, что 
+                  Субъекту персональных данных предоставлена возможность ознакомиться с полным 
+                  текстом настоящей Политики.
+                </p>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Срок действия и отзыв */}
+        <GlassCard className="p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+              <Clock className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Срок действия согласия</h2>
+              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
+                <p>
+                  Настоящее согласие действует с момента его подписания до даты его отзыва.
+                </p>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Отзыв согласия */}
+        <GlassCard className="p-6 mb-6 border-primary/20">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+              <AlertCircle className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Порядок отзыва согласия</h2>
+              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
+                <p>
+                  Отзыв настоящего согласия осуществляется в <span className="font-medium text-foreground">письменной 
+                  или электронной форме</span> путем направления соответствующего заявления на адрес 
+                  электронной почты Оператора:
+                </p>
+                <p className="flex items-center gap-2 text-base">
+                  <Mail className="h-5 w-5 text-primary" />
+                  <a href="mailto:info@ajoure.by" className="text-primary font-medium hover:underline">
+                    info@ajoure.by
+                  </a>
+                </p>
+                <p>
+                  или в письменной форме на почтовый адрес: 220052, Республика Беларусь, г. Минск, а/я 63.
+                </p>
+                <Separator className="my-4" />
+                <p className="text-xs">
+                  После получения отзыва согласия Оператор прекращает обработку персональных данных 
+                  и уничтожает их в срок, не превышающий 15 рабочих дней с даты получения отзыва, 
+                  за исключением случаев, предусмотренных законодательством Республики Беларусь.
+                </p>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Правовое основание */}
+        <GlassCard className="p-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-muted shrink-0">
+              <FileText className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Правовое основание</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Обработка персональных данных осуществляется в соответствии с Законом 
+                Республики Беларусь от 07.05.2021 № 99-З «О защите персональных данных».
+              </p>
+            </div>
+          </div>
+        </GlassCard>
       </main>
-      
+
       <LandingFooter />
     </div>
   );

@@ -1,22 +1,9 @@
 import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useConsent } from "@/hooks/useConsent";
-import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { GlassCard } from "@/components/ui/GlassCard";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Shield, ShieldCheck, ShieldX, Mail, ExternalLink, History, Loader2, AlertTriangle } from "lucide-react";
+import { Shield, ShieldCheck, ShieldX, Mail, ExternalLink, History, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -27,27 +14,12 @@ export default function ConsentsSettings() {
     profileConsent,
     consentHistory,
     isLoading,
-    revokeConsent,
     updateMarketingConsent,
   } = useConsent();
-  const [isRevoking, setIsRevoking] = useState(false);
   const [isUpdatingMarketing, setIsUpdatingMarketing] = useState(false);
 
   const hasPrivacyConsent = !!profileConsent?.consent_version;
   const hasMarketingConsent = profileConsent?.marketing_consent ?? false;
-
-  const handleRevokeConsent = async () => {
-    setIsRevoking(true);
-    try {
-      await revokeConsent.mutateAsync({ reason: "user_requested" });
-      toast.success("Согласие отозвано");
-    } catch (error) {
-      console.error("Error revoking consent:", error);
-      toast.error("Ошибка при отзыве согласия");
-    } finally {
-      setIsRevoking(false);
-    }
-  };
 
   const handleMarketingToggle = async (checked: boolean) => {
     setIsUpdatingMarketing(true);
@@ -138,11 +110,11 @@ export default function ConsentsSettings() {
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground mt-2">
-                  Согласие не дано или было отозвано
+                  Согласие не дано
                 </p>
               )}
 
-              <div className="mt-4 flex flex-wrap gap-3">
+              <div className="mt-4">
                 <a
                   href="/privacy"
                   target="_blank"
@@ -152,43 +124,25 @@ export default function ConsentsSettings() {
                   <ExternalLink className="h-4 w-4" />
                   Политика конфиденциальности
                 </a>
+              </div>
 
-                {hasPrivacyConsent && (
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="outline" size="sm" className="text-destructive hover:text-destructive">
-                        Отозвать согласие
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle className="flex items-center gap-2">
-                          <AlertTriangle className="h-5 w-5 text-destructive" />
-                          Отзыв согласия
-                        </AlertDialogTitle>
-                        <AlertDialogDescription className="space-y-2">
-                          <p>Вы уверены, что хотите отозвать согласие на обработку персональных данных?</p>
-                          <p className="font-medium text-destructive">
-                            После отзыва согласия доступ к сервису может быть ограничен.
-                          </p>
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Отмена</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={handleRevokeConsent}
-                          disabled={isRevoking}
-                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                        >
-                          {isRevoking ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          ) : null}
-                          Отозвать согласие
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                )}
+              {/* Info about revocation */}
+              <div className="mt-4 p-3 rounded-lg bg-muted/50 border border-border/50">
+                <div className="flex items-start gap-2">
+                  <Info className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                  <div className="text-sm text-muted-foreground">
+                    <p>
+                      Для отзыва согласия на обработку персональных данных направьте 
+                      письменное заявление на электронную почту{" "}
+                      <a 
+                        href="mailto:info@ajoure.by" 
+                        className="text-primary hover:underline font-medium"
+                      >
+                        info@ajoure.by
+                      </a>
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
