@@ -47,21 +47,96 @@ const OFFER_TARIFF_MAP: Record<string, string> = {
 
 // Маппинг статусов GetCourse -> наши статусы
 const STATUS_MAP: Record<string, string> = {
-  'payed': 'paid',
+  // Оплаченные (русские)
+  'Оплачено': 'paid',
+  'оплачено': 'paid',
   'Завершён': 'paid',
+  'завершён': 'paid',
+  'Завершен': 'paid',
+  'завершен': 'paid',
+  // Оплаченные (английские)
+  'payed': 'paid',
+  'paid': 'paid',
+  'Paid': 'paid',
   'finished': 'paid',
   'completed': 'paid',
+  'Completed': 'paid',
+  // Pending
   'new': 'pending',
-  'cancelled': 'canceled',
-  'in_work': 'pending',
-  'payment_waiting': 'pending',
-  'part_payed': 'pending',
   'Новый': 'pending',
+  'новый': 'pending',
+  'in_work': 'pending',
   'В работе': 'pending',
+  'в работе': 'pending',
+  'payment_waiting': 'pending',
   'Ожидает оплаты': 'pending',
+  'ожидает оплаты': 'pending',
+  'part_payed': 'pending',
+  // Отменённые
+  'cancelled': 'canceled',
   'Отменён': 'canceled',
+  'отменён': 'canceled',
+  'Отменен': 'canceled',
+  'отменен': 'canceled',
   'Ложный': 'canceled',
+  'ложный': 'canceled',
 };
+
+// Умный маппинг статуса с fallback
+function mapStatus(rawStatus: string): string {
+  if (!rawStatus) return 'pending';
+  const normalized = rawStatus.trim();
+  
+  // Прямой маппинг
+  if (STATUS_MAP[normalized]) return STATUS_MAP[normalized];
+  
+  // Case-insensitive поиск
+  const lower = normalized.toLowerCase();
+  for (const [key, value] of Object.entries(STATUS_MAP)) {
+    if (key.toLowerCase() === lower) return value;
+  }
+  
+  // Fallback по ключевым словам
+  if (lower.includes('оплач') || lower.includes('paid') || lower.includes('заверш') || lower.includes('finish')) return 'paid';
+  if (lower.includes('отмен') || lower.includes('cancel') || lower.includes('ложн')) return 'canceled';
+  
+  return 'pending';
+}
+
+// Парсинг даты из разных форматов
+function parseDate(dateStr: string): Date | null {
+  if (!dateStr || !dateStr.trim()) return null;
+  
+  const str = dateStr.trim();
+  
+  // ISO format: 2024-01-15 or 2024-01-15T10:30:00
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) return d;
+  }
+  
+  // DD.MM.YYYY or DD.MM.YYYY HH:MM
+  const dotMatch = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (dotMatch) {
+    const [, day, month, year] = dotMatch;
+    const d = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+    if (!isNaN(d.getTime())) return d;
+  }
+  
+  // DD/MM/YYYY
+  const slashMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (slashMatch) {
+    const [, day, month, year] = slashMatch;
+    const d = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+    if (!isNaN(d.getTime())) return d;
+  }
+  
+  // Fallback: try native Date parsing
+  const fallback = new Date(str);
+  if (!isNaN(fallback.getTime())) return fallback;
+  
+  return null;
+}
 
 // Задержка для rate limiting
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -477,8 +552,8 @@ async function createOrder(
     return { id: byNumber.id, isNew: false };
   }
   
-  // Маппинг статуса
-  const status = STATUS_MAP[deal.deal_status] || 'pending';
+  // Маппинг статуса с умным fallback
+  const status = mapStatus(deal.deal_status);
   
   const orderData = {
     order_number: gcOrderNumber,
@@ -519,40 +594,66 @@ async function createOrder(
 }
 
 // Создать подписку
+interface DealWithAccessDates extends GCDeal {
+  accessStartAt?: string;
+  accessEndAt?: string;
+}
+
 async function createSubscription(
   supabase: any,
-  deal: GCDeal,
+  deal: DealWithAccessDates,
   profileUserId: string,
   orderId: string,
   tariffId: string,
   productId: string
-): Promise<{ id: string; isNew: boolean } | null> {
-  // Только для оплаченных сделок
-  const isPaid = deal.deal_status === 'payed' || deal.deal_status === 'Завершён' || deal.deal_status === 'finished';
-  if (!isPaid) {
+): Promise<{ id: string; isNew: boolean; isActive: boolean; accessEndAt: string } | null> {
+  // Только для оплаченных сделок (используем умный маппинг)
+  const mappedStatus = mapStatus(deal.deal_status);
+  if (mappedStatus !== 'paid') {
     return null;
   }
   
   // Проверяем существующую подписку
   const { data: existing } = await supabase
     .from('subscriptions_v2')
-    .select('id')
+    .select('id, status, access_end_at')
     .eq('order_id', orderId)
     .maybeSingle();
   
   if (existing) {
-    return { id: existing.id, isNew: false };
+    const isActive = existing.status === 'active';
+    return { id: existing.id, isNew: false, isActive, accessEndAt: existing.access_end_at };
   }
   
-  // Рассчитываем период доступа
-  const accessStartAt = deal.deal_payed_at || deal.deal_created_at;
-  const startDate = new Date(accessStartAt);
-  const endDate = new Date(startDate);
-  endDate.setDate(endDate.getDate() + 30);
+  // Даты доступа из импорта или fallback
+  let accessStartAt: Date;
+  let accessEndAt: Date;
   
-  // Определяем статус
+  if (deal.accessEndAt) {
+    // Используем реальную дату окончания из импорта
+    const parsedEnd = parseDate(deal.accessEndAt);
+    if (parsedEnd) {
+      accessEndAt = parsedEnd;
+      // Начало: из импорта или от даты оплаты
+      const parsedStart = deal.accessStartAt ? parseDate(deal.accessStartAt) : null;
+      accessStartAt = parsedStart || new Date(deal.deal_payed_at || deal.deal_created_at);
+    } else {
+      // Если не удалось распарсить - fallback
+      accessStartAt = new Date(deal.deal_payed_at || deal.deal_created_at);
+      accessEndAt = new Date(accessStartAt);
+      accessEndAt.setDate(accessEndAt.getDate() + 30);
+    }
+  } else {
+    // Fallback: +30 дней от оплаты
+    accessStartAt = new Date(deal.deal_payed_at || deal.deal_created_at);
+    accessEndAt = new Date(accessStartAt);
+    accessEndAt.setDate(accessEndAt.getDate() + 30);
+  }
+  
+  // Определяем статус: active если дата окончания >= сегодня
   const now = new Date();
-  const status = endDate > now ? 'active' : 'expired';
+  const status = accessEndAt >= now ? 'active' : 'expired';
+  const isActive = status === 'active';
   
   const subscriptionData = {
     user_id: profileUserId,
@@ -560,12 +661,13 @@ async function createSubscription(
     tariff_id: tariffId,
     order_id: orderId,
     status,
-    access_start_at: accessStartAt,
-    access_end_at: endDate.toISOString(),
+    access_start_at: accessStartAt.toISOString(),
+    access_end_at: accessEndAt.toISOString(),
     is_trial: false,
     meta: {
       gc_deal_id: deal.id,
       imported_at: new Date().toISOString(),
+      access_dates_from_import: !!deal.accessEndAt,
     },
   };
   
@@ -580,7 +682,7 @@ async function createSubscription(
     throw error;
   }
   
-  return { id: newSub.id, isNew: true };
+  return { id: newSub.id, isNew: true, isActive, accessEndAt: accessEndAt.toISOString() };
 }
 
 // Найти тариф по коду
@@ -653,8 +755,8 @@ async function processFileDeals(
         productId = tariff.product_id;
       }
       
-      // Normalize the deal structure
-      const normalizedDeal: GCDeal = {
+      // Normalize the deal structure with access dates
+      const normalizedDeal: DealWithAccessDates = {
         id: deal.externalId || Date.now() + Math.random(),
         deal_number: deal.externalId || `IMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         deal_created_at: deal.createdAt || new Date().toISOString(),
@@ -666,6 +768,9 @@ async function processFileDeals(
         user_first_name: deal.user_first_name,
         user_last_name: deal.user_last_name,
         user_phone: deal.user_phone,
+        // Даты доступа из импорта
+        accessStartAt: deal.accessStartAt || '',
+        accessEndAt: deal.accessEndAt || '',
       };
       
       // Create/find profile
@@ -692,12 +797,40 @@ async function processFileDeals(
         result.orders_skipped++;
       }
       
-      // Create subscription for paid deals
+      // Create subscription for paid deals (with real access dates from import)
       const subscription = await createSubscription(
         supabase, normalizedDeal, userIdForRecords, order.id, tariffId, productId
       );
       if (subscription?.isNew) {
         result.subscriptions_created++;
+        
+        // Автоматическая выдача доступа в Telegram для активных подписок
+        if (subscription.isActive) {
+          try {
+            // Проверяем, есть ли у продукта telegram_club_id
+            const { data: product } = await supabase
+              .from('products_v2')
+              .select('telegram_club_id')
+              .eq('id', productId)
+              .single();
+            
+            if (product?.telegram_club_id) {
+              // Выдаём доступ в клуб
+              await supabase.functions.invoke('telegram-grant-access', {
+                body: {
+                  user_id: userIdForRecords,
+                  club_id: product.telegram_club_id,
+                  valid_until: subscription.accessEndAt,
+                  source: 'import',
+                },
+              });
+              result.details.push(`TG доступ: ${deal.user_email}`);
+            }
+          } catch (tgError) {
+            console.error(`[File Import] Telegram grant failed for ${deal.user_email}:`, tgError);
+            // Не прерываем импорт из-за ошибки Telegram
+          }
+        }
       }
       
     } catch (error) {

@@ -43,6 +43,8 @@ interface ColumnMapping {
   createdAt: string | null;
   paidAt: string | null;
   externalId: string | null;
+  accessStartAt: string | null;  // Дата начала доступа
+  accessEndAt: string | null;    // Дата окончания доступа
 }
 
 interface TariffSuggestion {
@@ -96,6 +98,8 @@ const DEFAULT_MAPPING: ColumnMapping = {
   createdAt: null,
   paidAt: null,
   externalId: null,
+  accessStartAt: null,
+  accessEndAt: null,
 };
 
 const DEFAULT_SETTINGS: ImportSettings = {
@@ -568,6 +572,8 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
             createdAt: String(row[columnMapping.createdAt!] || ""),
             paidAt: String(row[columnMapping.paidAt!] || ""),
             externalId: String(row[columnMapping.externalId!] || ""),
+            accessStartAt: columnMapping.accessStartAt ? String(row[columnMapping.accessStartAt] || "") : "",
+            accessEndAt: columnMapping.accessEndAt ? String(row[columnMapping.accessEndAt] || "") : "",
           };
         });
 
@@ -582,11 +588,38 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
     const byTariff = new Map<string, number>();
     const uniqueEmails = new Set<string>();
     let unknownTariffCount = 0;
+    let activeSubscriptions = 0;
+    let expiredSubscriptions = 0;
+    const now = new Date();
     
     deals.forEach((d) => {
       byTariff.set(d.tariffCode, (byTariff.get(d.tariffCode) || 0) + 1);
       if (d.user_email) uniqueEmails.add(d.user_email);
       if (d.tariffCode === "UNKNOWN") unknownTariffCount++;
+      
+      // Подсчёт активных/истекших по дате окончания доступа
+      if (d.accessEndAt) {
+        const endDate = parseAccessDate(d.accessEndAt);
+        if (endDate) {
+          if (endDate >= now) {
+            activeSubscriptions++;
+          } else {
+            expiredSubscriptions++;
+          }
+        }
+      } else {
+        // Если нет даты окончания - считаем по дате оплаты + 30 дней
+        const paidDate = d.paidAt ? parseAccessDate(d.paidAt) : null;
+        if (paidDate) {
+          const endDate = new Date(paidDate);
+          endDate.setDate(endDate.getDate() + 30);
+          if (endDate >= now) {
+            activeSubscriptions++;
+          } else {
+            expiredSubscriptions++;
+          }
+        }
+      }
     });
     
     // Compute skipped stats
@@ -638,8 +671,41 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       skippedByUnclearTariff,
       skippedByUserSkip,
       totalRows: rows.length,
+      activeSubscriptions,
+      expiredSubscriptions,
     };
   }, [prepareDealsForImport, rows, columnMapping, tariffSuggestions, settings.onlyPaid]);
+
+  // Helper: parse access date from various formats
+  function parseAccessDate(dateStr: string): Date | null {
+    if (!dateStr || !dateStr.trim()) return null;
+    const str = dateStr.trim();
+    
+    // ISO format
+    if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+      const d = new Date(str);
+      if (!isNaN(d.getTime())) return d;
+    }
+    
+    // DD.MM.YYYY
+    const dotMatch = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+    if (dotMatch) {
+      const [, day, month, year] = dotMatch;
+      const d = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+      if (!isNaN(d.getTime())) return d;
+    }
+    
+    // DD/MM/YYYY
+    const slashMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (slashMatch) {
+      const [, day, month, year] = slashMatch;
+      const d = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+      if (!isNaN(d.getTime())) return d;
+    }
+    
+    const fallback = new Date(str);
+    return !isNaN(fallback.getTime()) ? fallback : null;
+  }
 
   // Count undefined tariffs
   const undefinedTariffsCount = useMemo(() => {
@@ -862,6 +928,8 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                         {field === "createdAt" && "Создано"}
                         {field === "paidAt" && "Оплачено"}
                         {field === "externalId" && "Внешний ID"}
+                        {field === "accessStartAt" && "Начало доступа"}
+                        {field === "accessEndAt" && "Конец доступа"}
                       </label>
                       <Select
                         value={columnMapping[field] || "__none__"}
@@ -1090,6 +1158,20 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                         <p className="text-xs text-muted-foreground">Клиентов</p>
                       </div>
                     </div>
+
+                    {/* Access status stats */}
+                    {(previewStats.activeSubscriptions > 0 || previewStats.expiredSubscriptions > 0) && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="text-center p-2 bg-green-500/10 rounded-lg border border-green-500/20">
+                          <p className="text-lg font-bold text-green-600">{previewStats.activeSubscriptions}</p>
+                          <p className="text-xs text-muted-foreground">Активных</p>
+                        </div>
+                        <div className="text-center p-2 bg-muted/50 rounded-lg">
+                          <p className="text-lg font-bold text-muted-foreground">{previewStats.expiredSubscriptions}</p>
+                          <p className="text-xs text-muted-foreground">Истекших</p>
+                        </div>
+                      </div>
+                    )}
 
                     {previewStats.total === 0 && (
                       <Alert variant="destructive" className="py-2">
