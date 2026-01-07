@@ -168,7 +168,38 @@ export default function AdminDeals() {
   // Bulk delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
-      // First delete related payments
+      // 1. Get subscription IDs linked to these orders
+      const { data: subscriptions } = await supabase
+        .from("subscriptions_v2")
+        .select("id")
+        .in("order_id", ids);
+      
+      const subscriptionIds = subscriptions?.map(s => s.id) || [];
+      
+      // 2. Delete installment payments for these subscriptions
+      if (subscriptionIds.length > 0) {
+        const { error: installmentsError } = await supabase
+          .from("installment_payments")
+          .delete()
+          .in("subscription_id", subscriptionIds);
+        
+        if (installmentsError) {
+          console.error("Error deleting installments:", installmentsError);
+        }
+      }
+      
+      // 3. Delete subscriptions
+      const { error: subscriptionsError } = await supabase
+        .from("subscriptions_v2")
+        .delete()
+        .in("order_id", ids);
+      
+      if (subscriptionsError) {
+        console.error("Error deleting subscriptions:", subscriptionsError);
+        throw subscriptionsError;
+      }
+      
+      // 4. Delete payments
       const { error: paymentsError } = await supabase
         .from("payments_v2")
         .delete()
@@ -178,7 +209,7 @@ export default function AdminDeals() {
         console.error("Error deleting payments:", paymentsError);
       }
 
-      // Then delete orders
+      // 5. Delete orders
       const { error } = await supabase
         .from("orders_v2")
         .delete()
@@ -191,6 +222,7 @@ export default function AdminDeals() {
       toast.success(`Удалено ${count} сделок`);
       setSelectedDealIds(new Set());
       queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-subscriptions"] });
     },
     onError: (error) => {
       toast.error("Ошибка удаления: " + (error as Error).message);
@@ -496,7 +528,8 @@ export default function AdminDeals() {
             <AlertDialogTitle>Удалить сделки?</AlertDialogTitle>
             <AlertDialogDescription>
               Вы уверены, что хотите удалить {selectedDealIds.size} сделок? 
-              Также будут удалены все связанные платежи. Это действие нельзя отменить.
+              Также будут удалены все связанные подписки, платежи и рассрочки. 
+              Это действие нельзя отменить.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
