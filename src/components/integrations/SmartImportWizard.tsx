@@ -1203,10 +1203,19 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                   <p className="text-muted-foreground">
                     Будет импортировано {previewStats.total} сделок
                   </p>
-                  <Button onClick={() => { setImportCancelled(false); setIsImporting(true); importMutation.mutate(); }} size="lg">
-                    <Upload className="h-4 w-4 mr-2" />
-                    Начать импорт
-                  </Button>
+                  {previewStats.total === 0 ? (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        Нет сделок для импорта. Проверьте маппинг тарифов — возможно, все сделки имеют статус «UNKNOWN» или пропущены.
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    <Button onClick={() => { setImportCancelled(false); setIsImporting(true); importMutation.mutate(); }} size="lg">
+                      <Upload className="h-4 w-4 mr-2" />
+                      Начать импорт
+                    </Button>
+                  )}
                 </div>
               )}
 
