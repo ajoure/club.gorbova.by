@@ -136,7 +136,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         .select(`
           *,
           products_v2(id, name, code, telegram_club_id),
-          tariffs(id, name, code, getcourse_offer_code)
+          tariffs(id, name, code, getcourse_offer_code, getcourse_offer_id)
         `)
         .eq("user_id", contact.user_id)
         .order("created_at", { ascending: false });
@@ -885,7 +885,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                               </Badge>
                             );
                           })()}
-                          {tariff?.getcourse_offer_code && (() => {
+                          {(tariff?.getcourse_offer_code || tariff?.getcourse_offer_id) && (() => {
                             const syncResults = (sub.meta as any)?.sync_results;
                             const gcSync = syncResults?.getcourse;
                             const hasSync = gcSync !== undefined;
