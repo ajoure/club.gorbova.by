@@ -45,7 +45,7 @@ import {
 } from "lucide-react";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { SmartImportWizard } from "@/components/integrations/SmartImportWizard";
-import { AdvancedFilters, ActiveFilter, FilterField, applyFilters } from "@/components/admin/AdvancedFilters";
+import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -59,7 +59,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
 
 export default function AdminDeals() {
   const [search, setSearch] = useState("");
-  const [advancedFilters, setAdvancedFilters] = useState<ActiveFilter[]>([]);
+  const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
+  const [activePreset, setActivePreset] = useState("all");
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [showImportWizard, setShowImportWizard] = useState(false);
   const [selectedDealIds, setSelectedDealIds] = useState<Set<string>>(new Set());
@@ -180,9 +181,28 @@ export default function AdminDeals() {
       });
     }
     
-    // Then apply advanced filters
-    return applyFilters(result, advancedFilters, getDealFieldValue);
-  }, [deals, search, advancedFilters, profilesMap]);
+    // Then apply filters
+    return applyFilters(result, activeFilters, getDealFieldValue);
+  }, [deals, search, activeFilters, profilesMap]);
+
+  // Preset counts
+  const presetCounts = useMemo(() => {
+    if (!deals) return { paid: 0, pending: 0, trial: 0, canceled: 0 };
+    return {
+      paid: deals.filter(d => d.status === "paid").length,
+      pending: deals.filter(d => d.status === "pending").length,
+      trial: deals.filter(d => d.is_trial).length,
+      canceled: deals.filter(d => d.status === "canceled" || d.status === "refunded").length,
+    };
+  }, [deals]);
+
+  const DEAL_PRESETS: FilterPreset[] = useMemo(() => [
+    { id: "all", label: "Все", filters: [] },
+    { id: "paid", label: "Оплачены", filters: [{ field: "status", operator: "equals", value: "paid" }], count: presetCounts.paid },
+    { id: "pending", label: "Ожидают оплаты", filters: [{ field: "status", operator: "equals", value: "pending" }], count: presetCounts.pending },
+    { id: "trial", label: "Триал", filters: [{ field: "is_trial", operator: "equals", value: "true" }], count: presetCounts.trial },
+    { id: "canceled", label: "Отменённые", filters: [{ field: "status", operator: "equals", value: "canceled" }], count: presetCounts.canceled },
+  ], [presetCounts]);
 
   const selectedDeal = deals?.find(d => d.id === selectedDealId);
 
@@ -360,10 +380,13 @@ export default function AdminDeals() {
           </div>
         </div>
         
-        <AdvancedFilters
+        <QuickFilters
+          presets={DEAL_PRESETS}
           fields={DEAL_FILTER_FIELDS}
-          filters={advancedFilters}
-          onFiltersChange={setAdvancedFilters}
+          activeFilters={activeFilters}
+          onFiltersChange={setActiveFilters}
+          activePreset={activePreset}
+          onPresetChange={setActivePreset}
         />
       </div>
 

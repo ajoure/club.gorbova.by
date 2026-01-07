@@ -38,10 +38,11 @@ import {
   MessageCircle,
   Handshake,
   RefreshCw,
+  Ghost,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
-import { AdvancedFilters, ActiveFilter, FilterField, applyFilters } from "@/components/admin/AdvancedFilters";
+import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
 
 interface Contact {
   id: string;
@@ -69,6 +70,7 @@ const CONTACT_FILTER_FIELDS: FilterField[] = [
     label: "Статус", 
     type: "select",
     options: [
+      { value: "ghost", label: "Новый" },
       { value: "active", label: "Активен" },
       { value: "blocked", label: "Заблокирован" },
       { value: "deleted", label: "Удален" },
@@ -92,7 +94,8 @@ export default function AdminContacts() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [advancedFilters, setAdvancedFilters] = useState<ActiveFilter[]>([]);
+  const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
+  const [activePreset, setActivePreset] = useState("all");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -185,14 +188,35 @@ export default function AdminContacts() {
       );
     }
     
-    // Then apply advanced filters
-    return applyFilters(result, advancedFilters, getContactFieldValue);
-  }, [contacts, search, advancedFilters]);
+    // Then apply filters
+    return applyFilters(result, activeFilters, getContactFieldValue);
+  }, [contacts, search, activeFilters]);
+
+  // Calculate counts for presets
+  const presetCounts = useMemo(() => {
+    if (!contacts) return { active: 0, ghost: 0, withDeals: 0, duplicates: 0 };
+    return {
+      active: contacts.filter(c => c.status === "active").length,
+      ghost: contacts.filter(c => c.status === "ghost").length,
+      withDeals: contacts.filter(c => c.deals_count > 0).length,
+      duplicates: contacts.filter(c => c.duplicate_flag && c.duplicate_flag !== 'none').length,
+    };
+  }, [contacts]);
+
+  const CONTACT_PRESETS: FilterPreset[] = useMemo(() => [
+    { id: "all", label: "Все", filters: [] },
+    { id: "active", label: "Активные", filters: [{ field: "status", operator: "equals", value: "active" }], count: presetCounts.active },
+    { id: "ghost", label: "Новые", filters: [{ field: "status", operator: "equals", value: "ghost" }], count: presetCounts.ghost },
+    { id: "withDeals", label: "С покупками", filters: [{ field: "deals_count", operator: "gt", value: "0" }], count: presetCounts.withDeals },
+    { id: "duplicates", label: "Дубли", filters: [{ field: "is_duplicate", operator: "equals", value: "true" }], count: presetCounts.duplicates },
+  ], [presetCounts]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "active":
         return <Badge variant="default" className="bg-green-500/20 text-green-600 border-green-500/30"><CheckCircle className="w-3 h-3 mr-1" />Активен</Badge>;
+      case "ghost":
+        return <Badge variant="outline" className="text-muted-foreground"><Ghost className="w-3 h-3 mr-1" />Новый</Badge>;
       case "blocked":
         return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" />Заблокирован</Badge>;
       case "deleted":
@@ -329,10 +353,13 @@ export default function AdminContacts() {
           </div>
         </div>
         
-        <AdvancedFilters
+        <QuickFilters
+          presets={CONTACT_PRESETS}
           fields={CONTACT_FILTER_FIELDS}
-          filters={advancedFilters}
-          onFiltersChange={setAdvancedFilters}
+          activeFilters={activeFilters}
+          onFiltersChange={setActiveFilters}
+          activePreset={activePreset}
+          onPresetChange={setActivePreset}
         />
       </div>
 
