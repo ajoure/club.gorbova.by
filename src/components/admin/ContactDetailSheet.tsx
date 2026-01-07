@@ -54,7 +54,9 @@ import {
   ShieldCheck,
   ShieldX,
   FileText,
+  Wallet,
 } from "lucide-react";
+import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
 import { RefundDialog } from "./RefundDialog";
@@ -506,6 +508,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                 {profileConsent?.consent_version && (
                   <Badge variant="secondary" className="ml-1 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">✓</Badge>
                 )}
+              </TabsTrigger>
+              <TabsTrigger value="installments" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Wallet className="w-3 h-3 mr-1" />
+                Рассрочки
               </TabsTrigger>
               {contact.duplicate_flag && contact.duplicate_flag !== 'none' && (
                 <TabsTrigger value="duplicates" className="text-xs sm:text-sm px-2.5 sm:px-3">Дубли</TabsTrigger>
