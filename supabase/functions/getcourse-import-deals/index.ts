@@ -412,12 +412,11 @@ async function findOrCreateProfile(
     lastName = normalized.lastName || lastName;
   }
   
-  const ghostUserId = crypto.randomUUID();
-  
+  // Ghost profiles don't have a real auth user, so user_id is null
   const { data: newProfile, error } = await supabase
     .from('profiles')
     .insert({
-      user_id: ghostUserId,
+      user_id: null,  // No auth user for ghost profiles
       email: email,
       full_name: fullName,
       first_name: firstName,
