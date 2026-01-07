@@ -96,7 +96,7 @@ const DEFAULT_MAPPING: ColumnMapping = {
 };
 
 const DEFAULT_SETTINGS: ImportSettings = {
-  statusFilter: ["Оплачено", "Завершён", "В процессе"],
+  statusFilter: ["Оплачено", "Завершён", "В процессе", "Ожидает анализа"],
   duplicateHandling: "skip",
   mergeEmailDuplicates: true,
   normalizeNames: true,
@@ -479,14 +479,23 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
         return settings.statusFilter.some(s => status.toLowerCase().includes(s.toLowerCase()));
       })
       .filter((row) => {
-        // Skip rows where user explicitly chose "skip"
         const offerName = String(row[columnMapping.offerName!] || "");
         const suggestion = tariffSuggestions.find(s => s.pattern === offerName);
-        // Only skip if user explicitly chose skip
-        if (suggestion?.userChoice === "skip") {
-          return false;
-        }
-        // If no suggestion yet, include (will be unknown tariff)
+
+        // Always honor explicit user decision
+        if (suggestion?.userChoice === "skip") return false;
+
+        // Default: if status is "Ожидает анализа" and AI couldn't confidently map tariff → skip
+        const status = columnMapping.status ? String(row[columnMapping.status] || "") : "";
+        const isWaitingForAnalysis = status.toLowerCase().includes("ожидает анализа");
+        const isTariffUnclearFromAi =
+          !!suggestion &&
+          !suggestion.userChoice &&
+          (suggestion.action === "needs_review" ||
+            (suggestion.action === "skip" && !suggestion.targetTariffId && !suggestion.targetTariffCode));
+
+        if (isWaitingForAnalysis && isTariffUnclearFromAi) return false;
+
         return true;
       })
       .map((row) => {
@@ -948,7 +957,13 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                   <CardTitle className="text-sm">Фильтр статусов</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  {["Оплачено", "Завершён", "В процессе", "Отменён"].map((status) => (
+                  {[
+                    "Оплачено",
+                    "Завершён",
+                    "В процессе",
+                    "Ожидает анализа",
+                    "Отменён",
+                  ].map((status) => (
                     <div key={status} className="flex items-center gap-2">
                       <Checkbox
                         id={status}
