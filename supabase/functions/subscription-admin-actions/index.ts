@@ -39,7 +39,8 @@ async function cancelGetCourseOrder(
   offerId: number | string,
   orderNumber: string,
   reason: string,
-  amount: number = 0
+  amount: number = 0,
+  gcDealId?: string | number // GetCourse deal_id to update existing deal
 ): Promise<{ success: boolean; error?: string }> {
   const apiKey = Deno.env.get('GETCOURSE_API_KEY');
   const accountName = 'gorbova';
@@ -55,7 +56,22 @@ async function cancelGetCourseOrder(
   }
   
   try {
-    console.log(`Canceling GetCourse order: email=${email}, offerId=${offerId}, amount=${amount}`);
+    console.log(`Canceling GetCourse order: email=${email}, offerId=${offerId}, amount=${amount}, gcDealId=${gcDealId}`);
+    
+    // Build deal object - use deal_number to update existing deal if we have gc_deal_id
+    const dealParams: Record<string, any> = {
+      offer_code: offerId.toString(),
+      deal_cost: amount, // Required field for GetCourse
+      deal_status: 'cancelled', // Set status to cancelled
+      deal_is_paid: 0,
+      deal_comment: `Отменено администратором. ${reason}. Order: ${orderNumber}`,
+    };
+    
+    // CRITICAL: Pass deal_number to update existing deal instead of creating new one
+    if (gcDealId) {
+      dealParams.deal_number = parseInt(String(gcDealId), 10);
+      console.log(`Using deal_number=${dealParams.deal_number} to update existing GetCourse deal`);
+    }
     
     const params = {
       user: {
@@ -64,14 +80,7 @@ async function cancelGetCourseOrder(
       system: {
         refresh_if_exists: 1,
       },
-      deal: {
-        offer_code: offerId.toString(),
-        deal_cost: amount, // Required field for GetCourse
-        deal_status: 'cancelled', // Set status to cancelled
-        deal_is_paid: 0,
-        // Store order number in comment since deal_number must be integer
-        deal_comment: `Отменено администратором. ${reason}. Order: ${orderNumber}`,
-      },
+      deal: dealParams,
     };
     
     console.log('GetCourse cancel params:', JSON.stringify(params, null, 2));
@@ -121,7 +130,8 @@ async function updateGetCourseOrder(
   offerId: number | string,
   orderNumber: string,
   newEndDate: string,
-  amount: number = 0
+  amount: number = 0,
+  gcDealId?: string | number // GetCourse deal_id to update existing deal
 ): Promise<{ success: boolean; error?: string }> {
   const apiKey = Deno.env.get('GETCOURSE_API_KEY');
   const accountName = 'gorbova';
@@ -137,7 +147,22 @@ async function updateGetCourseOrder(
   }
   
   try {
-    console.log(`Updating GetCourse order: email=${email}, offerId=${offerId}, newEndDate=${newEndDate}`);
+    console.log(`Updating GetCourse order: email=${email}, offerId=${offerId}, newEndDate=${newEndDate}, gcDealId=${gcDealId}`);
+    
+    // Build deal object - use deal_number to update existing deal if we have gc_deal_id
+    const dealParams: Record<string, any> = {
+      offer_code: offerId.toString(),
+      deal_cost: amount,
+      deal_status: 'in_work', // Active status
+      deal_is_paid: 1,
+      deal_comment: `Доступ продлён до ${newEndDate}. Order: ${orderNumber}`,
+    };
+    
+    // CRITICAL: Pass deal_number to update existing deal instead of creating new one
+    if (gcDealId) {
+      dealParams.deal_number = parseInt(String(gcDealId), 10);
+      console.log(`Using deal_number=${dealParams.deal_number} to update existing GetCourse deal`);
+    }
     
     const params = {
       user: {
@@ -146,14 +171,7 @@ async function updateGetCourseOrder(
       system: {
         refresh_if_exists: 1,
       },
-      deal: {
-        offer_code: offerId.toString(),
-        deal_cost: amount,
-        deal_status: 'in_work', // Active status
-        deal_is_paid: 1,
-        // Store order number in comment since deal_number must be integer
-        deal_comment: `Доступ продлён до ${newEndDate}. Order: ${orderNumber}`,
-      },
+      deal: dealParams,
     };
     
     console.log('GetCourse update params:', JSON.stringify(params, null, 2));
@@ -478,10 +496,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get subscription with related product, tariff and order data
+    // Get subscription with related product, tariff and order data (including meta for gc_order_id)
     const { data: subscription, error: subError } = await supabase
       .from('subscriptions_v2')
-      .select('*, products_v2(telegram_club_id, name), tariffs(getcourse_offer_id, getcourse_offer_code, name), orders_v2(order_number, customer_email, final_price)')
+      .select('*, products_v2(telegram_club_id, name), tariffs(getcourse_offer_id, getcourse_offer_code, name), orders_v2(order_number, customer_email, final_price, meta)')
       .eq('id', subscription_id)
       .single();
 
@@ -576,17 +594,19 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Update in GetCourse
+        // Update in GetCourse with gc_order_id for update
         const tariffForExtend = subscription.tariffs as any;
         const gcOfferIdExtend = tariffForExtend?.getcourse_offer_id || tariffForExtend?.getcourse_offer_code;
         const orderForExtend = subscription.orders_v2 as any;
+        const gcDealIdExtend = orderForExtend?.meta?.gc_order_id; // Get deal_id from order meta
         if (gcOfferIdExtend && orderForExtend?.customer_email) {
           const gcResult = await updateGetCourseOrder(
             orderForExtend.customer_email,
             gcOfferIdExtend,
             orderForExtend.order_number || subscription_id,
             newEndDateStr,
-            orderForExtend.final_price || 0
+            orderForExtend.final_price || 0,
+            gcDealIdExtend // Pass deal_id to update existing deal
           );
           console.log('GetCourse extend/update result:', gcResult);
           result.getcourse_update = gcResult;
@@ -680,17 +700,19 @@ Deno.serve(async (req) => {
           console.log('Telegram revoke result:', revokeResult.data);
         }
 
-        // Cancel in GetCourse with amount
+        // Cancel in GetCourse with amount and gc_order_id for update
         const tariffForRevoke = subscription.tariffs as any;
         const gcOfferIdRevoke = tariffForRevoke?.getcourse_offer_id || tariffForRevoke?.getcourse_offer_code;
         const orderForRevoke = subscription.orders_v2 as any;
+        const gcDealIdRevoke = orderForRevoke?.meta?.gc_order_id; // Get deal_id from order meta
         if (gcOfferIdRevoke && orderForRevoke?.customer_email) {
           const gcResult = await cancelGetCourseOrder(
             orderForRevoke.customer_email,
             gcOfferIdRevoke,
             orderForRevoke.order_number || subscription_id,
             'Доступ отозван администратором',
-            orderForRevoke.final_price || 0
+            orderForRevoke.final_price || 0,
+            gcDealIdRevoke // Pass deal_id to update existing deal
           );
           console.log('GetCourse cancel result:', gcResult);
           result.getcourse_cancel = gcResult;
