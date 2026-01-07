@@ -590,10 +590,13 @@ Deno.serve(async (req) => {
             total: deals.length,
             byOffer,
             byStatus,
-            sample: deals.slice(0, 5).map(d => ({
+            sample: deals.slice(0, 10).map(d => ({
               id: d.id,
               number: d.deal_number,
               email: d.user_email,
+              phone: d.user_phone,
+              firstName: d.user_first_name,
+              lastName: d.user_last_name,
               cost: d.deal_cost,
               status: d.deal_status,
               offer_id: d.offer_id,
