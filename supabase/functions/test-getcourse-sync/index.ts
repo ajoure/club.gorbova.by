@@ -13,13 +13,27 @@ interface GetCourseUserData {
   lastName?: string | null;
 }
 
+// Generate a numeric deal_number from order_number string
+function generateDealNumber(orderNumber: string): number {
+  // Use a simple hash to convert order_number to a unique integer
+  // This ensures the same order_number always generates the same deal_number
+  let hash = 0;
+  for (let i = 0; i < orderNumber.length; i++) {
+    const char = orderNumber.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  // Ensure positive number and add timestamp prefix for uniqueness
+  return Math.abs(hash);
+}
+
 async function sendToGetCourse(
   userData: GetCourseUserData,
   offerId: number,
   orderNumber: string,
   amount: number,
   tariffCode: string
-): Promise<{ success: boolean; error?: string; gcOrderId?: string }> {
+): Promise<{ success: boolean; error?: string; gcOrderId?: string; gcDealNumber?: number }> {
   const apiKey = Deno.env.get('GETCOURSE_API_KEY');
   const accountName = 'gorbova';
   
@@ -36,6 +50,10 @@ async function sendToGetCourse(
   try {
     console.log(`Sending order to GetCourse: email=${userData.email}, offerId=${offerId}, orderNumber=${orderNumber}`);
     
+    // Generate a consistent deal_number from our order_number for future updates
+    const dealNumber = generateDealNumber(orderNumber);
+    console.log(`Generated deal_number=${dealNumber} from orderNumber=${orderNumber}`);
+    
     const params = {
       user: {
         email: userData.email,
@@ -47,13 +65,14 @@ async function sendToGetCourse(
         refresh_if_exists: 1,
       },
       deal: {
+        // CRITICAL: Pass our own deal_number so we can update this deal later
+        deal_number: dealNumber,
         offer_code: offerId.toString(),
         deal_cost: amount / 100, // Convert from kopecks
         deal_status: 'payed',
         deal_is_paid: 1,
         payment_type: 'CARD',
         manager_email: 'info@ajoure.by',
-        // Store order number in comment since deal_number must be integer
         deal_comment: `Оплата через сайт club.gorbova.by. Order: ${orderNumber}`,
       },
     };
@@ -87,7 +106,7 @@ async function sendToGetCourse(
     // Check result.success, not top-level success (which is just API call status)
     if (data.result?.success === true) {
       console.log('Order successfully sent to GetCourse, deal_id:', data.result?.deal_id);
-      return { success: true, gcOrderId: data.result?.deal_id?.toString() };
+      return { success: true, gcOrderId: data.result?.deal_id?.toString(), gcDealNumber: dealNumber };
     } else {
       const errorMsg = data.result?.error_message || data.error_message || 'Unknown error';
       console.error('GetCourse error:', errorMsg);
@@ -148,7 +167,7 @@ Deno.serve(async (req) => {
         tariff?.code || tariffCode || 'unknown'
       );
       
-      // Update order meta with sync result
+      // Update order meta with sync result - save gc_deal_number for future updates!
       await supabase
         .from('orders_v2')
         .update({
@@ -157,6 +176,7 @@ Deno.serve(async (req) => {
             gc_sync_status: gcResult.success ? 'success' : 'failed',
             gc_sync_error: gcResult.error || null,
             gc_order_id: gcResult.gcOrderId || null,
+            gc_deal_number: gcResult.gcDealNumber || null, // Save the deal_number we generated
             gc_sync_at: new Date().toISOString(),
           },
         })

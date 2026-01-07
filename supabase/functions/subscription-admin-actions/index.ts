@@ -594,11 +594,12 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Update in GetCourse with gc_order_id for update
+        // Update in GetCourse with gc_deal_number for update
         const tariffForExtend = subscription.tariffs as any;
         const gcOfferIdExtend = tariffForExtend?.getcourse_offer_id || tariffForExtend?.getcourse_offer_code;
         const orderForExtend = subscription.orders_v2 as any;
-        const gcDealIdExtend = orderForExtend?.meta?.gc_order_id; // Get deal_id from order meta
+        // Use gc_deal_number (our generated number) for updates, fallback to gc_order_id
+        const gcDealNumberExtend = orderForExtend?.meta?.gc_deal_number || orderForExtend?.meta?.gc_order_id;
         if (gcOfferIdExtend && orderForExtend?.customer_email) {
           const gcResult = await updateGetCourseOrder(
             orderForExtend.customer_email,
@@ -606,7 +607,7 @@ Deno.serve(async (req) => {
             orderForExtend.order_number || subscription_id,
             newEndDateStr,
             orderForExtend.final_price || 0,
-            gcDealIdExtend // Pass deal_id to update existing deal
+            gcDealNumberExtend // Pass deal_number to update existing deal
           );
           console.log('GetCourse extend/update result:', gcResult);
           result.getcourse_update = gcResult;
@@ -700,11 +701,12 @@ Deno.serve(async (req) => {
           console.log('Telegram revoke result:', revokeResult.data);
         }
 
-        // Cancel in GetCourse with amount and gc_order_id for update
+        // Cancel in GetCourse with gc_deal_number for update
         const tariffForRevoke = subscription.tariffs as any;
         const gcOfferIdRevoke = tariffForRevoke?.getcourse_offer_id || tariffForRevoke?.getcourse_offer_code;
         const orderForRevoke = subscription.orders_v2 as any;
-        const gcDealIdRevoke = orderForRevoke?.meta?.gc_order_id; // Get deal_id from order meta
+        // Use gc_deal_number (our generated number) for updates, fallback to gc_order_id
+        const gcDealNumberRevoke = orderForRevoke?.meta?.gc_deal_number || orderForRevoke?.meta?.gc_order_id;
         if (gcOfferIdRevoke && orderForRevoke?.customer_email) {
           const gcResult = await cancelGetCourseOrder(
             orderForRevoke.customer_email,
@@ -712,7 +714,7 @@ Deno.serve(async (req) => {
             orderForRevoke.order_number || subscription_id,
             'Доступ отозван администратором',
             orderForRevoke.final_price || 0,
-            gcDealIdRevoke // Pass deal_id to update existing deal
+            gcDealNumberRevoke // Pass deal_number to update existing deal
           );
           console.log('GetCourse cancel result:', gcResult);
           result.getcourse_cancel = gcResult;
