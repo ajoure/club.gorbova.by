@@ -34,6 +34,7 @@ import {
   Wrench,
   CalendarClock,
   ClipboardCheck,
+  MessageCircle,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -325,6 +326,25 @@ export function AdminSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
+
+              {/* Участники клуба */}
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={location.pathname.includes("/admin/integrations/telegram/clubs/") && location.pathname.includes("/members")}
+                  tooltip={collapsed ? "Участники клуба" : undefined}
+                >
+                  <NavLink
+                    to="/admin/integrations/telegram/clubs/fa547c41-3a84-4c4f-904a-427332a0506e/members"
+                    end
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                    activeClassName="bg-sidebar-accent text-sidebar-primary"
+                  >
+                    <MessageCircle className="h-5 w-5 shrink-0" />
+                    {!collapsed && <span>Участники клуба</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
 
               {/* Аудит системы - только для super_admin */}
               <SidebarMenuItem>
