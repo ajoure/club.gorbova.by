@@ -1223,7 +1223,7 @@ export type Database = {
           tariff_id: string | null
           trial_end_at: string | null
           updated_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           base_price: number
@@ -1248,7 +1248,7 @@ export type Database = {
           tariff_id?: string | null
           trial_end_at?: string | null
           updated_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           base_price?: number
@@ -1273,7 +1273,7 @@ export type Database = {
           tariff_id?: string | null
           trial_end_at?: string | null
           updated_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
