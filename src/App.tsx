@@ -51,6 +51,7 @@ import Documentation from "./pages/Documentation";
 import Help from "./pages/Help";
 import ProfileSettings from "./pages/settings/Profile";
 import PaymentMethodsSettings from "./pages/settings/PaymentMethods";
+import AdminInstallments from "./pages/admin/AdminInstallments";
 
 const queryClient = new QueryClient();
 
@@ -128,6 +129,7 @@ const App = () => (
               <Route path="/admin/orders-v2" element={<ProtectedRoute><AdminOrdersV2 /></ProtectedRoute>} />
               <Route path="/admin/payments-v2" element={<ProtectedRoute><AdminPaymentsV2 /></ProtectedRoute>} />
               <Route path="/admin/subscriptions-v2" element={<ProtectedRoute><AdminSubscriptionsV2 /></ProtectedRoute>} />
+              <Route path="/admin/installments" element={<ProtectedRoute><AdminInstallments /></ProtectedRoute>} />
               <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}

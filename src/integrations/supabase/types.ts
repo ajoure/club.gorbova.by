@@ -626,6 +626,101 @@ export type Database = {
         }
         Relationships: []
       }
+      installment_payments: {
+        Row: {
+          amount: number
+          charge_attempts: number | null
+          created_at: string | null
+          currency: string
+          due_date: string
+          error_message: string | null
+          id: string
+          last_attempt_at: string | null
+          meta: Json | null
+          order_id: string
+          paid_at: string | null
+          payment_id: string | null
+          payment_number: number
+          payment_plan_id: string | null
+          status: string
+          subscription_id: string
+          total_payments: number
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          charge_attempts?: number | null
+          created_at?: string | null
+          currency?: string
+          due_date: string
+          error_message?: string | null
+          id?: string
+          last_attempt_at?: string | null
+          meta?: Json | null
+          order_id: string
+          paid_at?: string | null
+          payment_id?: string | null
+          payment_number?: number
+          payment_plan_id?: string | null
+          status?: string
+          subscription_id: string
+          total_payments?: number
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          charge_attempts?: number | null
+          created_at?: string | null
+          currency?: string
+          due_date?: string
+          error_message?: string | null
+          id?: string
+          last_attempt_at?: string | null
+          meta?: Json | null
+          order_id?: string
+          paid_at?: string | null
+          payment_id?: string | null
+          payment_number?: number
+          payment_plan_id?: string | null
+          status?: string
+          subscription_id?: string
+          total_payments?: number
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "installment_payments_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "installment_payments_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "installment_payments_payment_plan_id_fkey"
+            columns: ["payment_plan_id"]
+            isOneToOne: false
+            referencedRelation: "payment_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "installment_payments_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integration_field_mappings: {
         Row: {
           created_at: string
@@ -1994,6 +2089,7 @@ export type Database = {
           getcourse_offer_id: string | null
           id: string
           is_active: boolean | null
+          is_installment: boolean | null
           is_primary: boolean | null
           offer_type: string
           requires_card_tokenization: boolean | null
@@ -2014,6 +2110,7 @@ export type Database = {
           getcourse_offer_id?: string | null
           id?: string
           is_active?: boolean | null
+          is_installment?: boolean | null
           is_primary?: boolean | null
           offer_type: string
           requires_card_tokenization?: boolean | null
@@ -2034,6 +2131,7 @@ export type Database = {
           getcourse_offer_id?: string | null
           id?: string
           is_active?: boolean | null
+          is_installment?: boolean | null
           is_primary?: boolean | null
           offer_type?: string
           requires_card_tokenization?: boolean | null
