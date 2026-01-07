@@ -82,7 +82,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.getcourse-sync]
-verify_jwt = true
+verify_jwt = false
 
 [functions.subscription-charge]
 verify_jwt = false
