@@ -128,3 +128,6 @@ verify_jwt = false
 
 [functions.getcourse-import-deals]
 verify_jwt = false
+
+[functions.getcourse-import-file]
+verify_jwt = false

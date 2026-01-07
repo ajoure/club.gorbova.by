@@ -1,14 +1,12 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useCallback } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Download, Eye, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Loader2, Download, Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, X } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 
 interface GetCourseImportDialogProps {
   open: boolean;
@@ -16,14 +14,19 @@ interface GetCourseImportDialogProps {
   instanceId?: string;
 }
 
-interface PreviewResult {
-  success: boolean;
-  result: {
-    total: number;
-    byOffer: Record<string, number>;
-    byStatus: Record<string, number>;
-    sample: any[];
-  };
+interface ParsedDeal {
+  id: string | number;
+  email: string;
+  phone?: string;
+  firstName?: string;
+  lastName?: string;
+  fullName?: string;
+  cost: number;
+  status: string;
+  offerName?: string;
+  tariffType?: "CHAT" | "FULL" | "BUSINESS";
+  createdAt?: string;
+  paidAt?: string;
 }
 
 interface ImportResult {
@@ -40,64 +43,199 @@ interface ImportResult {
   };
 }
 
-const OFFERS = [
-  { id: "6744625", name: "CHAT", tariff: "31f75673-a7ae-420a-b5ab-5906e34cbf84" },
-  { id: "6744626", name: "FULL", tariff: "b276d8a5-8e5f-4876-9f99-36f818722d6c" },
-  { id: "6744628", name: "BUSINESS", tariff: "7c748940-dcad-4c7c-a92e-76a2344622d3" },
-];
+// Маппинг тарифов по содержимому "Состав заказа"
+const TARIFF_MAP: Record<string, { type: "CHAT" | "FULL" | "BUSINESS"; id: string }> = {
+  chat: { type: "CHAT", id: "31f75673-a7ae-420a-b5ab-5906e34cbf84" },
+  full: { type: "FULL", id: "b276d8a5-8e5f-4876-9f99-36f818722d6c" },
+  business: { type: "BUSINESS", id: "7c748940-dcad-4c7c-a92e-76a2344622d3" },
+};
+
+// Статусы, которые импортируем
+const VALID_STATUSES = ["Завершен", "Активен", "Оплачено", "Завершён"];
 
 const STATUS_LABELS: Record<string, string> = {
-  payed: "Оплачено",
-  new: "Новый",
-  cancelled: "Отменён",
-  in_work: "В работе",
-  payment_waiting: "Ожидает оплаты",
-  part_payed: "Частично оплачен",
+  "Завершен": "Завершён",
+  "Завершён": "Завершён",
+  "Активен": "Активен",
+  "Оплачено": "Оплачено",
 };
 
 export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCourseImportDialogProps) {
   const queryClient = useQueryClient();
-  const [selectedOffers, setSelectedOffers] = useState<string[]>(OFFERS.map(o => o.id));
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [parsedDeals, setParsedDeals] = useState<ParsedDeal[]>([]);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  // Preview mutation
-  const previewMutation = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("getcourse-import-deals", {
-        body: {
-          action: "preview",
-          offer_ids: selectedOffers,
-          date_from: dateFrom || undefined,
-          date_to: dateTo || undefined,
-          instance_id: instanceId,
-        },
+  // Определение тарифа по названию оффера
+  const detectTariffType = (offerName: string): { type: "CHAT" | "FULL" | "BUSINESS"; id: string } | null => {
+    const lower = offerName.toLowerCase();
+    if (lower.includes("business")) return TARIFF_MAP.business;
+    if (lower.includes("full")) return TARIFF_MAP.full;
+    if (lower.includes("chat")) return TARIFF_MAP.chat;
+    return null;
+  };
+
+  // Парсинг Excel файла
+  const parseExcelFile = async (file: File): Promise<ParsedDeal[]> => {
+    const data = await file.arrayBuffer();
+    const workbook = XLSX.read(data, { type: "array" });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet);
+
+    console.log("[Excel Parse] Total rows:", rows.length);
+    console.log("[Excel Parse] Sample row:", rows[0]);
+
+    const deals: ParsedDeal[] = [];
+
+    for (const row of rows) {
+      const status = row["Статус"] || "";
+      
+      // Фильтруем только завершённые/активные/оплаченные
+      if (!VALID_STATUSES.includes(status)) {
+        continue;
+      }
+
+      const id = row["ID заказа"] || row["id"] || "";
+      const email = (row["Email"] || row["E-mail"] || "").toLowerCase().trim();
+      const phone = row["Телефон"] || "";
+      const fullName = row["Пользователь"] || "";
+      const offerName = row["Состав заказа"] || row["Предложение"] || "";
+      const createdAt = row["Дата создания"] || "";
+      const paidAt = row["Дата оплаты"] || "";
+      
+      // Парсим стоимость
+      const costRaw = row["Стоимость, BYN"] || row["Стоимость"] || row["Сумма"] || "0";
+      const cost = parseFloat(String(costRaw).replace(/[^\d.,]/g, "").replace(",", ".")) || 0;
+
+      // Разделяем ФИО
+      const nameParts = String(fullName).trim().split(/\s+/);
+      const firstName = nameParts[0] || "";
+      const lastName = nameParts.slice(1).join(" ") || "";
+
+      // Определяем тариф
+      const tariff = detectTariffType(offerName);
+
+      if (!email) {
+        console.log("[Excel Parse] Skipping row without email:", row);
+        continue;
+      }
+
+      deals.push({
+        id,
+        email,
+        phone,
+        firstName,
+        lastName,
+        fullName,
+        cost,
+        status,
+        offerName,
+        tariffType: tariff?.type,
+        createdAt,
+        paidAt,
       });
-      if (error) throw error;
-      return data as PreviewResult;
-    },
-    onSuccess: (data) => {
-      setPreviewResult(data);
-      setImportResult(null);
-    },
-    onError: (error) => {
-      toast.error("Ошибка предпросмотра: " + (error as Error).message);
-    },
-  });
+    }
+
+    console.log("[Excel Parse] Filtered deals:", deals.length);
+    return deals;
+  };
+
+  // Обработка загрузки файла
+  const handleFileUpload = async (file: File) => {
+    setUploadedFile(file);
+    setImportResult(null);
+    
+    try {
+      const deals = await parseExcelFile(file);
+      setParsedDeals(deals);
+      
+      if (deals.length === 0) {
+        toast.warning("Не найдено подходящих сделок. Проверьте, что файл содержит сделки со статусом 'Завершен', 'Активен' или 'Оплачено'.");
+      } else {
+        toast.success(`Найдено ${deals.length} сделок для импорта`);
+      }
+    } catch (error) {
+      console.error("Error parsing file:", error);
+      toast.error("Ошибка при чтении файла");
+      setUploadedFile(null);
+      setParsedDeals([]);
+    }
+  };
+
+  // Drag & Drop handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    const file = e.dataTransfer.files[0];
+    if (file && (file.name.endsWith(".xlsx") || file.name.endsWith(".xls") || file.name.endsWith(".csv"))) {
+      handleFileUpload(file);
+    } else {
+      toast.error("Поддерживаются только файлы Excel (.xlsx, .xls) или CSV");
+    }
+  }, []);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleFileUpload(file);
+    }
+  };
+
+  // Скачать шаблон
+  const downloadTemplate = () => {
+    const headers = [
+      "ID заказа",
+      "Email",
+      "Телефон",
+      "Пользователь",
+      "Состав заказа",
+      "Стоимость, BYN",
+      "Статус",
+      "Дата создания",
+      "Дата оплаты",
+    ];
+    
+    const sampleData = [
+      ["123456", "example@mail.ru", "+375291234567", "Иванов Иван", "Клуб: full", "250", "Завершен", "01.01.2025", "01.01.2025"],
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleData]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Шаблон");
+    XLSX.writeFile(wb, "getcourse_import_template.xlsx");
+  };
 
   // Import mutation
   const importMutation = useMutation({
-    mutationFn: async (dryRun: boolean) => {
-      const { data, error } = await supabase.functions.invoke("getcourse-import-deals", {
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("getcourse-import-file", {
         body: {
-          action: "import",
-          offer_ids: selectedOffers,
-          date_from: dateFrom || undefined,
-          date_to: dateTo || undefined,
+          deals: parsedDeals.map(d => ({
+            id: d.id,
+            email: d.email,
+            phone: d.phone,
+            firstName: d.firstName,
+            lastName: d.lastName,
+            cost: d.cost,
+            status: d.status,
+            offerName: d.offerName,
+            tariffId: d.tariffType ? TARIFF_MAP[d.tariffType.toLowerCase()]?.id : null,
+            createdAt: d.createdAt,
+            paidAt: d.paidAt,
+          })),
           instance_id: instanceId,
-          dry_run: dryRun,
         },
       });
       if (error) throw error;
@@ -117,169 +255,171 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
     },
   });
 
-  const handleOfferToggle = (offerId: string) => {
-    setSelectedOffers(prev => 
-      prev.includes(offerId) 
-        ? prev.filter(id => id !== offerId)
-        : [...prev, offerId]
-    );
-  };
-
   const handleClose = () => {
-    setPreviewResult(null);
+    setUploadedFile(null);
+    setParsedDeals([]);
     setImportResult(null);
     onOpenChange(false);
   };
 
-  const isLoading = previewMutation.isPending || importMutation.isPending;
+  const clearFile = () => {
+    setUploadedFile(null);
+    setParsedDeals([]);
+    setImportResult(null);
+  };
+
+  // Статистика по тарифам
+  const statsByTariff = parsedDeals.reduce((acc, d) => {
+    const key = d.tariffType || "UNKNOWN";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Импорт сделок из GetCourse</DialogTitle>
           <DialogDescription>
-            Импортируйте исторические данные о покупках клуба из GetCourse
+            Загрузите Excel-файл с экспортом сделок из GetCourse
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Выбор офферов */}
-          <div className="space-y-3">
-            <Label>Офферы для импорта</Label>
-            <div className="flex flex-wrap gap-3">
-              {OFFERS.map((offer) => (
-                <label 
-                  key={offer.id}
-                  className="flex items-center gap-2 px-3 py-2 border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors"
-                >
-                  <Checkbox
-                    checked={selectedOffers.includes(offer.id)}
-                    onCheckedChange={() => handleOfferToggle(offer.id)}
-                  />
-                  <span>{offer.name}</span>
-                  <Badge variant="outline" className="text-xs">
-                    {offer.id}
-                  </Badge>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Фильтр по датам */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Дата от</Label>
-              <Input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                placeholder="Начало периода"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Дата до</Label>
-              <Input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                placeholder="Конец периода"
-              />
-            </div>
-          </div>
-
-          {/* Кнопки действий */}
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => previewMutation.mutate()}
-              disabled={isLoading || selectedOffers.length === 0}
+          {/* Drag & Drop зона */}
+          {!uploadedFile ? (
+            <div
+              className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                isDragging ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"
+              }`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
             >
-              {previewMutation.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Eye className="h-4 w-4 mr-2" />
-              )}
-              Предпросмотр
-            </Button>
-            <Button
-              onClick={() => importMutation.mutate(false)}
-              disabled={isLoading || selectedOffers.length === 0}
-            >
-              {importMutation.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4 mr-2" />
-              )}
-              Импортировать
-            </Button>
-          </div>
-
-          {/* Результаты предпросмотра */}
-          {previewResult && (
-            <div className="border rounded-lg p-4 space-y-4 bg-muted/30">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-5 w-5 text-green-500" />
-                <span className="font-medium">
-                  Найдено сделок: {previewResult.result?.total || 0}
-                </span>
+              <FileSpreadsheet className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground mb-2">
+                Перетащите Excel файл сюда или нажмите для выбора
+              </p>
+              <p className="text-xs text-muted-foreground mb-4">
+                Поддерживаются .xlsx, .xls, .csv
+              </p>
+              <div className="flex justify-center gap-2">
+                <Button variant="outline" size="sm" asChild>
+                  <label className="cursor-pointer">
+                    <Upload className="h-4 w-4 mr-2" />
+                    Выбрать файл
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      className="hidden"
+                      onChange={handleFileSelect}
+                    />
+                  </label>
+                </Button>
+                <Button variant="ghost" size="sm" onClick={downloadTemplate}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Скачать шаблон
+                </Button>
               </div>
-              
-              {/* Разбивка по офферам */}
-              {previewResult.result?.byOffer && (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">По офферам:</div>
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(previewResult.result.byOffer).map(([offerId, count]) => (
-                      <Badge key={offerId} variant="secondary">
-                        {OFFERS.find(o => o.id === offerId)?.name || offerId}: {count}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Разбивка по статусам */}
-              {previewResult.result?.byStatus && (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">По статусам:</div>
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(previewResult.result.byStatus).map(([status, count]) => (
-                      <Badge key={status} variant="outline">
-                        {STATUS_LABELS[status] || status}: {count}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Пример данных */}
-              {previewResult.result?.sample && previewResult.result.sample.length > 0 && (
-                <details className="text-sm">
-                  <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                    Примеры сделок ({previewResult.result.sample.length})
-                  </summary>
-                  <div className="mt-2 space-y-2 max-h-60 overflow-y-auto">
-                    {previewResult.result.sample.map((deal, i) => (
-                      <div key={i} className="text-xs p-2 bg-background rounded border">
-                        <div className="font-medium">
-                          {[deal.firstName, deal.lastName].filter(Boolean).join(' ') || 'Без имени'}
-                        </div>
-                        <div className="text-muted-foreground">
-                          {deal.email} {deal.phone && `• ${deal.phone}`}
-                        </div>
-                        <div className="flex justify-between mt-1">
-                          <span>{deal.cost} BYN</span>
-                          <Badge variant="outline" className="text-xs">
-                            {STATUS_LABELS[deal.status] || deal.status}
-                          </Badge>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              )}
             </div>
+          ) : (
+            <>
+              {/* Загруженный файл */}
+              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <FileSpreadsheet className="h-5 w-5 text-green-600" />
+                  <div>
+                    <p className="text-sm font-medium">{uploadedFile.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {(uploadedFile.size / 1024).toFixed(1)} KB
+                    </p>
+                  </div>
+                </div>
+                <Button variant="ghost" size="icon" onClick={clearFile}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Результаты парсинга */}
+              {parsedDeals.length > 0 && (
+                <div className="border rounded-lg p-4 space-y-4 bg-muted/30">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    <span className="font-medium">
+                      Найдено сделок: {parsedDeals.length}
+                    </span>
+                  </div>
+
+                  {/* Разбивка по тарифам */}
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium">По тарифам:</div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(statsByTariff).map(([tariff, count]) => (
+                        <Badge 
+                          key={tariff} 
+                          variant={tariff === "UNKNOWN" ? "destructive" : "secondary"}
+                        >
+                          {tariff}: {count}
+                        </Badge>
+                      ))}
+                    </div>
+                    {statsByTariff["UNKNOWN"] > 0 && (
+                      <p className="text-xs text-destructive">
+                        ⚠️ {statsByTariff["UNKNOWN"]} сделок без определённого тарифа будут пропущены
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Примеры сделок */}
+                  <details className="text-sm">
+                    <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+                      Примеры сделок ({Math.min(10, parsedDeals.length)})
+                    </summary>
+                    <div className="mt-2 space-y-2 max-h-60 overflow-y-auto">
+                      {parsedDeals.slice(0, 10).map((deal, i) => (
+                        <div key={i} className="text-xs p-2 bg-background rounded border">
+                          <div className="font-medium">
+                            {deal.fullName || [deal.firstName, deal.lastName].filter(Boolean).join(" ") || "Без имени"}
+                          </div>
+                          <div className="text-muted-foreground">
+                            {deal.email} {deal.phone && `• ${deal.phone}`}
+                          </div>
+                          <div className="flex justify-between mt-1">
+                            <span>{deal.cost} BYN</span>
+                            <div className="flex gap-1">
+                              {deal.tariffType && (
+                                <Badge variant="outline" className="text-xs">
+                                  {deal.tariffType}
+                                </Badge>
+                              )}
+                              <Badge variant="secondary" className="text-xs">
+                                {STATUS_LABELS[deal.status] || deal.status}
+                              </Badge>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                </div>
+              )}
+
+              {/* Кнопка импорта */}
+              {parsedDeals.length > 0 && !importResult && (
+                <Button
+                  onClick={() => importMutation.mutate()}
+                  disabled={importMutation.isPending}
+                  className="w-full"
+                >
+                  {importMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4 mr-2" />
+                  )}
+                  Импортировать {parsedDeals.filter(d => d.tariffType).length} сделок
+                </Button>
+              )}
+            </>
           )}
 
           {/* Результаты импорта */}
@@ -291,7 +431,7 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
               </div>
               
               <div className="grid grid-cols-2 gap-2 text-sm">
-                <div>Получено сделок: <strong>{importResult.result.total_fetched}</strong></div>
+                <div>Обработано сделок: <strong>{importResult.result.total_fetched}</strong></div>
                 <div>Создано профилей: <strong>{importResult.result.profiles_created}</strong></div>
                 <div>Создано заказов: <strong>{importResult.result.orders_created}</strong></div>
                 <div>Пропущено (дубли): <strong>{importResult.result.orders_skipped}</strong></div>
@@ -308,7 +448,7 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
                   <summary className="cursor-pointer text-muted-foreground">
                     Подробности
                   </summary>
-                  <div className="mt-2 space-y-1 text-xs">
+                  <div className="mt-2 space-y-1 text-xs max-h-40 overflow-y-auto">
                     {importResult.result.details.map((d, i) => (
                       <div key={i}>{d}</div>
                     ))}
