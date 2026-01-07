@@ -561,8 +561,8 @@ async function createOrder(
   supabase: any,
   deal: GCDeal,
   profileUserId: string,
-  tariffId: string,
-  productId: string
+  tariffId: string | null,
+  productId: string | null
 ): Promise<{ id: string; isNew: boolean }> {
   // Проверяем дубликат по gc_deal_id
   const { data: existing } = await supabase
@@ -772,22 +772,24 @@ async function processFileDeals(
       
       let tariffId: string | null = null;
       let productId: string | null = null;
+      let isArchiveDeal = false;
       
       // Handle ARCHIVE_UNKNOWN - create order without tariff (for old club memberships)
       if (tariffCode === 'ARCHIVE_UNKNOWN') {
-        console.log(`[File Import] Archive deal for ${deal.user_email}`);
-        // We'll create a profile but skip the order/subscription for archive
-        // Or we could create with a placeholder - for now, just create profile
+        console.log(`[File Import] Archive deal (no tariff) for ${deal.user_email}`);
+        isArchiveDeal = true;
+        // Continue to create order without tariff - orders will have tariff_id = null
       } else {
         // Find tariff by code
         const tariff = await findTariffByCode(supabase, tariffCode);
         if (!tariff) {
-          result.orders_skipped++;
-          result.details.push(`Тариф не найден: ${tariffCode} для ${deal.user_email}`);
-          continue;
+          console.log(`[File Import] Tariff not found: ${tariffCode}, creating order without tariff`);
+          isArchiveDeal = true;
+          // Don't skip - create order without tariff
+        } else {
+          tariffId = tariff.id;
+          productId = tariff.product_id;
         }
-        tariffId = tariff.id;
-        productId = tariff.product_id;
       }
       
       // Normalize the deal structure with access dates
@@ -816,26 +818,25 @@ async function processFileDeals(
         result.profiles_updated++;
       }
       
-      // For ARCHIVE_UNKNOWN, only create profile without order
-      if (tariffCode === 'ARCHIVE_UNKNOWN' || !tariffId || !productId) {
-        result.orders_skipped++;
-        result.details.push(`Архивный профиль: ${deal.user_email}`);
-        continue;
-      }
-      
       // Create order - use profile.id for ghost profiles (user_id may be null)
       const userIdForRecords = profile.user_id || profile.id;
       const order = await createOrder(supabase, normalizedDeal, userIdForRecords, tariffId, productId);
       if (order.isNew) {
         result.orders_created++;
+        if (isArchiveDeal) {
+          result.details.push(`Создан заказ (без тарифа): ${deal.user_email}`);
+        }
       } else {
         result.orders_skipped++;
       }
       
-      // Create subscription for paid deals (with real access dates from import)
-      const subscription = await createSubscription(
-        supabase, normalizedDeal, userIdForRecords, order.id, tariffId, productId
-      );
+      // Create subscription for paid deals only if we have tariff/product
+      let subscription = null;
+      if (tariffId && productId) {
+        subscription = await createSubscription(
+          supabase, normalizedDeal, userIdForRecords, order.id, tariffId, productId
+        );
+      }
       if (subscription?.isNew) {
         result.subscriptions_created++;
         
