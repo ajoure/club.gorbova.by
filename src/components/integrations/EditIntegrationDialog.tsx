@@ -11,17 +11,23 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Save } from "lucide-react";
+import { Loader2, Save, ChevronDown, Settings2 } from "lucide-react";
 import {
   PROVIDERS,
   IntegrationInstance,
   useIntegrationMutations,
+  getSmtpSettings,
 } from "@/hooks/useIntegrations";
 import { WebhookUrlDisplay } from "./WebhookUrlDisplay";
 
@@ -38,6 +44,7 @@ export function EditIntegrationDialog({
 }: EditIntegrationDialogProps) {
   const { updateInstance } = useIntegrationMutations();
   const [formData, setFormData] = useState<Record<string, string | boolean>>({});
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const provider = instance ? PROVIDERS.find((p) => p.id === instance.provider) : null;
 
@@ -52,7 +59,22 @@ export function EditIntegrationDialog({
   }, [instance]);
 
   const handleFieldChange = (key: string, value: string | boolean) => {
-    setFormData((prev) => ({ ...prev, [key]: value }));
+    setFormData((prev) => {
+      const newData = { ...prev, [key]: value };
+      
+      // Auto-detect SMTP settings for email
+      if (key === "email" && provider?.id === "smtp" && typeof value === "string") {
+        const settings = getSmtpSettings(value);
+        if (settings) {
+          newData.smtp_host = settings.host;
+          newData.smtp_port = String(settings.port);
+          newData.smtp_encryption = settings.encryption;
+          newData.from_email = value;
+        }
+      }
+      
+      return newData;
+    });
   };
 
   const handleSubmit = async () => {
@@ -140,6 +162,58 @@ export function EditIntegrationDialog({
               )}
             </div>
           ))}
+
+          {/* Advanced settings for SMTP */}
+          {provider.advancedFields && provider.advancedFields.length > 0 && (
+            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="w-full justify-between">
+                  <span className="flex items-center gap-2">
+                    <Settings2 className="h-4 w-4" />
+                    Расширенные настройки
+                  </span>
+                  <ChevronDown className={`h-4 w-4 transition-transform ${advancedOpen ? "rotate-180" : ""}`} />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-4 pt-2">
+                {provider.advancedFields.map((field) => (
+                  <div key={field.key} className="space-y-2">
+                    {field.type === "select" ? (
+                      <>
+                        <Label htmlFor={field.key}>{field.label}</Label>
+                        <Select
+                          value={String(formData[field.key] || "")}
+                          onValueChange={(value) => handleFieldChange(field.key, value)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Выберите..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {field.options?.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </>
+                    ) : (
+                      <>
+                        <Label htmlFor={field.key}>{field.label}</Label>
+                        <Input
+                          id={field.key}
+                          type={field.type === "password" ? "password" : "text"}
+                          value={String(formData[field.key] || "")}
+                          onChange={(e) => handleFieldChange(field.key, e.target.value)}
+                          placeholder={field.placeholder}
+                        />
+                      </>
+                    )}
+                  </div>
+                ))}
+              </CollapsibleContent>
+            </Collapsible>
+          )}
 
           <div className="flex items-center space-x-2">
             <Checkbox
