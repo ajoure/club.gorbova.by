@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Sheet,
@@ -8,6 +9,16 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -30,15 +41,19 @@ import {
   Shield,
   Handshake,
   ExternalLink,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { EditDealDialog } from "./EditDealDialog";
 
 interface DealDetailSheetProps {
   deal: any | null;
   profile: any | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onDeleted?: () => void;
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
@@ -79,7 +94,10 @@ const getActionLabel = (action: string): string => {
   return ACTION_LABELS[action] || action;
 };
 
-export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetailSheetProps) {
+export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }: DealDetailSheetProps) {
+  const queryClient = useQueryClient();
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   // Fetch full payments for this deal
   const { data: payments, isLoading: paymentsLoading } = useQuery({
     queryKey: ["deal-payments", deal?.id],
@@ -150,6 +168,45 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetai
     toast.success(`${label} скопирован`);
   };
 
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      if (!deal?.id) throw new Error("No deal ID");
+      
+      // 1. Get subscription IDs linked to this order
+      const { data: subscriptions } = await supabase
+        .from("subscriptions_v2")
+        .select("id")
+        .eq("order_id", deal.id);
+      
+      const subscriptionIds = subscriptions?.map(s => s.id) || [];
+      
+      // 2. Delete installment payments for these subscriptions
+      if (subscriptionIds.length > 0) {
+        await supabase.from("installment_payments").delete().in("subscription_id", subscriptionIds);
+      }
+      
+      // 3. Delete subscriptions
+      await supabase.from("subscriptions_v2").delete().eq("order_id", deal.id);
+      
+      // 4. Delete payments
+      await supabase.from("payments_v2").delete().eq("order_id", deal.id);
+
+      // 5. Delete order
+      const { error } = await supabase.from("orders_v2").delete().eq("id", deal.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Сделка удалена");
+      queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+      onOpenChange(false);
+      onDeleted?.();
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + (error as Error).message);
+    },
+  });
+
   if (!deal) return null;
 
   const statusConfig = STATUS_CONFIG[deal.status] || { label: deal.status, color: "bg-muted", icon: Clock };
@@ -177,6 +234,18 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetai
               <StatusIcon className="w-3 h-3 mr-1" />
               {statusConfig.label}
             </Badge>
+          </div>
+          
+          {/* Action buttons */}
+          <div className="flex items-center gap-2 mt-3">
+            <Button variant="outline" size="sm" onClick={() => setEditDialogOpen(true)}>
+              <Pencil className="w-3 h-3 mr-1" />
+              Редактировать
+            </Button>
+            <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteDialogOpen(true)}>
+              <Trash2 className="w-3 h-3 mr-1" />
+              Удалить
+            </Button>
           </div>
         </SheetHeader>
 
@@ -467,6 +536,35 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange }: DealDetai
           </div>
         </div>
       </SheetContent>
+      
+      {/* Edit Dialog */}
+      <EditDealDialog
+        deal={deal}
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        onSuccess={() => queryClient.invalidateQueries({ queryKey: ["admin-deals"] })}
+      />
+      
+      {/* Delete Confirmation */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить сделку?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие нельзя отменить. Будут удалены: сделка #{deal.order_number}, связанные платежи и подписки.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={() => deleteMutation.mutate()}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sheet>
   );
 }
