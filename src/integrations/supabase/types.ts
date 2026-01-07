@@ -1541,6 +1541,7 @@ export type Database = {
       }
       privacy_policy_versions: {
         Row: {
+          changes: Json | null
           created_at: string | null
           effective_date: string
           id: string
@@ -1549,6 +1550,7 @@ export type Database = {
           version: string
         }
         Insert: {
+          changes?: Json | null
           created_at?: string | null
           effective_date: string
           id?: string
@@ -1557,6 +1559,7 @@ export type Database = {
           version: string
         }
         Update: {
+          changes?: Json | null
           created_at?: string | null
           effective_date?: string
           id?: string

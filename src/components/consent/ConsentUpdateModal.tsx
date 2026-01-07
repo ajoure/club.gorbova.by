@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useConsent } from "@/hooks/useConsent";
+import { usePolicyVersions, PolicyVersion } from "@/hooks/usePolicyVersions";
 import {
   Dialog,
   DialogContent,
@@ -12,15 +13,81 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Shield, ExternalLink, Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Shield, ExternalLink, Loader2, Plus, Minus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+
+interface PolicyChange {
+  type: "added" | "changed" | "removed";
+  text: string;
+}
+
+function VersionChanges({ version }: { version: PolicyVersion | undefined }) {
+  if (!version?.changes?.length) return null;
+
+  const getChangeIcon = (type: PolicyChange["type"]) => {
+    switch (type) {
+      case "added":
+        return <Plus className="h-3 w-3 text-green-500" />;
+      case "removed":
+        return <Minus className="h-3 w-3 text-destructive" />;
+      case "changed":
+        return <RefreshCw className="h-3 w-3 text-primary" />;
+    }
+  };
+
+  const getChangeBadgeVariant = (type: PolicyChange["type"]) => {
+    switch (type) {
+      case "added":
+        return "default" as const;
+      case "removed":
+        return "destructive" as const;
+      case "changed":
+        return "secondary" as const;
+    }
+  };
+
+  const getChangeLabel = (type: PolicyChange["type"]) => {
+    switch (type) {
+      case "added":
+        return "Добавлено";
+      case "removed":
+        return "Удалено";
+      case "changed":
+        return "Изменено";
+    }
+  };
+
+  return (
+    <div className="rounded-lg bg-muted/50 p-4 space-y-3">
+      <p className="text-sm font-medium">Что изменилось:</p>
+      {version.summary && (
+        <p className="text-sm text-muted-foreground">{version.summary}</p>
+      )}
+      <div className="space-y-2">
+        {version.changes.map((change, idx) => (
+          <div key={idx} className="flex items-start gap-2 text-sm">
+            {getChangeIcon(change.type)}
+            <Badge variant={getChangeBadgeVariant(change.type)} className="shrink-0 text-xs">
+              {getChangeLabel(change.type)}
+            </Badge>
+            <span className="text-muted-foreground">{change.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function ConsentUpdateModal() {
   const navigate = useNavigate();
   const { signOut } = useAuth();
   const { needsConsentUpdate, currentPolicy, grantConsent, isLoading } = useConsent();
+  const { data: policyVersions } = usePolicyVersions();
   const [accepted, setAccepted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const currentVersion = policyVersions?.find((v) => v.is_current);
 
   const handleAccept = async () => {
     if (!accepted) {
@@ -52,7 +119,7 @@ export function ConsentUpdateModal() {
   return (
     <Dialog open={needsConsentUpdate} onOpenChange={() => {}}>
       <DialogContent 
-        className="sm:max-w-lg"
+        className="sm:max-w-lg max-h-[90vh] overflow-y-auto"
         onPointerDownOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}
       >
@@ -67,12 +134,7 @@ export function ConsentUpdateModal() {
         </DialogHeader>
 
         <div className="space-y-4">
-          {currentPolicy?.summary && (
-            <div className="rounded-lg bg-muted/50 p-4">
-              <p className="text-sm font-medium mb-2">Что изменилось:</p>
-              <p className="text-sm text-muted-foreground">{currentPolicy.summary}</p>
-            </div>
-          )}
+          <VersionChanges version={currentVersion} />
 
           <a
             href="/privacy"

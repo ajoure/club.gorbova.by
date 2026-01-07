@@ -1,10 +1,19 @@
 import { GlassCard } from "@/components/ui/GlassCard";
 import { LandingHeader } from "@/components/landing/LandingHeader";
 import { LandingFooter } from "@/components/landing/LandingFooter";
-import { Shield, Building2, Mail, Phone, MapPin, User, FileText, Database, Eye, Lock, UserCheck, Clock, AlertCircle } from "lucide-react";
+import { PolicyVersionHistory } from "@/components/privacy/PolicyVersionHistory";
+import { usePolicyVersions } from "@/hooks/usePolicyVersions";
+import { downloadPolicyPdf } from "@/utils/policyPdfExport";
+import { Button } from "@/components/ui/button";
+import { 
+  Shield, Building2, Mail, Phone, MapPin, User, FileText, Database, 
+  Eye, Lock, UserCheck, Clock, AlertCircle, Download, Camera, CheckCircle 
+} from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
 export default function Privacy() {
+  const { data: policyVersions, isLoading: isLoadingVersions } = usePolicyVersions();
+
   return (
     <div className="min-h-screen bg-background">
       <LandingHeader />
@@ -17,9 +26,13 @@ export default function Privacy() {
           <h1 className="text-3xl md:text-4xl font-bold mb-3">
             Согласие на обработку персональных данных
           </h1>
-          <p className="text-muted-foreground">
+          <p className="text-muted-foreground mb-4">
             Действует с 7 января 2026 года
           </p>
+          <Button variant="outline" onClick={downloadPolicyPdf}>
+            <Download className="h-4 w-4 mr-2" />
+            Скачать PDF
+          </Button>
         </div>
 
         {/* Реквизиты оператора */}
@@ -186,17 +199,93 @@ export default function Privacy() {
                     </a>
                   </li>
                   <li>
-                    <a href="https://club.gorbova.by" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
-                      club.gorbova.by
+                    <a href="https://gorbova.getcourse.ru" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                      gorbova.getcourse.ru
                     </a>
                   </li>
                 </ul>
+                <p>
+                  <strong>включая все домены, субдомены и страницы</strong>, их содержимое, а также 
+                  интернет-сервисы и программное обеспечение, предлагаемые Оператором к использованию 
+                  на этих Сайтах.
+                </p>
                 <p>
                   Согласие считается данным при проставлении отметки рядом с текстом: 
                   «Я даю согласие на обработку моих персональных данных в соответствии с условиями 
                   политики конфиденциальности» или иным аналогичным текстом, при условии, что 
                   Субъекту персональных данных предоставлена возможность ознакомиться с полным 
                   текстом настоящей Политики.
+                </p>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Согласие на обработку изображений */}
+        <GlassCard className="p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+              <Camera className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Согласие на обработку изображений</h2>
+              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
+                <p>
+                  Я соглашаюсь с тем, что считаюсь в том числе давшим(-ей) согласие на обработку 
+                  моего изображения (в том числе фотографии, а также видеозаписи), в момент 
+                  проставления символа в чек-боксе (в поле для ввода) в сети Интернет по адресам: 
+                  gorbova.by, gorbova.pro, gorbova.getcourse.ru рядом с текстом вида: «Я даю согласие 
+                  на обработку моих персональных данных в соответствии с условиями политики 
+                  конфиденциальности» или иным аналогичным текстом.
+                </p>
+                <p>
+                  Настоящим я выражаю свою осведомленность о том, что Оператор не намеревается 
+                  устанавливать на основании моего изображения (в том числе фотографии, а также 
+                  видеозаписи), мою личность, а предоставление моего изображения (в том числе 
+                  фотографии, а также видеозаписи) требуется только для оценки результата 
+                  оказания услуг.
+                </p>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Принятие условий Политики */}
+        <GlassCard className="p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+              <CheckCircle className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Принятие условий Политики</h2>
+              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
+                <p>
+                  Я принимаю условия Политики конфиденциальности Оператора, размещенной в сети 
+                  Интернет по адресам: gorbova.by, gorbova.pro, gorbova.getcourse.ru, <strong>включая 
+                  все домены, субдомены и страницы</strong>, их содержимое, а также интернет-сервисы 
+                  и программное обеспечение, предлагаемые Оператором к использованию на этих Сайтах, 
+                  и подтверждаю, что ознакомлен(-а) с ней на момент предоставления настоящего Согласия.
+                </p>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Цели и условия обработки */}
+        <GlassCard className="p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+              <FileText className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-4">Цели и условия обработки</h2>
+              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
+                <p>
+                  Цель обработки персональных данных, основание обработки персональных данных, 
+                  разрешенные мной действия с персональными данными, условия и ограничения их 
+                  передачи и срок их обработки, другие требуемые законом условия для каждой цели 
+                  обработки персональных данных определены настоящим Согласием и Политикой 
+                  конфиденциальности Оператора, и я соглашаюсь с этими условиями.
                 </p>
               </div>
             </div>
@@ -213,7 +302,8 @@ export default function Privacy() {
               <h2 className="text-xl font-semibold mb-4">Срок действия согласия</h2>
               <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
                 <p>
-                  Настоящее согласие действует с момента его подписания до даты его отзыва.
+                  Настоящее согласие действует со дня его подписания до дня отзыва в 
+                  письменной/электронной форме.
                 </p>
               </div>
             </div>
@@ -255,7 +345,7 @@ export default function Privacy() {
         </GlassCard>
 
         {/* Правовое основание */}
-        <GlassCard className="p-6">
+        <GlassCard className="p-6 mb-6">
           <div className="flex items-start gap-4">
             <div className="p-3 rounded-xl bg-muted shrink-0">
               <FileText className="h-6 w-6 text-muted-foreground" />
@@ -269,6 +359,12 @@ export default function Privacy() {
             </div>
           </div>
         </GlassCard>
+
+        {/* История версий */}
+        <PolicyVersionHistory 
+          versions={policyVersions || []} 
+          isLoading={isLoadingVersions} 
+        />
       </main>
 
       <LandingFooter />
