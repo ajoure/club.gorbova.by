@@ -36,6 +36,7 @@ export interface ProviderConfig {
   icon: string;
   category: IntegrationCategory;
   fields: ProviderField[];
+  advancedFields?: ProviderField[];
   description?: string;
 }
 
@@ -99,7 +100,21 @@ export const PROVIDERS: ProviderConfig[] = [
     fields: [
       { key: "email", label: "Email", type: "email", required: true, autoDetect: true },
       { key: "smtp_password", label: "Пароль приложения", type: "password", required: true },
+    ],
+    advancedFields: [
       { key: "from_name", label: "Имя отправителя", type: "text", placeholder: "Gorbova Club" },
+      { key: "from_email", label: "Email отправителя", type: "email", placeholder: "noreply@example.com" },
+      { key: "smtp_host", label: "SMTP хост", type: "text", placeholder: "smtp.gmail.com" },
+      { key: "smtp_port", label: "SMTP порт", type: "text", placeholder: "465" },
+      { 
+        key: "smtp_encryption", 
+        label: "Шифрование", 
+        type: "select", 
+        options: [
+          { value: "SSL", label: "SSL (порт 465)" },
+          { value: "TLS", label: "STARTTLS (порт 587)" },
+        ] 
+      },
     ],
   },
 ];
