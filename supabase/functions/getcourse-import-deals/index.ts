@@ -590,6 +590,133 @@ async function createSubscription(
   return { id: newSub.id, isNew: true };
 }
 
+// Найти тариф по коду
+async function findTariffByCode(supabase: any, code: string): Promise<{ id: string; product_id: string } | null> {
+  if (!code || code === 'UNKNOWN' || code === 'skip') {
+    return null;
+  }
+  
+  const { data } = await supabase
+    .from('tariffs')
+    .select('id, product_id')
+    .eq('code', code.toLowerCase())
+    .eq('is_active', true)
+    .maybeSingle();
+  
+  return data;
+}
+
+// Обработка импорта из файла (режим file)
+async function processFileDeals(
+  supabase: any,
+  deals: any[],
+  settings: any
+): Promise<ImportResult> {
+  const result: ImportResult = {
+    total_fetched: deals.length,
+    profiles_created: 0,
+    profiles_updated: 0,
+    orders_created: 0,
+    orders_skipped: 0,
+    subscriptions_created: 0,
+    errors: 0,
+    details: [],
+  };
+  
+  const normalizeNames = settings?.normalizeNames !== false;
+  const mergeEmailDuplicates = settings?.mergeEmailDuplicates !== false;
+  
+  console.log(`[File Import] Processing ${deals.length} deals`);
+  console.log(`[File Import] Settings: normalizeNames=${normalizeNames}, mergeEmailDuplicates=${mergeEmailDuplicates}`);
+  
+  for (const deal of deals) {
+    try {
+      const tariffCode = deal.tariffCode;
+      
+      // Skip unknown or explicitly skipped
+      if (tariffCode === 'UNKNOWN' || tariffCode === 'skip' || !tariffCode) {
+        result.orders_skipped++;
+        result.details.push(`Пропущено: ${deal.user_email} - тариф не определён`);
+        continue;
+      }
+      
+      let tariffId: string | null = null;
+      let productId: string | null = null;
+      
+      // Handle ARCHIVE_UNKNOWN - create order without tariff (for old club memberships)
+      if (tariffCode === 'ARCHIVE_UNKNOWN') {
+        console.log(`[File Import] Archive deal for ${deal.user_email}`);
+        // We'll create a profile but skip the order/subscription for archive
+        // Or we could create with a placeholder - for now, just create profile
+      } else {
+        // Find tariff by code
+        const tariff = await findTariffByCode(supabase, tariffCode);
+        if (!tariff) {
+          result.orders_skipped++;
+          result.details.push(`Тариф не найден: ${tariffCode} для ${deal.user_email}`);
+          continue;
+        }
+        tariffId = tariff.id;
+        productId = tariff.product_id;
+      }
+      
+      // Normalize the deal structure
+      const normalizedDeal: GCDeal = {
+        id: deal.externalId || Date.now() + Math.random(),
+        deal_number: deal.externalId || `IMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        deal_created_at: deal.createdAt || new Date().toISOString(),
+        deal_payed_at: deal.paidAt || deal.createdAt,
+        deal_cost: parseFloat(deal.amount) || 0,
+        deal_status: deal.status || 'payed',
+        user_email: deal.user_email,
+        user_id: 0,
+        user_first_name: deal.user_first_name,
+        user_last_name: deal.user_last_name,
+        user_phone: deal.user_phone,
+      };
+      
+      // Create/find profile
+      const profile = await findOrCreateProfile(supabase, normalizedDeal, normalizeNames, mergeEmailDuplicates);
+      if (profile.isNew) {
+        result.profiles_created++;
+      } else {
+        result.profiles_updated++;
+      }
+      
+      // For ARCHIVE_UNKNOWN, only create profile without order
+      if (tariffCode === 'ARCHIVE_UNKNOWN' || !tariffId || !productId) {
+        result.orders_skipped++;
+        result.details.push(`Архивный профиль: ${deal.user_email}`);
+        continue;
+      }
+      
+      // Create order
+      const order = await createOrder(supabase, normalizedDeal, profile.user_id!, tariffId, productId);
+      if (order.isNew) {
+        result.orders_created++;
+      } else {
+        result.orders_skipped++;
+      }
+      
+      // Create subscription for paid deals
+      const subscription = await createSubscription(
+        supabase, normalizedDeal, profile.user_id!, order.id, tariffId, productId
+      );
+      if (subscription?.isNew) {
+        result.subscriptions_created++;
+      }
+      
+    } catch (error) {
+      console.error(`[File Import] Error processing deal:`, error);
+      result.details.push(`Ошибка: ${deal.user_email} - ${error instanceof Error ? error.message : String(error)}`);
+      result.errors++;
+    }
+  }
+  
+  console.log(`[File Import] Complete:`, result);
+  return result;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -608,6 +735,7 @@ Deno.serve(async (req) => {
     const offerIds = body.offerIds || body.offer_ids;
     const dateFrom = body.dateFrom || body.date_from;
     const dateTo = body.dateTo || body.date_to;
+    const fileDeals = body.deals; // Deals from file import
     
     // Настройки нормализации (по умолчанию включены)
     const normalizeNames = body.settings?.normalizeNames !== false;
@@ -616,12 +744,53 @@ Deno.serve(async (req) => {
     console.log(`\n========== GetCourse Import ==========`);
     console.log(`Action: ${action}`);
     console.log(`Instance ID: ${instanceId}`);
+    console.log(`File deals count: ${fileDeals?.length || 0}`);
     console.log(`Offer IDs: ${JSON.stringify(offerIds)}`);
     console.log(`Date range: ${dateFrom || 'not set'} - ${dateTo || 'not set'}`);
     console.log(`Normalize names: ${normalizeNames}, Merge email duplicates: ${mergeEmailDuplicates}`);
 
+    // РЕЖИМ ФАЙЛА: если переданы deals из файла
+    if (fileDeals && Array.isArray(fileDeals) && fileDeals.length > 0) {
+      console.log(`[MODE] File import with ${fileDeals.length} deals`);
+      
+      const result = await processFileDeals(supabase, fileDeals, body.settings);
+      
+      // Log the import
+      if (instanceId) {
+        await supabase.from('integration_logs').insert({
+          instance_id: instanceId,
+          event_type: 'file_import',
+          result: result.errors > 0 ? 'partial' : 'success',
+          payload_meta: {
+            action: 'file_import',
+            stats: {
+              total: result.total_fetched,
+              profiles_created: result.profiles_created,
+              orders_created: result.orders_created,
+              subscriptions_created: result.subscriptions_created,
+              skipped: result.orders_skipped,
+              errors: result.errors,
+            },
+          },
+        });
+      }
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          result,
+          // Match expected format from importMutation
+          orders_created: result.orders_created,
+          profiles_created: result.profiles_created,
+          subscriptions_created: result.subscriptions_created,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // РЕЖИМ API: требуется instance_id для GetCourse
     if (!instanceId) {
-      throw new Error('instance_id обязателен');
+      throw new Error('Необходимо передать deals (файл) или instance_id (API GetCourse)');
     }
 
     // Получаем конфигурацию интеграции
