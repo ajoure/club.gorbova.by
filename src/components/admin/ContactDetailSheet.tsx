@@ -441,28 +441,26 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         }
       }
 
-      // 5. Sync to GetCourse with full deal data (same as payment flow)
+      // 5. Sync to GetCourse using the created order (so gc_deal_number is saved for future revoke/cancel)
       const gcOfferId = tariff?.getcourse_offer_id || tariff?.getcourse_offer_code;
       if (gcOfferId) {
         try {
           const { data: gcResult, error: gcError } = await supabase.functions.invoke("test-getcourse-sync", {
             body: {
+              orderId: orderV2.id,
+              // Fallbacks (function will prefer order/tariff data when orderId is provided)
               email: contact.email,
-              firstName: contact.full_name?.split(" ")[0] || null,
-              lastName: contact.full_name?.split(" ").slice(1).join(" ") || null,
-              phone: contact.phone || null,
-              offerId: typeof gcOfferId === 'string' ? parseInt(gcOfferId) : gcOfferId,
+              offerId: typeof gcOfferId === "string" ? parseInt(gcOfferId) : gcOfferId,
               tariffCode: tariff?.code || "admin_grant",
-              amount: 0, // Admin grant - no charge
             },
           });
-          
+
           if (gcError) {
             syncResults.getcourse = { success: false, error: gcError.message };
           } else if (gcResult?.getcourse?.success) {
             syncResults.getcourse = { success: true };
           } else {
-            syncResults.getcourse = { success: false, error: gcResult?.getcourse?.error || 'Unknown error' };
+            syncResults.getcourse = { success: false, error: gcResult?.getcourse?.error || "Unknown error" };
           }
         } catch (err) {
           syncResults.getcourse = { success: false, error: (err as Error).message };

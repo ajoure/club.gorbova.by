@@ -217,7 +217,7 @@ Deno.serve(async (req) => {
       },
       offerId,
       testOrderNumber,
-      amount || 100,
+      amount ?? 100,
       tariffCode || 'test'
     );
     
