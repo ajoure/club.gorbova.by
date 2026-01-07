@@ -665,15 +665,15 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                       {field === "externalId" && "Внешний ID"}
                     </label>
                     <Select
-                      value={columnMapping[field] || ""}
-                      onValueChange={(v) => setColumnMapping(prev => ({ ...prev, [field]: v || null }))}
+                      value={columnMapping[field] || "__none__"}
+                      onValueChange={(v) => setColumnMapping(prev => ({ ...prev, [field]: v === "__none__" ? null : v }))}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Выберите колонку" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">— Не выбрано —</SelectItem>
-                        {headers.map((h) => (
+                        <SelectItem value="__none__">— Не выбрано —</SelectItem>
+                        {headers.filter(h => h && h.trim()).map((h) => (
                           <SelectItem key={h} value={h}>{h}</SelectItem>
                         ))}
                       </SelectContent>
@@ -756,26 +756,27 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                           <div className="flex items-center gap-2">
                             <span className="text-sm">Тариф:</span>
                             <Select
-                              value={suggestion?.userChoice || suggestion?.targetTariffId || ""}
+                              value={suggestion?.userChoice || suggestion?.targetTariffId || "__none__"}
                               onValueChange={(v) => {
+                                if (v === "__none__") return;
                                 const tariff = tariffs?.find(t => t.id === v);
                                 setTariffSuggestions(prev => {
                                   const idx = prev.findIndex(s => s.pattern === offer.name);
                                   if (idx >= 0) {
                                     const updated = [...prev];
-                                    updated[idx] = { ...updated[idx], userChoice: tariff?.code || v, targetTariffId: v };
+                                    updated[idx] = { ...updated[idx], userChoice: tariff?.code || v, targetTariffId: v === "skip" ? null : v };
                                     return updated;
                                   }
                                   return [...prev, {
                                     pattern: offer.name,
                                     count: offer.count,
-                                    action: "map_to_tariff",
-                                    targetTariffId: v,
+                                    action: v === "skip" ? "skip" : "map_to_tariff",
+                                    targetTariffId: v === "skip" ? null : v,
                                     targetTariffCode: tariff?.code || null,
                                     secondaryField: null,
                                     confidence: 1,
                                     reason: "Выбрано вручную",
-                                    userChoice: tariff?.code,
+                                    userChoice: v === "skip" ? "skip" : tariff?.code,
                                   }];
                                 });
                               }}
@@ -784,6 +785,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                                 <SelectValue placeholder="Выбрать" />
                               </SelectTrigger>
                               <SelectContent>
+                                <SelectItem value="__none__">— Не выбрано —</SelectItem>
                                 <SelectItem value="skip">Пропустить</SelectItem>
                                 {tariffs?.map((t) => (
                                   <SelectItem key={t.id} value={t.id}>{t.name} ({t.code})</SelectItem>
