@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useUserPendingInstallments } from "@/hooks/useInstallments";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,9 @@ export default function PaymentMethodsSettings() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Check for pending installments - blocks card deletion
+  const { data: pendingInstallments } = useUserPendingInstallments(user?.id);
 
   const { data: paymentMethods, isLoading } = useQuery({
     queryKey: ["user-payment-methods", user?.id],
@@ -99,6 +103,12 @@ export default function PaymentMethodsSettings() {
   const deleteMutation = useMutation({
     mutationFn: async (methodId: string) => {
       if (!user) throw new Error("Не авторизован");
+      
+      // Check for pending installments
+      if (pendingInstallments && pendingInstallments.length > 0) {
+        const totalPending = pendingInstallments.reduce((sum, i) => sum + Number(i.amount), 0);
+        throw new Error(`Невозможно отвязать карту: есть активная рассрочка (${pendingInstallments.length} платежей на сумму ${(totalPending / 100).toFixed(2)} BYN)`);
+      }
       
       const method = paymentMethods?.find(m => m.id === methodId);
       const otherMethods = paymentMethods?.filter(m => m.id !== methodId) || [];

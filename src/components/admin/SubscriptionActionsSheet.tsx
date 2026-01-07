@@ -26,7 +26,10 @@ import {
   Minus,
   Check,
   User,
+  Wallet,
 } from "lucide-react";
+import { InstallmentSchedule } from "./InstallmentSchedule";
+import { AdminChargeDialog } from "./AdminChargeDialog";
 
 interface SubscriptionActionsSheetProps {
   open: boolean;
@@ -54,6 +57,7 @@ export function SubscriptionActionsSheet({
   const queryClient = useQueryClient();
   const [extendDays, setExtendDays] = useState(30);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [chargeDialogOpen, setChargeDialogOpen] = useState(false);
 
   // Fetch user profile
   const { data: profile } = useQuery({
@@ -299,6 +303,27 @@ export function SubscriptionActionsSheet({
             </div>
           </div>
 
+          {/* Installment Schedule */}
+          <InstallmentSchedule subscriptionId={subscription.id} />
+
+          <Separator />
+
+          {/* Manual Charge */}
+          <div className="space-y-3">
+            <Label className="flex items-center gap-2">
+              <Wallet className="h-4 w-4" />
+              Ручное списание
+            </Label>
+            <Button
+              variant="outline"
+              onClick={() => setChargeDialogOpen(true)}
+              className="w-full gap-2"
+            >
+              <CreditCard className="h-4 w-4" />
+              Списать с карты клиента
+            </Button>
+          </div>
+
           {/* Subscription ID */}
           <div className="pt-4 border-t">
             <p className="text-xs text-muted-foreground">
@@ -310,6 +335,15 @@ export function SubscriptionActionsSheet({
           </div>
         </div>
       </SheetContent>
+
+      {/* Charge Dialog */}
+      <AdminChargeDialog
+        open={chargeDialogOpen}
+        onOpenChange={setChargeDialogOpen}
+        userId={subscription.user_id}
+        userName={profile?.full_name || undefined}
+        userEmail={profile?.email || undefined}
+      />
     </Sheet>
   );
 }
