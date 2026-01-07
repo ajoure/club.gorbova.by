@@ -133,4 +133,4 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.ai-import-analyzer]
-verify_jwt = true
+verify_jwt = false
