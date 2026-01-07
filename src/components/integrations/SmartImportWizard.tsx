@@ -572,6 +572,46 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       if (d.tariffCode === "UNKNOWN") unknownTariffCount++;
     });
     
+    // Compute skipped stats
+    let skippedByStatus = 0;
+    let skippedByUnclearTariff = 0;
+    let skippedByUserSkip = 0;
+
+    rows.forEach((row) => {
+      const status = columnMapping.status ? String(row[columnMapping.status] || "") : "";
+      const offerName = String(row[columnMapping.offerName!] || "");
+      const suggestion = tariffSuggestions.find(s => s.pattern === offerName);
+
+      // Check status filter
+      if (columnMapping.status && settings.statusFilter.length > 0) {
+        const passesStatus = settings.statusFilter.some(s =>
+          status.toLowerCase().includes(s.toLowerCase())
+        );
+        if (!passesStatus) {
+          skippedByStatus++;
+          return;
+        }
+      }
+
+      // Check user skip
+      if (suggestion?.userChoice === "skip") {
+        skippedByUserSkip++;
+        return;
+      }
+
+      // Check unclear tariff + waiting for analysis
+      const isWaitingForAnalysis = status.toLowerCase().includes("ожидает анализа");
+      const isTariffUnclearFromAi =
+        !!suggestion &&
+        !suggestion.userChoice &&
+        (suggestion.action === "needs_review" ||
+          (suggestion.action === "skip" && !suggestion.targetTariffId && !suggestion.targetTariffCode));
+
+      if (isWaitingForAnalysis && isTariffUnclearFromAi) {
+        skippedByUnclearTariff++;
+      }
+    });
+    
     return {
       total: deals.length,
       uniqueEmails: uniqueEmails.size,
@@ -579,8 +619,12 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       byTariff: Array.from(byTariff.entries()).sort((a, b) => b[1] - a[1]),
       emailDuplicatesInFile: emailDuplicates.length,
       totalDuplicateRows: emailDuplicates.reduce((sum, d) => sum + d.count, 0),
+      skippedByStatus,
+      skippedByUnclearTariff,
+      skippedByUserSkip,
+      totalRows: rows.length,
     };
-  }, [prepareDealsForImport, emailDuplicates]);
+  }, [prepareDealsForImport, emailDuplicates, rows, columnMapping, tariffSuggestions, settings.statusFilter]);
 
   // Reset wizard
   const resetWizard = () => {
@@ -1092,13 +1136,32 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                 <CardContent>
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm text-muted-foreground">Всего сделок:</span>
+                      <span className="text-sm text-muted-foreground">Всего в файле:</span>
+                      <span className="font-medium text-muted-foreground">{previewStats.totalRows}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">К импорту:</span>
                       <span className="text-2xl font-bold">{previewStats.total}</span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Уникальных email:</span>
                       <span className="font-medium">{previewStats.uniqueEmails}</span>
                     </div>
+
+                    {(previewStats.skippedByStatus > 0 || previewStats.skippedByUnclearTariff > 0 || previewStats.skippedByUserSkip > 0) && (
+                      <div className="text-xs text-muted-foreground space-y-0.5 border-t pt-2">
+                        <p className="font-medium text-sm mb-1">Пропущено:</p>
+                        {previewStats.skippedByStatus > 0 && (
+                          <p>• По статусу: {previewStats.skippedByStatus}</p>
+                        )}
+                        {previewStats.skippedByUnclearTariff > 0 && (
+                          <p>• «Ожидает анализа» + непонятный тариф: {previewStats.skippedByUnclearTariff}</p>
+                        )}
+                        {previewStats.skippedByUserSkip > 0 && (
+                          <p>• Вручную пропущено: {previewStats.skippedByUserSkip}</p>
+                        )}
+                      </div>
+                    )}
                     
                     {previewStats.unknownTariffCount > 0 && (
                       <Alert variant="destructive" className="py-2">
