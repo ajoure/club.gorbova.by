@@ -73,7 +73,7 @@ import { EditContactDialog } from "./EditContactDialog";
 
 interface Contact {
   id: string;
-  user_id: string;
+  user_id: string | null;
   email: string | null;
   full_name: string | null;
   phone: string | null;
@@ -730,16 +730,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                     </span>
                   </div>
                   <Separator />
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3 text-sm">
-                      <Shield className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-muted-foreground">ID пользователя</span>
+                  {contact.user_id && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3 text-sm">
+                        <Shield className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-muted-foreground">ID пользователя</span>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={() => copyToClipboard(contact.user_id!, "ID")}>
+                        <code className="text-xs mr-2">{contact.user_id.slice(0, 8)}...</code>
+                        <Copy className="w-3 h-3" />
+                      </Button>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => copyToClipboard(contact.user_id, "ID")}>
-                      <code className="text-xs mr-2">{contact.user_id.slice(0, 8)}...</code>
-                      <Copy className="w-3 h-3" />
-                    </Button>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
