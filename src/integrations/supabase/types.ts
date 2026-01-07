@@ -668,6 +668,56 @@ export type Database = {
         }
         Relationships: []
       }
+      import_mapping_rules: {
+        Row: {
+          additional_conditions: Json | null
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          priority: number | null
+          secondary_field_name: string | null
+          secondary_field_value: string | null
+          source_pattern: string
+          target_tariff_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          additional_conditions?: Json | null
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          priority?: number | null
+          secondary_field_name?: string | null
+          secondary_field_value?: string | null
+          source_pattern: string
+          target_tariff_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          additional_conditions?: Json | null
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          priority?: number | null
+          secondary_field_name?: string | null
+          secondary_field_value?: string | null
+          source_pattern?: string
+          target_tariff_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "import_mapping_rules_target_tariff_id_fkey"
+            columns: ["target_tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       installment_payments: {
         Row: {
           amount: number

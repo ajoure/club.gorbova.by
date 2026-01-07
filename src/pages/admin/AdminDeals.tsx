@@ -37,8 +37,11 @@ import {
   XCircle,
   AlertTriangle,
   TrendingUp,
+  Upload,
+  Sparkles,
 } from "lucide-react";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
+import { SmartImportWizard } from "@/components/integrations/SmartImportWizard";
 
 type DealStatus = "all" | "draft" | "pending" | "paid" | "partial" | "cancelled" | "refunded" | "expired";
 
@@ -57,6 +60,7 @@ export default function AdminDeals() {
   const [statusFilter, setStatusFilter] = useState<DealStatus>("all");
   const [productFilter, setProductFilter] = useState<string>("all");
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const [showImportWizard, setShowImportWizard] = useState(false);
 
   // Fetch deals (orders_v2) with related data
   const { data: deals, isLoading, refetch } = useQuery({
@@ -156,10 +160,16 @@ export default function AdminDeals() {
           </h1>
           <p className="text-muted-foreground">Все заказы, подписки, триалы и ручные выдачи</p>
         </div>
-        <Button variant="outline" onClick={() => refetch()}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Обновить
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setShowImportWizard(true)}>
+            <Sparkles className="h-4 w-4 mr-2" />
+            Умный импорт
+          </Button>
+          <Button variant="outline" onClick={() => refetch()}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Обновить
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -374,6 +384,12 @@ export default function AdminDeals() {
         profile={selectedDeal ? profilesMap?.get(selectedDeal.user_id) : null}
         open={!!selectedDealId}
         onOpenChange={(open) => !open && setSelectedDealId(null)}
+      />
+
+      {/* Smart Import Wizard */}
+      <SmartImportWizard
+        open={showImportWizard}
+        onOpenChange={setShowImportWizard}
       />
     </div>
   );
