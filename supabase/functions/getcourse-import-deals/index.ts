@@ -320,36 +320,108 @@ async function fetchAllDeals(
   return allDeals;
 }
 
-// Найти или создать профиль
+/**
+ * Нормализация имени - убирает дубли типа "Иван Иванов Иван Иванов" -> "Иван Иванов"
+ */
+function normalizeName(name: string): { firstName: string; lastName: string; fullName: string } {
+  if (!name) return { firstName: "", lastName: "", fullName: "" };
+  
+  // Split and clean
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { firstName: "", lastName: "", fullName: "" };
+  
+  // Capitalize each part
+  const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  const capitalizedParts = parts.map(capitalize);
+  
+  // Detect and remove duplicates (e.g., "Иван Иванов Иван Иванов" -> "Иван Иванов")
+  const halfLen = Math.floor(capitalizedParts.length / 2);
+  if (capitalizedParts.length >= 4 && capitalizedParts.length % 2 === 0) {
+    const firstHalf = capitalizedParts.slice(0, halfLen).join(" ");
+    const secondHalf = capitalizedParts.slice(halfLen).join(" ");
+    if (firstHalf === secondHalf) {
+      return {
+        firstName: capitalizedParts[0],
+        lastName: capitalizedParts.slice(1, halfLen).join(" "),
+        fullName: firstHalf,
+      };
+    }
+  }
+  
+  // Standard case: first part is firstName, rest is lastName
+  return {
+    firstName: capitalizedParts[0],
+    lastName: capitalizedParts.slice(1).join(" "),
+    fullName: capitalizedParts.join(" "),
+  };
+}
+
+// Найти или создать профиль (с поддержкой нормализации имён и слияния дублей)
 async function findOrCreateProfile(
   supabase: any,
-  deal: GCDeal
+  deal: GCDeal,
+  normalizeNames: boolean = true,
+  mergeEmailDuplicates: boolean = true
 ): Promise<{ id: string; user_id: string | null; isNew: boolean }> {
   if (!deal.user_email) {
     throw new Error('Email обязателен для создания профиля');
   }
   
+  const email = deal.user_email.toLowerCase().trim();
+  
   // Ищем существующий профиль по email
   const { data: existing } = await supabase
     .from('profiles')
-    .select('id, user_id')
-    .eq('email', deal.user_email)
+    .select('id, user_id, full_name, first_name, last_name')
+    .eq('email', email)
     .maybeSingle();
   
   if (existing) {
+    // Если нужно нормализовать имя и обновить профиль
+    if (normalizeNames && deal.user_first_name) {
+      const rawName = [deal.user_first_name, deal.user_last_name].filter(Boolean).join(' ');
+      const normalized = normalizeName(rawName);
+      
+      // Обновляем если имя отличается
+      if (normalized.fullName && normalized.fullName !== existing.full_name) {
+        await supabase
+          .from('profiles')
+          .update({
+            full_name: normalized.fullName,
+            first_name: normalized.firstName,
+            last_name: normalized.lastName,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id);
+      }
+    }
+    
     return { id: existing.id, user_id: existing.user_id, isNew: false };
   }
   
   // Создаем ghost профиль
-  const fullName = [deal.user_first_name, deal.user_last_name].filter(Boolean).join(' ') || null;
+  let fullName = [deal.user_first_name, deal.user_last_name].filter(Boolean).join(' ') || null;
+  let firstName = deal.user_first_name || '';
+  let lastName = deal.user_last_name || '';
+  
+  // Нормализуем имя если нужно
+  if (normalizeNames && fullName) {
+    const normalized = normalizeName(fullName);
+    fullName = normalized.fullName || fullName;
+    firstName = normalized.firstName || firstName;
+    lastName = normalized.lastName || lastName;
+  }
+  
   const ghostUserId = crypto.randomUUID();
   
   const { data: newProfile, error } = await supabase
     .from('profiles')
     .insert({
       user_id: ghostUserId,
-      email: deal.user_email,
+      email: email,
       full_name: fullName,
+      first_name: firstName,
+      last_name: lastName,
       phone: deal.user_phone,
       status: 'ghost',
       meta: {
@@ -537,11 +609,16 @@ Deno.serve(async (req) => {
     const dateFrom = body.dateFrom || body.date_from;
     const dateTo = body.dateTo || body.date_to;
     
+    // Настройки нормализации (по умолчанию включены)
+    const normalizeNames = body.settings?.normalizeNames !== false;
+    const mergeEmailDuplicates = body.settings?.mergeEmailDuplicates !== false;
+    
     console.log(`\n========== GetCourse Import ==========`);
     console.log(`Action: ${action}`);
     console.log(`Instance ID: ${instanceId}`);
     console.log(`Offer IDs: ${JSON.stringify(offerIds)}`);
     console.log(`Date range: ${dateFrom || 'not set'} - ${dateTo || 'not set'}`);
+    console.log(`Normalize names: ${normalizeNames}, Merge email duplicates: ${mergeEmailDuplicates}`);
 
     if (!instanceId) {
       throw new Error('instance_id обязателен');
@@ -638,8 +715,8 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // Создаём/находим профиль
-        const profile = await findOrCreateProfile(supabase, deal);
+        // Создаём/находим профиль (с настройками нормализации)
+        const profile = await findOrCreateProfile(supabase, deal, normalizeNames, mergeEmailDuplicates);
         if (profile.isNew) {
           result.profiles_created++;
         } else {

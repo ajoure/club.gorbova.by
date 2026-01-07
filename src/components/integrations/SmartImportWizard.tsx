@@ -56,9 +56,17 @@ interface TariffSuggestion {
   userChoice?: string; // User's override choice
 }
 
+interface DuplicateInfo {
+  email: string;
+  count: number;
+  names: string[];
+}
+
 interface ImportSettings {
   statusFilter: string[];
   duplicateHandling: "skip" | "update";
+  mergeEmailDuplicates: boolean;
+  normalizeNames: boolean;
   dateField: "createdAt" | "paidAt";
   createGhostProfiles: boolean;
 }
@@ -89,6 +97,8 @@ const DEFAULT_MAPPING: ColumnMapping = {
 const DEFAULT_SETTINGS: ImportSettings = {
   statusFilter: ["Оплачено", "Завершён", "В процессе"],
   duplicateHandling: "skip",
+  mergeEmailDuplicates: true,
+  normalizeNames: true,
   dateField: "createdAt",
   createGhostProfiles: true,
 };
@@ -253,6 +263,73 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       .sort((a, b) => b.count - a.count);
   }, [rows, columnMapping.offerName]);
 
+  // Helper function to normalize names (remove duplicates like "Иван Иванов Иван Иванов")
+  const normalizeName = useCallback((name: string): { firstName: string; lastName: string; fullName: string } => {
+    if (!name) return { firstName: "", lastName: "", fullName: "" };
+    
+    // Split and clean
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return { firstName: "", lastName: "", fullName: "" };
+    
+    // Capitalize each part
+    const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+    const capitalizedParts = parts.map(capitalize);
+    
+    // Detect and remove duplicates (e.g., "Иван Иванов Иван Иванов" -> "Иван Иванов")
+    const halfLen = Math.floor(capitalizedParts.length / 2);
+    if (capitalizedParts.length >= 4 && capitalizedParts.length % 2 === 0) {
+      const firstHalf = capitalizedParts.slice(0, halfLen).join(" ");
+      const secondHalf = capitalizedParts.slice(halfLen).join(" ");
+      if (firstHalf === secondHalf) {
+        return {
+          firstName: capitalizedParts[0],
+          lastName: capitalizedParts.slice(1, halfLen).join(" "),
+          fullName: firstHalf,
+        };
+      }
+    }
+    
+    // Standard case: first part is firstName, rest is lastName
+    return {
+      firstName: capitalizedParts[0],
+      lastName: capitalizedParts.slice(1).join(" "),
+      fullName: capitalizedParts.join(" "),
+    };
+  }, []);
+
+  // Find email duplicates in the data
+  const emailDuplicates = useMemo((): DuplicateInfo[] => {
+    if (!columnMapping.email || !rows.length) return [];
+    
+    const emailMap = new Map<string, { count: number; names: Set<string> }>();
+    
+    rows.forEach((row) => {
+      const email = String(row[columnMapping.email!] || "").toLowerCase().trim();
+      if (!email || !email.includes("@")) return;
+      
+      const nameCol = columnMapping.fullName || columnMapping.firstName;
+      const name = nameCol ? String(row[nameCol] || "") : "";
+      
+      const existing = emailMap.get(email);
+      if (existing) {
+        existing.count++;
+        if (name) existing.names.add(name);
+      } else {
+        emailMap.set(email, { count: 1, names: new Set(name ? [name] : []) });
+      }
+    });
+    
+    // Return only actual duplicates (count > 1)
+    return Array.from(emailMap.entries())
+      .filter(([_, data]) => data.count > 1)
+      .map(([email, data]) => ({
+        email,
+        count: data.count,
+        names: Array.from(data.names),
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [rows, columnMapping.email, columnMapping.fullName, columnMapping.firstName]);
+
   // AI Tariff Analysis
   const analyzeTariffs = async () => {
     if (!uniqueOffers.length || !tariffs?.length) return;
@@ -333,7 +410,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
   });
 
   // Prepare deals for import based on mappings
-  const prepareDealsForImport = () => {
+  const prepareDealsForImport = useCallback(() => {
     return rows
       .filter((row) => {
         const status = String(row[columnMapping.status!] || "");
@@ -354,10 +431,32 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           else if (secondaryValue.includes("business")) tariffCode = "business";
         }
         
+        // Get raw name
+        let rawFullName = String(row[columnMapping.fullName!] || "");
+        let firstName = columnMapping.firstName ? String(row[columnMapping.firstName] || "") : "";
+        let lastName = columnMapping.lastName ? String(row[columnMapping.lastName] || "") : "";
+        
+        // Normalize names if enabled
+        if (settings.normalizeNames) {
+          if (rawFullName) {
+            const normalized = normalizeName(rawFullName);
+            rawFullName = normalized.fullName;
+            if (!firstName) firstName = normalized.firstName;
+            if (!lastName) lastName = normalized.lastName;
+          } else if (firstName || lastName) {
+            const combined = normalizeName(`${firstName} ${lastName}`);
+            firstName = combined.firstName;
+            lastName = combined.lastName;
+            rawFullName = combined.fullName;
+          }
+        }
+        
         return {
-          email: String(row[columnMapping.email!] || ""),
+          email: String(row[columnMapping.email!] || "").toLowerCase().trim(),
           phone: String(row[columnMapping.phone!] || ""),
-          fullName: String(row[columnMapping.fullName!] || ""),
+          fullName: rawFullName,
+          firstName,
+          lastName,
           offerName,
           tariffCode,
           amount: parseFloat(String(row[columnMapping.amount!] || "0")) || 0,
@@ -367,22 +466,30 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           externalId: String(row[columnMapping.externalId!] || ""),
         };
       });
-  };
+  }, [rows, columnMapping, tariffSuggestions, settings, normalizeName]);
 
   // Stats for preview
   const previewStats = useMemo(() => {
     const deals = prepareDealsForImport();
     const byTariff = new Map<string, number>();
+    const uniqueEmails = new Set<string>();
+    let unknownTariffCount = 0;
     
     deals.forEach((d) => {
       byTariff.set(d.tariffCode, (byTariff.get(d.tariffCode) || 0) + 1);
+      if (d.email) uniqueEmails.add(d.email);
+      if (d.tariffCode === "UNKNOWN") unknownTariffCount++;
     });
     
     return {
       total: deals.length,
+      uniqueEmails: uniqueEmails.size,
+      unknownTariffCount,
       byTariff: Array.from(byTariff.entries()).sort((a, b) => b[1] - a[1]),
+      emailDuplicatesInFile: emailDuplicates.length,
+      totalDuplicateRows: emailDuplicates.reduce((sum, d) => sum + d.count, 0),
     };
-  }, [rows, columnMapping, tariffSuggestions, settings]);
+  }, [prepareDealsForImport, emailDuplicates]);
 
   // Reset wizard
   const resetWizard = () => {
@@ -763,6 +870,34 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
 
               <Card>
                 <CardHeader className="py-3">
+                  <CardTitle className="text-sm">Нормализация данных</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="normalizeNames"
+                      checked={settings.normalizeNames}
+                      onCheckedChange={(checked) => setSettings(prev => ({ ...prev, normalizeNames: !!checked }))}
+                    />
+                    <label htmlFor="normalizeNames" className="text-sm">
+                      Нормализовать имена (убрать дубли типа "Иван Иванов Иван Иванов")
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="mergeEmailDuplicates"
+                      checked={settings.mergeEmailDuplicates}
+                      onCheckedChange={(checked) => setSettings(prev => ({ ...prev, mergeEmailDuplicates: !!checked }))}
+                    />
+                    <label htmlFor="mergeEmailDuplicates" className="text-sm">
+                      Объединять профили с одинаковым email
+                    </label>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="py-3">
                   <CardTitle className="text-sm">Создание профилей</CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -781,18 +916,76 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
 
               <Separator />
 
+              {/* Email duplicates warning */}
+              {emailDuplicates.length > 0 && (
+                <Alert variant="default" className="border-yellow-500/50 bg-yellow-500/10">
+                  <AlertCircle className="h-4 w-4 text-yellow-500" />
+                  <AlertDescription>
+                    <div className="space-y-2">
+                      <p className="font-medium text-yellow-600">
+                        Найдено {emailDuplicates.length} email с повторами ({previewStats.totalDuplicateRows} строк)
+                      </p>
+                      <div className="text-sm space-y-1 max-h-32 overflow-auto">
+                        {emailDuplicates.slice(0, 5).map((dup) => (
+                          <div key={dup.email} className="flex justify-between">
+                            <span className="truncate max-w-[200px]">{dup.email}</span>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="secondary">{dup.count}x</Badge>
+                              {dup.names.length > 0 && (
+                                <span className="text-muted-foreground text-xs truncate max-w-[150px]">
+                                  {dup.names[0]}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {emailDuplicates.length > 5 && (
+                          <p className="text-muted-foreground">
+                            ... и ещё {emailDuplicates.length - 5} email
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
+
               <Card>
                 <CardHeader className="py-3">
                   <CardTitle className="text-sm">Превью импорта</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-2">
-                    <p className="text-2xl font-bold">{previewStats.total} сделок</p>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Всего сделок:</span>
+                      <span className="text-2xl font-bold">{previewStats.total}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Уникальных email:</span>
+                      <span className="font-medium">{previewStats.uniqueEmails}</span>
+                    </div>
+                    
+                    {previewStats.unknownTariffCount > 0 && (
+                      <Alert variant="destructive" className="py-2">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription className="text-sm">
+                          {previewStats.unknownTariffCount} сделок без определённого тарифа будут пропущены
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    
+                    <Separator />
+                    
+                    <div className="text-sm font-medium">По тарифам:</div>
                     <div className="space-y-1">
                       {previewStats.byTariff.map(([code, count]) => (
                         <div key={code} className="flex justify-between text-sm">
-                          <span>{code}</span>
-                          <Badge variant="secondary">{count}</Badge>
+                          <span className={code === "UNKNOWN" ? "text-destructive" : ""}>
+                            {code === "UNKNOWN" ? "⚠️ UNKNOWN" : code.toUpperCase()}
+                          </span>
+                          <Badge variant={code === "UNKNOWN" ? "destructive" : "secondary"}>
+                            {count}
+                          </Badge>
                         </div>
                       ))}
                     </div>
