@@ -36,8 +36,8 @@ Deno.serve(async (req) => {
     const testMode = settingsMap['bepaid_test_mode'] === 'true';
     const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
 
-    // Find pending installments that are due
-    const now = new Date().toISOString();
+    // Find pending installments that are due with exponential backoff
+    const now = new Date();
     const { data: dueInstallments, error: fetchError } = await supabase
       .from('installment_payments')
       .select(`
@@ -48,10 +48,24 @@ Deno.serve(async (req) => {
         )
       `)
       .eq('status', 'pending')
-      .lte('due_date', now)
-      .lt('charge_attempts', 3) // Max 3 attempts
+      .lte('due_date', now.toISOString())
+      .lt('charge_attempts', 5) // Max 5 attempts with backoff
       .order('due_date', { ascending: true })
       .limit(50); // Process in batches
+    
+    // Filter by exponential backoff: wait 1h, 4h, 24h, 72h before retries
+    const backoffHours = [0, 1, 4, 24, 72];
+    const filteredInstallments = (dueInstallments || []).filter(inst => {
+      const attempts = inst.charge_attempts || 0;
+      if (attempts === 0) return true;
+      
+      const lastAttempt = inst.last_attempt_at ? new Date(inst.last_attempt_at) : null;
+      if (!lastAttempt) return true;
+      
+      const waitHours = backoffHours[Math.min(attempts, backoffHours.length - 1)];
+      const nextAttemptTime = new Date(lastAttempt.getTime() + waitHours * 60 * 60 * 1000);
+      return now >= nextAttemptTime;
+    });
 
     if (fetchError) {
       console.error('Error fetching due installments:', fetchError);
@@ -61,7 +75,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log(`Found ${dueInstallments?.length || 0} due installments to process`);
+    console.log(`Found ${filteredInstallments.length} due installments to process (after backoff filter)`);
 
     const results = {
       processed: 0,
@@ -71,7 +85,7 @@ Deno.serve(async (req) => {
       errors: [] as string[],
     };
 
-    for (const installment of dueInstallments || []) {
+    for (const installment of filteredInstallments) {
       results.processed++;
       const subscription = installment.subscriptions_v2;
 
@@ -208,6 +222,20 @@ Deno.serve(async (req) => {
 
           console.log(`Installment ${installment.id} charged successfully`);
           results.successful++;
+
+          // Send success notification
+          try {
+            await fetch(`${supabaseUrl}/functions/v1/installment-notifications`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${supabaseServiceKey}`,
+              },
+              body: JSON.stringify({ action: 'success', installment_id: installment.id }),
+            });
+          } catch (notifErr) {
+            console.error('Failed to send success notification:', notifErr);
+          }
         } else {
           // Payment failed
           const errorMessage = chargeResult.transaction?.message || chargeResult.errors?.base?.[0] || 'Payment failed';
@@ -221,8 +249,8 @@ Deno.serve(async (req) => {
             })
             .eq('id', payment.id);
 
-          // Update installment - back to pending or failed if max attempts
-          const maxAttempts = 3;
+          // Update installment - back to pending or failed if max attempts (5 with backoff)
+          const maxAttempts = 5;
           const newAttempts = (installment.charge_attempts || 0) + 1;
           const newStatus = newAttempts >= maxAttempts ? 'failed' : 'pending';
           
@@ -233,6 +261,20 @@ Deno.serve(async (req) => {
               error_message: errorMessage,
             })
             .eq('id', installment.id);
+
+          // Send failed notification
+          try {
+            await fetch(`${supabaseUrl}/functions/v1/installment-notifications`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${supabaseServiceKey}`,
+              },
+              body: JSON.stringify({ action: 'failed', installment_id: installment.id }),
+            });
+          } catch (notifErr) {
+            console.error('Failed to send failure notification:', notifErr);
+          }
 
           console.error(`Installment ${installment.id} charge failed: ${errorMessage}`);
           results.failed++;

@@ -1138,6 +1138,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
               </Card>
             </TabsContent>
 
+            {/* Installments Tab */}
+            <TabsContent value="installments" className="m-0">
+              <ContactInstallments userId={contact.user_id} />
+            </TabsContent>
+
             {/* Duplicates Tab */}
             {contact.duplicate_flag && (
               <TabsContent value="duplicates" className="m-0 space-y-4">
