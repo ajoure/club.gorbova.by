@@ -200,82 +200,28 @@ export default function AdminIntegrations() {
           </div>
         ) : (
         <div className="mt-6 space-y-6">
-          {/* Provider cards */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {categoryProviders.map((provider) => {
-              const providerInstances = instancesByProvider[provider.id] || [];
-              const hasErrors = providerInstances.some((i) => i.status === "error");
-              return (
-                <IntegrationProviderCard
-                  key={provider.id}
-                  provider={provider}
-                  instanceCount={providerInstances.length}
-                  hasErrors={hasErrors}
-                  onClick={() => handleProviderClick(provider.id)}
+          {/* All instances */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-lg">Все подключения</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {isLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                </div>
+              ) : (
+                <IntegrationInstanceList
+                  instances={instances || []}
+                  onEdit={setEditInstance}
+                  onViewLogs={setLogsInstance}
+                  onHealthCheck={handleHealthCheck}
+                  onSyncSettings={setSyncSettingsInstance}
                 />
-              );
-            })}
-          </div>
-
-          {/* Instance list for selected provider */}
-          {selectedProvider && (
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-lg">
-                  Подключения: {PROVIDERS.find((p) => p.id === selectedProvider)?.name}
-                </CardTitle>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleAddNew(activeTab, selectedProvider)}
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Добавить
-                </Button>
-              </CardHeader>
-              <CardContent>
-                {isLoading ? (
-                  <div className="space-y-2">
-                    <Skeleton className="h-12 w-full" />
-                    <Skeleton className="h-12 w-full" />
-                  </div>
-                ) : (
-                  <IntegrationInstanceList
-                    instances={instancesByProvider[selectedProvider] || []}
-                    onEdit={setEditInstance}
-                    onViewLogs={setLogsInstance}
-                    onHealthCheck={handleHealthCheck}
-                    onSyncSettings={setSyncSettingsInstance}
-                  />
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Show all instances if no provider selected */}
-          {!selectedProvider && instances && instances.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Все подключения</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {isLoading ? (
-                  <div className="space-y-2">
-                    <Skeleton className="h-12 w-full" />
-                    <Skeleton className="h-12 w-full" />
-                  </div>
-                ) : (
-                  <IntegrationInstanceList
-                    instances={instances}
-                    onEdit={setEditInstance}
-                    onViewLogs={setLogsInstance}
-                    onHealthCheck={handleHealthCheck}
-                    onSyncSettings={setSyncSettingsInstance}
-                  />
-                )}
-              </CardContent>
-            </Card>
-          )}
+              )}
+            </CardContent>
+          </Card>
         </div>
         )}
       </Tabs>
