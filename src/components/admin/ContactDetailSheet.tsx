@@ -425,27 +425,31 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         });
       }
 
-      // 5. Sync to GetCourse with full deal data (like bepaid-webhook)
+      // 5. Sync to GetCourse with full deal data (optional - don't fail if not configured)
       if (tariff?.getcourse_offer_code || tariff?.getcourse_offer_id) {
-        await supabase.functions.invoke("getcourse-sync", {
-          body: {
-            action: "create_deal",
-            user_id: contact.user_id,
-            deal_data: {
-              product_code: product?.code,
-              product_name: product?.name,
-              tariff_code: tariff?.code,
-              tariff_name: tariff?.name,
-              offer_code: tariff.getcourse_offer_code || tariff.getcourse_offer_id,
-              order_number: orderNumber,
-              amount: 0,
-              status: "admin_grant",
-              user_email: contact.email,
-              user_name: contact.full_name,
-              user_phone: contact.phone,
+        try {
+          await supabase.functions.invoke("getcourse-sync", {
+            body: {
+              action: "create_deal",
+              user_id: contact.user_id,
+              deal_data: {
+                product_code: product?.code,
+                product_name: product?.name,
+                tariff_code: tariff?.code,
+                tariff_name: tariff?.name,
+                offer_code: tariff.getcourse_offer_code || tariff.getcourse_offer_id,
+                order_number: orderNumber,
+                amount: 0,
+                status: "admin_grant",
+                user_email: contact.email,
+                user_name: contact.full_name,
+                user_phone: contact.phone,
+              },
             },
-          },
-        });
+          });
+        } catch (gcError) {
+          console.warn("GetCourse sync skipped:", gcError);
+        }
       }
 
       // 6. Log action with full details
