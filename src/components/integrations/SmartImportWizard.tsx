@@ -443,8 +443,14 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
   const prepareDealsForImport = useCallback(() => {
     return rows
       .filter((row) => {
-        const status = String(row[columnMapping.status!] || "");
-        return settings.statusFilter.some(s => status.includes(s));
+        // If no status column mapped, include all rows
+        if (!columnMapping.status) return true;
+        
+        const status = String(row[columnMapping.status] || "");
+        // If no status filter or empty filter, include all rows
+        if (!settings.statusFilter || settings.statusFilter.length === 0) return true;
+        
+        return settings.statusFilter.some(s => status.toLowerCase().includes(s.toLowerCase()));
       })
       .filter((row) => {
         // Skip rows where user explicitly chose "skip"
