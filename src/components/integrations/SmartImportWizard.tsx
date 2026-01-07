@@ -140,7 +140,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
     queryFn: async () => {
       const { data, error } = await supabase
         .from("tariffs")
-        .select("id, code, name, product_id")
+        .select("id, code, name, product_id, original_price")
         .eq("is_active", true);
       if (error) throw error;
       return data || [];
@@ -241,7 +241,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
   const uniqueOffers = useMemo(() => {
     if (!columnMapping.offerName || !rows.length) return [];
     
-    const offerCounts = new Map<string, { count: number; samples: ParsedRow[] }>();
+    const offerCounts = new Map<string, { count: number; samples: ParsedRow[]; amount?: number }>();
     
     rows.forEach((row) => {
       const offerName = String(row[columnMapping.offerName!] || "").trim();
@@ -254,14 +254,17 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           existing.samples.push(row);
         }
       } else {
-        offerCounts.set(offerName, { count: 1, samples: [row] });
+        // Extract amount from the first sample
+        const amountValue = columnMapping.amount ? row[columnMapping.amount] : undefined;
+        const amount = amountValue ? parseFloat(String(amountValue).replace(/[^\d.,]/g, '').replace(',', '.')) : undefined;
+        offerCounts.set(offerName, { count: 1, samples: [row], amount: amount && !isNaN(amount) ? amount : undefined });
       }
     });
     
     return Array.from(offerCounts.entries())
       .map(([name, data]) => ({ name, ...data }))
       .sort((a, b) => b.count - a.count);
-  }, [rows, columnMapping.offerName]);
+  }, [rows, columnMapping.offerName, columnMapping.amount]);
 
   // Helper function to normalize names (remove duplicates like "Иван Иванов Иван Иванов")
   const normalizeName = useCallback((name: string): { firstName: string; lastName: string; fullName: string } => {
@@ -339,8 +342,18 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       const { data, error } = await supabase.functions.invoke("ai-import-analyzer", {
         body: {
           type: "tariffs",
-          uniqueOffers: uniqueOffers.slice(0, 50),
-          existingTariffs: tariffs.map(t => ({ id: t.id, code: t.code, name: t.name })),
+          uniqueOffers: uniqueOffers.slice(0, 50).map(o => ({
+            name: o.name,
+            count: o.count,
+            samples: o.samples,
+            amount: o.amount,
+          })),
+          existingTariffs: tariffs.map(t => ({ 
+            id: t.id, 
+            code: t.code, 
+            name: t.name,
+            price: t.original_price,
+          })),
           existingRules: mappingRules?.map(r => ({ pattern: r.source_pattern, tariff_id: r.target_tariff_id })),
         },
       });
@@ -537,7 +550,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-4xl h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-primary" />
@@ -569,7 +582,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
           ))}
         </div>
 
-        <ScrollArea className="flex-1 px-1">
+        <ScrollArea className="flex-1 min-h-0 px-1">
           {/* Step 1: File Upload */}
           {step === 1 && (
             <div className="space-y-4 p-4">
@@ -714,7 +727,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
               </div>
 
               <div className="space-y-2">
-                {uniqueOffers.slice(0, 20).map((offer) => {
+                {uniqueOffers.map((offer) => {
                   const suggestion = tariffSuggestions.find(s => s.pattern === offer.name);
                   const isExpanded = expandedOffers.has(offer.name);
                   
