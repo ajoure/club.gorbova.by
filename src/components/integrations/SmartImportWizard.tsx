@@ -1310,14 +1310,23 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                       </Button>
                     </div>
                   ) : (
-                    <Button 
-                      onClick={() => { setImportCancelled(false); setIsImporting(true); importMutation.mutate({ mode: "full" }); }} 
-                      size="lg"
-                      className="w-full sm:w-auto"
-                    >
-                      <Upload className="h-4 w-4 mr-2" />
-                      Начать импорт
-                    </Button>
+                    <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                      <Button 
+                        onClick={() => { setImportCancelled(false); setIsImporting(true); importMutation.mutate({ mode: "full" }); }} 
+                        size="lg"
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Начать импорт
+                      </Button>
+                      <Button 
+                        onClick={() => { setImportCancelled(false); setIsImporting(true); importMutation.mutate({ mode: "test5" }); }} 
+                        variant="outline"
+                        size="lg"
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Тест: 5 сделок
+                      </Button>
+                    </div>
                   )}
                 </div>
               )}
