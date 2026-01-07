@@ -110,6 +110,48 @@ export type Database = {
           },
         ]
       }
+      consent_logs: {
+        Row: {
+          consent_type: string
+          created_at: string | null
+          email: string | null
+          granted: boolean
+          id: string
+          ip_address: string | null
+          meta: Json | null
+          policy_version: string
+          source: string
+          user_agent: string | null
+          user_id: string | null
+        }
+        Insert: {
+          consent_type: string
+          created_at?: string | null
+          email?: string | null
+          granted?: boolean
+          id?: string
+          ip_address?: string | null
+          meta?: Json | null
+          policy_version: string
+          source: string
+          user_agent?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          consent_type?: string
+          created_at?: string | null
+          email?: string | null
+          granted?: boolean
+          id?: string
+          ip_address?: string | null
+          meta?: Json | null
+          policy_version?: string
+          source?: string
+          user_agent?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       contact_requests: {
         Row: {
           consent: boolean
@@ -1497,6 +1539,33 @@ export type Database = {
           },
         ]
       }
+      privacy_policy_versions: {
+        Row: {
+          created_at: string | null
+          effective_date: string
+          id: string
+          is_current: boolean | null
+          summary: string | null
+          version: string
+        }
+        Insert: {
+          created_at?: string | null
+          effective_date: string
+          id?: string
+          is_current?: boolean | null
+          summary?: string | null
+          version: string
+        }
+        Update: {
+          created_at?: string | null
+          effective_date?: string
+          id?: string
+          is_current?: boolean | null
+          summary?: string | null
+          version?: string
+        }
+        Relationships: []
+      }
       product_club_mappings: {
         Row: {
           club_id: string
@@ -1696,6 +1765,8 @@ export type Database = {
       profiles: {
         Row: {
           avatar_url: string | null
+          consent_given_at: string | null
+          consent_version: string | null
           created_at: string
           duplicate_flag: string | null
           duplicate_group_id: string | null
@@ -1706,6 +1777,7 @@ export type Database = {
           is_archived: boolean | null
           last_name: string | null
           last_seen_at: string | null
+          marketing_consent: boolean | null
           merged_to_profile_id: string | null
           phone: string | null
           primary_in_group: boolean | null
@@ -1722,6 +1794,8 @@ export type Database = {
         }
         Insert: {
           avatar_url?: string | null
+          consent_given_at?: string | null
+          consent_version?: string | null
           created_at?: string
           duplicate_flag?: string | null
           duplicate_group_id?: string | null
@@ -1732,6 +1806,7 @@ export type Database = {
           is_archived?: boolean | null
           last_name?: string | null
           last_seen_at?: string | null
+          marketing_consent?: boolean | null
           merged_to_profile_id?: string | null
           phone?: string | null
           primary_in_group?: boolean | null
@@ -1748,6 +1823,8 @@ export type Database = {
         }
         Update: {
           avatar_url?: string | null
+          consent_given_at?: string | null
+          consent_version?: string | null
           created_at?: string
           duplicate_flag?: string | null
           duplicate_group_id?: string | null
@@ -1758,6 +1835,7 @@ export type Database = {
           is_archived?: boolean | null
           last_name?: string | null
           last_seen_at?: string | null
+          marketing_consent?: boolean | null
           merged_to_profile_id?: string | null
           phone?: string | null
           primary_in_group?: boolean | null
