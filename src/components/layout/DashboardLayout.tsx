@@ -3,6 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
 import { DashboardBreadcrumbs } from "./DashboardBreadcrumbs";
+import { ConsentUpdateModal } from "@/components/consent/ConsentUpdateModal";
 import { Loader2 } from "lucide-react";
 
 interface DashboardLayoutProps {
@@ -22,6 +23,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   return (
     <SidebarProvider>
+      <ConsentUpdateModal />
       <div className="min-h-screen flex w-full">
         <AppSidebar />
         <SidebarInset className="flex-1 flex flex-col min-w-0">

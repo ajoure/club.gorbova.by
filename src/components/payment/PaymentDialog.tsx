@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 
 interface PaymentDialogProps {
@@ -75,6 +76,7 @@ export function PaymentDialog({
   const [loginError, setLoginError] = useState<string | null>(null);
   const [savedCard, setSavedCard] = useState<{ id: string; brand: string; last4: string } | null>(null);
   const [isLoadingCard, setIsLoadingCard] = useState(false);
+  const [privacyConsent, setPrivacyConsent] = useState(false);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -124,6 +126,7 @@ export function PaymentDialog({
       setErrors({});
       setEmailCheckResult(null);
       setLoginError(null);
+      setPrivacyConsent(false);
     }
   }, [open, user, session]);
 
@@ -269,6 +272,11 @@ export function PaymentDialog({
     const phoneValidation = phoneSchema.safeParse(formData.phone.replace(/\D/g, ""));
     if (!phoneValidation.success) {
       newErrors.phone = phoneValidation.error.errors[0].message;
+    }
+
+    if (!privacyConsent) {
+      toast.error("Необходимо согласиться с Политикой конфиденциальности");
+      return;
     }
 
     if (Object.keys(newErrors).length > 0) {
@@ -674,6 +682,26 @@ export function PaymentDialog({
               <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на email.</p>
             </div>
 
+            {/* Privacy consent checkbox */}
+            <div className="flex items-start gap-3 p-3 rounded-lg border border-border/50 bg-muted/30">
+              <Checkbox
+                id="payment-privacy-consent"
+                checked={privacyConsent}
+                onCheckedChange={(checked) => setPrivacyConsent(!!checked)}
+                className="mt-0.5"
+              />
+              <Label htmlFor="payment-privacy-consent" className="text-sm leading-snug cursor-pointer">
+                Я согласен(на) с{" "}
+                <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                  Политикой конфиденциальности
+                </a>{" "}
+                и{" "}
+                <a href="/offer" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                  Публичной офертой
+                </a>
+              </Label>
+            </div>
+
             <div className="flex gap-2">
               <Button
                 type="button"
@@ -684,7 +712,7 @@ export function PaymentDialog({
               >
                 Назад
               </Button>
-              <Button type="submit" disabled={isLoading} className="flex-1">
+              <Button type="submit" disabled={isLoading || !privacyConsent} className="flex-1">
                 Продолжить
               </Button>
             </div>

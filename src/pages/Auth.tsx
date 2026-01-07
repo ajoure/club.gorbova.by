@@ -5,11 +5,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
 import { Loader2, Mail, Lock, User, ArrowRight, ArrowLeft, Check, X } from "lucide-react";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 import logoImage from "@/assets/logo.png";
+
+const CURRENT_POLICY_VERSION = "v2026-01-07";
 
 const loginSchema = z.object({
   email: z.string().email("Введите корректный email"),
@@ -80,6 +83,7 @@ export default function Auth() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldError[]>([]);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [privacyConsent, setPrivacyConsent] = useState(false);
 
   // Get redirectTo from URL params
   const redirectTo = searchParams.get("redirectTo") || "/dashboard";
@@ -259,6 +263,17 @@ export default function Auth() {
           navigate(redirectTo);
         }
       } else if (mode === "signup") {
+        // Check privacy consent
+        if (!privacyConsent) {
+          toast({
+            title: "Необходимо согласие",
+            description: "Для регистрации необходимо согласиться с Политикой конфиденциальности",
+            variant: "destructive",
+          });
+          setIsSubmitting(false);
+          return;
+        }
+
         const validation = signupSchema.safeParse({ 
           email, 
           password, 
@@ -279,9 +294,9 @@ export default function Auth() {
         }
 
         const cleanPhone = phone.replace(/[^\d+]/g, '');
-        const { error } = await signUp(email, password, firstName.trim(), lastName.trim(), cleanPhone);
-        if (error) {
-          if (error.message.includes("already registered")) {
+        const signUpResult = await signUp(email, password, firstName.trim(), lastName.trim(), cleanPhone);
+        if (signUpResult.error) {
+          if (signUpResult.error.message.includes("already registered")) {
             setFieldErrors([{ field: "email", message: "Этот email уже зарегистрирован. Попробуйте войти." }]);
           } else {
             toast({
@@ -291,6 +306,33 @@ export default function Auth() {
             });
           }
         } else {
+          // Log consent after successful registration - use email to find profile
+          try {
+            const { data: profile } = await supabase
+              .from("profiles")
+              .select("user_id")
+              .eq("email", email.toLowerCase())
+              .maybeSingle();
+
+            if (profile?.user_id) {
+              await supabase.from("consent_logs").insert({
+                user_id: profile.user_id,
+                email: email,
+                consent_type: "privacy_policy",
+                policy_version: CURRENT_POLICY_VERSION,
+                granted: true,
+                source: "registration",
+              });
+
+              await supabase.from("profiles").update({
+                consent_version: CURRENT_POLICY_VERSION,
+                consent_given_at: new Date().toISOString(),
+              }).eq("user_id", profile.user_id);
+            }
+          } catch (consentError) {
+            console.error("Error logging consent:", consentError);
+          }
+
           toast({
             title: "Регистрация успешна!",
             description: "Добро пожаловать в систему",
@@ -640,15 +682,39 @@ export default function Auth() {
                     {getFieldError('confirmPassword') && (
                       <p className="text-sm text-destructive">{getFieldError('confirmPassword')}</p>
                     )}
-                    {touched.confirmPassword && !passwordsMatch && confirmPassword && !getFieldError('confirmPassword') && (
-                      <p className="text-sm text-destructive">Пароли не совпадают</p>
-                    )}
+                {touched.confirmPassword && !passwordsMatch && confirmPassword && !getFieldError('confirmPassword') && (
+                  <p className="text-sm text-destructive">Пароли не совпадают</p>
+                )}
+                  </div>
+                )}
+
+                {/* Privacy consent checkbox for signup */}
+                {mode === "signup" && (
+                  <div className="flex items-start gap-3 p-4 rounded-xl bg-muted/50 border border-border/50">
+                    <Checkbox
+                      id="privacy-consent"
+                      checked={privacyConsent}
+                      onCheckedChange={(checked) => setPrivacyConsent(!!checked)}
+                      className="mt-0.5"
+                    />
+                    <Label htmlFor="privacy-consent" className="text-sm leading-snug cursor-pointer">
+                      Я согласен(на) с{" "}
+                      <a 
+                        href="/privacy" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >
+                        Политикой конфиденциальности
+                      </a>{" "}
+                      и даю согласие на обработку персональных данных
+                    </Label>
                   </div>
                 )}
 
                 <Button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || (mode === "signup" && !privacyConsent)}
                   className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
                 >
                   {isSubmitting ? (

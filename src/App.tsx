@@ -51,6 +51,7 @@ import Documentation from "./pages/Documentation";
 import Help from "./pages/Help";
 import ProfileSettings from "./pages/settings/Profile";
 import PaymentMethodsSettings from "./pages/settings/PaymentMethods";
+import ConsentsSettings from "./pages/settings/Consents";
 import AdminInstallments from "./pages/admin/AdminInstallments";
 
 const queryClient = new QueryClient();
@@ -97,6 +98,7 @@ const App = () => (
               <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
               <Route path="/settings/profile" element={<ProtectedRoute><ProfileSettings /></ProtectedRoute>} />
               <Route path="/settings/payment-methods" element={<ProtectedRoute><PaymentMethodsSettings /></ProtectedRoute>} />
+              <Route path="/settings/consents" element={<ProtectedRoute><ConsentsSettings /></ProtectedRoute>} />
               <Route path="/settings/subscriptions" element={<Navigate to="/purchases" replace />} />
               
               {/* Admin routes - CRM */}
