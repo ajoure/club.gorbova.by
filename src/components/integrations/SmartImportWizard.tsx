@@ -543,11 +543,12 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
         }
         
         return {
-          email: String(row[columnMapping.email!] || "").toLowerCase().trim(),
-          phone: String(row[columnMapping.phone!] || ""),
-          fullName: rawFullName,
-          firstName,
-          lastName,
+          // Map to field names expected by edge function
+          user_email: String(row[columnMapping.email!] || "").toLowerCase().trim(),
+          user_phone: String(row[columnMapping.phone!] || ""),
+          user_full_name: rawFullName,
+          user_first_name: firstName,
+          user_last_name: lastName,
           offerName,
           tariffCode,
           amount: parseFloat(String(row[columnMapping.amount!] || "0")) || 0,
@@ -568,7 +569,7 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
     
     deals.forEach((d) => {
       byTariff.set(d.tariffCode, (byTariff.get(d.tariffCode) || 0) + 1);
-      if (d.email) uniqueEmails.add(d.email);
+      if (d.user_email) uniqueEmails.add(d.user_email);
       if (d.tariffCode === "UNKNOWN") unknownTariffCount++;
     });
     

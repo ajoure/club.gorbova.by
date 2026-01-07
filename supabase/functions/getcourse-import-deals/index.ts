@@ -424,12 +424,6 @@ async function findOrCreateProfile(
       last_name: lastName,
       phone: deal.user_phone,
       status: 'ghost',
-      meta: {
-        source: 'getcourse_import',
-        gc_user_id: deal.user_id,
-        needs_migration: true,
-        imported_at: new Date().toISOString(),
-      },
     })
     .select('id, user_id')
     .single();
@@ -735,7 +729,7 @@ Deno.serve(async (req) => {
     const offerIds = body.offerIds || body.offer_ids;
     const dateFrom = body.dateFrom || body.date_from;
     const dateTo = body.dateTo || body.date_to;
-    const fileDeals = body.deals; // Deals from file import
+    const fileDeals = body.fileDeals || body.deals; // Deals from file import (support both param names)
     
     // Настройки нормализации (по умолчанию включены)
     const normalizeNames = body.settings?.normalizeNames !== false;
