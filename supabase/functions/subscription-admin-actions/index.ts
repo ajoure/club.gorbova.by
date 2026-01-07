@@ -744,17 +744,20 @@ Deno.serve(async (req) => {
           console.log('Telegram revoke result:', revokeResult.data);
         }
 
-        // Cancel in GetCourse before deletion with amount
+        // Cancel in GetCourse before deletion with amount and deal_number
         const tariffForDelete = subscription.tariffs as any;
         const gcOfferIdDelete = tariffForDelete?.getcourse_offer_id || tariffForDelete?.getcourse_offer_code;
         const orderForDelete = subscription.orders_v2 as any;
+        // Use gc_deal_number (our generated number) for updates, fallback to gc_order_id
+        const gcDealNumberDelete = orderForDelete?.meta?.gc_deal_number || orderForDelete?.meta?.gc_order_id;
         if (gcOfferIdDelete && orderForDelete?.customer_email) {
           const gcResult = await cancelGetCourseOrder(
             orderForDelete.customer_email,
             gcOfferIdDelete,
             orderForDelete.order_number || subscription_id,
             'Подписка удалена',
-            orderForDelete.final_price || 0
+            orderForDelete.final_price || 0,
+            gcDealNumberDelete // Pass deal_number to update existing deal
           );
           console.log('GetCourse cancel result:', gcResult);
           result.getcourse_cancel = gcResult;
