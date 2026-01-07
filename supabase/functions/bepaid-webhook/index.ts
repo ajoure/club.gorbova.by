@@ -15,13 +15,24 @@ interface GetCourseUserData {
   lastName?: string | null;
 }
 
+// Generate a consistent deal_number from orderNumber for GetCourse updates
+function generateDealNumber(orderNumber: string): number {
+  let hash = 0;
+  for (let i = 0; i < orderNumber.length; i++) {
+    const char = orderNumber.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash);
+}
+
 async function sendToGetCourse(
   userData: GetCourseUserData,
   offerId: number,
   orderNumber: string,
   amount: number,
   tariffCode: string
-): Promise<{ success: boolean; error?: string; gcOrderId?: string }> {
+): Promise<{ success: boolean; error?: string; gcOrderId?: string; gcDealNumber?: number }> {
   const apiKey = Deno.env.get('GETCOURSE_API_KEY');
   const accountName = 'gorbova';
   
@@ -38,7 +49,10 @@ async function sendToGetCourse(
   try {
     console.log(`Sending order to GetCourse: email=${userData.email}, offerId=${offerId}, orderNumber=${orderNumber}`);
     
-    // GetCourse API expects form-encoded data with action and params
+    // Generate a consistent deal_number from our order_number for future updates
+    const dealNumber = generateDealNumber(orderNumber);
+    console.log(`Generated deal_number=${dealNumber} from orderNumber=${orderNumber}`);
+    
     const params = {
       user: {
         email: userData.email,
@@ -50,6 +64,8 @@ async function sendToGetCourse(
         refresh_if_exists: 1,
       },
       deal: {
+        // CRITICAL: Pass our own deal_number so we can update this deal later
+        deal_number: dealNumber,
         offer_code: offerId.toString(),
         deal_cost: amount / 100, // Convert from kopecks
         deal_status: 'payed',
@@ -88,8 +104,8 @@ async function sendToGetCourse(
     
     // Check result.success, not top-level success (which is just API call status)
     if (data.result?.success === true) {
-      console.log('Order successfully sent to GetCourse, deal_id:', data.result?.deal_id);
-      return { success: true, gcOrderId: data.result?.deal_id?.toString() };
+      console.log('Order successfully sent to GetCourse, deal_id:', data.result?.deal_id, 'deal_number:', dealNumber);
+      return { success: true, gcOrderId: data.result?.deal_id?.toString(), gcDealNumber: dealNumber };
     } else {
       const errorMsg = data.result?.error_message || data.error_message || 'Unknown error';
       console.error('GetCourse error:', errorMsg);
@@ -1253,7 +1269,7 @@ Deno.serve(async (req) => {
       );
 
       // Send to GetCourse
-      let gcSyncResult: { success: boolean; error?: string; gcOrderId?: string } = { success: false };
+      let gcSyncResult: { success: boolean; error?: string; gcOrderId?: string; gcDealNumber?: number } = { success: false };
       const tariffCode = meta.tariff_code as string | undefined;
       
       if (tariffCode && order.customer_email) {
@@ -1293,7 +1309,7 @@ Deno.serve(async (req) => {
             tariffCode
           );
           
-          // Update order with GetCourse sync status
+          // Update order with GetCourse sync status including deal_number for future updates
           await supabase
             .from('orders_v2')
             .update({
@@ -1302,6 +1318,7 @@ Deno.serve(async (req) => {
                 gc_sync_status: gcSyncResult.success ? 'success' : 'failed',
                 gc_sync_error: gcSyncResult.error || null,
                 gc_order_id: gcSyncResult.gcOrderId || null,
+                gc_deal_number: gcSyncResult.gcDealNumber || null,
                 gc_sync_at: new Date().toISOString(),
               },
             })
