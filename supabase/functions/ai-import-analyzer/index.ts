@@ -118,6 +118,8 @@ ${JSON.stringify(uniqueOffers?.map(o => ({
 })).slice(0, 10), null, 2)}`;
     }
 
+    console.log("Calling AI Gateway with model: google/gemini-2.5-flash");
+    
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -134,9 +136,13 @@ ${JSON.stringify(uniqueOffers?.map(o => ({
       }),
     });
 
+    // Get response as text first to handle empty responses
+    const responseText = await response.text();
+    console.log("AI Gateway response status:", response.status);
+    console.log("AI Gateway response length:", responseText.length);
+
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("AI Gateway error:", response.status, errorText);
+      console.error("AI Gateway error:", response.status, responseText);
       
       if (response.status === 429) {
         return new Response(JSON.stringify({ error: "Rate limit exceeded, please try again later" }), {
@@ -151,11 +157,30 @@ ${JSON.stringify(uniqueOffers?.map(o => ({
         });
       }
       
-      throw new Error(`AI Gateway error: ${response.status}`);
+      throw new Error(`AI Gateway error: ${response.status} - ${responseText}`);
     }
 
-    const aiResponse = await response.json();
+    // Check for empty response
+    if (!responseText || responseText.trim() === "") {
+      console.error("AI Gateway returned empty response");
+      throw new Error("AI Gateway returned empty response");
+    }
+
+    let aiResponse;
+    try {
+      aiResponse = JSON.parse(responseText);
+    } catch (e) {
+      console.error("Failed to parse AI Gateway response:", responseText);
+      throw new Error("Failed to parse AI Gateway response");
+    }
+
     const content = aiResponse.choices?.[0]?.message?.content || "";
+    console.log("AI content length:", content.length);
+
+    if (!content) {
+      console.error("AI returned empty content");
+      throw new Error("AI returned empty content");
+    }
 
     // Parse JSON from response
     let result;

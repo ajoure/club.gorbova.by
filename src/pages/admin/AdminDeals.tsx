@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
 import {
   Search,
   Handshake,
@@ -39,6 +51,7 @@ import {
   TrendingUp,
   Upload,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { SmartImportWizard } from "@/components/integrations/SmartImportWizard";
@@ -61,6 +74,9 @@ export default function AdminDeals() {
   const [productFilter, setProductFilter] = useState<string>("all");
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [showImportWizard, setShowImportWizard] = useState(false);
+  const [selectedDealIds, setSelectedDealIds] = useState<Set<string>>(new Set());
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const queryClient = useQueryClient();
 
   // Fetch deals (orders_v2) with related data
   const { data: deals, isLoading, refetch } = useQuery({
@@ -148,6 +164,61 @@ export default function AdminDeals() {
   }, [deals, search, profilesMap]);
 
   const selectedDeal = deals?.find(d => d.id === selectedDealId);
+
+  // Bulk delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      // First delete related payments
+      const { error: paymentsError } = await supabase
+        .from("payments_v2")
+        .delete()
+        .in("order_id", ids);
+      
+      if (paymentsError) {
+        console.error("Error deleting payments:", paymentsError);
+      }
+
+      // Then delete orders
+      const { error } = await supabase
+        .from("orders_v2")
+        .delete()
+        .in("id", ids);
+      
+      if (error) throw error;
+      return ids.length;
+    },
+    onSuccess: (count) => {
+      toast.success(`Удалено ${count} сделок`);
+      setSelectedDealIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+    },
+    onError: (error) => {
+      toast.error("Ошибка удаления: " + (error as Error).message);
+    },
+  });
+
+  const handleSelectAll = () => {
+    if (selectedDealIds.size === filteredDeals.length) {
+      setSelectedDealIds(new Set());
+    } else {
+      setSelectedDealIds(new Set(filteredDeals.map(d => d.id)));
+    }
+  };
+
+  const handleSelectDeal = (id: string) => {
+    const newSelected = new Set(selectedDealIds);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedDealIds(newSelected);
+  };
+
+  const handleBulkDelete = () => {
+    deleteMutation.mutate(Array.from(selectedDealIds));
+    setShowDeleteDialog(false);
+  };
 
   return (
     <div className="space-y-6">
@@ -261,9 +332,23 @@ export default function AdminDeals() {
         </Select>
       </div>
 
-      {/* Stats line */}
-      <div className="flex items-center gap-4 text-sm text-muted-foreground">
+      {/* Stats line & bulk actions */}
+      <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
         <span>Найдено: <strong className="text-foreground">{filteredDeals.length}</strong></span>
+        {selectedDealIds.size > 0 && (
+          <div className="flex items-center gap-2">
+            <span>Выбрано: <strong className="text-foreground">{selectedDealIds.size}</strong></span>
+            <Button 
+              variant="destructive" 
+              size="sm"
+              onClick={() => setShowDeleteDialog(true)}
+              disabled={deleteMutation.isPending}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Удалить выбранные
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Deals Table */}
@@ -283,6 +368,12 @@ export default function AdminDeals() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={filteredDeals.length > 0 && selectedDealIds.size === filteredDeals.length}
+                    onCheckedChange={handleSelectAll}
+                  />
+                </TableHead>
                 <TableHead>Дата</TableHead>
                 <TableHead>Контакт</TableHead>
                 <TableHead>Продукт / Тариф</TableHead>
@@ -306,6 +397,12 @@ export default function AdminDeals() {
                     className="cursor-pointer hover:bg-muted/50"
                     onClick={() => setSelectedDealId(deal.id)}
                   >
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedDealIds.has(deal.id)}
+                        onCheckedChange={() => handleSelectDeal(deal.id)}
+                      />
+                    </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2 text-sm">
                         <Calendar className="h-3 w-3 text-muted-foreground" />
@@ -391,6 +488,28 @@ export default function AdminDeals() {
         open={showImportWizard}
         onOpenChange={setShowImportWizard}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить сделки?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Вы уверены, что хотите удалить {selectedDealIds.size} сделок? 
+              Также будут удалены все связанные платежи. Это действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleBulkDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
