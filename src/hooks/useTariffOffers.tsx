@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
+export type PaymentMethod = "full_payment" | "internal_installment" | "bank_installment";
+
 export interface TariffOffer {
   id: string;
   tariff_id: string;
@@ -20,11 +22,22 @@ export interface TariffOffer {
   sort_order: number;
   getcourse_offer_id: string | null;
   reject_virtual_cards: boolean;
+  // Installment fields
+  payment_method: PaymentMethod;
+  installment_count: number | null;
+  installment_interval_days: number | null;
+  first_payment_delay_days: number | null;
   created_at: string;
   updated_at: string;
 }
 
-export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated_at" | "getcourse_offer_id"> & { getcourse_offer_id?: string | null };
+export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated_at" | "getcourse_offer_id" | "payment_method" | "installment_count" | "installment_interval_days" | "first_payment_delay_days"> & { 
+  getcourse_offer_id?: string | null;
+  payment_method?: PaymentMethod;
+  installment_count?: number | null;
+  installment_interval_days?: number | null;
+  first_payment_delay_days?: number | null;
+};
 export type TariffOfferUpdate = Partial<Omit<TariffOffer, "id" | "created_at" | "updated_at">> & { id: string };
 
 export function useTariffOffers(tariffId?: string) {

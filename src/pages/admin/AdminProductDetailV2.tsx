@@ -14,8 +14,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { 
-  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe
+  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard
 } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
@@ -34,6 +35,7 @@ import {
   useSetPrimaryOffer,
   type TariffOffer,
   type TariffOfferInsert,
+  type PaymentMethod,
 } from "@/hooks/useTariffOffers";
 import { isFeatureVisible, type TariffFeature } from "@/hooks/useTariffFeatures";
 
@@ -113,6 +115,11 @@ export default function AdminProductDetailV2() {
     is_active: true,
     getcourse_offer_id: "",
     reject_virtual_cards: false,
+    // Installment fields
+    payment_method: "full_payment" as PaymentMethod,
+    installment_count: 3,
+    installment_interval_days: 30,
+    first_payment_delay_days: 0,
   });
 
   // Flow form
@@ -212,6 +219,10 @@ export default function AdminProductDetailV2() {
         is_active: offer.is_active ?? true,
         getcourse_offer_id: offer.getcourse_offer_id || "",
         reject_virtual_cards: offer.reject_virtual_cards ?? false,
+        payment_method: offer.payment_method || "full_payment",
+        installment_count: offer.installment_count || 3,
+        installment_interval_days: offer.installment_interval_days || 30,
+        first_payment_delay_days: offer.first_payment_delay_days || 0,
       });
       setOfferDialog({ open: true, editing: offer });
     } else {
@@ -228,6 +239,10 @@ export default function AdminProductDetailV2() {
         is_active: true,
         getcourse_offer_id: "",
         reject_virtual_cards: false,
+        payment_method: "full_payment",
+        installment_count: 3,
+        installment_interval_days: 30,
+        first_payment_delay_days: 0,
       });
       setOfferDialog({ open: true, editing: null });
     }
@@ -238,6 +253,7 @@ export default function AdminProductDetailV2() {
       toast.error("Заполните обязательные поля");
       return;
     }
+    const isInstallment = offerForm.payment_method === "internal_installment";
     const data: TariffOfferInsert = {
       tariff_id: offerForm.tariff_id,
       offer_type: offerForm.offer_type,
@@ -247,7 +263,7 @@ export default function AdminProductDetailV2() {
       auto_charge_after_trial: offerForm.offer_type === "trial" ? offerForm.auto_charge_after_trial : false,
       auto_charge_amount: offerForm.offer_type === "trial" ? offerForm.auto_charge_amount : null,
       auto_charge_delay_days: offerForm.offer_type === "trial" ? offerForm.auto_charge_delay_days : null,
-      requires_card_tokenization: offerForm.offer_type === "trial" ? true : offerForm.requires_card_tokenization,
+      requires_card_tokenization: offerForm.offer_type === "trial" ? true : (isInstallment || offerForm.requires_card_tokenization),
       is_active: offerForm.is_active,
       is_primary: offerForm.offer_type === "pay_now" ? (offerForm as any).is_primary ?? false : false,
       visible_from: null,
@@ -255,6 +271,11 @@ export default function AdminProductDetailV2() {
       sort_order: offerForm.offer_type === "trial" ? 1 : 0,
       getcourse_offer_id: offerForm.getcourse_offer_id || null,
       reject_virtual_cards: offerForm.reject_virtual_cards,
+      // Installment fields
+      payment_method: offerForm.offer_type === "pay_now" ? offerForm.payment_method : "full_payment",
+      installment_count: isInstallment ? offerForm.installment_count : null,
+      installment_interval_days: isInstallment ? offerForm.installment_interval_days : null,
+      first_payment_delay_days: isInstallment ? offerForm.first_payment_delay_days : null,
     };
     if (offerDialog.editing) {
       await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
@@ -776,20 +797,135 @@ export default function AdminProductDetailV2() {
             </div>
 
             {offerForm.offer_type === "pay_now" && (
-              <div className="border-t pt-4">
-                <h4 className="font-medium mb-3 text-sm">Настройки оплаты</h4>
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    checked={offerForm.requires_card_tokenization}
-                    onCheckedChange={(checked) => setOfferForm({ ...offerForm, requires_card_tokenization: checked })}
-                  />
-                  <Label>Подписка (автопродление)</Label>
+              <div className="border-t pt-4 space-y-4">
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Способ оплаты</Label>
+                  <RadioGroup
+                    value={offerForm.payment_method}
+                    onValueChange={(v: PaymentMethod) => setOfferForm({ ...offerForm, payment_method: v })}
+                    className="space-y-2"
+                  >
+                    <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                      <RadioGroupItem value="full_payment" id="full_payment" />
+                      <Label htmlFor="full_payment" className="cursor-pointer flex-1">
+                        <div className="font-medium">100% оплата</div>
+                        <div className="text-xs text-muted-foreground">Полная оплата сразу</div>
+                      </Label>
+                    </div>
+                    <div className="flex items-center space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                      <RadioGroupItem value="internal_installment" id="internal_installment" />
+                      <Label htmlFor="internal_installment" className="cursor-pointer flex-1">
+                        <div className="font-medium flex items-center gap-2">
+                          <CreditCard className="h-4 w-4" />
+                          Внутренняя рассрочка
+                        </div>
+                        <div className="text-xs text-muted-foreground">Автоматические списания по графику</div>
+                      </Label>
+                    </div>
+                    <div className="flex items-center space-x-3 p-3 rounded-lg border bg-muted/30 opacity-70">
+                      <RadioGroupItem value="bank_installment" id="bank_installment" />
+                      <Label htmlFor="bank_installment" className="cursor-pointer flex-1">
+                        <div className="font-medium">Банковская рассрочка</div>
+                        <div className="text-xs text-muted-foreground">Рассрочка через банк (настроим позже)</div>
+                      </Label>
+                    </div>
+                  </RadioGroup>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {offerForm.requires_card_tokenization 
-                    ? "Карта будет сохранена для автоматического продления" 
-                    : "Разовый платёж без сохранения карты"}
-                </p>
+
+                {/* Installment settings */}
+                {offerForm.payment_method === "internal_installment" && (
+                  <div className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg space-y-4">
+                    <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
+                      <CreditCard className="h-4 w-4" />
+                      <span className="font-medium text-sm">Настройка рассрочки</span>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Количество платежей</Label>
+                        <Input
+                          type="number"
+                          min={2}
+                          max={24}
+                          value={offerForm.installment_count}
+                          onChange={(e) => setOfferForm({ ...offerForm, installment_count: parseInt(e.target.value) || 3 })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Интервал (дней)</Label>
+                        <Input
+                          type="number"
+                          min={7}
+                          max={90}
+                          value={offerForm.installment_interval_days}
+                          onChange={(e) => setOfferForm({ ...offerForm, installment_interval_days: parseInt(e.target.value) || 30 })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Первый платёж через (дней)</Label>
+                      <div className="flex items-center gap-4">
+                        <Input
+                          type="number"
+                          min={0}
+                          max={30}
+                          value={offerForm.first_payment_delay_days}
+                          onChange={(e) => setOfferForm({ ...offerForm, first_payment_delay_days: parseInt(e.target.value) || 0 })}
+                          className="w-24"
+                        />
+                        <span className="text-sm text-muted-foreground">
+                          {offerForm.first_payment_delay_days === 0 ? "Сразу при покупке" : `Через ${offerForm.first_payment_delay_days} дней`}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Payment schedule preview */}
+                    {offerForm.amount > 0 && offerForm.installment_count > 1 && (
+                      <div className="pt-3 border-t border-amber-200 dark:border-amber-800">
+                        <Label className="text-xs text-amber-700 dark:text-amber-300">График платежей:</Label>
+                        <div className="mt-2 space-y-1.5 max-h-32 overflow-y-auto">
+                          {Array.from({ length: offerForm.installment_count }, (_, i) => {
+                            const perPayment = offerForm.amount / offerForm.installment_count;
+                            const delay = offerForm.first_payment_delay_days + (i * offerForm.installment_interval_days);
+                            return (
+                              <div key={i} className="flex justify-between text-sm">
+                                <span className="text-amber-700 dark:text-amber-300">
+                                  {i + 1}. {delay === 0 ? "При покупке" : `Через ${delay} дн.`}
+                                </span>
+                                <span className="font-medium text-amber-900 dark:text-amber-100">
+                                  {perPayment.toFixed(2)} BYN
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-800 flex justify-between text-sm font-medium">
+                          <span className="text-amber-700 dark:text-amber-300">Итого:</span>
+                          <span className="text-amber-900 dark:text-amber-100">{offerForm.amount} BYN</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Subscription toggle - only for full payment */}
+                {offerForm.payment_method === "full_payment" && (
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        checked={offerForm.requires_card_tokenization}
+                        onCheckedChange={(checked) => setOfferForm({ ...offerForm, requires_card_tokenization: checked })}
+                      />
+                      <Label>Подписка (автопродление)</Label>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {offerForm.requires_card_tokenization 
+                        ? "Карта будет сохранена для автоматического продления" 
+                        : "Разовый платёж без сохранения карты"}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -838,8 +974,8 @@ export default function AdminProductDetailV2() {
               </>
             )}
 
-            {/* Virtual card blocking - show when tokenization is required */}
-            {(offerForm.requires_card_tokenization || offerForm.offer_type === "trial") && (
+            {/* Virtual card blocking - show when tokenization is required or installment */}
+            {(offerForm.requires_card_tokenization || offerForm.offer_type === "trial" || offerForm.payment_method === "internal_installment") && (
               <div className="border-t pt-4">
                 <div className="flex items-center space-x-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg">
                   <Switch

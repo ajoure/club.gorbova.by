@@ -2220,12 +2220,16 @@ export type Database = {
           auto_charge_delay_days: number | null
           button_label: string
           created_at: string | null
+          first_payment_delay_days: number | null
           getcourse_offer_id: string | null
           id: string
+          installment_count: number | null
+          installment_interval_days: number | null
           is_active: boolean | null
           is_installment: boolean | null
           is_primary: boolean | null
           offer_type: string
+          payment_method: string | null
           reject_virtual_cards: boolean | null
           requires_card_tokenization: boolean | null
           sort_order: number | null
@@ -2242,12 +2246,16 @@ export type Database = {
           auto_charge_delay_days?: number | null
           button_label: string
           created_at?: string | null
+          first_payment_delay_days?: number | null
           getcourse_offer_id?: string | null
           id?: string
+          installment_count?: number | null
+          installment_interval_days?: number | null
           is_active?: boolean | null
           is_installment?: boolean | null
           is_primary?: boolean | null
           offer_type: string
+          payment_method?: string | null
           reject_virtual_cards?: boolean | null
           requires_card_tokenization?: boolean | null
           sort_order?: number | null
@@ -2264,12 +2272,16 @@ export type Database = {
           auto_charge_delay_days?: number | null
           button_label?: string
           created_at?: string | null
+          first_payment_delay_days?: number | null
           getcourse_offer_id?: string | null
           id?: string
+          installment_count?: number | null
+          installment_interval_days?: number | null
           is_active?: boolean | null
           is_installment?: boolean | null
           is_primary?: boolean | null
           offer_type?: string
+          payment_method?: string | null
           reject_virtual_cards?: boolean | null
           requires_card_tokenization?: boolean | null
           sort_order?: number | null
