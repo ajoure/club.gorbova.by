@@ -9,8 +9,8 @@ interface AnalyzeRequest {
   type: "columns" | "tariffs";
   headers?: string[];
   sampleRows?: Record<string, unknown>[];
-  uniqueOffers?: { name: string; count: number; samples?: Record<string, unknown>[] }[];
-  existingTariffs?: { id: string; code: string; name: string }[];
+  uniqueOffers?: { name: string; count: number; samples?: Record<string, unknown>[]; amount?: number }[];
+  existingTariffs?: { id: string; code: string; name: string; price?: number }[];
   existingRules?: { pattern: string; tariff_id: string }[];
 }
 
@@ -72,7 +72,7 @@ ${JSON.stringify(sampleRows?.slice(0, 3), null, 2)}
       systemPrompt = `Ты эксперт по сопоставлению продуктов и тарифов из разных систем.
 Твоя задача - сопоставить названия офферов из импорта с существующими тарифами.
 
-Существующие тарифы:
+Существующие тарифы с ценами:
 ${JSON.stringify(existingTariffs, null, 2)}
 
 ${existingRules?.length ? `Существующие правила маппинга:\n${JSON.stringify(existingRules, null, 2)}` : ""}
@@ -83,10 +83,11 @@ ${existingRules?.length ? `Существующие правила маппин�
     {
       "pattern": "название оффера из импорта",
       "count": 100,
-      "action": "map_to_tariff" | "use_secondary_field" | "skip" | "create_rule",
+      "action": "map_to_tariff" | "use_secondary_field" | "skip" | "create_rule" | "needs_review",
       "targetTariffId": "id тарифа если map_to_tariff",
       "targetTariffCode": "код тарифа",
       "secondaryField": "название поля с тарифом если use_secondary_field",
+      "suggestedPrice": 100,
       "confidence": 0.9,
       "reason": "объяснение почему такой маппинг"
     }
@@ -95,27 +96,35 @@ ${existingRules?.length ? `Существующие правила маппин�
   "notes": "общие примечания"
 }
 
-Логика маппинга:
-- "Клуб: chat" / "Клуб Chat" → тариф с кодом chat
-- "Клуб: full" / "Клуб Full" → тариф с кодом full  
-- "Клуб: business" / "Клуб Business" → тариф с кодом business
-- "Клуб 07/2022" без указания тарифа → проверь дополнительное поле "Выбрать тариф клуба"
-- Если в samples есть поле с "chat"/"full"/"business" → use_secondary_field`;
+ЛОГИКА ОПРЕДЕЛЕНИЯ ТАРИФА:
+1. Если в названии оффера есть "chat" (регистронезависимо) → тариф с кодом chat
+2. Если в названии есть "full" / "полный" → тариф с кодом full  
+3. Если в названии есть "business" / "бизнес" → тариф с кодом business
+4. Если название не содержит явного указания тарифа, проверь сумму (amount):
+   - ~100 BYN → скорее всего тариф chat
+   - ~150 BYN → скорее всего тариф full
+   - ~250 BYN → скорее всего тариф business
+   - Сравни с ценами тарифов из existingTariffs.price
+5. "Клуб 07/2022" без указания тарифа → проверь дополнительное поле "Выбрать тариф клуба" → use_secondary_field
+6. Если в samples есть поле со значением "chat"/"full"/"business" → use_secondary_field с указанием этого поля
+7. Если ничего не подходит → action: "needs_review" с suggestedPrice (сумма из данных) для ручного выбора`;
 
       userPrompt = `Проанализируй эти уникальные офферы и предложи маппинг на тарифы:
 
-УНИКАЛЬНЫЕ ОФФЕРЫ:
+УНИКАЛЬНЫЕ ОФФЕРЫ С СУММАМИ:
 ${JSON.stringify(uniqueOffers?.map(o => ({
   name: o.name,
   count: o.count,
+  amount: o.amount,
   sampleFields: o.samples?.[0] ? Object.keys(o.samples[0]) : []
 })), null, 2)}
 
 ПРИМЕРЫ ДАННЫХ ДЛЯ КАЖДОГО ОФФЕРА:
 ${JSON.stringify(uniqueOffers?.map(o => ({
   name: o.name,
+  amount: o.amount,
   sample: o.samples?.[0]
-})).slice(0, 10), null, 2)}`;
+})).slice(0, 15), null, 2)}`;
     }
 
     console.log("Calling AI Gateway with model: google/gemini-2.5-flash");
