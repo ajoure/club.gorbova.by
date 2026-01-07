@@ -25,6 +25,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   User,
   Mail,
   Phone,
@@ -44,6 +50,7 @@ import {
   RotateCcw,
   Settings,
   ChevronRight,
+  ChevronDown,
   Eye,
   Trash2,
   Send,
@@ -986,28 +993,43 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                                   Возобновить
                                 </Button>
                               ) : isActive ? (
-                                <>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => handleSubscriptionAction("cancel", sub.id)}
-                                    disabled={isProcessing}
-                                    className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1 text-amber-600 hover:text-amber-700"
-                                  >
-                                    <Ban className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
-                                    <span className="hidden sm:inline">Отменить</span>
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => handleSubscriptionAction("revoke_access", sub.id)}
-                                    disabled={isProcessing}
-                                    className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1 text-red-600 hover:text-red-700"
-                                  >
-                                    <XCircle className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
-                                    <span className="hidden sm:inline">Заблокировать</span>
-                                  </Button>
-                              </>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={isProcessing}
+                                      className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
+                                    >
+                                      <Ban className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
+                                      <span className="hidden sm:inline">Управление доступом</span>
+                                      <span className="sm:hidden">Доступ</span>
+                                      <ChevronDown className="w-3 h-3 ml-1" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="start" className="w-56">
+                                    <DropdownMenuItem
+                                      onClick={() => handleSubscriptionAction("cancel", sub.id)}
+                                      className="gap-2 text-amber-600"
+                                    >
+                                      <Ban className="w-4 h-4" />
+                                      <div>
+                                        <div className="font-medium">Отменить автопродление</div>
+                                        <div className="text-xs text-muted-foreground">Доступ сохранится до конца периода</div>
+                                      </div>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => handleSubscriptionAction("revoke_access", sub.id)}
+                                      className="gap-2 text-destructive"
+                                    >
+                                      <XCircle className="w-4 h-4" />
+                                      <div>
+                                        <div className="font-medium">Заблокировать сейчас</div>
+                                        <div className="text-xs text-muted-foreground">Немедленно закрыть доступ</div>
+                                      </div>
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
                               ) : (
                                 <span className="text-xs text-muted-foreground italic">
                                   Для восстановления используйте «Выдать новый доступ»

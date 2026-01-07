@@ -5,12 +5,41 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Send Telegram notification helper
+async function sendTelegramNotification(
+  supabase: any,
+  userId: string,
+  messageType: string,
+  customMessage?: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke('telegram-send-notification', {
+      body: {
+        user_id: userId,
+        message_type: messageType,
+        custom_message: customMessage,
+      },
+    });
+    
+    if (error) {
+      console.log('Telegram notification error:', error.message);
+      return { success: false, error: error.message };
+    }
+    
+    return { success: data?.success ?? false, error: data?.error };
+  } catch (err) {
+    console.log('Telegram notification exception:', err);
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // Cancel order in GetCourse
 async function cancelGetCourseOrder(
   email: string,
   offerId: number | string,
   orderNumber: string,
-  reason: string
+  reason: string,
+  amount: number = 0
 ): Promise<{ success: boolean; error?: string }> {
   const apiKey = Deno.env.get('GETCOURSE_API_KEY');
   const accountName = 'gorbova';
@@ -26,7 +55,7 @@ async function cancelGetCourseOrder(
   }
   
   try {
-    console.log(`Canceling GetCourse order: email=${email}, offerId=${offerId}`);
+    console.log(`Canceling GetCourse order: email=${email}, offerId=${offerId}, amount=${amount}`);
     
     const params = {
       user: {
@@ -37,6 +66,7 @@ async function cancelGetCourseOrder(
       },
       deal: {
         offer_code: offerId.toString(),
+        deal_cost: amount, // Required field for GetCourse
         deal_status: 'cancelled', // Set status to cancelled
         deal_is_paid: 0,
         deal_comment: `Отменено администратором. ${reason}. Order: ${orderNumber}`,
@@ -80,6 +110,87 @@ async function cancelGetCourseOrder(
   } catch (error: unknown) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('GetCourse cancel API error:', errorMsg);
+    return { success: false, error: errorMsg };
+  }
+}
+
+// Update order in GetCourse (for extend/modify)
+async function updateGetCourseOrder(
+  email: string,
+  offerId: number | string,
+  orderNumber: string,
+  newEndDate: string,
+  amount: number = 0
+): Promise<{ success: boolean; error?: string }> {
+  const apiKey = Deno.env.get('GETCOURSE_API_KEY');
+  const accountName = 'gorbova';
+  
+  if (!apiKey) {
+    console.log('GetCourse API key not configured, skipping update');
+    return { success: false, error: 'API key not configured' };
+  }
+  
+  if (!offerId) {
+    console.log('No offerId for GetCourse update, skipping');
+    return { success: false, error: 'No offer ID' };
+  }
+  
+  try {
+    console.log(`Updating GetCourse order: email=${email}, offerId=${offerId}, newEndDate=${newEndDate}`);
+    
+    const params = {
+      user: {
+        email: email,
+      },
+      system: {
+        refresh_if_exists: 1,
+      },
+      deal: {
+        offer_code: offerId.toString(),
+        deal_cost: amount,
+        deal_status: 'in_work', // Active status
+        deal_is_paid: 1,
+        deal_comment: `Доступ продлён до ${newEndDate}. Order: ${orderNumber}`,
+      },
+    };
+    
+    console.log('GetCourse update params:', JSON.stringify(params, null, 2));
+    
+    const formData = new URLSearchParams();
+    formData.append('action', 'add');
+    formData.append('key', apiKey);
+    formData.append('params', btoa(unescape(encodeURIComponent(JSON.stringify(params)))));
+    
+    const response = await fetch(`https://${accountName}.getcourse.ru/pl/api/deals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData.toString(),
+    });
+    
+    const responseText = await response.text();
+    console.log('GetCourse update response:', responseText);
+    
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      console.error('Failed to parse GetCourse response:', responseText);
+      return { success: false, error: `Invalid response: ${responseText.substring(0, 200)}` };
+    }
+    
+    if (data.result?.success === true) {
+      console.log('Order successfully updated in GetCourse');
+      return { success: true };
+    } else {
+      const errorMsg = data.result?.error_message || data.error_message || 'Unknown error';
+      console.error('GetCourse update error:', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error('GetCourse update API error:', errorMsg);
     return { success: false, error: errorMsg };
   }
 }
@@ -368,7 +479,7 @@ Deno.serve(async (req) => {
     // Get subscription with related product, tariff and order data
     const { data: subscription, error: subError } = await supabase
       .from('subscriptions_v2')
-      .select('*, products_v2(telegram_club_id), tariffs(getcourse_offer_id, getcourse_offer_code), orders_v2(order_number, customer_email)')
+      .select('*, products_v2(telegram_club_id, name), tariffs(getcourse_offer_id, getcourse_offer_code, name), orders_v2(order_number, customer_email, final_price)')
       .eq('id', subscription_id)
       .single();
 
@@ -394,6 +505,17 @@ Deno.serve(async (req) => {
             updated_at: new Date().toISOString(),
           })
           .eq('id', subscription_id);
+
+        // Send Telegram notification about cancellation (access_ending)
+        const endDate = new Date(cancelAt).toLocaleDateString('ru-RU');
+        const product = subscription.products_v2 as any;
+        const clubName = product?.name || 'клубе';
+        await sendTelegramNotification(
+          supabase,
+          subscription.user_id,
+          'custom',
+          `⏰ Подписка отменена\n\nАвтопродление отключено. Твой доступ в ${clubName} сохраняется до ${endDate}.\n\nПосле этой даты доступ будет закрыт автоматически.`
+        );
 
         result.cancel_at = cancelAt;
         break;
@@ -430,6 +552,7 @@ Deno.serve(async (req) => {
           ? new Date(subscription.access_end_at) 
           : new Date();
         const newEndDate = new Date(currentEnd.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+        const newEndDateStr = newEndDate.toLocaleDateString('ru-RU');
         
         await supabase
           .from('subscriptions_v2')
@@ -450,6 +573,31 @@ Deno.serve(async (req) => {
             },
           });
         }
+
+        // Update in GetCourse
+        const tariffForExtend = subscription.tariffs as any;
+        const gcOfferIdExtend = tariffForExtend?.getcourse_offer_id || tariffForExtend?.getcourse_offer_code;
+        const orderForExtend = subscription.orders_v2 as any;
+        if (gcOfferIdExtend && orderForExtend?.customer_email) {
+          const gcResult = await updateGetCourseOrder(
+            orderForExtend.customer_email,
+            gcOfferIdExtend,
+            orderForExtend.order_number || subscription_id,
+            newEndDateStr,
+            orderForExtend.final_price || 0
+          );
+          console.log('GetCourse extend/update result:', gcResult);
+          result.getcourse_update = gcResult;
+        }
+
+        // Send Telegram notification about extension
+        const clubName = product?.name || 'клубе';
+        await sendTelegramNotification(
+          supabase,
+          subscription.user_id,
+          'custom',
+          `✅ Доступ продлён!\n\nТвоя подписка в ${clubName} продлена на ${daysToAdd} дней.\nНовая дата окончания: ${newEndDateStr}\n\nСпасибо, что ты с нами 💙`
+        );
 
         result.new_end_date = newEndDate.toISOString();
         break;
@@ -530,23 +678,32 @@ Deno.serve(async (req) => {
           console.log('Telegram revoke result:', revokeResult.data);
         }
 
-        // Cancel in GetCourse
+        // Cancel in GetCourse with amount
         const tariffForRevoke = subscription.tariffs as any;
         const gcOfferIdRevoke = tariffForRevoke?.getcourse_offer_id || tariffForRevoke?.getcourse_offer_code;
-        if (gcOfferIdRevoke && subscription.orders_v2?.customer_email) {
+        const orderForRevoke = subscription.orders_v2 as any;
+        if (gcOfferIdRevoke && orderForRevoke?.customer_email) {
           const gcResult = await cancelGetCourseOrder(
-            subscription.orders_v2.customer_email,
+            orderForRevoke.customer_email,
             gcOfferIdRevoke,
-            subscription.orders_v2.order_number || subscription_id,
-            'Доступ отозван администратором'
+            orderForRevoke.order_number || subscription_id,
+            'Доступ отозван администратором',
+            orderForRevoke.final_price || 0
           );
           console.log('GetCourse cancel result:', gcResult);
           result.getcourse_cancel = gcResult;
         }
+
+        // Send Telegram notification about revocation
+        await sendTelegramNotification(supabase, subscription.user_id, 'access_revoked');
+
         break;
       }
 
       case 'delete': {
+        // Send Telegram notification before deletion
+        await sendTelegramNotification(supabase, subscription.user_id, 'access_revoked');
+
         // First revoke any access with proper club_id
         const productForDelete = subscription.products_v2 as any;
         if (productForDelete?.telegram_club_id) {
@@ -561,15 +718,17 @@ Deno.serve(async (req) => {
           console.log('Telegram revoke result:', revokeResult.data);
         }
 
-        // Cancel in GetCourse before deletion
+        // Cancel in GetCourse before deletion with amount
         const tariffForDelete = subscription.tariffs as any;
         const gcOfferIdDelete = tariffForDelete?.getcourse_offer_id || tariffForDelete?.getcourse_offer_code;
-        if (gcOfferIdDelete && subscription.orders_v2?.customer_email) {
+        const orderForDelete = subscription.orders_v2 as any;
+        if (gcOfferIdDelete && orderForDelete?.customer_email) {
           const gcResult = await cancelGetCourseOrder(
-            subscription.orders_v2.customer_email,
+            orderForDelete.customer_email,
             gcOfferIdDelete,
-            subscription.orders_v2.order_number || subscription_id,
-            'Подписка удалена'
+            orderForDelete.order_number || subscription_id,
+            'Подписка удалена',
+            orderForDelete.final_price || 0
           );
           console.log('GetCourse cancel result:', gcResult);
           result.getcourse_cancel = gcResult;
