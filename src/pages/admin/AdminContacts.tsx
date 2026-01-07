@@ -2,13 +2,14 @@ import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
   TableBody,
@@ -24,6 +25,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Search,
@@ -60,10 +71,13 @@ interface Contact {
 
 export default function AdminContacts() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "blocked" | "deleted">("all");
   const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+  const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   // Fetch contacts with deals count
   const { data: contacts, isLoading, refetch } = useQuery({
@@ -181,6 +195,85 @@ export default function AdminContacts() {
 
   const selectedContact = contacts?.find(c => c.id === selectedContactId);
 
+  // Bulk delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      // Get user_ids for these profiles
+      const profilesToDelete = contacts?.filter(c => ids.includes(c.id)) || [];
+      const userIds = profilesToDelete.map(p => p.user_id).filter(Boolean);
+
+      // Delete related data in order
+      if (userIds.length > 0) {
+        // 1. Get order IDs
+        const { data: orders } = await supabase.from("orders_v2").select("id").in("user_id", userIds);
+        const orderIds = orders?.map(o => o.id) || [];
+
+        // 2. Get subscription IDs
+        const { data: subscriptions } = await supabase.from("subscriptions_v2").select("id").in("user_id", userIds);
+        const subscriptionIds = subscriptions?.map(s => s.id) || [];
+
+        // 3. Delete installment_payments
+        if (subscriptionIds.length > 0) {
+          await supabase.from("installment_payments").delete().in("subscription_id", subscriptionIds);
+        }
+
+        // 4. Delete subscriptions
+        await supabase.from("subscriptions_v2").delete().in("user_id", userIds);
+
+        // 5. Delete payments
+        if (orderIds.length > 0) {
+          await supabase.from("payments_v2").delete().in("order_id", orderIds);
+        }
+
+        // 6. Delete orders
+        await supabase.from("orders_v2").delete().in("user_id", userIds);
+
+        // 7. Delete consent logs
+        await supabase.from("consent_logs").delete().in("user_id", userIds);
+
+        // 8. Delete audit logs
+        await supabase.from("audit_logs").delete().in("target_user_id", userIds);
+      }
+
+      // 9. Delete profiles
+      const { error } = await supabase.from("profiles").delete().in("id", ids);
+      if (error) throw error;
+      
+      return ids.length;
+    },
+    onSuccess: (count) => {
+      toast.success(`Удалено ${count} контактов`);
+      setSelectedContactIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + (error as Error).message);
+    },
+  });
+
+  const handleSelectAll = () => {
+    if (selectedContactIds.size === filteredContacts.length) {
+      setSelectedContactIds(new Set());
+    } else {
+      setSelectedContactIds(new Set(filteredContacts.map(c => c.id)));
+    }
+  };
+
+  const handleSelectContact = (id: string) => {
+    const newSelected = new Set(selectedContactIds);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedContactIds(newSelected);
+  };
+
+  const handleBulkDelete = () => {
+    deleteMutation.mutate(Array.from(selectedContactIds));
+    setShowDeleteDialog(false);
+  };
+
   return (
     <div className="space-y-6 pb-24">
       {/* Header */}
@@ -250,14 +343,30 @@ export default function AdminContacts() {
         </Select>
       </div>
 
-      {/* Stats */}
-      <div className="flex items-center gap-4 text-sm text-muted-foreground">
-        <span>Найдено: <strong className="text-foreground">{filteredContacts.length}</strong></span>
-        {contacts && (
-          <>
-            <span>•</span>
-            <span>Всего: {contacts.length}</span>
-          </>
+      {/* Stats & Bulk Actions */}
+      <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
+        <div className="flex items-center gap-4">
+          <span>Найдено: <strong className="text-foreground">{filteredContacts.length}</strong></span>
+          {contacts && (
+            <>
+              <span>•</span>
+              <span>Всего: {contacts.length}</span>
+            </>
+          )}
+        </div>
+        {selectedContactIds.size > 0 && (
+          <div className="flex items-center gap-2">
+            <span>Выбрано: <strong className="text-foreground">{selectedContactIds.size}</strong></span>
+            <Button 
+              variant="destructive" 
+              size="sm"
+              onClick={() => setShowDeleteDialog(true)}
+              disabled={deleteMutation.isPending}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Удалить выбранные
+            </Button>
+          </div>
         )}
       </div>
 
@@ -278,6 +387,12 @@ export default function AdminContacts() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={filteredContacts.length > 0 && selectedContactIds.size === filteredContacts.length}
+                    onCheckedChange={handleSelectAll}
+                  />
+                </TableHead>
                 <TableHead>Имя / Email</TableHead>
                 <TableHead>Телефон</TableHead>
                 <TableHead>Telegram</TableHead>
@@ -293,6 +408,12 @@ export default function AdminContacts() {
                   className="cursor-pointer hover:bg-muted/50"
                   onClick={() => setSelectedContactId(contact.id)}
                 >
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={selectedContactIds.has(contact.id)}
+                      onCheckedChange={() => handleSelectContact(contact.id)}
+                    />
+                  </TableCell>
                   <TableCell>
                     <div>
                       <div className="font-medium flex items-center gap-2">
@@ -356,6 +477,28 @@ export default function AdminContacts() {
         open={!!selectedContactId}
         onOpenChange={(open) => !open && setSelectedContactId(null)}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить контакты?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие нельзя отменить. Будут удалены {selectedContactIds.size} контактов, 
+              а также связанные с ними сделки, платежи и подписки.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleBulkDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

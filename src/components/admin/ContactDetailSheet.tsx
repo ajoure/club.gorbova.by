@@ -62,12 +62,14 @@ import {
   ShieldX,
   FileText,
   Wallet,
+  Pencil,
 } from "lucide-react";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
 import { RefundDialog } from "./RefundDialog";
 import { AccessHistorySheet } from "./AccessHistorySheet";
+import { EditContactDialog } from "./EditContactDialog";
 
 interface Contact {
   id: string;
@@ -104,6 +106,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
   const [refundDialogOpen, setRefundDialogOpen] = useState(false);
   const [refundDeal, setRefundDeal] = useState<any>(null);
   const [historySheetOpen, setHistorySheetOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
 
   // Fetch deals for this contact
   const { data: deals, isLoading: dealsLoading } = useQuery({
@@ -614,6 +617,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
               )}
             </Badge>
           </div>
+          <Button variant="outline" size="sm" onClick={() => setEditDialogOpen(true)} className="mt-2">
+            <Pencil className="w-3 h-3 mr-1" />
+            Редактировать
+          </Button>
         </SheetHeader>
 
         <Tabs defaultValue="profile" className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -1378,6 +1385,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           open={historySheetOpen}
           onOpenChange={setHistorySheetOpen}
           userId={contact.user_id}
+        />
+
+        {/* Edit Contact Dialog */}
+        <EditContactDialog
+          contact={contact}
+          open={editDialogOpen}
+          onOpenChange={setEditDialogOpen}
+          onSuccess={() => queryClient.invalidateQueries({ queryKey: ["admin-contacts"] })}
         />
       </SheetContent>
     </Sheet>
