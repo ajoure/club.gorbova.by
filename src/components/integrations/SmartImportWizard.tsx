@@ -47,12 +47,13 @@ interface ColumnMapping {
 interface TariffSuggestion {
   pattern: string;
   count: number;
-  action: "map_to_tariff" | "use_secondary_field" | "skip" | "create_rule";
+  action: "map_to_tariff" | "use_secondary_field" | "skip" | "create_rule" | "needs_review" | "archive_unknown";
   targetTariffId: string | null;
   targetTariffCode: string | null;
   secondaryField: string | null;
   confidence: number;
   reason: string;
+  suggestedPrice?: number; // Price from data for manual review
   userChoice?: string; // User's override choice
 }
 
@@ -361,8 +362,24 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
       if (error) throw error;
       
       if (data.suggestions) {
-        setTariffSuggestions(data.suggestions);
-        toast.success("Тарифы проанализированы");
+        // Auto-fill: mark unknown products as "skip" by default, with option to choose archive
+        const enrichedSuggestions = data.suggestions.map((s: TariffSuggestion) => {
+          if (s.action === "needs_review" || s.action === "skip") {
+            return { ...s, action: "skip" as const, userChoice: "skip" };
+          }
+          return s;
+        });
+        setTariffSuggestions(enrichedSuggestions);
+        
+        const unknownCount = enrichedSuggestions.filter((s: TariffSuggestion) => 
+          s.action === "skip" && !s.targetTariffId
+        ).length;
+        
+        if (unknownCount > 0) {
+          toast.info(`${unknownCount} офферов без тарифа (по умолчанию пропускаются)`);
+        } else {
+          toast.success("Все тарифы определены");
+        }
       }
     } catch (err) {
       toast.error("Ошибка анализа тарифов");
@@ -429,12 +446,30 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
         const status = String(row[columnMapping.status!] || "");
         return settings.statusFilter.some(s => status.includes(s));
       })
+      .filter((row) => {
+        // Skip rows where suggestion action is "skip" (unless overridden)
+        const offerName = String(row[columnMapping.offerName!] || "");
+        const suggestion = tariffSuggestions.find(s => s.pattern === offerName);
+        if (suggestion?.userChoice === "skip" || (suggestion?.action === "skip" && !suggestion?.userChoice)) {
+          return false;
+        }
+        return true;
+      })
       .map((row) => {
         // Find tariff based on suggestions
         const offerName = String(row[columnMapping.offerName!] || "");
         const suggestion = tariffSuggestions.find(s => s.pattern === offerName);
         
-        let tariffCode = suggestion?.userChoice || suggestion?.targetTariffCode || "UNKNOWN";
+        let tariffCode = "UNKNOWN";
+        
+        // Handle archive_unknown - keep as special marker for club without tariff
+        if (suggestion?.userChoice === "archive_unknown" || suggestion?.action === "archive_unknown") {
+          tariffCode = "ARCHIVE_UNKNOWN";
+        } else if (suggestion?.userChoice && suggestion.userChoice !== "skip") {
+          tariffCode = suggestion.userChoice;
+        } else if (suggestion?.targetTariffCode) {
+          tariffCode = suggestion.targetTariffCode;
+        }
         
         // If using secondary field
         if (suggestion?.action === "use_secondary_field" && suggestion.secondaryField) {
@@ -750,11 +785,28 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                           </div>
                           <div className="flex items-center gap-2">
                             {suggestion ? (
-                              <Badge variant={suggestion.action === "skip" ? "destructive" : "default"}>
-                                {suggestion.userChoice || suggestion.targetTariffCode || suggestion.action}
+                              <Badge 
+                                variant={
+                                  suggestion.userChoice === "skip" || suggestion.action === "skip" 
+                                    ? "destructive" 
+                                    : suggestion.userChoice === "archive_unknown" || suggestion.action === "archive_unknown"
+                                    ? "secondary"
+                                    : "default"
+                                }
+                              >
+                                {suggestion.userChoice === "archive_unknown" 
+                                  ? "Не определён (архив)" 
+                                  : suggestion.userChoice === "skip" 
+                                  ? "Пропустить"
+                                  : suggestion.userChoice || suggestion.targetTariffCode || "Не определён"}
                               </Badge>
                             ) : (
                               <Badge variant="outline">Не определён</Badge>
+                            )}
+                            {suggestion?.suggestedPrice && (
+                              <Badge variant="outline" className="text-xs">
+                                ~{suggestion.suggestedPrice} BYN
+                              </Badge>
                             )}
                           </div>
                         </div>
@@ -799,7 +851,9 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="__none__">— Не выбрано —</SelectItem>
-                                <SelectItem value="skip">Пропустить</SelectItem>
+                                <SelectItem value="skip">🚫 Пропустить</SelectItem>
+                                <SelectItem value="archive_unknown">📦 Не определён (архивный)</SelectItem>
+                                <Separator className="my-1" />
                                 {tariffs?.map((t) => (
                                   <SelectItem key={t.id} value={t.id}>{t.name} ({t.code})</SelectItem>
                                 ))}
