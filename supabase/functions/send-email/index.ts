@@ -184,7 +184,7 @@ async function sendEmailViaSMTP(params: {
   html: string;
   text?: string;
   account: EmailAccount;
-}): Promise<void> {
+}): Promise<{ queueId?: string; smtpHost: string; smtpPort: number }> {
   const { account } = params;
   
   let smtpHost = account.smtp_host;
@@ -334,11 +334,17 @@ async function sendEmailViaSMTP(params: {
       throw new Error(`SMTP DATA not accepted (${dataCode}): ${dataResp.trim()}`);
     }
 
+    // Best-effort queue id extraction (Yandex returns: "Ok: queued on ... <queueId>")
+    const queueMatch = dataResp.match(/queued[^\s]*\s+.*\s([A-Za-z0-9_-]+)\s*$/m);
+    const queueId = queueMatch?.[1];
+
     try {
       await sendCommand("QUIT");
     } catch {
       // ignore
     }
+
+    return { queueId, smtpHost, smtpPort };
   } finally {
     try {
       conn.close();
@@ -346,6 +352,9 @@ async function sendEmailViaSMTP(params: {
       // ignore
     }
   }
+
+  // Unreachable; return satisfies TS
+  return { smtpHost, smtpPort };
 }
 
 const handler = async (req: Request): Promise<Response> => {
@@ -371,12 +380,17 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`Using email account: ${account.email} (${account.from_name || "no name"})`);
 
-    await sendEmailViaSMTP({ to, subject, html, text, account });
+    const sendResult = await sendEmailViaSMTP({ to, subject, html, text, account });
 
-    return new Response(JSON.stringify({ 
-      success: true, 
-      message: "Email sent successfully",
+    return new Response(JSON.stringify({
+      success: true,
+      message: "Email accepted by SMTP server",
       from: account.from_email || account.email,
+      to,
+      smtp_host: sendResult.smtpHost,
+      smtp_port: sendResult.smtpPort,
+      queue_id: sendResult.queueId,
+      note: "Доставка может занять время. Проверьте Спам/Промоакции. Ответ 250 означает, что SMTP сервер принял письмо в очередь.",
     }), {
       status: 200,
       headers: { "Content-Type": "application/json", ...corsHeaders },

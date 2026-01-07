@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -18,6 +19,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   MoreHorizontal,
   RefreshCw,
@@ -39,6 +50,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { WebhookUrlDisplay } from "./WebhookUrlDisplay";
+import { useAuth } from "@/contexts/AuthContext";
+
+const testEmailSchema = z.object({
+  to: z.string().trim().email("Введите корректный email").max(255),
+  subject: z.string().trim().min(1, "Укажите тему письма").max(140),
+});
 
 interface IntegrationInstanceListProps {
   instances: IntegrationInstance[];
@@ -56,10 +73,31 @@ export function IntegrationInstanceList({
   onHealthCheck,
   onSyncSettings,
 }: IntegrationInstanceListProps) {
+  const { user } = useAuth();
   const { deleteInstance } = useIntegrationMutations();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [sendingTestEmail, setSendingTestEmail] = useState<string | null>(null);
   const [expandedWebhook, setExpandedWebhook] = useState<string | null>(null);
+
+  const [testEmailOpen, setTestEmailOpen] = useState(false);
+  const [testEmailInstance, setTestEmailInstance] = useState<IntegrationInstance | null>(null);
+  const [testEmailTo, setTestEmailTo] = useState<string>("");
+  const [testEmailSubject, setTestEmailSubject] = useState<string>("");
+
+  const defaultTestRecipient = useMemo(() => user?.email || "", [user?.email]);
+
+  const openTestEmailDialog = (instance: IntegrationInstance) => {
+    setTestEmailInstance(instance);
+    setTestEmailTo(defaultTestRecipient);
+    setTestEmailSubject(`Тестовое письмо: ${instance.alias}`);
+    setTestEmailOpen(true);
+  };
+
+  const closeTestEmailDialog = () => {
+    if (sendingTestEmail) return;
+    setTestEmailOpen(false);
+    setTestEmailInstance(null);
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -94,47 +132,54 @@ export function IntegrationInstanceList({
     }
   };
 
-  const handleSendTestEmail = async (instance: IntegrationInstance) => {
-    setSendingTestEmail(instance.id);
-    
-    try {
-      const config = instance.config as Record<string, unknown> | null;
-      const recipientEmail = config?.email as string || config?.from_email as string;
-      
-      if (!recipientEmail) {
-        toast.error("Email не указан в настройках интеграции");
-        return;
-      }
+  const handleSendTestEmail = async () => {
+    if (!testEmailInstance) return;
 
-      console.log(`Sending test email to ${recipientEmail} via instance ${instance.id}`);
-      
+    const parsed = testEmailSchema.safeParse({
+      to: testEmailTo,
+      subject: testEmailSubject,
+    });
+
+    if (!parsed.success) {
+      toast.error(parsed.error.issues[0]?.message || "Проверьте данные");
+      return;
+    }
+
+    setSendingTestEmail(testEmailInstance.id);
+
+    try {
+      const { to, subject } = parsed.data;
+
       const { data, error } = await supabase.functions.invoke("send-email", {
         body: {
-          to: recipientEmail,
-          subject: "Тестовое письмо",
-          html: `<p>Это тестовое письмо отправлено для проверки почтовой интеграции <strong>${instance.alias}</strong>.</p>
-                 <p>Время отправки: ${new Date().toLocaleString("ru-RU")}</p>`,
-          account_id: instance.id,
+          to,
+          subject,
+          html: `<p>Это тестовое письмо отправлено для проверки почтовой интеграции <strong>${testEmailInstance.alias}</strong>.</p>
+                 <p>Время отправки: ${new Date().toLocaleString("ru-RU")}</p>
+                 <p style="color: #6b7280; font-size: 12px;">Если письмо не видно — проверьте Спам/Промоакции. Иногда доставка занимает несколько минут.</p>`,
+          account_id: testEmailInstance.id,
         },
       });
 
-      console.log("Send email response:", data, error);
-
       if (error) {
-        console.error("Send email error:", error);
         toast.error(`Ошибка отправки: ${error.message}`);
         return;
       }
-      
+
       if (data?.error) {
-        console.error("Send email data error:", data.error);
         toast.error(`Ошибка отправки: ${data.error}`);
         return;
       }
-      
-      toast.success(`Тестовое письмо отправлено на ${recipientEmail}`);
+
+      const queueId = data?.queue_id as string | undefined;
+      toast.success(queueId
+        ? `SMTP принял письмо для ${to} (очередь: ${queueId})`
+        : `SMTP принял письмо для ${to}`
+      );
+
+      setTestEmailOpen(false);
+      setTestEmailInstance(null);
     } catch (err: unknown) {
-      console.error("Send email exception:", err);
       const message = err instanceof Error ? err.message : "Неизвестная ошибка";
       toast.error(`Ошибка отправки: ${message}`);
     } finally {
@@ -231,14 +276,17 @@ export function IntegrationInstanceList({
                       <MoreHorizontal className="h-4 w-4" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuContent
+                    align="end"
+                    className="w-48 bg-popover text-popover-foreground border shadow-md z-50"
+                  >
                     <DropdownMenuItem onClick={() => onHealthCheck(instance)} className="gap-2 cursor-pointer">
                       <RefreshCw className="h-4 w-4" />
                       <span>Проверить</span>
                     </DropdownMenuItem>
                     {instance.category === "email" && (
-                      <DropdownMenuItem 
-                        onClick={() => handleSendTestEmail(instance)}
+                      <DropdownMenuItem
+                        onClick={() => openTestEmailDialog(instance)}
                         disabled={sendingTestEmail === instance.id}
                         className="gap-2 cursor-pointer"
                       >
@@ -282,6 +330,54 @@ export function IntegrationInstanceList({
           </div>
         ))}
       </div>
+
+      <Dialog open={testEmailOpen} onOpenChange={(open) => (open ? setTestEmailOpen(true) : closeTestEmailDialog())}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Тестовое письмо</DialogTitle>
+            <DialogDescription>
+              Отправим письмо на указанный адрес, используя выбранную интеграцию.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="testEmailTo">Кому</Label>
+              <Input
+                id="testEmailTo"
+                value={testEmailTo}
+                onChange={(e) => setTestEmailTo(e.target.value)}
+                placeholder={defaultTestRecipient || "example@email.com"}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="testEmailSubject">Тема</Label>
+              <Input
+                id="testEmailSubject"
+                value={testEmailSubject}
+                onChange={(e) => setTestEmailSubject(e.target.value)}
+                placeholder="Тестовое письмо"
+              />
+            </div>
+
+            {testEmailInstance && (
+              <p className="text-xs text-muted-foreground">
+                Интеграция: <span className="font-medium text-foreground">{testEmailInstance.alias}</span>
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={closeTestEmailDialog} disabled={!!sendingTestEmail}>
+              Отмена
+            </Button>
+            <Button onClick={handleSendTestEmail} disabled={!testEmailInstance || !!sendingTestEmail}>
+              {sendingTestEmail ? "Отправка..." : "Отправить"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
