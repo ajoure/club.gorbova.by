@@ -18,7 +18,7 @@ import { AddIntegrationDialog } from "@/components/integrations/AddIntegrationDi
 import { EditIntegrationDialog } from "@/components/integrations/EditIntegrationDialog";
 import { IntegrationLogsSheet } from "@/components/integrations/IntegrationLogsSheet";
 import { IntegrationSyncSettingsDialog } from "@/components/integrations/IntegrationSyncSettingsDialog";
-import { GetCourseImportDialog } from "@/components/integrations/GetCourseImportDialog";
+import { SmartImportWizard } from "@/components/integrations/SmartImportWizard";
 import { TelegramBotsTab } from "@/components/telegram/TelegramBotsTab";
 import { TelegramClubsTab } from "@/components/telegram/TelegramClubsTab";
 import { TelegramLogsTab } from "@/components/telegram/TelegramLogsTab";
@@ -257,10 +257,9 @@ export default function AdminIntegrations() {
         onOpenChange={setMassBroadcastOpen}
       />
 
-      <GetCourseImportDialog
+      <SmartImportWizard
         open={getcourseImportOpen}
         onOpenChange={setGetcourseImportOpen}
-        instanceId={instances?.find(i => i.provider === 'getcourse')?.id}
       />
     </div>
   );
