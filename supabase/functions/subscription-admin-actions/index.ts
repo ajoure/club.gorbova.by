@@ -437,27 +437,35 @@ Deno.serve(async (req) => {
           })
           .eq('id', subscription_id);
 
-        // Revoke Telegram access
+        // Revoke Telegram access with club_id
         const productForRevoke = subscription.products_v2 as any;
         if (productForRevoke?.telegram_club_id) {
-          await supabase.functions.invoke('telegram-revoke-access', {
+          const revokeResult = await supabase.functions.invoke('telegram-revoke-access', {
             body: {
               user_id: subscription.user_id,
+              club_id: productForRevoke.telegram_club_id,
+              reason: 'subscription_revoked',
+              admin_id: adminUserId,
             },
           });
+          console.log('Telegram revoke result:', revokeResult.data);
         }
         break;
       }
 
       case 'delete': {
-        // First revoke any access
+        // First revoke any access with proper club_id
         const productForDelete = subscription.products_v2 as any;
         if (productForDelete?.telegram_club_id) {
-          await supabase.functions.invoke('telegram-revoke-access', {
+          const revokeResult = await supabase.functions.invoke('telegram-revoke-access', {
             body: {
               user_id: subscription.user_id,
+              club_id: productForDelete.telegram_club_id,
+              reason: 'subscription_deleted',
+              admin_id: adminUserId,
             },
           });
+          console.log('Telegram revoke result:', revokeResult.data);
         }
 
         // Delete the subscription

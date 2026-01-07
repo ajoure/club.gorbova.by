@@ -425,29 +425,26 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         });
       }
 
-      // 5. Sync to GetCourse with full deal data (optional - don't fail if not configured)
-      if (tariff?.getcourse_offer_code || tariff?.getcourse_offer_id) {
-        const { error: gcError } = await supabase.functions.invoke("getcourse-sync", {
+      // 5. Sync to GetCourse with full deal data (same as payment flow)
+      const gcOfferId = tariff?.getcourse_offer_id || tariff?.getcourse_offer_code;
+      if (gcOfferId) {
+        const { data: gcResult, error: gcError } = await supabase.functions.invoke("test-getcourse-sync", {
           body: {
-            action: "create_deal",
-            user_id: contact.user_id,
-            deal_data: {
-              product_code: product?.code,
-              product_name: product?.name,
-              tariff_code: tariff?.code,
-              tariff_name: tariff?.name,
-              offer_code: tariff.getcourse_offer_code || tariff.getcourse_offer_id,
-              order_number: orderNumber,
-              amount: 0,
-              status: "admin_grant",
-              user_email: contact.email,
-              user_name: contact.full_name,
-              user_phone: contact.phone,
-            },
+            email: contact.email,
+            firstName: contact.full_name?.split(" ")[0] || null,
+            lastName: contact.full_name?.split(" ").slice(1).join(" ") || null,
+            phone: contact.phone || null,
+            offerId: typeof gcOfferId === 'string' ? parseInt(gcOfferId) : gcOfferId,
+            tariffCode: tariff?.code || "admin_grant",
+            amount: 0, // Admin grant - no charge
           },
         });
         if (gcError) {
           console.warn("GetCourse sync skipped:", gcError.message);
+        } else if (gcResult?.getcourse?.success) {
+          console.log("GetCourse sync success:", gcResult.getcourse.gcOrderId);
+        } else {
+          console.warn("GetCourse sync failed:", gcResult?.getcourse?.error);
         }
       }
 
