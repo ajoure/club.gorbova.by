@@ -230,8 +230,9 @@ export function RefundDialog({
               <Input
                 id="reduce-days"
                 type="number"
-                value={reduceDays}
-                onChange={(e) => setReduceDays(parseInt(e.target.value) || 0)}
+                value={reduceDays === 0 ? "" : reduceDays}
+                onChange={(e) => setReduceDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
+                onBlur={() => { if (reduceDays < 1) setReduceDays(1); }}
                 min={1}
                 max={365}
               />

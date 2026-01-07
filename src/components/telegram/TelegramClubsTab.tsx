@@ -267,8 +267,10 @@ export function TelegramClubsTab() {
                   <Input
                     id="subscription_duration_days"
                     type="number"
-                    value={newClub.subscription_duration_days}
-                    onChange={(e) => setNewClub({ ...newClub, subscription_duration_days: parseInt(e.target.value) || 30 })}
+                    min={1}
+                    value={newClub.subscription_duration_days === 0 ? "" : newClub.subscription_duration_days}
+                    onChange={(e) => setNewClub({ ...newClub, subscription_duration_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                    onBlur={() => { if (newClub.subscription_duration_days < 1) setNewClub({ ...newClub, subscription_duration_days: 1 }); }}
                   />
                 </div>
               </div>

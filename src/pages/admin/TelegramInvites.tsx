@@ -316,8 +316,9 @@ export default function TelegramInvites() {
                       <Input
                         type="number"
                         min="1"
-                        value={newInvite.duration_days}
-                        onChange={(e) => setNewInvite({ ...newInvite, duration_days: parseInt(e.target.value) || 30 })}
+                        value={newInvite.duration_days === 0 ? "" : newInvite.duration_days}
+                        onChange={(e) => setNewInvite({ ...newInvite, duration_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                        onBlur={() => { if (newInvite.duration_days < 1) setNewInvite({ ...newInvite, duration_days: 1 }); }}
                       />
                     </div>
                     <div className="space-y-2">

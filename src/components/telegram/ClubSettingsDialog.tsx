@@ -312,14 +312,16 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
 
               <div>
                 <Label htmlFor="subscription_duration_days">Длительность подписки (дней)</Label>
-                <Input
+              <Input
                   id="subscription_duration_days"
                   type="number"
-                  value={formData.subscription_duration_days}
+                  min={1}
+                  value={formData.subscription_duration_days === 0 ? "" : formData.subscription_duration_days}
                   onChange={(e) => setFormData({ 
                     ...formData, 
-                    subscription_duration_days: parseInt(e.target.value) || 30 
+                    subscription_duration_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 
                   })}
+                  onBlur={() => { if (formData.subscription_duration_days < 1) setFormData({ ...formData, subscription_duration_days: 1 }); }}
                 />
               </div>
 

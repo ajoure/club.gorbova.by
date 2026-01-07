@@ -268,8 +268,9 @@ export default function ProductClubMappings() {
                     <Input
                       type="number"
                       min="1"
-                      value={newMapping.duration_days}
-                      onChange={(e) => setNewMapping({ ...newMapping, duration_days: parseInt(e.target.value) || 30 })}
+                      value={newMapping.duration_days === 0 ? "" : newMapping.duration_days}
+                      onChange={(e) => setNewMapping({ ...newMapping, duration_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                      onBlur={() => { if (newMapping.duration_days < 1) setNewMapping({ ...newMapping, duration_days: 1 }); }}
                     />
                     <p className="text-xs text-muted-foreground">
                       Автоматически берётся из продукта, но можно переопределить

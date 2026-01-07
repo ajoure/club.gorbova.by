@@ -662,8 +662,10 @@ export default function AdminProductDetailV2() {
                 <Label>Срок доступа (дней)</Label>
                 <Input
                   type="number"
-                  value={tariffForm.access_days}
-                  onChange={(e) => setTariffForm({ ...tariffForm, access_days: parseInt(e.target.value) || 30 })}
+                  value={tariffForm.access_days === 0 ? "" : tariffForm.access_days}
+                  onChange={(e) => setTariffForm({ ...tariffForm, access_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                  onBlur={() => { if (tariffForm.access_days < 1) setTariffForm({ ...tariffForm, access_days: 1 }); }}
+                  min={1}
                 />
               </div>
               <div className="space-y-2">
@@ -847,8 +849,9 @@ export default function AdminProductDetailV2() {
                           type="number"
                           min={2}
                           max={24}
-                          value={offerForm.installment_count}
-                          onChange={(e) => setOfferForm({ ...offerForm, installment_count: parseInt(e.target.value) || 3 })}
+                          value={offerForm.installment_count === 0 ? "" : offerForm.installment_count}
+                          onChange={(e) => setOfferForm({ ...offerForm, installment_count: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                          onBlur={() => { if (offerForm.installment_count < 2) setOfferForm({ ...offerForm, installment_count: 2 }); }}
                         />
                       </div>
                       <div className="space-y-2">
@@ -857,8 +860,9 @@ export default function AdminProductDetailV2() {
                           type="number"
                           min={7}
                           max={90}
-                          value={offerForm.installment_interval_days}
-                          onChange={(e) => setOfferForm({ ...offerForm, installment_interval_days: parseInt(e.target.value) || 30 })}
+                          value={offerForm.installment_interval_days === 0 ? "" : offerForm.installment_interval_days}
+                          onChange={(e) => setOfferForm({ ...offerForm, installment_interval_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                          onBlur={() => { if (offerForm.installment_interval_days < 7) setOfferForm({ ...offerForm, installment_interval_days: 7 }); }}
                         />
                       </div>
                     </div>
@@ -871,7 +875,7 @@ export default function AdminProductDetailV2() {
                           min={0}
                           max={30}
                           value={offerForm.first_payment_delay_days}
-                          onChange={(e) => setOfferForm({ ...offerForm, first_payment_delay_days: parseInt(e.target.value) || 0 })}
+                          onChange={(e) => setOfferForm({ ...offerForm, first_payment_delay_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
                           className="w-24"
                         />
                         <span className="text-sm text-muted-foreground">
@@ -938,16 +942,20 @@ export default function AdminProductDetailV2() {
                       <Label>Дней trial</Label>
                       <Input
                         type="number"
-                        value={offerForm.trial_days}
-                        onChange={(e) => setOfferForm({ ...offerForm, trial_days: parseInt(e.target.value) || 5 })}
+                        value={offerForm.trial_days === 0 ? "" : offerForm.trial_days}
+                        onChange={(e) => setOfferForm({ ...offerForm, trial_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                        onBlur={() => { if (offerForm.trial_days < 1) setOfferForm({ ...offerForm, trial_days: 1 }); }}
+                        min={1}
                       />
                     </div>
                     <div className="space-y-2">
                       <Label>Автосписание через (дн.)</Label>
                       <Input
                         type="number"
-                        value={offerForm.auto_charge_delay_days}
-                        onChange={(e) => setOfferForm({ ...offerForm, auto_charge_delay_days: parseInt(e.target.value) || 5 })}
+                        value={offerForm.auto_charge_delay_days === 0 ? "" : offerForm.auto_charge_delay_days}
+                        onChange={(e) => setOfferForm({ ...offerForm, auto_charge_delay_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                        onBlur={() => { if (offerForm.auto_charge_delay_days < 1) setOfferForm({ ...offerForm, auto_charge_delay_days: 1 }); }}
+                        min={1}
                       />
                     </div>
                   </div>

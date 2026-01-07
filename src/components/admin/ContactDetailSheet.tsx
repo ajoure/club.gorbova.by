@@ -301,7 +301,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
     }
   };
 
-  // Grant new access
+  // Grant new access - performs all the same actions as a regular purchase
   const handleGrantNewAccess = async () => {
     if (!contact?.user_id || !grantProductId || !grantTariffId) {
       toast.error("Выберите продукт и тариф");
@@ -310,77 +310,175 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
 
     setIsProcessing(true);
     try {
-      const accessEnd = new Date(Date.now() + grantDays * 24 * 60 * 60 * 1000);
+      const currentUser = (await supabase.auth.getUser()).data.user;
+      const now = new Date();
+      const accessEnd = new Date(now.getTime() + grantDays * 24 * 60 * 60 * 1000);
       
-      // Create subscription
-      const { data: newSub, error } = await supabase.from("subscriptions_v2").insert({
+      // Get tariff and product data upfront
+      const [{ data: tariff }, { data: product }] = await Promise.all([
+        supabase.from("tariffs").select("getcourse_offer_code, getcourse_offer_id, code, name").eq("id", grantTariffId).single(),
+        supabase.from("products_v2").select("telegram_club_id, code, name").eq("id", grantProductId).single(),
+      ]);
+
+      // 1. Create order_v2 (like bepaid-webhook does)
+      const orderNumber = `GIFT-${now.getFullYear().toString().slice(-2)}-${Date.now().toString(36).toUpperCase()}`;
+      const { data: orderV2, error: orderError } = await supabase.from("orders_v2").insert({
+        order_number: orderNumber,
         user_id: contact.user_id,
         product_id: grantProductId,
         tariff_id: grantTariffId,
-        status: "active",
+        customer_email: contact.email,
+        base_price: 0,
+        final_price: 0,
+        paid_amount: 0,
+        currency: "BYN",
+        status: "paid",
         is_trial: false,
-        access_start_at: new Date().toISOString(),
-        access_end_at: accessEnd.toISOString(),
+        meta: { 
+          source: "admin_grant", 
+          granted_by: currentUser?.id,
+          granted_by_email: currentUser?.email,
+        },
       }).select().single();
 
-      if (error) throw error;
+      if (orderError) throw orderError;
 
-      // Get tariff to check for GetCourse offer code
-      const { data: tariff } = await supabase
-        .from("tariffs")
-        .select("getcourse_offer_code")
-        .eq("id", grantTariffId)
-        .single();
+      // 2. Create payment_v2 as gift/admin (for history and reports)
+      await supabase.from("payments_v2").insert({
+        order_id: orderV2.id,
+        user_id: contact.user_id,
+        amount: 0,
+        currency: "BYN",
+        status: "succeeded",
+        provider: "admin",
+        paid_at: now.toISOString(),
+        meta: { source: "admin_grant", granted_by: currentUser?.id },
+      });
 
-      // Get product for telegram club
-      const { data: product } = await supabase
-        .from("products_v2")
-        .select("telegram_club_id")
-        .eq("id", grantProductId)
-        .single();
+      // 3. Check for existing active subscription and extend or create new
+      const { data: existingSub } = await supabase
+        .from("subscriptions_v2")
+        .select("id, access_end_at")
+        .eq("user_id", contact.user_id)
+        .eq("product_id", grantProductId)
+        .eq("tariff_id", grantTariffId)
+        .in("status", ["active", "trial"])
+        .is("canceled_at", null)
+        .gte("access_end_at", now.toISOString())
+        .order("access_end_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      // Grant Telegram access if product has club
+      let subscriptionId: string;
+      if (existingSub) {
+        // Extend existing subscription
+        const currentEnd = new Date(existingSub.access_end_at);
+        const newEnd = new Date(currentEnd.getTime() + grantDays * 24 * 60 * 60 * 1000);
+        await supabase.from("subscriptions_v2").update({
+          access_end_at: newEnd.toISOString(),
+          order_id: orderV2.id,
+        }).eq("id", existingSub.id);
+        subscriptionId = existingSub.id;
+      } else {
+        // Create new subscription
+        const { data: newSub, error: subError } = await supabase.from("subscriptions_v2").insert({
+          user_id: contact.user_id,
+          order_id: orderV2.id,
+          product_id: grantProductId,
+          tariff_id: grantTariffId,
+          status: "active",
+          is_trial: false,
+          access_start_at: now.toISOString(),
+          access_end_at: accessEnd.toISOString(),
+        }).select().single();
+        if (subError) throw subError;
+        subscriptionId = newSub.id;
+      }
+
+      // 4. Create telegram_access_grants and grant access if product has club
       if (product?.telegram_club_id) {
+        // Create access grant record
+        await supabase.from("telegram_access_grants").insert({
+          user_id: contact.user_id,
+          club_id: product.telegram_club_id,
+          source: "admin_grant",
+          source_id: orderV2.id,
+          start_at: now.toISOString(),
+          end_at: accessEnd.toISOString(),
+          status: "active",
+          meta: {
+            product_id: grantProductId,
+            tariff_id: grantTariffId,
+            granted_by: currentUser?.id,
+            granted_by_email: currentUser?.email,
+          },
+        });
+
+        // Grant Telegram access via edge function
         await supabase.functions.invoke("telegram-grant-access", {
           body: {
             user_id: contact.user_id,
+            club_id: product.telegram_club_id,
             duration_days: grantDays,
+            source: "admin_grant",
           },
         });
       }
 
-      // Sync to GetCourse if offer code exists
-      if (tariff?.getcourse_offer_code) {
+      // 5. Sync to GetCourse with full deal data (like bepaid-webhook)
+      if (tariff?.getcourse_offer_code || tariff?.getcourse_offer_id) {
         await supabase.functions.invoke("getcourse-sync", {
           body: {
-            action: "add_user_to_offer",
+            action: "create_deal",
             user_id: contact.user_id,
-            offer_code: tariff.getcourse_offer_code,
+            deal_data: {
+              product_code: product?.code,
+              product_name: product?.name,
+              tariff_code: tariff?.code,
+              tariff_name: tariff?.name,
+              offer_code: tariff.getcourse_offer_code || tariff.getcourse_offer_id,
+              order_number: orderNumber,
+              amount: 0,
+              status: "admin_grant",
+              user_email: contact.email,
+              user_name: contact.full_name,
+              user_phone: contact.phone,
+            },
           },
         });
       }
 
-      // Log action
+      // 6. Log action with full details
       await supabase.from("audit_logs").insert({
-        actor_user_id: (await supabase.auth.getUser()).data.user?.id,
+        actor_user_id: currentUser?.id,
         action: "admin.grant_access",
         target_user_id: contact.user_id,
         meta: { 
-          product_id: grantProductId, 
-          tariff_id: grantTariffId, 
+          product_id: grantProductId,
+          product_name: product?.name,
+          tariff_id: grantTariffId,
+          tariff_name: tariff?.name,
           days: grantDays,
-          subscription_id: newSub?.id,
+          order_id: orderV2.id,
+          order_number: orderNumber,
+          subscription_id: subscriptionId,
+          extended_existing: !!existingSub,
           getcourse_offer_code: tariff?.getcourse_offer_code,
+          telegram_club_id: product?.telegram_club_id,
         },
       });
 
-      toast.success(`Доступ выдан на ${grantDays} дней`);
+      toast.success(existingSub 
+        ? `Доступ продлён на ${grantDays} дней` 
+        : `Доступ выдан на ${grantDays} дней`
+      );
+      queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.user_id] });
       refetchSubs();
       setGrantProductId("");
       setGrantTariffId("");
     } catch (error) {
       console.error("Grant access error:", error);
-      toast.error("Ошибка выдачи доступа");
+      toast.error("Ошибка выдачи доступа: " + (error as Error).message);
     } finally {
       setIsProcessing(false);
     }
@@ -670,8 +768,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                       <Label className="text-xs">Дней доступа</Label>
                       <Input
                         type="number"
-                        value={grantDays}
-                        onChange={(e) => setGrantDays(parseInt(e.target.value) || 30)}
+                        value={grantDays === 0 ? "" : grantDays}
+                        onChange={(e) => setGrantDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
+                        onBlur={() => { if (grantDays < 1) setGrantDays(1); }}
                         min={1}
                         className="h-10 sm:h-9"
                       />
@@ -770,10 +869,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                           {isSelected ? (
                             <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center w-full">
                               <div className="flex gap-1 items-center">
-                                <Input
+                              <Input
                                   type="number"
-                                  value={extendDays}
-                                  onChange={(e) => setExtendDays(parseInt(e.target.value) || 30)}
+                                  value={extendDays === 0 ? "" : extendDays}
+                                  onChange={(e) => setExtendDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
+                                  onBlur={() => { if (extendDays < 1) setExtendDays(1); }}
                                   className="h-9 sm:h-8 w-20"
                                   min={1}
                                 />

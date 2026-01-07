@@ -213,8 +213,9 @@ export function SubscriptionActionsSheet({
             <div className="flex gap-2">
               <Input
                 type="number"
-                value={extendDays}
-                onChange={(e) => setExtendDays(parseInt(e.target.value) || 0)}
+                value={extendDays === 0 ? "" : extendDays}
+                onChange={(e) => setExtendDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
+                onBlur={() => { if (extendDays < 1) setExtendDays(1); }}
                 min={1}
                 max={365}
                 className="w-24"

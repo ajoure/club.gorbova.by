@@ -841,8 +841,9 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
                   type="number"
                   min={1}
                   max={365}
-                  value={grantDays}
-                  onChange={(e) => setGrantDays(parseInt(e.target.value) || 30)}
+                  value={grantDays === 0 ? "" : grantDays}
+                  onChange={(e) => setGrantDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
+                  onBlur={() => { if (grantDays < 1) setGrantDays(1); }}
                 />
               </div>
               <p className="text-xs text-muted-foreground">
@@ -891,8 +892,9 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
                   type="number"
                   min={1}
                   max={365}
-                  value={extendDays}
-                  onChange={(e) => setExtendDays(parseInt(e.target.value) || 30)}
+                  value={extendDays === 0 ? "" : extendDays}
+                  onChange={(e) => setExtendDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
+                  onBlur={() => { if (extendDays < 1) setExtendDays(1); }}
                 />
               </div>
               <p className="text-xs text-muted-foreground">

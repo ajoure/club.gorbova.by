@@ -1109,8 +1109,9 @@ export default function TelegramClubMembers() {
                     type="number"
                     min={1}
                     max={365}
-                    value={massGrantDays}
-                    onChange={(e) => setMassGrantDays(parseInt(e.target.value) || 30)}
+                    value={massGrantDays === 0 ? "" : massGrantDays}
+                    onChange={(e) => setMassGrantDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
+                    onBlur={() => { if (massGrantDays < 1) setMassGrantDays(1); }}
                   />
                 </div>
                 <p className="text-xs text-muted-foreground">
