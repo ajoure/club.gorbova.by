@@ -418,10 +418,14 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
   // Import mutation
   const importMutation = useMutation({
     mutationFn: async () => {
+      const dealsToImport = prepareDealsForImport();
+      console.log(`[SmartImport] Sending ${dealsToImport.length} deals to import`);
+      
       const { data, error } = await supabase.functions.invoke("getcourse-import-deals", {
         body: {
-          deals: prepareDealsForImport(),
+          fileDeals: dealsToImport, // Edge function expects fileDeals for file import mode
           settings,
+          instanceId, // Optional, for logging
         },
       });
       
