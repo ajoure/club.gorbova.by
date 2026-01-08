@@ -86,7 +86,21 @@ export function AppSidebar() {
   };
 
   const handleLogoClick = () => {
-    navigate("/");
+    // Always navigate to the main club domain
+    const hostname = window.location.hostname;
+    const isProductDomain = hostname !== "localhost" && 
+                            hostname !== "127.0.0.1" &&
+                            hostname !== "club.gorbova.by" && 
+                            hostname !== "gorbova.by" &&
+                            !hostname.includes(".lovable.app") &&
+                            !hostname.includes(".lovableproject.com");
+    
+    if (isProductDomain) {
+      // On product domains (like consultation.gorbova.by), redirect to main club
+      window.location.href = "https://club.gorbova.by";
+    } else {
+      navigate("/");
+    }
   };
   const getRoleLabel = () => {
     switch (role) {
