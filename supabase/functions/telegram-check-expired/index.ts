@@ -173,12 +173,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 2. Kick violators from all active clubs
+    // 2. Kick violators from clubs that have autokick enabled
+    // CRITICAL: Only process clubs with autokick_no_access = true
     // Violators = people in chat/channel who don't have access_status = 'ok'
     const { data: clubs } = await supabase
       .from('telegram_clubs')
       .select('*, telegram_bots(*)')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .eq('autokick_no_access', true); // CRITICAL: Only autokick if enabled!
 
     for (const club of clubs || []) {
       const bot = club.telegram_bots;
