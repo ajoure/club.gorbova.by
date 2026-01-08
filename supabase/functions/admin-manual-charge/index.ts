@@ -12,6 +12,8 @@ interface ManualChargeRequest {
   amount?: number; // in kopecks
   description?: string;
   installment_id?: string;
+  product_id?: string;
+  tariff_id?: string;
 }
 
 Deno.serve(async (req) => {
@@ -139,10 +141,10 @@ Deno.serve(async (req) => {
 
     // ACTION: Manual charge
     if (action === 'manual_charge') {
-      const { user_id, payment_method_id, amount, description } = body;
+      const { user_id, payment_method_id, amount, description, product_id, tariff_id } = body;
 
-      if (!user_id || !payment_method_id || !amount) {
-        return new Response(JSON.stringify({ success: false, error: 'Missing required fields' }), {
+      if (!user_id || !payment_method_id || !amount || !product_id || !tariff_id) {
+        return new Response(JSON.stringify({ success: false, error: 'Missing required fields: user_id, payment_method_id, amount, product_id, tariff_id' }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -164,25 +166,44 @@ Deno.serve(async (req) => {
         });
       }
 
+      // Get product and tariff info for order details
+      const { data: product } = await supabase
+        .from('products_v2')
+        .select('name, code')
+        .eq('id', product_id)
+        .single();
+
+      const { data: tariff } = await supabase
+        .from('tariffs')
+        .select('name, duration_days, access_duration_days')
+        .eq('id', tariff_id)
+        .single();
+
       // Generate order number
       const { data: orderNumberData } = await supabase.rpc('generate_order_number');
-      const orderNumber = orderNumberData || `ORD-MANUAL-${Date.now()}`;
+      const orderNumber = orderNumberData || `ORD-ADM-${Date.now()}`;
 
-      // Create order for manual charge
+      // Create order for manual charge with product/tariff
       const { data: order, error: orderError } = await supabase
         .from('orders_v2')
         .insert({
           order_number: orderNumber,
           user_id,
+          product_id,
+          tariff_id,
           base_price: amount / 100, // Convert from kopecks to BYN
           final_price: amount / 100,
           paid_amount: 0,
           currency: 'BYN',
           status: 'pending',
+          customer_email: paymentMethod.meta?.email || null,
           meta: {
             type: 'admin_manual_charge',
             description,
             charged_by: user.id,
+            charged_by_action: 'admin_charge_dialog',
+            product_name: product?.name,
+            tariff_name: tariff?.name,
           },
         })
         .select()
@@ -246,17 +267,50 @@ Deno.serve(async (req) => {
             paid_at: new Date().toISOString(),
             provider_payment_id: chargeResult.uid,
             provider_response: chargeResult.response,
+            card_brand: paymentMethod.brand,
+            card_last4: paymentMethod.last4,
           })
           .eq('id', payment.id);
 
-        // Update order as completed
+        // Update order as paid/completed
         await supabase
           .from('orders_v2')
           .update({
-            status: 'completed',
+            status: 'paid',
             paid_amount: amount / 100,
           })
           .eq('id', order.id);
+
+        // Calculate access dates
+        const now = new Date();
+        const durationDays = tariff?.access_duration_days || tariff?.duration_days || 365;
+        const accessEnd = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+
+        // Create subscription (entitlement)
+        const { data: subscription, error: subError } = await supabase
+          .from('subscriptions_v2')
+          .insert({
+            user_id,
+            order_id: order.id,
+            product_id,
+            tariff_id,
+            status: 'active',
+            payment_token: paymentMethod.provider_token,
+            access_start: now.toISOString(),
+            access_end: accessEnd.toISOString(),
+            meta: {
+              source: 'admin_manual_charge',
+              charged_by: user.id,
+              description,
+            },
+          })
+          .select()
+          .single();
+
+        if (subError) {
+          console.error('Subscription creation error:', subError);
+          // Don't fail the payment, just log it
+        }
 
         // Audit log
         await supabase.from('audit_logs').insert({
@@ -266,17 +320,31 @@ Deno.serve(async (req) => {
           meta: {
             payment_id: payment.id,
             order_id: order.id,
+            order_number: orderNumber,
+            subscription_id: subscription?.id,
+            product_id,
+            tariff_id,
+            product_name: product?.name,
+            tariff_name: tariff?.name,
             amount: amount / 100,
+            currency: 'BYN',
             description,
             bepaid_uid: chargeResult.uid,
+            card_brand: paymentMethod.brand,
+            card_last4: paymentMethod.last4,
+            access_start: now.toISOString(),
+            access_end: accessEnd.toISOString(),
           },
         });
 
-        console.log(`Manual charge successful: ${payment.id}, order: ${order.id}, amount: ${amount / 100} BYN`);
+        console.log(`Manual charge successful: order=${orderNumber}, payment=${payment.id}, subscription=${subscription?.id}, amount=${amount / 100} BYN`);
 
         return new Response(JSON.stringify({
           success: true,
           payment_id: payment.id,
+          order_id: order.id,
+          order_number: orderNumber,
+          subscription_id: subscription?.id,
           bepaid_uid: chargeResult.uid,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -292,10 +360,41 @@ Deno.serve(async (req) => {
           })
           .eq('id', payment.id);
 
+        // Update order status to failed
+        await supabase
+          .from('orders_v2')
+          .update({
+            status: 'cancelled',
+            meta: {
+              ...order.meta,
+              error: chargeResult.error,
+            },
+          })
+          .eq('id', order.id);
+
+        // Audit log for failed charge
+        await supabase.from('audit_logs').insert({
+          actor_user_id: user.id,
+          target_user_id: user_id,
+          action: 'payment.admin_manual_charge_failed',
+          meta: {
+            payment_id: payment.id,
+            order_id: order.id,
+            order_number: orderNumber,
+            product_id,
+            tariff_id,
+            amount: amount / 100,
+            error: chargeResult.error,
+            card_brand: paymentMethod.brand,
+            card_last4: paymentMethod.last4,
+          },
+        });
+
         return new Response(JSON.stringify({
           success: false,
           error: chargeResult.error,
           payment_id: payment.id,
+          order_number: orderNumber,
         }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
