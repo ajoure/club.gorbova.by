@@ -119,6 +119,7 @@ async function sendToGetCourse(
 interface DirectChargeRequest {
   productId: string;
   tariffCode: string;
+  offerId?: string; // Specific offer ID for pricing
   isTrial?: boolean;
   trialDays?: number;
   paymentMethodId?: string; // If not provided, use default card
@@ -155,9 +156,9 @@ Deno.serve(async (req) => {
     }
 
     const body: DirectChargeRequest = await req.json();
-    const { productId, tariffCode, isTrial, trialDays, paymentMethodId } = body;
+    const { productId, tariffCode, offerId, isTrial, trialDays, paymentMethodId } = body;
 
-    console.log(`Direct charge for user ${user.id}: product=${productId}, tariff=${tariffCode}, trial=${isTrial}`);
+    console.log(`Direct charge for user ${user.id}: product=${productId}, tariff=${tariffCode}, offerId=${offerId}, trial=${isTrial}`);
 
     // Get user's payment method
     let paymentMethodQuery = supabase
@@ -217,17 +218,41 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get offer data
-    const offerType = isTrial ? 'trial' : 'pay_now';
-    const { data: offer } = await supabase
-      .from('tariff_offers')
-      .select('*')
-      .eq('tariff_id', tariff.id)
-      .eq('offer_type', offerType)
-      .eq('is_active', true)
-      .order('is_primary', { ascending: false })
-      .limit(1)
-      .single();
+    // Get offer data - PRIORITY: use offerId if provided
+    let offer: any = null;
+    
+    if (offerId) {
+      // Use specific offer by ID
+      const { data: specificOffer } = await supabase
+        .from('tariff_offers')
+        .select('*')
+        .eq('id', offerId)
+        .eq('is_active', true)
+        .single();
+      
+      if (specificOffer) {
+        offer = specificOffer;
+        console.log(`Using specific offer by ID: ${offerId}, amount: ${offer.amount}`);
+      } else {
+        console.warn(`Offer not found or inactive: ${offerId}, falling back to tariff lookup`);
+      }
+    }
+    
+    // Fallback to tariff-based lookup
+    if (!offer) {
+      const offerType = isTrial ? 'trial' : 'pay_now';
+      const { data: tariffOffer } = await supabase
+        .from('tariff_offers')
+        .select('*')
+        .eq('tariff_id', tariff.id)
+        .eq('offer_type', offerType)
+        .eq('is_active', true)
+        .order('is_primary', { ascending: false })
+        .limit(1)
+        .single();
+      
+      offer = tariffOffer;
+    }
 
     // Check if this is an internal installment payment
     const isInternalInstallment = offer?.payment_method === 'internal_installment' && offer?.installment_count > 1;

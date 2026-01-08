@@ -25,8 +25,12 @@ function TariffCard({
   onSelectOffer: (offer: TariffOffer, tariff: PublicTariff) => void;
   showBadges?: boolean;
 }) {
-  const primaryOffer = tariff.offers?.find(o => o.offer_type === "pay_now");
-  const trialOffer = tariff.offers?.find(o => o.offer_type === "trial");
+  // Show ALL active offers, sorted by sort_order
+  const payNowOffers = tariff.offers?.filter(o => o.offer_type === "pay_now") || [];
+  const trialOffers = tariff.offers?.filter(o => o.offer_type === "trial") || [];
+  
+  // Get primary offer for price display
+  const primaryOffer = payNowOffers.find(o => o.is_primary) || payNowOffers[0];
   const displayPrice = tariff.current_price ?? tariff.base_price ?? primaryOffer?.amount ?? 0;
   
   const visibleFeatures = tariff.features?.filter(f => {
@@ -104,25 +108,29 @@ function TariffCard({
       )}
 
       <div className="space-y-2 mt-auto">
-        {trialOffer && (
+        {/* All trial offers */}
+        {trialOffers.map((offer) => (
           <Button 
-            onClick={() => onSelectOffer(trialOffer, tariff)}
+            key={offer.id}
+            onClick={() => onSelectOffer(offer, tariff)}
             variant="outline"
             className="w-full"
           >
-            {trialOffer.button_label || `Пробный период ${trialOffer.trial_days} дней`}
+            {offer.button_label || `Пробный период ${offer.trial_days} дней`}
           </Button>
-        )}
-        {primaryOffer && (
+        ))}
+        {/* All pay_now offers */}
+        {payNowOffers.map((offer, index) => (
           <Button 
-            onClick={() => onSelectOffer(primaryOffer, tariff)}
-            variant={tariff.is_popular ? "default" : "outline"}
+            key={offer.id}
+            onClick={() => onSelectOffer(offer, tariff)}
+            variant={tariff.is_popular && index === 0 ? "default" : "outline"}
             className="w-full"
           >
-            {primaryOffer.button_label || "Оплатить"}
+            {offer.button_label || "Оплатить"}
             <ChevronRight className="ml-2 h-4 w-4" />
           </Button>
-        )}
+        ))}
       </div>
     </GlassCard>
   );
@@ -261,6 +269,7 @@ export function ProductLanding({ data, header, footer, customSections }: Product
           productName={selectedOffer.tariff.name}
           price={String(selectedOffer.offer.amount)}
           tariffCode={selectedOffer.tariff.code}
+          offerId={selectedOffer.offer.id}
           isTrial={selectedOffer.offer.offer_type === "trial"}
           trialDays={selectedOffer.offer.trial_days ?? undefined}
         />

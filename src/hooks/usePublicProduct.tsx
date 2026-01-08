@@ -28,6 +28,10 @@ export interface TariffOffer {
   auto_charge_delay_days: number | null;
   requires_card_tokenization: boolean;
   sort_order: number;
+  is_active?: boolean;
+  is_primary?: boolean;
+  payment_method?: string;
+  installment_count?: number;
 }
 
 export interface PublicTariff {

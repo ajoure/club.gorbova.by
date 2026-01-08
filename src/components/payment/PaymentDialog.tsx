@@ -24,6 +24,7 @@ interface PaymentDialogProps {
   productName: string;
   price: string;
   tariffCode?: string;
+  offerId?: string;
   isTrial?: boolean;
   trialDays?: number;
 }
@@ -55,6 +56,7 @@ export function PaymentDialog({
   productName,
   price,
   tariffCode,
+  offerId,
   isTrial,
   trialDays,
 }: PaymentDialogProps) {
@@ -296,11 +298,12 @@ export function PaymentDialog({
     try {
       // If user has a saved card and tariffCode is provided, use direct charge
       if (savedCard && tariffCode && user) {
-        console.log("Using direct charge with saved card:", savedCard.id);
+        console.log("Using direct charge with saved card:", savedCard.id, "offerId:", offerId);
         const { data, error } = await supabase.functions.invoke("direct-charge", {
           body: {
             productId,
             tariffCode,
+            offerId,
             isTrial,
             trialDays,
             paymentMethodId: savedCard.id,
@@ -365,6 +368,7 @@ export function PaymentDialog({
           existingUserId,
           description: productName,
           tariffCode,
+          offerId,
           isTrial,
           trialDays,
         },
@@ -413,6 +417,7 @@ export function PaymentDialog({
           existingUserId,
           description: productName,
           tariffCode,
+          offerId,
           isTrial,
           trialDays,
           skipRedirect: true,

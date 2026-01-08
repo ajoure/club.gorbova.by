@@ -105,10 +105,28 @@ Deno.serve(async (req) => {
     if (productV2) {
       console.log('Found product in products_v2:', productV2.name);
       
-      // For v2 products, get price from tariff_offers based on tariffCode
+      // For v2 products, get price from tariff_offers
       let priceFromOffer = 0;
       
-      if (tariffCode) {
+      // PRIORITY 1: If offerId is provided, use that specific offer
+      if (offerId) {
+        const { data: specificOffer } = await supabase
+          .from('tariff_offers')
+          .select('amount, trial_days, auto_charge_amount, requires_card_tokenization, offer_type')
+          .eq('id', offerId)
+          .eq('is_active', true)
+          .maybeSingle();
+        
+        if (specificOffer) {
+          priceFromOffer = specificOffer.amount;
+          console.log('Using specific offer by offerId:', offerId, 'price:', priceFromOffer);
+        } else {
+          console.warn('Offer not found or inactive:', offerId);
+        }
+      }
+      
+      // PRIORITY 2: Fallback to tariffCode-based lookup
+      if (priceFromOffer === 0 && tariffCode) {
         // Get tariff by code
         const { data: tariff } = await supabase
           .from('tariffs')
