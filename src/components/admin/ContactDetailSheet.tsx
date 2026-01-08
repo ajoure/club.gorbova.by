@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { format, addDays } from "date-fns";
+import { format, addDays, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { DateRange } from "react-day-picker";
+import { cn } from "@/lib/utils";
 import {
   Sheet,
   SheetContent,
@@ -31,11 +33,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { Textarea } from "@/components/ui/textarea";
+import {
   User,
   Mail,
   Phone,
   MessageCircle,
-  Calendar,
+  Calendar as CalendarIcon,
   Clock,
   Handshake,
   CreditCard,
@@ -102,7 +111,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
   const [isProcessing, setIsProcessing] = useState(false);
   const [grantProductId, setGrantProductId] = useState("");
   const [grantTariffId, setGrantTariffId] = useState("");
-  const [grantDays, setGrantDays] = useState(30);
+  const [grantDateRange, setGrantDateRange] = useState<DateRange | undefined>({
+    from: new Date(),
+    to: addDays(new Date(), 30),
+  });
+  const [grantComment, setGrantComment] = useState("");
   const [selectedDeal, setSelectedDeal] = useState<any>(null);
   const [dealSheetOpen, setDealSheetOpen] = useState(false);
   const [refundDialogOpen, setRefundDialogOpen] = useState(false);
@@ -320,11 +333,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
       return;
     }
 
+    if (!grantDateRange?.from || !grantDateRange?.to) {
+      toast.error("Выберите период доступа");
+      return;
+    }
+
     setIsProcessing(true);
     try {
       const currentUser = (await supabase.auth.getUser()).data.user;
+      const accessStart = grantDateRange.from;
+      const accessEnd = grantDateRange.to;
+      const grantDays = differenceInDays(accessEnd, accessStart) + 1;
       const now = new Date();
-      const accessEnd = new Date(now.getTime() + grantDays * 24 * 60 * 60 * 1000);
       
       // Get tariff and product data upfront
       const [{ data: tariff }, { data: product }] = await Promise.all([
@@ -350,6 +370,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           source: "admin_grant", 
           granted_by: currentUser?.id,
           granted_by_email: currentUser?.email,
+          comment: grantComment || null,
+          access_start: accessStart.toISOString(),
+          access_end: accessEnd.toISOString(),
         },
       }).select().single();
 
@@ -383,16 +406,16 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
 
       let subscriptionId: string;
       if (existingSub) {
-        // Extend existing subscription
+        // Extend existing subscription to use the later date
         const currentEnd = new Date(existingSub.access_end_at);
-        const newEnd = new Date(currentEnd.getTime() + grantDays * 24 * 60 * 60 * 1000);
+        const newEnd = accessEnd > currentEnd ? accessEnd : new Date(currentEnd.getTime() + grantDays * 24 * 60 * 60 * 1000);
         await supabase.from("subscriptions_v2").update({
           access_end_at: newEnd.toISOString(),
           order_id: orderV2.id,
         }).eq("id", existingSub.id);
         subscriptionId = existingSub.id;
       } else {
-        // Create new subscription
+        // Create new subscription with custom dates
         const { data: newSub, error: subError } = await supabase.from("subscriptions_v2").insert({
           user_id: contact.user_id,
           order_id: orderV2.id,
@@ -400,7 +423,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           tariff_id: grantTariffId,
           status: "active",
           is_trial: false,
-          access_start_at: now.toISOString(),
+          access_start_at: accessStart.toISOString(),
           access_end_at: accessEnd.toISOString(),
         }).select().single();
         if (subError) throw subError;
@@ -419,7 +442,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
             club_id: product.telegram_club_id,
             source: "admin_grant",
             source_id: orderV2.id,
-            start_at: now.toISOString(),
+            start_at: accessStart.toISOString(),
             end_at: accessEnd.toISOString(),
             status: "active",
             meta: {
@@ -427,6 +450,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
               tariff_id: grantTariffId,
               granted_by: currentUser?.id,
               granted_by_email: currentUser?.email,
+              comment: grantComment || null,
             },
           });
 
@@ -490,6 +514,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           tariff_id: grantTariffId,
           tariff_name: tariff?.name,
           days: grantDays,
+          access_start: accessStart.toISOString(),
+          access_end: accessEnd.toISOString(),
+          comment: grantComment || null,
           order_id: orderV2.id,
           order_number: orderNumber,
           subscription_id: subscriptionId,
@@ -500,14 +527,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         },
       });
 
+      const dateStr = `${format(accessStart, "dd.MM.yy")} — ${format(accessEnd, "dd.MM.yy")}`;
       toast.success(existingSub 
-        ? `Доступ продлён на ${grantDays} дней` 
-        : `Доступ выдан на ${grantDays} дней`
+        ? `Доступ продлён (${dateStr})` 
+        : `Доступ выдан (${dateStr})`
       );
       queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.user_id] });
       refetchSubs();
       setGrantProductId("");
       setGrantTariffId("");
+      setGrantComment("");
+      setGrantDateRange({ from: new Date(), to: addDays(new Date(), 30) });
     } catch (error) {
       console.error("Grant access error:", error);
       toast.error("Ошибка выдачи доступа: " + (error as Error).message);
@@ -722,7 +752,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3 text-sm">
-                      <Calendar className="w-4 h-4 text-muted-foreground" />
+                      <CalendarIcon className="w-4 h-4 text-muted-foreground" />
                       <span className="text-muted-foreground">Регистрация</span>
                     </div>
                     <span className="text-sm">{format(new Date(contact.created_at), "dd MMM yyyy HH:mm", { locale: ru })}</span>
@@ -826,27 +856,69 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                       </Select>
                     </div>
                   </div>
-                  <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
-                    <div className="flex-1">
-                      <Label className="text-xs">Дней доступа</Label>
-                      <Input
-                        type="number"
-                        value={grantDays === 0 ? "" : grantDays}
-                        onChange={(e) => setGrantDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
-                        onBlur={() => { if (grantDays < 1) setGrantDays(1); }}
-                        min={1}
-                        className="h-10 sm:h-9"
-                      />
-                    </div>
-                    <Button
-                      onClick={handleGrantNewAccess}
-                      disabled={isProcessing || !grantProductId || !grantTariffId}
-                      className="gap-1 h-10 sm:h-9 w-full sm:w-auto"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Выдать доступ
-                    </Button>
+                  {/* Date range picker */}
+                  <div>
+                    <Label className="text-xs">Период доступа</Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            "w-full justify-start text-left font-normal h-10 sm:h-9",
+                            !grantDateRange && "text-muted-foreground"
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {grantDateRange?.from ? (
+                            grantDateRange.to ? (
+                              <>
+                                {format(grantDateRange.from, "dd.MM.yy")} — {format(grantDateRange.to, "dd.MM.yy")}
+                                <span className="ml-auto text-muted-foreground text-xs">
+                                  ({differenceInDays(grantDateRange.to, grantDateRange.from) + 1} дн.)
+                                </span>
+                              </>
+                            ) : (
+                              format(grantDateRange.from, "dd.MM.yy")
+                            )
+                          ) : (
+                            <span>Выберите период</span>
+                          )}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          initialFocus
+                          mode="range"
+                          defaultMonth={grantDateRange?.from}
+                          selected={grantDateRange}
+                          onSelect={setGrantDateRange}
+                          numberOfMonths={1}
+                          locale={ru}
+                          className={cn("p-3 pointer-events-auto")}
+                        />
+                      </PopoverContent>
+                    </Popover>
                   </div>
+                  
+                  {/* Comment field */}
+                  <div>
+                    <Label className="text-xs">Комментарий (необязательно)</Label>
+                    <Textarea
+                      value={grantComment}
+                      onChange={(e) => setGrantComment(e.target.value)}
+                      placeholder="Причина выдачи доступа..."
+                      className="min-h-[60px] resize-none"
+                    />
+                  </div>
+
+                  <Button
+                    onClick={handleGrantNewAccess}
+                    disabled={isProcessing || !grantProductId || !grantTariffId || !grantDateRange?.from || !grantDateRange?.to}
+                    className="gap-1 h-10 sm:h-9 w-full"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Выдать доступ
+                  </Button>
                 </CardContent>
               </Card>
 
