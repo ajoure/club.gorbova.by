@@ -354,9 +354,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
 
       const result = await startImpersonation(contact.user_id);
       if (result) {
-        // Use verifyOtp with token_hash parameter
+        // Use verifyOtp with token_hash only (email must not be provided with token_hash)
         const { error } = await supabase.auth.verifyOtp({
-          email: result.email,
           token_hash: result.tokenHash,
           type: "magiclink",
         });
