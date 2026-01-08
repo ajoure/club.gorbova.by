@@ -87,8 +87,8 @@ export function TelegramLinkReminder() {
     }
   };
 
-  // Don't show if loading, dismissed, or already linked
-  if (isLoading || isDismissed || linkStatus?.status === 'active') {
+  // Don't show if loading, dismissed, already linked, or has telegram username (already linked)
+  if (isLoading || isDismissed || linkStatus?.status === 'active' || linkStatus?.telegram_username) {
     return null;
   }
 
