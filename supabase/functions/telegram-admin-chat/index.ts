@@ -160,11 +160,11 @@ Deno.serve(async (req) => {
         if (bot_id) {
           const { data: bot } = await supabase
             .from("telegram_bots")
-            .select("id, bot_token")
+            .select("id, bot_token_encrypted")
             .eq("id", bot_id)
             .single();
-          if (bot?.bot_token) {
-            botToken = bot.bot_token;
+          if (bot?.bot_token_encrypted) {
+            botToken = bot.bot_token_encrypted;
             usedBotId = bot.id;
           }
         }
@@ -172,24 +172,26 @@ Deno.serve(async (req) => {
         if (!botToken && profile.telegram_link_bot_id) {
           const { data: bot } = await supabase
             .from("telegram_bots")
-            .select("id, bot_token")
+            .select("id, bot_token_encrypted")
             .eq("id", profile.telegram_link_bot_id)
             .single();
-          if (bot?.bot_token) {
-            botToken = bot.bot_token;
+          if (bot?.bot_token_encrypted) {
+            botToken = bot.bot_token_encrypted;
             usedBotId = bot.id;
           }
         }
 
+        // Fallback to any active bot if user's linked bot not found
         if (!botToken) {
-          const { data: defaultBot } = await supabase
+          const { data: anyBot } = await supabase
             .from("telegram_bots")
-            .select("id, bot_token")
-            .eq("is_default", true)
+            .select("id, bot_token_encrypted")
+            .eq("status", "active")
+            .limit(1)
             .single();
-          if (defaultBot?.bot_token) {
-            botToken = defaultBot.bot_token;
-            usedBotId = defaultBot.id;
+          if (anyBot?.bot_token_encrypted) {
+            botToken = anyBot.bot_token_encrypted;
+            usedBotId = anyBot.id;
           }
         }
 
