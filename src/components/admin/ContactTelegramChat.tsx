@@ -41,6 +41,7 @@ interface ContactTelegramChatProps {
   userId: string;
   telegramUserId: number | null;
   telegramUsername: string | null;
+  clientName?: string | null;
 }
 
 interface TelegramMessage {
@@ -109,6 +110,7 @@ export function ContactTelegramChat({
   userId,
   telegramUserId,
   telegramUsername,
+  clientName,
 }: ContactTelegramChatProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
@@ -294,7 +296,7 @@ export function ContactTelegramChat({
               <User className="w-3 h-3" />
             )}
             <span className="text-xs opacity-70">
-              {msg.direction === "outgoing" ? "Вы" : "Клиент"}
+              {msg.direction === "outgoing" ? "Вы" : (clientName || telegramUsername ? `@${telegramUsername}` : "Клиент")}
             </span>
           </div>
           
