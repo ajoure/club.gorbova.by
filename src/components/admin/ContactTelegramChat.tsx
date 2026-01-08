@@ -10,6 +10,11 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Send,
   MessageCircle,
   Bot,
@@ -18,6 +23,11 @@ import {
   CheckCircle,
   Clock,
   RefreshCw,
+  Paperclip,
+  Smile,
+  Image as ImageIcon,
+  FileText,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -31,6 +41,9 @@ interface TelegramMessage {
   id: string;
   direction: "outgoing" | "incoming";
   message_text: string | null;
+  file_type: string | null;
+  file_name: string | null;
+  file_url: string | null;
   status: string;
   created_at: string;
   sent_by_admin: string | null;
@@ -41,6 +54,14 @@ interface TelegramMessage {
   } | null;
 }
 
+const EMOJI_LIST = [
+  "😀", "😃", "😄", "😁", "😅", "😂", "🤣", "😊", "😇", "🙂",
+  "😉", "😌", "😍", "🥰", "😘", "😋", "😛", "😜", "🤪", "😎",
+  "🤗", "🤔", "🤐", "😐", "😑", "😶", "😏", "😒", "🙄", "😬",
+  "👍", "👎", "👌", "✌️", "🤞", "🤝", "👏", "🙏", "💪", "❤️",
+  "🔥", "⭐", "✨", "💯", "✅", "❌", "⚠️", "📌", "📎", "💼",
+];
+
 export function ContactTelegramChat({
   userId,
   telegramUserId,
@@ -48,7 +69,10 @@ export function ContactTelegramChat({
 }: ContactTelegramChatProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch messages
   const { data: messages, isLoading, refetch } = useQuery({
@@ -61,14 +85,37 @@ export function ContactTelegramChat({
       return (data.messages || []) as TelegramMessage[];
     },
     enabled: !!userId && !!telegramUserId,
-    refetchInterval: 30000, // Auto-refresh every 30 seconds
+    refetchInterval: 30000,
   });
 
   // Send message mutation
   const sendMutation = useMutation({
-    mutationFn: async (text: string) => {
+    mutationFn: async ({ text, file }: { text?: string; file?: File }) => {
+      let fileData: { type: string; name: string; base64: string } | undefined;
+      
+      if (file) {
+        setIsUploading(true);
+        const buffer = await file.arrayBuffer();
+        const base64 = btoa(
+          new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+        );
+        
+        // Determine file type category
+        let type = "document";
+        if (file.type.startsWith("image/")) type = "photo";
+        else if (file.type.startsWith("video/")) type = "video";
+        else if (file.type.startsWith("audio/")) type = "audio";
+        
+        fileData = { type, name: file.name, base64 };
+      }
+
       const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
-        body: { action: "send_message", user_id: userId, message: text },
+        body: { 
+          action: "send_message", 
+          user_id: userId, 
+          message: text || "",
+          file: fileData,
+        },
       });
       if (error) throw error;
       if (!data.success) throw new Error(data.error || "Failed to send message");
@@ -76,10 +123,13 @@ export function ContactTelegramChat({
     },
     onSuccess: () => {
       setMessage("");
+      setSelectedFile(null);
+      setIsUploading(false);
       queryClient.invalidateQueries({ queryKey: ["telegram-chat", userId] });
       toast.success("Сообщение отправлено");
     },
     onError: (error) => {
+      setIsUploading(false);
       toast.error("Ошибка отправки: " + (error as Error).message);
     },
   });
@@ -93,8 +143,8 @@ export function ContactTelegramChat({
 
   const handleSend = () => {
     const trimmed = message.trim();
-    if (!trimmed) return;
-    sendMutation.mutate(trimmed);
+    if (!trimmed && !selectedFile) return;
+    sendMutation.mutate({ text: trimmed, file: selectedFile || undefined });
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -102,6 +152,27 @@ export function ContactTelegramChat({
       e.preventDefault();
       handleSend();
     }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Max 20MB
+      if (file.size > 20 * 1024 * 1024) {
+        toast.error("Файл слишком большой (макс. 20 МБ)");
+        return;
+      }
+      setSelectedFile(file);
+    }
+  };
+
+  const insertEmoji = (emoji: string) => {
+    setMessage(prev => prev + emoji);
+  };
+
+  const getFileIcon = (fileType: string | null) => {
+    if (fileType === "photo") return <ImageIcon className="w-4 h-4" />;
+    return <FileText className="w-4 h-4" />;
   };
 
   if (!telegramUserId) {
@@ -179,7 +250,19 @@ export function ContactTelegramChat({
                       {msg.direction === "outgoing" ? "Вы" : "Клиент"}
                     </span>
                   </div>
-                  <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+                  
+                  {/* File preview if present */}
+                  {msg.file_type && (
+                    <div className="flex items-center gap-2 mb-2 p-2 rounded bg-background/20">
+                      {getFileIcon(msg.file_type)}
+                      <span className="text-xs truncate">{msg.file_name || "Файл"}</span>
+                    </div>
+                  )}
+                  
+                  {msg.message_text && (
+                    <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+                  )}
+                  
                   <div className="flex items-center justify-end gap-1 mt-1">
                     <span className="text-xs opacity-60">
                       {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
@@ -199,20 +282,80 @@ export function ContactTelegramChat({
         )}
       </ScrollArea>
 
+      {/* Selected file preview */}
+      {selectedFile && (
+        <div className="flex items-center gap-2 px-2 py-1 bg-muted rounded-md mb-2">
+          <Paperclip className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm truncate flex-1">{selectedFile.name}</span>
+          <span className="text-xs text-muted-foreground">
+            {(selectedFile.size / 1024).toFixed(0)} KB
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSelectedFile(null)}
+            className="h-6 w-6 p-0"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+      )}
+
       {/* Input */}
       <div className="pt-3 border-t">
         <div className="flex gap-2">
+          <div className="flex flex-col gap-1">
+            {/* Emoji button */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                  <Smile className="w-4 h-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 p-2" align="start">
+                <div className="grid grid-cols-10 gap-1">
+                  {EMOJI_LIST.map((emoji) => (
+                    <button
+                      key={emoji}
+                      onClick={() => insertEmoji(emoji)}
+                      className="w-6 h-6 text-center hover:bg-muted rounded transition-colors"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+            
+            {/* File button */}
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-8 w-8 p-0"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Paperclip className="w-4 h-4" />
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={handleFileSelect}
+              accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar"
+            />
+          </div>
+          
           <Textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyPress}
             placeholder="Введите сообщение..."
-            className="min-h-[60px] max-h-[120px] resize-none"
-            disabled={sendMutation.isPending}
+            className="min-h-[60px] max-h-[120px] resize-none flex-1"
+            disabled={sendMutation.isPending || isUploading}
           />
           <Button
             onClick={handleSend}
-            disabled={!message.trim() || sendMutation.isPending}
+            disabled={(!message.trim() && !selectedFile) || sendMutation.isPending || isUploading}
             className="h-auto"
           >
             <Send className="w-4 h-4" />

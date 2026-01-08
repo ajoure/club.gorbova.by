@@ -81,6 +81,9 @@ import { AccessHistorySheet } from "./AccessHistorySheet";
 import { EditContactDialog } from "./EditContactDialog";
 import { ContactTelegramChat } from "./ContactTelegramChat";
 import { ContactEmailHistory } from "./ContactEmailHistory";
+import { EditSubscriptionDialog } from "./EditSubscriptionDialog";
+import { EditDealDialog } from "./EditDealDialog";
+import { ComposeEmailDialog } from "./ComposeEmailDialog";
 
 interface Contact {
   id: string;
@@ -111,6 +114,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
   const [isProcessing, setIsProcessing] = useState(false);
   const [grantProductId, setGrantProductId] = useState("");
   const [grantTariffId, setGrantTariffId] = useState("");
+  const [grantDays, setGrantDays] = useState(30);
   const [grantDateRange, setGrantDateRange] = useState<DateRange | undefined>({
     from: new Date(),
     to: addDays(new Date(), 30),
@@ -122,6 +126,28 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
   const [refundDeal, setRefundDeal] = useState<any>(null);
   const [historySheetOpen, setHistorySheetOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editSubscriptionOpen, setEditSubscriptionOpen] = useState(false);
+  const [subscriptionToEdit, setSubscriptionToEdit] = useState<any>(null);
+  const [editDealOpen, setEditDealOpen] = useState(false);
+  const [dealToEdit, setDealToEdit] = useState<any>(null);
+  const [composeEmailOpen, setComposeEmailOpen] = useState(false);
+
+  // Sync days input with date range
+  const handleDaysChange = (days: number) => {
+    setGrantDays(days);
+    setGrantDateRange({
+      from: new Date(),
+      to: addDays(new Date(), days - 1),
+    });
+  };
+
+  // Sync date range with days
+  const handleDateRangeChange = (range: DateRange | undefined) => {
+    setGrantDateRange(range);
+    if (range?.from && range?.to) {
+      setGrantDays(differenceInDays(range.to, range.from) + 1);
+    }
+  };
 
   // Fetch deals for this contact
   const { data: deals, isLoading: dealsLoading } = useQuery({
@@ -856,48 +882,53 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                       </Select>
                     </div>
                   </div>
-                  {/* Date range picker */}
-                  <div>
-                    <Label className="text-xs">Период доступа</Label>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className={cn(
-                            "w-full justify-start text-left font-normal h-10 sm:h-9",
-                            !grantDateRange && "text-muted-foreground"
-                          )}
-                        >
-                          <CalendarIcon className="mr-2 h-4 w-4" />
-                          {grantDateRange?.from ? (
-                            grantDateRange.to ? (
-                              <>
-                                {format(grantDateRange.from, "dd.MM.yy")} — {format(grantDateRange.to, "dd.MM.yy")}
-                                <span className="ml-auto text-muted-foreground text-xs">
-                                  ({differenceInDays(grantDateRange.to, grantDateRange.from) + 1} дн.)
-                                </span>
-                              </>
+                  {/* Days input + Date range picker */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs">Дней (от сегодня)</Label>
+                      <Input
+                        type="number"
+                        value={grantDays}
+                        onChange={(e) => handleDaysChange(parseInt(e.target.value) || 30)}
+                        min={1}
+                        className="h-10 sm:h-9"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Или период</Label>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className={cn(
+                              "w-full justify-start text-left font-normal h-10 sm:h-9",
+                              !grantDateRange && "text-muted-foreground"
+                            )}
+                          >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {grantDateRange?.from && grantDateRange.to ? (
+                              <span className="truncate">
+                                {format(grantDateRange.from, "dd.MM")} — {format(grantDateRange.to, "dd.MM")}
+                              </span>
                             ) : (
-                              format(grantDateRange.from, "dd.MM.yy")
-                            )
-                          ) : (
-                            <span>Выберите период</span>
-                          )}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar
-                          initialFocus
-                          mode="range"
-                          defaultMonth={grantDateRange?.from}
-                          selected={grantDateRange}
-                          onSelect={setGrantDateRange}
-                          numberOfMonths={1}
-                          locale={ru}
-                          className={cn("p-3 pointer-events-auto")}
-                        />
-                      </PopoverContent>
-                    </Popover>
+                              <span>📅</span>
+                            )}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            initialFocus
+                            mode="range"
+                            defaultMonth={grantDateRange?.from}
+                            selected={grantDateRange}
+                            onSelect={handleDateRangeChange}
+                            numberOfMonths={1}
+                            locale={ru}
+                            className={cn("p-3 pointer-events-auto")}
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </div>
                   </div>
                   
                   {/* Comment field */}
@@ -1494,6 +1525,30 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           open={editDialogOpen}
           onOpenChange={setEditDialogOpen}
           onSuccess={() => queryClient.invalidateQueries({ queryKey: ["admin-contacts"] })}
+        />
+
+        {/* Edit Subscription Dialog */}
+        <EditSubscriptionDialog
+          subscription={subscriptionToEdit}
+          open={editSubscriptionOpen}
+          onOpenChange={setEditSubscriptionOpen}
+          onSuccess={() => refetchSubs()}
+        />
+
+        {/* Edit Deal Dialog */}
+        <EditDealDialog
+          deal={dealToEdit}
+          open={editDealOpen}
+          onOpenChange={setEditDealOpen}
+          onSuccess={() => queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.user_id] })}
+        />
+
+        {/* Compose Email Dialog */}
+        <ComposeEmailDialog
+          recipientEmail={contact.email}
+          recipientName={contact.full_name}
+          open={composeEmailOpen}
+          onOpenChange={setComposeEmailOpen}
         />
       </SheetContent>
     </Sheet>
