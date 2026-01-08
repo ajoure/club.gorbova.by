@@ -28,6 +28,12 @@ import {
   Image as ImageIcon,
   FileText,
   X,
+  Key,
+  UserPlus,
+  UserMinus,
+  Link,
+  Unlink,
+  Bell,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -39,11 +45,9 @@ interface ContactTelegramChatProps {
 
 interface TelegramMessage {
   id: string;
+  type: "message";
   direction: "outgoing" | "incoming";
   message_text: string | null;
-  file_type?: string | null;
-  file_name?: string | null;
-  file_url?: string | null;
   status: string;
   created_at: string;
   sent_by_admin?: string | null;
@@ -52,12 +56,18 @@ interface TelegramMessage {
     file_name?: string | null;
     [key: string]: unknown;
   } | null;
-  telegram_bots?: {
-    id: string;
-    bot_name: string;
-    bot_username: string;
-  } | null;
 }
+
+interface TelegramEvent {
+  id: string;
+  type: "event";
+  action: string;
+  status: string;
+  created_at: string;
+  meta?: Record<string, unknown> | null;
+}
+
+type ChatItem = TelegramMessage | TelegramEvent;
 
 const EMOJI_LIST = [
   "😀", "😃", "😄", "😁", "😅", "😂", "🤣", "😊", "😇", "🙂",
@@ -66,6 +76,34 @@ const EMOJI_LIST = [
   "👍", "👎", "👌", "✌️", "🤞", "🤝", "👏", "🙏", "💪", "❤️",
   "🔥", "⭐", "✨", "💯", "✅", "❌", "⚠️", "📌", "📎", "💼",
 ];
+
+const EVENT_ICONS: Record<string, React.ReactNode> = {
+  LINK_SUCCESS: <Link className="w-3 h-3 text-green-500" />,
+  RELINK_SUCCESS: <Link className="w-3 h-3 text-blue-500" />,
+  UNLINK: <Unlink className="w-3 h-3 text-orange-500" />,
+  AUTO_GRANT: <Key className="w-3 h-3 text-green-500" />,
+  MANUAL_GRANT: <Key className="w-3 h-3 text-green-500" />,
+  MANUAL_EXTEND: <Key className="w-3 h-3 text-blue-500" />,
+  AUTO_REVOKE: <UserMinus className="w-3 h-3 text-red-500" />,
+  MANUAL_REVOKE: <UserMinus className="w-3 h-3 text-red-500" />,
+  AUTO_KICK_VIOLATOR: <UserMinus className="w-3 h-3 text-red-500" />,
+  manual_notification: <Bell className="w-3 h-3 text-blue-500" />,
+  ADMIN_CHAT_MESSAGE: <MessageCircle className="w-3 h-3 text-primary" />,
+  ADMIN_CHAT_FILE: <Paperclip className="w-3 h-3 text-primary" />,
+};
+
+const EVENT_LABELS: Record<string, string> = {
+  LINK_SUCCESS: "Привязал Telegram",
+  RELINK_SUCCESS: "Перепривязал Telegram",
+  UNLINK: "Отвязал Telegram",
+  AUTO_GRANT: "Автоматическая выдача доступа",
+  MANUAL_GRANT: "Ручная выдача доступа",
+  MANUAL_EXTEND: "Продление доступа",
+  AUTO_REVOKE: "Автоматический отзыв доступа",
+  MANUAL_REVOKE: "Ручной отзыв доступа",
+  AUTO_KICK_VIOLATOR: "Исключён из группы",
+  manual_notification: "Уведомление отправлено",
+};
 
 export function ContactTelegramChat({
   userId,
@@ -80,18 +118,45 @@ export function ContactTelegramChat({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch messages
-  const { data: messages, isLoading, refetch } = useQuery({
-    queryKey: ["telegram-chat", userId],
+  const { data: messages, isLoading: messagesLoading } = useQuery({
+    queryKey: ["telegram-messages", userId],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
-        body: { action: "get_messages", user_id: userId },
+        body: { action: "get_messages", user_id: userId, limit: 100 },
       });
       if (error) throw error;
-      return (data.messages || []) as TelegramMessage[];
+      return (data.messages || []).map((m: any) => ({ ...m, type: "message" })) as TelegramMessage[];
     },
-    enabled: !!userId && !!telegramUserId,
-    refetchInterval: 30000,
+    enabled: !!userId,
   });
+
+  // Fetch events from telegram_logs
+  const { data: events, isLoading: eventsLoading } = useQuery({
+    queryKey: ["telegram-events", userId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("telegram_logs")
+        .select("id, action, status, created_at, meta")
+        .eq("user_id", userId)
+        .not("action", "in", "(ADMIN_CHAT_MESSAGE,ADMIN_CHAT_FILE)")
+        .order("created_at", { ascending: true })
+        .limit(100);
+      if (error) throw error;
+      return (data || []).map((e: any) => ({ ...e, type: "event" })) as TelegramEvent[];
+    },
+    enabled: !!userId,
+  });
+
+  // Combine and sort messages + events
+  const chatItems: ChatItem[] = [...(messages || []), ...(events || [])]
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  const isLoading = messagesLoading || eventsLoading;
+
+  const refetch = () => {
+    queryClient.invalidateQueries({ queryKey: ["telegram-messages", userId] });
+    queryClient.invalidateQueries({ queryKey: ["telegram-events", userId] });
+  };
 
   // Send message mutation
   const sendMutation = useMutation({
@@ -105,7 +170,6 @@ export function ContactTelegramChat({
           new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
         );
         
-        // Determine file type category
         let type = "document";
         if (file.type.startsWith("image/")) type = "photo";
         else if (file.type.startsWith("video/")) type = "video";
@@ -130,7 +194,7 @@ export function ContactTelegramChat({
       setMessage("");
       setSelectedFile(null);
       setIsUploading(false);
-      queryClient.invalidateQueries({ queryKey: ["telegram-chat", userId] });
+      refetch();
       toast.success("Сообщение отправлено");
     },
     onError: (error) => {
@@ -139,12 +203,12 @@ export function ContactTelegramChat({
     },
   });
 
-  // Scroll to bottom when messages change
+  // Scroll to bottom when items change
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [chatItems]);
 
   const handleSend = () => {
     const trimmed = message.trim();
@@ -162,7 +226,6 @@ export function ContactTelegramChat({
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Max 20MB
       if (file.size > 20 * 1024 * 1024) {
         toast.error("Файл слишком большой (макс. 20 МБ)");
         return;
@@ -192,13 +255,84 @@ export function ContactTelegramChat({
     );
   }
 
+  const renderChatItem = (item: ChatItem) => {
+    if (item.type === "event") {
+      const event = item as TelegramEvent;
+      return (
+        <div key={event.id} className="flex justify-center my-2">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-xs text-muted-foreground">
+            {EVENT_ICONS[event.action] || <Bell className="w-3 h-3" />}
+            <span>{EVENT_LABELS[event.action] || event.action}</span>
+            <span className="opacity-60">
+              {format(new Date(event.created_at), "dd.MM HH:mm", { locale: ru })}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    const msg = item as TelegramMessage;
+    const fileType = msg.meta?.file_type as string | null;
+    const fileName = msg.meta?.file_name as string | null;
+
+    return (
+      <div
+        key={msg.id}
+        className={`flex ${msg.direction === "outgoing" ? "justify-end" : "justify-start"}`}
+      >
+        <div
+          className={`max-w-[80%] rounded-lg p-3 ${
+            msg.direction === "outgoing"
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted"
+          }`}
+        >
+          <div className="flex items-center gap-1 mb-1">
+            {msg.direction === "outgoing" ? (
+              <Bot className="w-3 h-3" />
+            ) : (
+              <User className="w-3 h-3" />
+            )}
+            <span className="text-xs opacity-70">
+              {msg.direction === "outgoing" ? "Вы" : "Клиент"}
+            </span>
+          </div>
+          
+          {fileType && (
+            <div className="flex items-center gap-2 mb-2 p-2 rounded bg-background/20">
+              {getFileIcon(fileType)}
+              <span className="text-xs truncate">{fileName || "Файл"}</span>
+            </div>
+          )}
+          
+          {msg.message_text && (
+            <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+          )}
+          
+          <div className="flex items-center justify-end gap-1 mt-1">
+            <span className="text-xs opacity-60">
+              {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
+            </span>
+            {msg.direction === "outgoing" && (
+              <>
+                {msg.status === "sent" && <CheckCircle className="w-3 h-3 opacity-60" />}
+                {msg.status === "failed" && <AlertCircle className="w-3 h-3 text-destructive" />}
+                {msg.status === "pending" && <Clock className="w-3 h-3 opacity-60" />}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="flex flex-col h-[400px]">
+    <div className="flex flex-col h-[500px]">
       {/* Header */}
       <div className="flex items-center justify-between pb-3 border-b">
         <div className="flex items-center gap-2">
           <MessageCircle className="w-4 h-4 text-blue-500" />
-          <span className="font-medium">Telegram чат</span>
+          <span className="font-medium">Telegram</span>
           {telegramUsername && (
             <Badge variant="secondary" className="text-xs">
               @{telegramUsername}
@@ -208,14 +342,14 @@ export function ContactTelegramChat({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => refetch()}
+          onClick={refetch}
           className="h-8 w-8 p-0"
         >
           <RefreshCw className="w-4 h-4" />
         </Button>
       </div>
 
-      {/* Messages */}
+      {/* Messages + Events */}
       <ScrollArea className="flex-1 py-3" ref={scrollRef}>
         {isLoading ? (
           <div className="space-y-3">
@@ -223,7 +357,7 @@ export function ContactTelegramChat({
               <Skeleton key={i} className="h-12 w-3/4" />
             ))}
           </div>
-        ) : !messages?.length ? (
+        ) : !chatItems?.length ? (
           <div className="h-full flex items-center justify-center text-muted-foreground">
             <div className="text-center">
               <Bot className="w-10 h-10 mx-auto mb-2 opacity-30" />
@@ -233,56 +367,7 @@ export function ContactTelegramChat({
           </div>
         ) : (
           <div className="space-y-3 pr-4">
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.direction === "outgoing" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[80%] rounded-lg p-3 ${
-                    msg.direction === "outgoing"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted"
-                  }`}
-                >
-                  <div className="flex items-center gap-1 mb-1">
-                    {msg.direction === "outgoing" ? (
-                      <Bot className="w-3 h-3" />
-                    ) : (
-                      <User className="w-3 h-3" />
-                    )}
-                    <span className="text-xs opacity-70">
-                      {msg.direction === "outgoing" ? "Вы" : "Клиент"}
-                    </span>
-                  </div>
-                  
-                  {/* File preview if present */}
-                  {(msg.file_type || msg.meta?.file_type) && (
-                    <div className="flex items-center gap-2 mb-2 p-2 rounded bg-background/20">
-                      {getFileIcon(msg.file_type || msg.meta?.file_type || null)}
-                      <span className="text-xs truncate">{msg.file_name || msg.meta?.file_name || "Файл"}</span>
-                    </div>
-                  )}
-                  
-                  {msg.message_text && (
-                    <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
-                  )}
-                  
-                  <div className="flex items-center justify-end gap-1 mt-1">
-                    <span className="text-xs opacity-60">
-                      {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
-                    </span>
-                    {msg.direction === "outgoing" && (
-                      <>
-                        {msg.status === "sent" && <CheckCircle className="w-3 h-3 opacity-60" />}
-                        {msg.status === "failed" && <AlertCircle className="w-3 h-3 text-destructive" />}
-                        {msg.status === "pending" && <Clock className="w-3 h-3 opacity-60" />}
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
+            {chatItems.map(renderChatItem)}
           </div>
         )}
       </ScrollArea>
@@ -310,7 +395,6 @@ export function ContactTelegramChat({
       <div className="pt-3 border-t">
         <div className="flex gap-2">
           <div className="flex flex-col gap-1">
-            {/* Emoji button */}
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
@@ -332,7 +416,6 @@ export function ContactTelegramChat({
               </PopoverContent>
             </Popover>
             
-            {/* File button */}
             <Button 
               variant="ghost" 
               size="sm" 

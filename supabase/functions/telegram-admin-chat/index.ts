@@ -231,13 +231,15 @@ Deno.serve(async (req) => {
           bot_id: usedBotId,
           direction: "outgoing",
           message_text: message || null,
-          file_type: file?.type || null,
-          file_name: file?.name || null,
           message_id: sendResult.ok ? sendResult.result.message_id : null,
           sent_by_admin: user.id,
           status: sendResult.ok ? "sent" : "failed",
           error_message: sendResult.ok ? null : sendResult.description,
-          meta: { telegram_response: sendResult },
+          meta: { 
+            telegram_response: sendResult,
+            file_type: file?.type || null,
+            file_name: file?.name || null,
+          },
         };
 
         await supabase.from("telegram_messages").insert(messageLogData);
