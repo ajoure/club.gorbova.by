@@ -3,8 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { LandingHeader } from "@/components/landing/LandingHeader";
-import { LandingFooter } from "@/components/landing/LandingFooter";
+import { ConsultationHeader } from "@/components/consultation/ConsultationHeader";
+import { ConsultationFooter } from "@/components/consultation/ConsultationFooter";
 import { AnimatedSection } from "@/components/landing/AnimatedSection";
 import { ConsultationPaymentDialog } from "@/components/payment/ConsultationPaymentDialog";
 import { 
@@ -134,7 +134,7 @@ export default function Consultation() {
 
   return (
     <div className="min-h-screen bg-background">
-      <LandingHeader />
+      <ConsultationHeader />
       
       {/* Hero Section */}
       <section className="relative pt-32 pb-20 overflow-hidden">
@@ -190,7 +190,7 @@ export default function Consultation() {
       </section>
 
       {/* Target Audience Section */}
-      <section className="py-20">
+      <section id="audience" className="py-20">
         <div className="container mx-auto px-4">
           <AnimatedSection animation="fade-up">
             <div className="text-center mb-12">
@@ -223,7 +223,7 @@ export default function Consultation() {
       </section>
 
       {/* Achievements Section */}
-      <section className="py-20 relative overflow-hidden">
+      <section id="results" className="py-20 relative overflow-hidden">
         <div className="absolute inset-0 bg-muted/50 -z-10" />
         <div className="container mx-auto px-4">
           <AnimatedSection animation="fade-up">
@@ -313,7 +313,7 @@ export default function Consultation() {
       </section>
 
       {/* After Payment Section */}
-      <section className="py-20 relative overflow-hidden">
+      <section id="after-payment" className="py-20 relative overflow-hidden">
         <div className="absolute inset-0 bg-muted/50 -z-10" />
         <div className="container mx-auto px-4">
           <AnimatedSection animation="fade-up">
@@ -368,7 +368,7 @@ export default function Consultation() {
         </div>
       </section>
 
-      <LandingFooter />
+      <ConsultationFooter />
 
       {/* Payment Dialog */}
       {selectedTariff && (
