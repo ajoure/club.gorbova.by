@@ -110,6 +110,143 @@ export type Database = {
           },
         ]
       }
+      client_legal_details: {
+        Row: {
+          bank_account: string | null
+          bank_code: string | null
+          bank_name: string | null
+          client_type: string
+          created_at: string
+          email: string | null
+          ent_acts_on_basis: string | null
+          ent_address: string | null
+          ent_name: string | null
+          ent_unp: string | null
+          id: string
+          ind_address_apartment: string | null
+          ind_address_city: string | null
+          ind_address_district: string | null
+          ind_address_house: string | null
+          ind_address_index: string | null
+          ind_address_region: string | null
+          ind_address_street: string | null
+          ind_birth_date: string | null
+          ind_full_name: string | null
+          ind_passport_issued_by: string | null
+          ind_passport_issued_date: string | null
+          ind_passport_number: string | null
+          ind_passport_series: string | null
+          ind_passport_valid_until: string | null
+          ind_personal_number: string | null
+          is_default: boolean
+          leg_acts_on_basis: string | null
+          leg_address: string | null
+          leg_director_name: string | null
+          leg_director_position: string | null
+          leg_name: string | null
+          leg_org_form: string | null
+          leg_unp: string | null
+          phone: string | null
+          profile_id: string
+          updated_at: string
+          validated_at: string | null
+          validation_errors: Json | null
+          validation_status: string | null
+        }
+        Insert: {
+          bank_account?: string | null
+          bank_code?: string | null
+          bank_name?: string | null
+          client_type?: string
+          created_at?: string
+          email?: string | null
+          ent_acts_on_basis?: string | null
+          ent_address?: string | null
+          ent_name?: string | null
+          ent_unp?: string | null
+          id?: string
+          ind_address_apartment?: string | null
+          ind_address_city?: string | null
+          ind_address_district?: string | null
+          ind_address_house?: string | null
+          ind_address_index?: string | null
+          ind_address_region?: string | null
+          ind_address_street?: string | null
+          ind_birth_date?: string | null
+          ind_full_name?: string | null
+          ind_passport_issued_by?: string | null
+          ind_passport_issued_date?: string | null
+          ind_passport_number?: string | null
+          ind_passport_series?: string | null
+          ind_passport_valid_until?: string | null
+          ind_personal_number?: string | null
+          is_default?: boolean
+          leg_acts_on_basis?: string | null
+          leg_address?: string | null
+          leg_director_name?: string | null
+          leg_director_position?: string | null
+          leg_name?: string | null
+          leg_org_form?: string | null
+          leg_unp?: string | null
+          phone?: string | null
+          profile_id: string
+          updated_at?: string
+          validated_at?: string | null
+          validation_errors?: Json | null
+          validation_status?: string | null
+        }
+        Update: {
+          bank_account?: string | null
+          bank_code?: string | null
+          bank_name?: string | null
+          client_type?: string
+          created_at?: string
+          email?: string | null
+          ent_acts_on_basis?: string | null
+          ent_address?: string | null
+          ent_name?: string | null
+          ent_unp?: string | null
+          id?: string
+          ind_address_apartment?: string | null
+          ind_address_city?: string | null
+          ind_address_district?: string | null
+          ind_address_house?: string | null
+          ind_address_index?: string | null
+          ind_address_region?: string | null
+          ind_address_street?: string | null
+          ind_birth_date?: string | null
+          ind_full_name?: string | null
+          ind_passport_issued_by?: string | null
+          ind_passport_issued_date?: string | null
+          ind_passport_number?: string | null
+          ind_passport_series?: string | null
+          ind_passport_valid_until?: string | null
+          ind_personal_number?: string | null
+          is_default?: boolean
+          leg_acts_on_basis?: string | null
+          leg_address?: string | null
+          leg_director_name?: string | null
+          leg_director_position?: string | null
+          leg_name?: string | null
+          leg_org_form?: string | null
+          leg_unp?: string | null
+          phone?: string | null
+          profile_id?: string
+          updated_at?: string
+          validated_at?: string | null
+          validation_errors?: Json | null
+          validation_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_legal_details_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       consent_logs: {
         Row: {
           consent_type: string
@@ -588,6 +725,72 @@ export type Database = {
         }
         Relationships: []
       }
+      executors: {
+        Row: {
+          acts_on_basis: string | null
+          bank_account: string
+          bank_code: string
+          bank_name: string
+          created_at: string
+          director_full_name: string | null
+          director_position: string | null
+          director_short_name: string | null
+          email: string | null
+          full_name: string
+          id: string
+          is_active: boolean
+          is_default: boolean
+          legal_address: string
+          legal_form: string
+          phone: string | null
+          short_name: string | null
+          unp: string
+          updated_at: string
+        }
+        Insert: {
+          acts_on_basis?: string | null
+          bank_account: string
+          bank_code: string
+          bank_name: string
+          created_at?: string
+          director_full_name?: string | null
+          director_position?: string | null
+          director_short_name?: string | null
+          email?: string | null
+          full_name: string
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          legal_address: string
+          legal_form?: string
+          phone?: string | null
+          short_name?: string | null
+          unp: string
+          updated_at?: string
+        }
+        Update: {
+          acts_on_basis?: string | null
+          bank_account?: string
+          bank_code?: string
+          bank_name?: string
+          created_at?: string
+          director_full_name?: string | null
+          director_position?: string | null
+          director_short_name?: string | null
+          email?: string | null
+          full_name?: string
+          id?: string
+          is_active?: boolean
+          is_default?: boolean
+          legal_address?: string
+          legal_form?: string
+          phone?: string | null
+          short_name?: string | null
+          unp?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       field_values: {
         Row: {
           created_at: string
@@ -753,6 +956,110 @@ export type Database = {
             columns: ["product_id"]
             isOneToOne: false
             referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      generated_documents: {
+        Row: {
+          client_details_id: string | null
+          client_snapshot: Json
+          created_at: string
+          document_date: string
+          document_number: string
+          document_type: string
+          download_count: number | null
+          error_message: string | null
+          executor_id: string | null
+          executor_snapshot: Json
+          file_path: string | null
+          file_size: number | null
+          file_url: string | null
+          id: string
+          last_downloaded_at: string | null
+          order_id: string
+          order_snapshot: Json
+          profile_id: string
+          sent_at: string | null
+          sent_to_email: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          client_details_id?: string | null
+          client_snapshot: Json
+          created_at?: string
+          document_date?: string
+          document_number: string
+          document_type?: string
+          download_count?: number | null
+          error_message?: string | null
+          executor_id?: string | null
+          executor_snapshot: Json
+          file_path?: string | null
+          file_size?: number | null
+          file_url?: string | null
+          id?: string
+          last_downloaded_at?: string | null
+          order_id: string
+          order_snapshot: Json
+          profile_id: string
+          sent_at?: string | null
+          sent_to_email?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          client_details_id?: string | null
+          client_snapshot?: Json
+          created_at?: string
+          document_date?: string
+          document_number?: string
+          document_type?: string
+          download_count?: number | null
+          error_message?: string | null
+          executor_id?: string | null
+          executor_snapshot?: Json
+          file_path?: string | null
+          file_size?: number | null
+          file_url?: string | null
+          id?: string
+          last_downloaded_at?: string | null
+          order_id?: string
+          order_snapshot?: Json
+          profile_id?: string
+          sent_at?: string | null
+          sent_to_email?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fk_generated_documents_client_details"
+            columns: ["client_details_id"]
+            isOneToOne: false
+            referencedRelation: "client_legal_details"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_generated_documents_executor"
+            columns: ["executor_id"]
+            isOneToOne: false
+            referencedRelation: "executors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "generated_documents_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "generated_documents_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
