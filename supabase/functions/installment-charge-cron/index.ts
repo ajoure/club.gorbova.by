@@ -5,6 +5,116 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Translate bePaid error messages to Russian
+function translatePaymentError(error: string): string {
+  const errorMap: Record<string, string> = {
+    'Insufficient funds': 'Недостаточно средств на карте',
+    'insufficient_funds': 'Недостаточно средств на карте',
+    'Card declined': 'Карта отклонена банком',
+    'card_declined': 'Карта отклонена банком',
+    'Expired card': 'Срок действия карты истёк',
+    'expired_card': 'Срок действия карты истёк',
+    'Invalid card': 'Неверные данные карты',
+    'invalid_card': 'Неверные данные карты',
+    'Do not honor': 'Операция отклонена банком',
+    'do_not_honor': 'Операция отклонена банком',
+    'Lost card': 'Карта заблокирована (утеряна)',
+    'lost_card': 'Карта заблокирована (утеряна)',
+    'Stolen card': 'Карта заблокирована (украдена)',
+    'stolen_card': 'Карта заблокирована (украдена)',
+    'Card restricted': 'Ограничения на карте',
+    'card_restricted': 'Ограничения на карте',
+    'Transaction not permitted': 'Операция не разрешена для данной карты',
+    'transaction_not_permitted': 'Операция не разрешена для данной карты',
+    'Invalid amount': 'Неверная сумма',
+    'invalid_amount': 'Неверная сумма',
+    'Authentication failed': 'Ошибка аутентификации 3D Secure',
+    'authentication_failed': 'Ошибка аутентификации 3D Secure',
+    '3-D Secure authentication failed': 'Ошибка подтверждения 3D Secure',
+    'Payment failed': 'Платёж не прошёл',
+    'payment_failed': 'Платёж не прошёл',
+    'Token expired': 'Сохранённая карта устарела',
+    'token_expired': 'Сохранённая карта устарела',
+    'Invalid token': 'Ошибка привязанной карты',
+    'invalid_token': 'Ошибка привязанной карты',
+  };
+
+  if (errorMap[error]) return errorMap[error];
+  const lowerError = error.toLowerCase();
+  for (const [key, value] of Object.entries(errorMap)) {
+    if (lowerError.includes(key.toLowerCase())) return value;
+  }
+  return `Ошибка платежа: ${error}`;
+}
+
+// Send Telegram notification about payment failure
+async function sendPaymentFailureNotification(
+  supabase: any,
+  userId: string,
+  productName: string,
+  amount: number,
+  currency: string,
+  errorMessage: string,
+  paymentNumber?: number,
+  totalPayments?: number
+): Promise<void> {
+  try {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('telegram_user_id, telegram_link_status, full_name')
+      .eq('user_id', userId)
+      .single();
+
+    if (!profile?.telegram_user_id || profile.telegram_link_status !== 'active') {
+      return;
+    }
+
+    const { data: linkBot } = await supabase
+      .from('telegram_bots')
+      .select('token')
+      .eq('is_link_bot', true)
+      .eq('is_active', true)
+      .limit(1)
+      .single();
+
+    if (!linkBot?.token) return;
+
+    const userName = profile.full_name || 'Клиент';
+    const russianError = translatePaymentError(errorMessage);
+    const installmentInfo = paymentNumber && totalPayments 
+      ? `\n📊 *Платёж:* ${paymentNumber} из ${totalPayments}` 
+      : '';
+    
+    const message = `❌ *Платёж не прошёл*
+
+${userName}, к сожалению, не удалось провести оплату.
+
+📦 *Продукт:* ${productName}
+💳 *Сумма:* ${amount} ${currency}${installmentInfo}
+⚠️ *Причина:* ${russianError}
+
+*Что можно сделать:*
+• Проверьте баланс карты
+• Убедитесь, что карта не заблокирована
+• Попробуйте оплатить другой картой
+
+🔗 [Попробовать снова](https://club.gorbova.by/purchases)`;
+
+    await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: profile.telegram_user_id,
+        text: message,
+        parse_mode: 'Markdown',
+      }),
+    });
+    console.log(`Sent payment failure notification to user ${userId} via Telegram`);
+  } catch (err) {
+    console.error('Failed to send payment failure notification:', err);
+  }
+}
+
 // This function should be called by a cron job daily
 // It processes pending installment payments that are due
 
@@ -266,7 +376,7 @@ Deno.serve(async (req) => {
             })
             .eq('id', installment.id);
 
-          // Send failed notification
+          // Send failed notification via email
           try {
             await fetch(`${supabaseUrl}/functions/v1/installment-notifications`, {
               method: 'POST',
@@ -277,14 +387,26 @@ Deno.serve(async (req) => {
               body: JSON.stringify({ action: 'failed', installment_id: installment.id }),
             });
           } catch (notifErr) {
-            console.error('Failed to send failure notification:', notifErr);
+            console.error('Failed to send failure email notification:', notifErr);
           }
+
+          // Send Telegram notification about failed payment
+          const productName = subscription.products_v2?.name || 'Продукт';
+          const currency = subscription.products_v2?.currency || 'BYN';
+          await sendPaymentFailureNotification(
+            supabase,
+            installment.user_id,
+            productName,
+            installment.amount,
+            currency,
+            errorMessage,
+            installment.payment_number,
+            installment.total_payments
+          );
 
           console.error(`Installment ${installment.id} charge failed: ${errorMessage}`);
           results.failed++;
           results.errors.push(`${installment.id}: ${errorMessage}`);
-
-          // TODO: Send notification to user about failed payment
         }
       } catch (error) {
         console.error(`Error processing installment ${installment.id}:`, error);

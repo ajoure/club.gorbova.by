@@ -5,6 +5,108 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Translate bePaid error messages to Russian
+function translatePaymentError(error: string): string {
+  const errorMap: Record<string, string> = {
+    'Insufficient funds': 'Недостаточно средств на карте',
+    'insufficient_funds': 'Недостаточно средств на карте',
+    'Card declined': 'Карта отклонена банком',
+    'card_declined': 'Карта отклонена банком',
+    'Expired card': 'Срок действия карты истёк',
+    'expired_card': 'Срок действия карты истёк',
+    'Invalid card': 'Неверные данные карты',
+    'invalid_card': 'Неверные данные карты',
+    'Do not honor': 'Операция отклонена банком',
+    'do_not_honor': 'Операция отклонена банком',
+    'Lost card': 'Карта заблокирована (утеряна)',
+    'lost_card': 'Карта заблокирована (утеряна)',
+    'Stolen card': 'Карта заблокирована (украдена)',
+    'stolen_card': 'Карта заблокирована (украдена)',
+    'Card restricted': 'Ограничения на карте',
+    'card_restricted': 'Ограничения на карте',
+    'Transaction not permitted': 'Операция не разрешена для данной карты',
+    'transaction_not_permitted': 'Операция не разрешена для данной карты',
+    'Payment failed': 'Платёж не прошёл',
+    'payment_failed': 'Платёж не прошёл',
+    'Token expired': 'Сохранённая карта устарела',
+    'token_expired': 'Сохранённая карта устарела',
+    'Invalid token': 'Ошибка привязанной карты',
+    'invalid_token': 'Ошибка привязанной карты',
+  };
+
+  if (errorMap[error]) return errorMap[error];
+  const lowerError = error.toLowerCase();
+  for (const [key, value] of Object.entries(errorMap)) {
+    if (lowerError.includes(key.toLowerCase())) return value;
+  }
+  return `Ошибка платежа: ${error}`;
+}
+
+// Send Telegram notification about payment failure
+async function sendPaymentFailureNotification(
+  supabase: any,
+  userId: string,
+  productName: string,
+  amount: number,
+  currency: string,
+  errorMessage: string
+): Promise<void> {
+  try {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('telegram_user_id, telegram_link_status, full_name')
+      .eq('user_id', userId)
+      .single();
+
+    if (!profile?.telegram_user_id || profile.telegram_link_status !== 'active') {
+      return;
+    }
+
+    const { data: linkBot } = await supabase
+      .from('telegram_bots')
+      .select('token')
+      .eq('is_link_bot', true)
+      .eq('is_active', true)
+      .limit(1)
+      .single();
+
+    if (!linkBot?.token) return;
+
+    const userName = profile.full_name || 'Клиент';
+    const russianError = translatePaymentError(errorMessage);
+    
+    const message = `❌ *Платёж по подписке не прошёл*
+
+${userName}, к сожалению, не удалось продлить подписку.
+
+📦 *Продукт:* ${productName}
+💳 *Сумма:* ${amount} ${currency}
+⚠️ *Причина:* ${russianError}
+
+*Что можно сделать:*
+• Проверьте баланс карты
+• Убедитесь, что карта не заблокирована
+• Попробуйте оплатить другой картой
+
+⚠️ Мы повторим попытку списания через 24 часа.
+
+🔗 [Обновить карту](https://club.gorbova.by/settings/payment-methods)`;
+
+    await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: profile.telegram_user_id,
+        text: message,
+        parse_mode: 'Markdown',
+      }),
+    });
+    console.log(`Sent subscription failure notification to user ${userId} via Telegram`);
+  } catch (err) {
+    console.error('Failed to send subscription failure notification:', err);
+  }
+}
+
 interface ChargeResult {
   subscription_id: string;
   success: boolean;
@@ -171,12 +273,13 @@ async function chargeSubscription(
       // Payment failed
       const attempts = (subscription.charge_attempts || 0) + 1;
       const maxAttempts = 3;
+      const errorMsg = chargeResult.transaction?.message || 'Payment failed';
 
       await supabase
         .from('payments_v2')
         .update({
           status: 'failed',
-          error_message: chargeResult.transaction?.message || 'Payment failed',
+          error_message: errorMsg,
           provider_response: chargeResult,
         })
         .eq('id', payment.id);
@@ -213,10 +316,20 @@ async function chargeSubscription(
           .eq('id', id);
       }
 
+      // Send Telegram notification about failed payment
+      await sendPaymentFailureNotification(
+        supabase,
+        user_id,
+        tariff.name || 'Подписка',
+        amount,
+        currency,
+        errorMsg
+      );
+
       return { 
         subscription_id: id, 
         success: false, 
-        error: chargeResult.transaction?.message || 'Payment failed',
+        error: errorMsg,
       };
     }
   } catch (err) {
