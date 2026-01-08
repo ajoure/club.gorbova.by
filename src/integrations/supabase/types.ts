@@ -741,7 +741,6 @@ export type Database = {
           is_active: boolean
           is_default: boolean
           legal_address: string
-          legal_form: string
           phone: string | null
           short_name: string | null
           unp: string
@@ -762,7 +761,6 @@ export type Database = {
           is_active?: boolean
           is_default?: boolean
           legal_address: string
-          legal_form?: string
           phone?: string | null
           short_name?: string | null
           unp: string
@@ -783,7 +781,6 @@ export type Database = {
           is_active?: boolean
           is_default?: boolean
           legal_address?: string
-          legal_form?: string
           phone?: string | null
           short_name?: string | null
           unp?: string

@@ -39,7 +39,6 @@ const ACTS_ON_BASIS_OPTIONS = [
 interface ExecutorFormData {
   full_name: string;
   short_name: string;
-  legal_form: string;
   unp: string;
   legal_address: string;
   bank_name: string;
@@ -50,7 +49,7 @@ interface ExecutorFormData {
   director_full_name: string;
   acts_on_basis: string;
   acts_on_basis_type: string;
-  acts_on_basis_details: string; // Для номера и даты доверенности
+  acts_on_basis_details: string;
   phone: string;
   email: string;
 }
@@ -58,7 +57,6 @@ interface ExecutorFormData {
 const defaultFormData: ExecutorFormData = {
   full_name: "",
   short_name: "",
-  legal_form: "ЗАО",
   unp: "",
   legal_address: "",
   bank_name: "",
@@ -137,7 +135,6 @@ export default function AdminExecutors() {
       setFormData({
         full_name: executor.full_name,
         short_name: executor.short_name || "",
-        legal_form: executor.legal_form || "ЗАО",
         unp: executor.unp,
         legal_address: executor.legal_address,
         bank_name: executor.bank_name,
@@ -201,7 +198,6 @@ export default function AdminExecutors() {
       const payload = {
         full_name: formData.full_name,
         short_name: formData.short_name,
-        legal_form: formData.legal_form,
         unp: formData.unp,
         legal_address: formData.legal_address,
         bank_name: formData.bank_name,
@@ -338,10 +334,6 @@ export default function AdminExecutors() {
                               <Badge variant="outline" className="text-xs">Неактивен</Badge>
                             )}
                           </div>
-                          <div className="text-sm text-muted-foreground">{executor.legal_form}</div>
-                          <div className="sm:hidden text-xs text-muted-foreground mt-1">
-                            УНП: {executor.unp}
-                          </div>
                         </TableCell>
                         <TableCell className="font-mono hidden sm:table-cell">{executor.unp}</TableCell>
                         <TableCell className="hidden md:table-cell">
@@ -413,23 +405,13 @@ export default function AdminExecutors() {
           </DialogHeader>
           <div className="grid gap-4 py-4">
             {/* Наименование */}
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-              <div className="sm:col-span-3">
-                <Label>Полное наименование *</Label>
-                <Input
-                  value={formData.full_name}
-                  onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                  placeholder='Закрытое акционерное общество "АЖУР инкам"'
-                />
-              </div>
-              <div>
-                <Label>Форма</Label>
-                <Input
-                  value={formData.legal_form}
-                  onChange={(e) => setFormData({ ...formData, legal_form: e.target.value })}
-                  placeholder="ЗАО"
-                />
-              </div>
+            <div>
+              <Label>Полное наименование *</Label>
+              <Input
+                value={formData.full_name}
+                onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                placeholder='Закрытое акционерное общество "АЖУР инкам"'
+              />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -61,7 +61,6 @@ export interface ClientLegalDetails {
 
 export interface Executor {
   id: string;
-  legal_form: string;
   full_name: string;
   short_name: string | null;
   unp: string;
