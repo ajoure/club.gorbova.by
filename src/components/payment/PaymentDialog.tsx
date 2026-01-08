@@ -331,15 +331,16 @@ export function PaymentDialog({
     setLoginError(null);
 
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(
-        formData.email.toLowerCase().trim(),
-        {
-          redirectTo: `${window.location.origin}/auth?mode=reset`,
-        }
-      );
+      // Use custom auth-actions edge function (same as Auth.tsx)
+      const { data, error } = await supabase.functions.invoke("auth-actions", {
+        body: {
+          action: "reset_password",
+          email: formData.email.toLowerCase().trim(),
+        },
+      });
 
       if (error) {
-        setLoginError(error.message);
+        setLoginError("Ошибка отправки письма. Попробуйте позже.");
       } else {
         toast.success("Письмо для восстановления пароля отправлено на ваш email");
       }

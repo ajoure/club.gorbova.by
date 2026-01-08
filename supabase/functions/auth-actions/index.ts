@@ -42,26 +42,25 @@ serve(async (req: Request): Promise<Response> => {
 
     switch (action) {
       case "reset_password": {
-        // Check if user exists
-        const { data: users, error: listError } = await supabaseAdmin.auth.admin.listUsers();
+        // Check if user exists by email in profiles table (more efficient than listing all users)
+        const { data: userData } = await supabaseAdmin
+          .from('profiles')
+          .select('user_id, email')
+          .ilike('email', email)
+          .limit(1)
+          .maybeSingle();
         
-        if (listError) {
-          console.error("List users error:", listError);
-          // Don't reveal if user exists or not for security
-          return new Response(JSON.stringify({ success: true }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-
-        const userExists = users.users.some(u => u.email?.toLowerCase() === email.toLowerCase());
+        const userExists = !!userData?.user_id;
         
         if (!userExists) {
           // Don't reveal if user exists - just pretend it worked
-          console.log("User not found, returning success anyway for security");
+          console.log("User not found in profiles, returning success anyway for security");
           return new Response(JSON.stringify({ success: true }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
+        
+        console.log("User found, generating reset link for:", email);
 
         // Generate password reset link - always use production domain
         const siteUrl = "https://club.gorbova.by";
