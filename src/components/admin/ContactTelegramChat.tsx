@@ -296,7 +296,7 @@ export function ContactTelegramChat({
               <User className="w-3 h-3" />
             )}
             <span className="text-xs opacity-70">
-              {msg.direction === "outgoing" ? "Вы" : (clientName || telegramUsername ? `@${telegramUsername}` : "Клиент")}
+              {msg.direction === "outgoing" ? "Вы" : (clientName || "Клиент")}
             </span>
           </div>
           

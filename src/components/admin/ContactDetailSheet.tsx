@@ -72,6 +72,8 @@ import {
   FileText,
   Wallet,
   Pencil,
+  LogIn,
+  Loader2,
 } from "lucide-react";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
@@ -84,6 +86,9 @@ import { ContactEmailHistory } from "./ContactEmailHistory";
 import { EditSubscriptionDialog } from "./EditSubscriptionDialog";
 import { EditDealDialog } from "./EditDealDialog";
 import { ComposeEmailDialog } from "./ComposeEmailDialog";
+import { AdminChargeDialog } from "./AdminChargeDialog";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useAdminUsers } from "@/hooks/useAdminUsers";
 
 interface Contact {
   id: string;
@@ -109,6 +114,8 @@ interface ContactDetailSheetProps {
 
 export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetailSheetProps) {
   const queryClient = useQueryClient();
+  const { hasPermission, isSuperAdmin } = usePermissions();
+  const { startImpersonation } = useAdminUsers();
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
   const [extendDays, setExtendDays] = useState(30);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -131,6 +138,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
   const [editDealOpen, setEditDealOpen] = useState(false);
   const [dealToEdit, setDealToEdit] = useState<any>(null);
   const [composeEmailOpen, setComposeEmailOpen] = useState(false);
+  const [chargeDialogOpen, setChargeDialogOpen] = useState(false);
+  const [isImpersonating, setIsImpersonating] = useState(false);
 
   // Sync days input with date range
   const handleDaysChange = (days: number) => {
@@ -311,7 +320,62 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
     enabled: !!contact?.user_id,
   });
 
-  // Admin action mutation
+  // Fetch payment methods
+  const { data: paymentMethods, isLoading: cardsLoading } = useQuery({
+    queryKey: ["contact-payment-methods", contact?.user_id],
+    queryFn: async () => {
+      if (!contact?.user_id) return [];
+      const { data, error } = await supabase
+        .from("payment_methods")
+        .select("id, brand, last4, exp_month, exp_year, is_default, status")
+        .eq("user_id", contact.user_id)
+        .eq("status", "active")
+        .order("is_default", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!contact?.user_id,
+  });
+
+  // Handle impersonation
+  const handleImpersonate = async () => {
+    if (!contact?.user_id) return;
+    setIsImpersonating(true);
+    try {
+      // Store current session before impersonating
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        localStorage.setItem("admin_session", JSON.stringify({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+        }));
+        localStorage.setItem("admin_return_url", window.location.pathname);
+      }
+
+      const result = await startImpersonation(contact.user_id);
+      if (result) {
+        // Use OTP verification with token hash
+        const { error } = await supabase.auth.verifyOtp({
+          email: result.email,
+          token: result.tokenHash,
+          type: "magiclink",
+        });
+        
+        if (error) {
+          throw error;
+        }
+        
+        toast.success(`Вход от имени ${contact.full_name || contact.email}`);
+        onOpenChange(false);
+        window.location.href = "/?impersonating=true";
+      }
+    } catch (error) {
+      console.error("Impersonation error:", error);
+      toast.error("Ошибка входа от имени пользователя");
+    } finally {
+      setIsImpersonating(false);
+    }
+  };
   const adminActionMutation = useMutation({
     mutationFn: async ({ action, subscriptionId, data }: { action: string; subscriptionId: string; data?: Record<string, any> }) => {
       const { data: result, error } = await supabase.functions.invoke("subscription-admin-actions", {
@@ -827,6 +891,87 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                   )}
                 </CardContent>
               </Card>
+
+              {/* Payment Methods Card */}
+              {contact.user_id && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                      <CreditCard className="w-4 h-4" />
+                      Привязанные карты
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {cardsLoading ? (
+                      <Skeleton className="h-12 w-full" />
+                    ) : paymentMethods && paymentMethods.length > 0 ? (
+                      <>
+                        {paymentMethods.map((method) => (
+                          <div key={method.id} className="flex items-center justify-between p-2 rounded-lg bg-muted/50">
+                            <div className="flex items-center gap-3">
+                              <CreditCard className="w-4 h-4 text-muted-foreground" />
+                              <div>
+                                <span className="font-medium">{method.brand?.toUpperCase() || "Карта"} •••• {method.last4}</span>
+                                {method.exp_month && method.exp_year && (
+                                  <p className="text-xs text-muted-foreground">
+                                    До {String(method.exp_month).padStart(2, "0")}/{String(method.exp_year).slice(-2)}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            {method.is_default && (
+                              <Badge variant="secondary" className="text-xs">Основная</Badge>
+                            )}
+                          </div>
+                        ))}
+                        {/* Charge button for super admin */}
+                        {isSuperAdmin() && (
+                          <Button
+                            variant="outline"
+                            className="w-full gap-2 mt-2"
+                            onClick={() => setChargeDialogOpen(true)}
+                          >
+                            <CreditCard className="w-4 h-4" />
+                            Списать деньги
+                          </Button>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-center py-4 text-muted-foreground">
+                        <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                        <p className="text-sm">Нет привязанных карт</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Admin Actions Card */}
+              {contact.user_id && hasPermission("users.impersonate") && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                      <Settings className="w-4 h-4" />
+                      Действия администратора
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <Button
+                      variant="outline"
+                      className="w-full gap-2"
+                      onClick={handleImpersonate}
+                      disabled={isImpersonating}
+                    >
+                      {isImpersonating ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <LogIn className="w-4 h-4" />
+                      )}
+                      Войти от имени клиента
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
 
             {/* Telegram Chat Tab */}
@@ -1593,6 +1738,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
           open={composeEmailOpen}
           onOpenChange={setComposeEmailOpen}
         />
+
+        {/* Admin Charge Dialog */}
+        {contact.user_id && (
+          <AdminChargeDialog
+            open={chargeDialogOpen}
+            onOpenChange={setChargeDialogOpen}
+            userId={contact.user_id}
+            userName={contact.full_name || undefined}
+            userEmail={contact.email || undefined}
+          />
+        )}
       </SheetContent>
     </Sheet>
   );
