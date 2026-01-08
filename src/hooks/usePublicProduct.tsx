@@ -78,6 +78,7 @@ export interface PublicProduct {
   public_subtitle: string | null;
   payment_disclaimer_text: string | null;
   landing_config: LandingConfig;
+  telegram_club_id: string | null;
 }
 
 export interface PublicProductData {

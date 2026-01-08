@@ -49,6 +49,7 @@ interface Product {
   public_subtitle: string | null;
   payment_disclaimer_text: string | null;
   currency: string;
+  telegram_club_id: string | null;
 }
 
 // Fallback plans in case DB is empty
@@ -106,6 +107,7 @@ export function LandingPricing() {
     offerId?: string;
     isTrial?: boolean;
     trialDays?: number;
+    isClubProduct?: boolean;
   } | null>(null);
 
   // Fetch product with tariffs, features and offers from DB
@@ -243,6 +245,7 @@ export function LandingPricing() {
         offerId,
         isTrial,
         trialDays,
+        isClubProduct: !!productData?.product?.telegram_club_id,
       });
     } else {
       navigate("/auth?mode=signup");
@@ -504,6 +507,7 @@ export function LandingPricing() {
           offerId={selectedPlan.offerId}
           isTrial={selectedPlan.isTrial}
           trialDays={selectedPlan.trialDays}
+          isClubProduct={selectedPlan.isClubProduct}
         />
       )}
     </section>
