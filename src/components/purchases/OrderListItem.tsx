@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { ChevronRight, CheckCircle, XCircle, Clock, CreditCard, Download, FileText, Loader2, Mail, Send } from "lucide-react";
+import { ChevronRight, CheckCircle, XCircle, Clock, CreditCard, Download, FileText, Loader2, Mail, Send, Files } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -126,6 +126,100 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
     }
   };
 
+  // Generate all documents (invoice + act)
+  const generateAllDocuments = async (sendEmail = false, sendTelegram = false) => {
+    if (sendEmail || sendTelegram) {
+      setIsSending(true);
+    } else {
+      setIsGenerating(true);
+    }
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error("Необходима авторизация");
+        return;
+      }
+
+      const allMessages: string[] = [];
+      let hasSuccess = false;
+
+      // Generate invoice
+      const { data: invoiceData, error: invoiceError } = await supabase.functions.invoke("generate-invoice-act", {
+        body: { 
+          order_id: order.id, 
+          document_type: "invoice",
+          send_email: sendEmail,
+          send_telegram: sendTelegram,
+        },
+      });
+
+      if (invoiceError || !invoiceData?.success) {
+        allMessages.push("❌ Счёт: ошибка");
+      } else {
+        if (sendEmail || sendTelegram) {
+          if (invoiceData.send_results?.email_sent) allMessages.push("✉️ Счёт → почта");
+          if (invoiceData.send_results?.telegram_sent) allMessages.push("📱 Счёт → Telegram");
+          if (invoiceData.send_results?.email_sent || invoiceData.send_results?.telegram_sent) hasSuccess = true;
+        } else {
+          const docWindow = window.open("", "_blank");
+          if (docWindow) {
+            docWindow.document.write(invoiceData.document.html);
+            docWindow.document.close();
+          }
+          hasSuccess = true;
+        }
+      }
+
+      // Generate act
+      const { data: actData, error: actError } = await supabase.functions.invoke("generate-invoice-act", {
+        body: { 
+          order_id: order.id, 
+          document_type: "act",
+          send_email: sendEmail,
+          send_telegram: sendTelegram,
+        },
+      });
+
+      if (actError || !actData?.success) {
+        allMessages.push("❌ Акт: ошибка");
+      } else {
+        if (sendEmail || sendTelegram) {
+          if (actData.send_results?.email_sent) allMessages.push("✉️ Акт → почта");
+          if (actData.send_results?.telegram_sent) allMessages.push("📱 Акт → Telegram");
+          if (actData.send_results?.email_sent || actData.send_results?.telegram_sent) hasSuccess = true;
+        } else {
+          const docWindow = window.open("", "_blank");
+          if (docWindow) {
+            docWindow.document.write(actData.document.html);
+            docWindow.document.close();
+          }
+          hasSuccess = true;
+        }
+      }
+
+      if (sendEmail || sendTelegram) {
+        if (hasSuccess) {
+          toast.success(allMessages.join("\n"));
+        } else {
+          toast.error(allMessages.join("\n"));
+        }
+      } else {
+        if (hasSuccess) {
+          toast.success("Документы сформированы");
+        } else {
+          toast.error("Ошибка формирования документов");
+        }
+      }
+    } catch (error) {
+      console.error("Generate all error:", error);
+      toast.error("Ошибка генерации документов");
+    } finally {
+      setIsGenerating(false);
+      setIsSending(false);
+    }
+  };
+
   const getStatusBadge = () => {
     if (order.status === "refunded") {
       return (
@@ -224,8 +318,8 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
                 <span className="hidden sm:inline ml-1">Документы</span>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              {/* View documents */}
+            <DropdownMenuContent align="end" className="w-64">
+              {/* View individual documents */}
               <DropdownMenuItem onClick={() => generateDocument("invoice")}>
                 <FileText className="h-4 w-4 mr-2" />
                 Открыть счёт
@@ -234,25 +328,45 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
                 <FileText className="h-4 w-4 mr-2" />
                 Открыть акт
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => generateAllDocuments()}>
+                <Files className="h-4 w-4 mr-2" />
+                Открыть всё (счёт + акт)
+              </DropdownMenuItem>
               
               <DropdownMenuSeparator />
               
-              {/* Send by email */}
+              {/* Send all documents */}
+              <DropdownMenuItem onClick={() => generateAllDocuments(true, false)}>
+                <Mail className="h-4 w-4 mr-2" />
+                Отправить всё на почту
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => generateAllDocuments(false, true)}>
+                <Send className="h-4 w-4 mr-2" />
+                Отправить всё в Telegram
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => generateAllDocuments(true, true)}>
+                <Send className="h-4 w-4 mr-2" />
+                Отправить всё везде
+              </DropdownMenuItem>
+              
+              <DropdownMenuSeparator />
+              
+              {/* Individual document sending */}
+              <DropdownMenuItem onClick={() => generateDocument("invoice", true, false)}>
+                <Mail className="h-4 w-4 mr-2" />
+                Счёт → почта
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => generateDocument("act", true, false)}>
                 <Mail className="h-4 w-4 mr-2" />
-                Отправить акт на почту
+                Акт → почта
               </DropdownMenuItem>
-              
-              {/* Send to Telegram */}
+              <DropdownMenuItem onClick={() => generateDocument("invoice", false, true)}>
+                <Send className="h-4 w-4 mr-2" />
+                Счёт → Telegram
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => generateDocument("act", false, true)}>
                 <Send className="h-4 w-4 mr-2" />
-                Отправить акт в Telegram
-              </DropdownMenuItem>
-              
-              {/* Send both */}
-              <DropdownMenuItem onClick={() => generateDocument("act", true, true)}>
-                <Send className="h-4 w-4 mr-2" />
-                Отправить акт везде
+                Акт → Telegram
               </DropdownMenuItem>
               
               {receiptUrl && (
