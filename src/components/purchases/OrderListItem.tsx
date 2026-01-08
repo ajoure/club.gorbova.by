@@ -1,8 +1,12 @@
+import { useState } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { ChevronRight, CheckCircle, XCircle, Clock, CreditCard, Download } from "lucide-react";
+import { ChevronRight, CheckCircle, XCircle, Clock, CreditCard, Download, FileText, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface Order {
   id: string;
@@ -45,12 +49,44 @@ interface OrderListItemProps {
 }
 
 export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }: OrderListItemProps) {
+  const [isGenerating, setIsGenerating] = useState(false);
   const payment = order.payments_v2?.[0];
   const isPaid = order.status === "paid" || payment?.status === "succeeded";
   const receiptUrl = payment?.provider_response?.transaction?.receipt_url;
 
   const formatShortDate = (dateString: string) => {
     return format(new Date(dateString), "d MMM yyyy, HH:mm", { locale: ru });
+  };
+
+  const generateDocument = async (type: "invoice" | "act") => {
+    setIsGenerating(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error("Необходима авторизация");
+        return;
+      }
+
+      const { data, error } = await supabase.functions.invoke("generate-invoice-act", {
+        body: { order_id: order.id, document_type: type },
+      });
+
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error);
+
+      // Open document in new window
+      const docWindow = window.open("", "_blank");
+      if (docWindow) {
+        docWindow.document.write(data.document.html);
+        docWindow.document.close();
+        toast.success(type === "invoice" ? "Счёт сформирован" : "Акт сформирован");
+      }
+    } catch (error) {
+      console.error("Generate error:", error);
+      toast.error("Ошибка генерации документа");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const getStatusBadge = () => {
@@ -134,20 +170,35 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
       </div>
       {isPaid && (
         <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-          {receiptUrl && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenBePaidReceipt(receiptUrl);
-              }}
-              title="Чек bePaid"
-            >
-              <Download className="h-4 w-4" />
-              <span className="hidden sm:inline ml-1">Чек</span>
-            </Button>
-          )}
+          {/* Document generation dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" disabled={isGenerating}>
+                {isGenerating ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FileText className="h-4 w-4" />
+                )}
+                <span className="hidden sm:inline ml-1">Документы</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => generateDocument("invoice")}>
+                <FileText className="h-4 w-4 mr-2" />
+                Счёт
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => generateDocument("act")}>
+                <FileText className="h-4 w-4 mr-2" />
+                Акт выполненных работ
+              </DropdownMenuItem>
+              {receiptUrl && (
+                <DropdownMenuItem onClick={() => onOpenBePaidReceipt(receiptUrl)}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Чек bePaid
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       )}
     </div>
