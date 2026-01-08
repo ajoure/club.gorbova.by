@@ -41,12 +41,17 @@ interface TelegramMessage {
   id: string;
   direction: "outgoing" | "incoming";
   message_text: string | null;
-  file_type: string | null;
-  file_name: string | null;
-  file_url: string | null;
+  file_type?: string | null;
+  file_name?: string | null;
+  file_url?: string | null;
   status: string;
   created_at: string;
-  sent_by_admin: string | null;
+  sent_by_admin?: string | null;
+  meta?: {
+    file_type?: string | null;
+    file_name?: string | null;
+    [key: string]: unknown;
+  } | null;
   telegram_bots?: {
     id: string;
     bot_name: string;
@@ -252,10 +257,10 @@ export function ContactTelegramChat({
                   </div>
                   
                   {/* File preview if present */}
-                  {msg.file_type && (
+                  {(msg.file_type || msg.meta?.file_type) && (
                     <div className="flex items-center gap-2 mb-2 p-2 rounded bg-background/20">
-                      {getFileIcon(msg.file_type)}
-                      <span className="text-xs truncate">{msg.file_name || "Файл"}</span>
+                      {getFileIcon(msg.file_type || msg.meta?.file_type || null)}
+                      <span className="text-xs truncate">{msg.file_name || msg.meta?.file_name || "Файл"}</span>
                     </div>
                   )}
                   

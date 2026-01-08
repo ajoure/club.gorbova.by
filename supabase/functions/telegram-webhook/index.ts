@@ -410,7 +410,64 @@ Deno.serve(async (req) => {
       const chatId = msg.chat.id;
       const chatType = msg.chat.type;
 
-      // Only process group/supergroup messages (not private chats)
+      // Save private messages to telegram_messages for admin chat history
+      if (chatType === 'private') {
+        const telegramUserId = msg.from.id;
+        
+        // Find user by telegram_user_id
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id, user_id')
+          .eq('telegram_user_id', telegramUserId)
+          .single();
+        
+        if (profile?.user_id) {
+          // Determine file info if present
+          let fileType: string | null = null;
+          let fileName: string | null = null;
+          const msgAny = msg as any;
+          
+          if (msgAny.photo) {
+            fileType = 'photo';
+            fileName = 'photo.jpg';
+          } else if (msgAny.video) {
+            fileType = 'video';
+            fileName = msgAny.video?.file_name || 'video.mp4';
+          } else if (msgAny.audio) {
+            fileType = 'audio';
+            fileName = msgAny.audio?.file_name || 'audio.mp3';
+          } else if (msgAny.voice) {
+            fileType = 'voice';
+            fileName = 'voice.ogg';
+          } else if (msgAny.document) {
+            fileType = 'document';
+            fileName = msgAny.document?.file_name || 'file';
+          } else if (msgAny.sticker) {
+            fileType = 'sticker';
+            fileName = msgAny.sticker?.emoji || 'sticker';
+          }
+
+          await supabase.from('telegram_messages').insert({
+            user_id: profile.user_id,
+            telegram_user_id: telegramUserId,
+            bot_id: botId,
+            direction: 'incoming',
+            message_text: msg.text || msg.caption || null,
+            message_id: msg.message_id,
+            reply_to_message_id: msg.reply_to_message?.message_id || null,
+            status: 'sent',
+            meta: { 
+              file_type: fileType, 
+              file_name: fileName,
+              raw: msg 
+            },
+          });
+          
+          console.log(`Saved incoming message ${msg.message_id} from user ${profile.user_id}`);
+        }
+      }
+
+      // Group/supergroup messages for analytics
       if (chatType === 'supergroup' || chatType === 'group') {
         // Find club for this chat with analytics enabled
         const { data: club } = await supabase

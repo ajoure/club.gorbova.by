@@ -768,6 +768,23 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                       </Button>
                     )}
                   </div>
+                  
+                  {/* Send email button */}
+                  {contact.email && (
+                    <>
+                      <Separator />
+                      <div className="pt-2">
+                        <Button
+                          variant="outline"
+                          className="w-full gap-2"
+                          onClick={() => setComposeEmailOpen(true)}
+                        >
+                          <Mail className="w-4 h-4" />
+                          Написать письмо
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -982,6 +999,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                           </div>
                           <div className="flex items-center gap-2">
                             {getSubscriptionStatusBadge(sub)}
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSubscriptionToEdit(sub);
+                                setEditSubscriptionOpen(true);
+                              }}
+                              className="h-6 w-6 text-muted-foreground hover:text-primary"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </Button>
                             <Button
                               size="icon"
                               variant="ghost"
@@ -1219,6 +1248,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge className={getStatusColor(deal.status)}>{getStatusLabel(deal.status)}</Badge>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDealToEdit(deal);
+                                setEditDealOpen(true);
+                              }}
+                              className="h-6 w-6 text-muted-foreground hover:text-primary"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </Button>
                             <Eye className="w-4 h-4 text-muted-foreground" />
                           </div>
                         </div>
