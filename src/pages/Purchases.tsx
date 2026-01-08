@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CreditCard, ShoppingBag, History } from "lucide-react";
+import { CreditCard, ShoppingBag, History, ClipboardList } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
@@ -23,6 +23,7 @@ import {
 import { SubscriptionListItem } from "@/components/purchases/SubscriptionListItem";
 import { SubscriptionDetailSheet } from "@/components/purchases/SubscriptionDetailSheet";
 import { OrderListItem } from "@/components/purchases/OrderListItem";
+import { PreregistrationListItem } from "@/components/purchases/PreregistrationListItem";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface OrderV2 {
@@ -106,6 +107,15 @@ interface SubscriptionV2 {
   } | null;
 }
 
+interface CoursePreregistration {
+  id: string;
+  product_code: string;
+  tariff_name: string | null;
+  status: string;
+  created_at: string;
+  notes: string | null;
+}
+
 export default function Purchases() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -160,6 +170,23 @@ export default function Purchases() {
       
       if (error) throw error;
       return data as SubscriptionV2[];
+    },
+    enabled: !!user,
+  });
+
+  // Fetch preregistrations
+  const { data: preregistrations, isLoading: preregistrationsLoading } = useQuery({
+    queryKey: ["user-preregistrations", user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data, error } = await supabase
+        .from("course_preregistrations")
+        .select("id, product_code, tariff_name, status, created_at, notes")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      
+      if (error) throw error;
+      return data as CoursePreregistration[];
     },
     enabled: !!user,
   });
@@ -342,9 +369,10 @@ export default function Purchases() {
           </CardHeader>
           <CardContent>
             <Tabs defaultValue="orders" className="w-full">
-              <TabsList className="grid w-full grid-cols-2 mb-4">
+              <TabsList className="grid w-full grid-cols-3 mb-4">
                 <TabsTrigger value="orders">Платежи</TabsTrigger>
                 <TabsTrigger value="subscriptions">Прошлые подписки</TabsTrigger>
+                <TabsTrigger value="preregistrations">Предзаписи</TabsTrigger>
               </TabsList>
 
               <TabsContent value="orders">
@@ -393,6 +421,29 @@ export default function Purchases() {
                   <div className="text-center py-8 text-muted-foreground">
                     <History className="h-10 w-10 mx-auto mb-3 opacity-40" />
                     <p className="text-sm">Нет прошлых подписок</p>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="preregistrations">
+                {preregistrationsLoading ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                  </div>
+                ) : preregistrations && preregistrations.length > 0 ? (
+                  <div className="space-y-3">
+                    {preregistrations.map((prereg) => (
+                      <PreregistrationListItem
+                        key={prereg.id}
+                        preregistration={prereg}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                    <p className="text-sm">Нет предзаписей на курсы</p>
                   </div>
                 )}
               </TabsContent>

@@ -55,6 +55,7 @@ import PaymentMethodsSettings from "./pages/settings/PaymentMethods";
 import ConsentsSettings from "./pages/settings/Consents";
 import AdminInstallments from "./pages/admin/AdminInstallments";
 import AdminConsents from "./pages/admin/AdminConsents";
+import AdminPreregistrations from "./pages/admin/AdminPreregistrations";
 import Products from "./pages/Products";
 import Consultation from "./pages/Consultation";
 import CourseAccountant from "./pages/CourseAccountant";
@@ -141,6 +142,7 @@ const App = () => (
               <Route path="/admin/subscriptions-v2" element={<ProtectedRoute><AdminSubscriptionsV2 /></ProtectedRoute>} />
               <Route path="/admin/installments" element={<ProtectedRoute><AdminInstallments /></ProtectedRoute>} />
               <Route path="/admin/consents" element={<ProtectedRoute><AdminLayout><AdminConsents /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/preregistrations" element={<ProtectedRoute><AdminPreregistrations /></ProtectedRoute>} />
               <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
