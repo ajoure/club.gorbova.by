@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { encode } from "https://deno.land/std@0.190.0/encoding/base64.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,6 +12,92 @@ interface GenerateRequest {
   document_type: "invoice" | "act";
   client_details_id?: string;
   executor_id?: string;
+  send_email?: boolean;
+  send_telegram?: boolean;
+}
+
+// Telegram API helper
+async function telegramRequest(botToken: string, method: string, params?: Record<string, unknown>) {
+  const url = `https://api.telegram.org/bot${botToken}/${method}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return response.json();
+}
+
+// Get email account for sending
+async function getEmailAccount(supabase: any): Promise<any | null> {
+  // First try integration_instances for email
+  const { data: integration } = await supabase
+    .from("integration_instances")
+    .select("*")
+    .eq("category", "email")
+    .eq("is_default", true)
+    .maybeSingle();
+  
+  if (integration?.config) {
+    const config = integration.config as Record<string, unknown>;
+    const email = config.email as string || config.from_email as string || "";
+    let password = config.smtp_password as string || config.password as string || "";
+    
+    // Fallback to Yandex env password
+    if (!password && email.includes("yandex")) {
+      password = Deno.env.get("YANDEX_SMTP_PASSWORD") || "";
+    }
+    
+    return {
+      id: integration.id,
+      email,
+      smtp_host: config.smtp_host as string || "smtp.yandex.ru",
+      smtp_port: Number(config.smtp_port) || 465,
+      smtp_password: password,
+      from_name: config.from_name as string || integration.alias || "Gorbova.by",
+      from_email: config.from_email as string || email,
+    };
+  }
+
+  // Fallback to email_accounts
+  const { data: account } = await supabase
+    .from("email_accounts")
+    .select("*")
+    .eq("is_active", true)
+    .eq("is_default", true)
+    .maybeSingle();
+  
+  if (account) {
+    let password = account.smtp_password;
+    if (!password) {
+      password = Deno.env.get("YANDEX_SMTP_PASSWORD") || "";
+    }
+    return { ...account, smtp_password: password };
+  }
+  
+  return null;
+}
+
+// Get Telegram bot token
+async function getTelegramBotToken(supabase: any): Promise<string | null> {
+  const { data: club } = await supabase
+    .from("telegram_clubs")
+    .select("bot_id, telegram_bots(bot_token_encrypted)")
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+  
+  if (club?.telegram_bots?.bot_token_encrypted) {
+    return club.telegram_bots.bot_token_encrypted;
+  }
+  
+  // Fallback: direct bot query
+  const { data: bot } = await supabase
+    .from("telegram_bots")
+    .select("bot_token_encrypted")
+    .limit(1)
+    .maybeSingle();
+  
+  return bot?.bot_token_encrypted || null;
 }
 
 serve(async (req) => {
@@ -41,7 +128,7 @@ serve(async (req) => {
       });
     }
 
-    const { order_id, document_type, client_details_id, executor_id }: GenerateRequest = await req.json();
+    const { order_id, document_type, client_details_id, executor_id, send_email, send_telegram }: GenerateRequest = await req.json();
 
     if (!order_id || !document_type) {
       return new Response(JSON.stringify({ error: "order_id and document_type required" }), {
@@ -55,7 +142,7 @@ serve(async (req) => {
       .from("orders_v2")
       .select(`
         id, order_number, final_price, currency, status, created_at, customer_email,
-        payer_type, purchase_snapshot,
+        payer_type, purchase_snapshot, user_id,
         products_v2(id, name, code),
         tariffs(id, name, code)
       `)
@@ -72,7 +159,7 @@ serve(async (req) => {
     // Check user access
     const { data: profile } = await supabase
       .from("profiles")
-      .select("id")
+      .select("id, email, full_name, telegram_user_id")
       .eq("user_id", user.id)
       .single();
 
@@ -122,7 +209,7 @@ serve(async (req) => {
     }
 
     if (!executor) {
-      return new Response(JSON.stringify({ error: "No executor found" }), {
+      return new Response(JSON.stringify({ error: "No executor found. Please configure an executor in admin panel." }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -167,8 +254,8 @@ serve(async (req) => {
     // Create snapshots
     const clientSnapshot = clientDetails || {
       type: "individual",
-      name: order.customer_email || "Физическое лицо",
-      email: order.customer_email,
+      name: order.customer_email || profile?.full_name || "Физическое лицо",
+      email: order.customer_email || profile?.email,
     };
 
     const executorSnapshot = {
@@ -230,7 +317,7 @@ serve(async (req) => {
       });
     }
 
-    // Generate document content (HTML for now, can be converted to PDF)
+    // Generate document content (HTML)
     const documentHtml = generateDocumentHtml(document_type, {
       documentNumber,
       documentDate: new Date().toLocaleDateString("ru-RU"),
@@ -238,6 +325,116 @@ serve(async (req) => {
       client: clientSnapshot,
       order: orderSnapshot,
     });
+
+    const results = {
+      email_sent: false,
+      telegram_sent: false,
+      email_error: null as string | null,
+      telegram_error: null as string | null,
+    };
+
+    // Send email if requested
+    if (send_email) {
+      const recipientEmail = order.customer_email || profile?.email;
+      if (recipientEmail) {
+        try {
+          const emailAccount = await getEmailAccount(supabase);
+          if (emailAccount) {
+            const docTypeName = document_type === "invoice" ? "Счёт" : "Акт выполненных работ";
+            const serviceName = orderSnapshot.tariff_name 
+              ? `${orderSnapshot.product_name} — ${orderSnapshot.tariff_name}`
+              : orderSnapshot.product_name;
+            
+            const emailHtml = generateEmailTemplate({
+              docTypeName,
+              documentNumber,
+              documentDate: new Date().toLocaleDateString("ru-RU"),
+              serviceName,
+              amount: `${order.final_price.toFixed(2)} ${order.currency}`,
+              executor: executorSnapshot,
+              documentHtml,
+            });
+
+            // Call send-email function
+            const { error: emailError } = await supabase.functions.invoke("send-email", {
+              body: {
+                to: recipientEmail,
+                subject: `${docTypeName} № ${documentNumber} от ${executorSnapshot.short_name || executorSnapshot.full_name}`,
+                html: emailHtml,
+                text: `${docTypeName} № ${documentNumber}. Услуга: ${serviceName}. Сумма: ${order.final_price.toFixed(2)} ${order.currency}`,
+              },
+            });
+
+            if (emailError) {
+              console.error("Email send error:", emailError);
+              results.email_error = emailError.message;
+            } else {
+              results.email_sent = true;
+              
+              // Update document record
+              await supabase
+                .from("generated_documents")
+                .update({
+                  sent_to_email: recipientEmail,
+                  sent_at: new Date().toISOString(),
+                })
+                .eq("id", docRecord.id);
+            }
+          } else {
+            results.email_error = "Email account not configured";
+          }
+        } catch (e) {
+          console.error("Email error:", e);
+          results.email_error = e instanceof Error ? e.message : "Unknown email error";
+        }
+      } else {
+        results.email_error = "No recipient email";
+      }
+    }
+
+    // Send Telegram if requested
+    if (send_telegram) {
+      const telegramUserId = profile?.telegram_user_id;
+      if (telegramUserId) {
+        try {
+          const botToken = await getTelegramBotToken(supabase);
+          if (botToken) {
+            const docTypeName = document_type === "invoice" ? "📄 Счёт" : "✅ Акт выполненных работ";
+            const serviceName = orderSnapshot.tariff_name 
+              ? `${orderSnapshot.product_name} — ${orderSnapshot.tariff_name}`
+              : orderSnapshot.product_name;
+            
+            const telegramMessage = generateTelegramMessage({
+              docTypeName,
+              documentNumber,
+              documentDate: new Date().toLocaleDateString("ru-RU"),
+              serviceName,
+              amount: `${order.final_price.toFixed(2)} ${order.currency}`,
+              executor: executorSnapshot,
+            });
+
+            const sendResult = await telegramRequest(botToken, "sendMessage", {
+              chat_id: telegramUserId,
+              text: telegramMessage,
+              parse_mode: "HTML",
+            });
+
+            if (sendResult.ok) {
+              results.telegram_sent = true;
+            } else {
+              results.telegram_error = sendResult.description || "Telegram send failed";
+            }
+          } else {
+            results.telegram_error = "Telegram bot not configured";
+          }
+        } catch (e) {
+          console.error("Telegram error:", e);
+          results.telegram_error = e instanceof Error ? e.message : "Unknown telegram error";
+        }
+      } else {
+        results.telegram_error = "User has no Telegram linked";
+      }
+    }
 
     return new Response(JSON.stringify({
       success: true,
@@ -250,6 +447,7 @@ serve(async (req) => {
         client: clientSnapshot,
         order: orderSnapshot,
       },
+      send_results: results,
     }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -264,6 +462,120 @@ serve(async (req) => {
     });
   }
 });
+
+// Email template
+function generateEmailTemplate(data: {
+  docTypeName: string;
+  documentNumber: string;
+  documentDate: string;
+  serviceName: string;
+  amount: string;
+  executor: any;
+  documentHtml: string;
+}): string {
+  const { docTypeName, documentNumber, documentDate, serviceName, amount, executor, documentHtml } = data;
+  const executorName = executor.short_name || executor.full_name;
+  
+  return `
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${docTypeName} № ${documentNumber}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background: #f5f5f5; }
+    .container { max-width: 600px; margin: 0 auto; background: #fff; }
+    .header { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; padding: 30px; text-align: center; }
+    .header h1 { margin: 0; font-size: 24px; }
+    .content { padding: 30px; }
+    .info-box { background: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0; }
+    .info-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
+    .info-row:last-child { border-bottom: none; }
+    .info-label { color: #666; }
+    .info-value { font-weight: 600; color: #333; }
+    .amount { font-size: 24px; color: #6366f1; font-weight: 700; }
+    .document-section { margin-top: 30px; padding-top: 20px; border-top: 2px solid #eee; }
+    .button { display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; margin-top: 20px; }
+    .footer { background: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>${docTypeName}</h1>
+      <p style="margin: 10px 0 0; opacity: 0.9;">№ ${documentNumber} от ${documentDate}</p>
+    </div>
+    
+    <div class="content">
+      <p>Здравствуйте!</p>
+      
+      <p>Направляем вам ${docTypeName.toLowerCase()} за оказанные услуги.</p>
+      
+      <div class="info-box">
+        <div class="info-row">
+          <span class="info-label">Услуга</span>
+          <span class="info-value">${serviceName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Номер документа</span>
+          <span class="info-value">${documentNumber}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Дата</span>
+          <span class="info-value">${documentDate}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Сумма</span>
+          <span class="info-value amount">${amount}</span>
+        </div>
+      </div>
+      
+      <p><strong>От кого:</strong> ${executor.legal_form || ""} "${executorName}"<br>
+      УНП: ${executor.unp}</p>
+      
+      <div class="document-section">
+        <p style="font-weight: 600; margin-bottom: 15px;">Документ:</p>
+        ${documentHtml}
+      </div>
+    </div>
+    
+    <div class="footer">
+      <p>Это автоматическое сообщение. Если у вас есть вопросы, свяжитесь с нами.</p>
+      <p>© ${new Date().getFullYear()} ${executorName}</p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+// Telegram message template
+function generateTelegramMessage(data: {
+  docTypeName: string;
+  documentNumber: string;
+  documentDate: string;
+  serviceName: string;
+  amount: string;
+  executor: any;
+}): string {
+  const { docTypeName, documentNumber, documentDate, serviceName, amount, executor } = data;
+  const executorName = executor.short_name || executor.full_name;
+  
+  return `${docTypeName}
+
+<b>Документ:</b> № ${documentNumber}
+<b>Дата:</b> ${documentDate}
+<b>Услуга:</b> ${serviceName}
+<b>Сумма:</b> ${amount}
+
+<b>Исполнитель:</b> ${executor.legal_form || ""} "${executorName}"
+УНП: ${executor.unp}
+
+—
+<i>Это закрывающий документ, подтверждающий оплату услуг. Сохраните его для бухгалтерского учёта.</i>
+
+Документ также доступен в вашем личном кабинете в разделе «Мои покупки» → «Документы».`;
+}
 
 function generateDocumentHtml(
   type: "invoice" | "act",
@@ -300,6 +612,7 @@ function generateDocumentHtml(
     .total { font-weight: bold; }
     .requisites { margin-top: 30px; font-size: 10pt; }
     .signature { margin-top: 50px; }
+    @media print { body { margin: 20px; } }
   </style>
 </head>
 <body>
@@ -308,7 +621,7 @@ function generateDocumentHtml(
     <div>от ${documentDate}</div>
   </div>
   
-  <p><strong>Исполнитель:</strong> ${executor.legal_form} "${executorName}", УНП ${executor.unp}</p>
+  <p><strong>Исполнитель:</strong> ${executor.legal_form || ""} "${executorName}", УНП ${executor.unp}</p>
   <p>${executor.legal_address}</p>
   <p>р/с ${executor.bank_account} в ${executor.bank_name}, БИК ${executor.bank_code}</p>
   
@@ -348,7 +661,7 @@ function generateDocumentHtml(
   <p>НДС не облагается.</p>
   
   <div class="signature">
-    <p>${executor.director_position || "Директор"} _________________ ${executor.director_short_name || ""}</p>
+    <p>${executor.director_position || "Руководитель"} _________________ ${executor.director_short_name || ""}</p>
   </div>
 </body>
 </html>`;
@@ -371,6 +684,7 @@ function generateDocumentHtml(
     .total { font-weight: bold; }
     .signatures { display: flex; justify-content: space-between; margin-top: 50px; }
     .signature-block { width: 45%; }
+    @media print { body { margin: 20px; } }
   </style>
 </head>
 <body>
@@ -379,7 +693,7 @@ function generateDocumentHtml(
     <div>№ ${documentNumber} от ${documentDate}</div>
   </div>
   
-  <p><strong>Исполнитель:</strong> ${executor.legal_form} "${executorName}", УНП ${executor.unp}, ${executor.legal_address}</p>
+  <p><strong>Исполнитель:</strong> ${executor.legal_form || ""} "${executorName}", УНП ${executor.unp}, ${executor.legal_address}</p>
   <p><strong>Заказчик:</strong> ${clientName}</p>
   
   <p style="margin-top: 20px;">Мы, нижеподписавшиеся, составили настоящий акт о том, что Исполнитель оказал, а Заказчик принял следующие услуги:</p>
@@ -419,7 +733,7 @@ function generateDocumentHtml(
   <div class="signatures">
     <div class="signature-block">
       <p><strong>Исполнитель:</strong></p>
-      <p style="margin-top: 30px;">${executor.director_position || "Директор"}</p>
+      <p style="margin-top: 30px;">${executor.director_position || "Руководитель"}</p>
       <p style="margin-top: 20px;">_________________ ${executor.director_short_name || ""}</p>
     </div>
     <div class="signature-block">
