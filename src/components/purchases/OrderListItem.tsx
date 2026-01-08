@@ -306,6 +306,19 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
       </div>
       {isPaid && (
         <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+          {/* BePaid receipt button - always visible for paid orders with receipt */}
+          {receiptUrl && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={() => onOpenBePaidReceipt(receiptUrl)}
+              title="Чек bePaid"
+            >
+              <Download className="h-4 w-4" />
+              <span className="hidden sm:inline ml-1">Чек</span>
+            </Button>
+          )}
+          
           {/* Document generation dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -368,16 +381,6 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
                 <Send className="h-4 w-4 mr-2" />
                 Акт → Telegram
               </DropdownMenuItem>
-              
-              {receiptUrl && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => onOpenBePaidReceipt(receiptUrl)}>
-                    <Download className="h-4 w-4 mr-2" />
-                    Чек bePaid
-                  </DropdownMenuItem>
-                </>
-              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
