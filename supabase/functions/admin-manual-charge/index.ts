@@ -164,13 +164,45 @@ Deno.serve(async (req) => {
         });
       }
 
+      // Generate order number
+      const { data: orderNumberData } = await supabase.rpc('generate_order_number');
+      const orderNumber = orderNumberData || `ORD-MANUAL-${Date.now()}`;
+
+      // Create order for manual charge
+      const { data: order, error: orderError } = await supabase
+        .from('orders_v2')
+        .insert({
+          order_number: orderNumber,
+          user_id,
+          base_price: amount / 100, // Convert from kopecks to BYN
+          final_price: amount / 100,
+          paid_amount: 0,
+          currency: 'BYN',
+          status: 'pending',
+          meta: {
+            type: 'admin_manual_charge',
+            description,
+            charged_by: user.id,
+          },
+        })
+        .select()
+        .single();
+
+      if (orderError) {
+        console.error('Order creation error:', orderError);
+        return new Response(JSON.stringify({ success: false, error: 'Failed to create order' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       // Create payment record
       const { data: payment, error: paymentError } = await supabase
         .from('payments_v2')
         .insert({
-          order_id: null, // Manual charge has no order
+          order_id: order.id,
           user_id,
-          amount,
+          amount: amount / 100, // Convert from kopecks to BYN
           currency: 'BYN',
           status: 'processing',
           provider: 'bepaid',
@@ -188,6 +220,8 @@ Deno.serve(async (req) => {
 
       if (paymentError) {
         console.error('Payment record error:', paymentError);
+        // Cleanup the order
+        await supabase.from('orders_v2').delete().eq('id', order.id);
         return new Response(JSON.stringify({ success: false, error: 'Failed to create payment record' }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -215,6 +249,15 @@ Deno.serve(async (req) => {
           })
           .eq('id', payment.id);
 
+        // Update order as completed
+        await supabase
+          .from('orders_v2')
+          .update({
+            status: 'completed',
+            paid_amount: amount / 100,
+          })
+          .eq('id', order.id);
+
         // Audit log
         await supabase.from('audit_logs').insert({
           actor_user_id: user.id,
@@ -222,13 +265,14 @@ Deno.serve(async (req) => {
           action: 'payment.admin_manual_charge',
           meta: {
             payment_id: payment.id,
-            amount,
+            order_id: order.id,
+            amount: amount / 100,
             description,
             bepaid_uid: chargeResult.uid,
           },
         });
 
-        console.log(`Manual charge successful: ${payment.id}, amount: ${amount}`);
+        console.log(`Manual charge successful: ${payment.id}, order: ${order.id}, amount: ${amount / 100} BYN`);
 
         return new Response(JSON.stringify({
           success: true,
