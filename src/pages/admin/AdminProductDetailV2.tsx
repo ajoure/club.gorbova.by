@@ -113,6 +113,7 @@ export default function AdminProductDetailV2() {
     auto_charge_delay_days: 5,
     requires_card_tokenization: false,
     is_active: true,
+    is_primary: false,
     getcourse_offer_id: "",
     reject_virtual_cards: false,
     // Installment fields
@@ -217,6 +218,7 @@ export default function AdminProductDetailV2() {
         auto_charge_delay_days: offer.auto_charge_delay_days || 5,
         requires_card_tokenization: offer.requires_card_tokenization ?? false,
         is_active: offer.is_active ?? true,
+        is_primary: offer.is_primary ?? false,
         getcourse_offer_id: offer.getcourse_offer_id || "",
         reject_virtual_cards: offer.reject_virtual_cards ?? false,
         payment_method: offer.payment_method || "full_payment",
@@ -237,6 +239,7 @@ export default function AdminProductDetailV2() {
         auto_charge_delay_days: 5,
         requires_card_tokenization: false,
         is_active: true,
+        is_primary: false,
         getcourse_offer_id: "",
         reject_virtual_cards: false,
         payment_method: "full_payment",
@@ -265,7 +268,7 @@ export default function AdminProductDetailV2() {
       auto_charge_delay_days: offerForm.offer_type === "trial" ? offerForm.auto_charge_delay_days : null,
       requires_card_tokenization: offerForm.offer_type === "trial" ? true : (isInstallment || offerForm.requires_card_tokenization),
       is_active: offerForm.is_active,
-      is_primary: offerForm.offer_type === "pay_now" ? (offerForm as any).is_primary ?? false : false,
+      is_primary: offerForm.offer_type === "pay_now" ? offerForm.is_primary : false,
       visible_from: null,
       visible_to: null,
       sort_order: offerForm.offer_type === "trial" ? 1 : 0,
@@ -1019,6 +1022,16 @@ export default function AdminProductDetailV2() {
               />
               <Label>Активна</Label>
             </div>
+
+            {offerForm.offer_type === "pay_now" && (
+              <div className="flex items-center space-x-2">
+                <Switch
+                  checked={offerForm.is_primary}
+                  onCheckedChange={(checked) => setOfferForm({ ...offerForm, is_primary: checked })}
+                />
+                <Label>Основная цена</Label>
+              </div>
+            )}
           </div>
 
           <DialogFooter>
