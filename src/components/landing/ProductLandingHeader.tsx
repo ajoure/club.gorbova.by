@@ -1,10 +1,27 @@
 import { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { Menu, X } from "lucide-react";
 
-export function ConsultationHeader() {
+interface NavItem {
+  label: string;
+  sectionId: string;
+}
+
+interface ProductLandingHeaderProps {
+  productName: string;
+  subtitle?: string;
+  navItems?: NavItem[];
+}
+
+export function ProductLandingHeader({ 
+  productName, 
+  subtitle,
+  navItems = [
+    { label: "Тарифы", sectionId: "tariffs" },
+  ]
+}: ProductLandingHeaderProps) {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   const [isScrolled, setIsScrolled] = useState(false);
@@ -20,19 +37,10 @@ export function ConsultationHeader() {
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 20);
     };
-
     window.addEventListener("scroll", handleScroll);
     handleScroll();
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
-
-  const handleLoginClick = () => {
-    navigate("/auth");
-  };
-
-  const handleDashboardClick = () => {
-    navigate("/dashboard");
-  };
 
   const scrollToSection = (sectionId: string) => {
     setMobileMenuOpen(false);
@@ -45,14 +53,8 @@ export function ConsultationHeader() {
   return (
     <header
       className={`fixed left-0 right-0 z-50 transition-all duration-500 ${
-        isScrolled
-          ? "py-3 border-b border-border/50"
-          : "py-4"
-      } ${
-        isVisible
-          ? "opacity-100 translate-y-0"
-          : "opacity-0 -translate-y-4"
-      }`}
+        isScrolled ? "py-3 border-b border-border/50" : "py-4"
+      } ${isVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4"}`}
       style={{
         top: "0",
         background: isScrolled
@@ -62,50 +64,34 @@ export function ConsultationHeader() {
       }}
     >
       <div className="container mx-auto px-4 flex items-center justify-between">
-        <Link 
-          to="/consultation" 
-          className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
-        >
+        <div className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity">
           <div>
-            <span className="text-lg font-bold text-foreground">КАТЕРИНА ГОРБОВА</span>
-            <span className="block text-xs text-muted-foreground">Платные консультации</span>
+            <span className="text-lg font-bold text-foreground uppercase">{productName}</span>
+            {subtitle && (
+              <span className="block text-xs text-muted-foreground">{subtitle}</span>
+            )}
           </div>
-        </Link>
+        </div>
 
         {/* Desktop Navigation */}
         <nav className="hidden md:flex items-center gap-6">
-          <button
-            onClick={() => scrollToSection("audience")}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Кому подходит
-          </button>
-          <button
-            onClick={() => scrollToSection("results")}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Результаты
-          </button>
-          <button
-            onClick={() => scrollToSection("tariffs")}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Тарифы
-          </button>
-          <button
-            onClick={() => scrollToSection("after-payment")}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            После оплаты
-          </button>
+          {navItems.map((item) => (
+            <button
+              key={item.sectionId}
+              onClick={() => scrollToSection(item.sectionId)}
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {item.label}
+            </button>
+          ))}
         </nav>
 
-        {/* Auth Buttons */}
+        {/* Auth Button */}
         <div className="hidden md:flex items-center gap-3">
           {!loading && (
             user ? (
               <Button 
-                onClick={handleDashboardClick} 
+                onClick={() => navigate("/dashboard")} 
                 variant="outline"
                 className="border-border hover:bg-muted"
               >
@@ -113,7 +99,7 @@ export function ConsultationHeader() {
               </Button>
             ) : (
               <Button 
-                onClick={handleLoginClick} 
+                onClick={() => navigate("/auth")} 
                 variant="outline"
                 className="border-border hover:bg-muted"
               >
@@ -142,38 +128,23 @@ export function ConsultationHeader() {
           }}
         >
           <nav className="container mx-auto px-4 flex flex-col gap-4">
-            <button
-              onClick={() => scrollToSection("audience")}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2 text-left"
-            >
-              Кому подходит
-            </button>
-            <button
-              onClick={() => scrollToSection("results")}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2 text-left"
-            >
-              Результаты
-            </button>
-            <button
-              onClick={() => scrollToSection("tariffs")}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2 text-left"
-            >
-              Тарифы
-            </button>
-            <button
-              onClick={() => scrollToSection("after-payment")}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2 text-left"
-            >
-              После оплаты
-            </button>
+            {navItems.map((item) => (
+              <button
+                key={item.sectionId}
+                onClick={() => scrollToSection(item.sectionId)}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors py-2 text-left"
+              >
+                {item.label}
+              </button>
+            ))}
             <div className="pt-2 border-t border-border/50">
               {!loading && (
                 user ? (
-                  <Button onClick={handleDashboardClick} className="w-full" variant="outline">
+                  <Button onClick={() => navigate("/dashboard")} className="w-full" variant="outline">
                     Личный кабинет
                   </Button>
                 ) : (
-                  <Button onClick={handleLoginClick} className="w-full" variant="outline">
+                  <Button onClick={() => navigate("/auth")} className="w-full" variant="outline">
                     Войти
                   </Button>
                 )
