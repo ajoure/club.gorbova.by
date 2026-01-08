@@ -27,6 +27,7 @@ import { useState } from "react";
 interface ContactEmailHistoryProps {
   userId: string | null;
   email: string | null;
+  clientName?: string | null;
 }
 
 interface EmailLog {
@@ -46,7 +47,7 @@ interface EmailLog {
   clicked_at: string | null;
 }
 
-export function ContactEmailHistory({ userId, email }: ContactEmailHistoryProps) {
+export function ContactEmailHistory({ userId, email, clientName }: ContactEmailHistoryProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // Fetch email logs
@@ -192,7 +193,9 @@ export function ContactEmailHistory({ userId, email }: ContactEmailHistoryProps)
                             </p>
                             <p className="text-xs text-muted-foreground">
                               {emailItem.direction === "outgoing" ? "→ " : "← "}
-                              {emailItem.direction === "outgoing" ? emailItem.to_email : emailItem.from_email}
+                              {emailItem.direction === "outgoing" 
+                                ? emailItem.to_email 
+                                : (clientName || emailItem.from_email)}
                             </p>
                           </div>
                         </div>

@@ -835,6 +835,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                 userId={contact.user_id || ""}
                 telegramUserId={contact.telegram_user_id}
                 telegramUsername={contact.telegram_username}
+                clientName={contact.full_name}
               />
             </TabsContent>
 
@@ -843,6 +844,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
               <ContactEmailHistory
                 userId={contact.user_id}
                 email={contact.email}
+                clientName={contact.full_name}
               />
             </TabsContent>
 
