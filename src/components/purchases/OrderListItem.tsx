@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { ChevronRight, CheckCircle, XCircle, Clock, CreditCard, Download, FileText, Loader2 } from "lucide-react";
+import { ChevronRight, CheckCircle, XCircle, Clock, CreditCard, Download, FileText, Loader2, Mail, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -50,6 +50,7 @@ interface OrderListItemProps {
 
 export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }: OrderListItemProps) {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const payment = order.payments_v2?.[0];
   const isPaid = order.status === "paid" || payment?.status === "succeeded";
   const receiptUrl = payment?.provider_response?.transaction?.receipt_url;
@@ -58,8 +59,13 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
     return format(new Date(dateString), "d MMM yyyy, HH:mm", { locale: ru });
   };
 
-  const generateDocument = async (type: "invoice" | "act") => {
-    setIsGenerating(true);
+  const generateDocument = async (type: "invoice" | "act", sendEmail = false, sendTelegram = false) => {
+    if (sendEmail || sendTelegram) {
+      setIsSending(true);
+    } else {
+      setIsGenerating(true);
+    }
+    
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
@@ -68,24 +74,55 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
       }
 
       const { data, error } = await supabase.functions.invoke("generate-invoice-act", {
-        body: { order_id: order.id, document_type: type },
+        body: { 
+          order_id: order.id, 
+          document_type: type,
+          send_email: sendEmail,
+          send_telegram: sendTelegram,
+        },
       });
 
       if (error) throw error;
       if (!data.success) throw new Error(data.error);
 
-      // Open document in new window
-      const docWindow = window.open("", "_blank");
-      if (docWindow) {
-        docWindow.document.write(data.document.html);
-        docWindow.document.close();
-        toast.success(type === "invoice" ? "Счёт сформирован" : "Акт сформирован");
+      // Show results
+      const results = data.send_results;
+      
+      if (sendEmail || sendTelegram) {
+        const messages: string[] = [];
+        if (sendEmail && results?.email_sent) {
+          messages.push("✉️ Отправлено на почту");
+        }
+        if (sendEmail && results?.email_error) {
+          messages.push(`❌ Почта: ${results.email_error}`);
+        }
+        if (sendTelegram && results?.telegram_sent) {
+          messages.push("📱 Отправлено в Telegram");
+        }
+        if (sendTelegram && results?.telegram_error) {
+          messages.push(`❌ Telegram: ${results.telegram_error}`);
+        }
+        
+        if (results?.email_sent || results?.telegram_sent) {
+          toast.success(messages.join("\n"));
+        } else {
+          toast.error(messages.join("\n"));
+        }
+      } else {
+        // Open document in new window
+        const docWindow = window.open("", "_blank");
+        if (docWindow) {
+          docWindow.document.write(data.document.html);
+          docWindow.document.close();
+          toast.success(type === "invoice" ? "Счёт сформирован" : "Акт сформирован");
+        }
       }
     } catch (error) {
       console.error("Generate error:", error);
       toast.error("Ошибка генерации документа");
     } finally {
       setIsGenerating(false);
+      setIsSending(false);
     }
   };
 
@@ -136,6 +173,11 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
       return `${productName} — ${tariffName}`;
     }
     if (productName) return productName;
+    if (order.purchase_snapshot?.product_name) {
+      const pName = order.purchase_snapshot.product_name;
+      const tName = order.purchase_snapshot.tariff_name;
+      return tName ? `${pName} — ${tName}` : pName;
+    }
     if (order.is_trial) return "Пробный период";
     return order.order_number;
   };
@@ -173,8 +215,8 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
           {/* Document generation dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" disabled={isGenerating}>
-                {isGenerating ? (
+              <Button variant="ghost" size="sm" disabled={isGenerating || isSending}>
+                {isGenerating || isSending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <FileText className="h-4 w-4" />
@@ -182,20 +224,45 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
                 <span className="hidden sm:inline ml-1">Документы</span>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="w-56">
+              {/* View documents */}
               <DropdownMenuItem onClick={() => generateDocument("invoice")}>
                 <FileText className="h-4 w-4 mr-2" />
-                Счёт
+                Открыть счёт
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => generateDocument("act")}>
                 <FileText className="h-4 w-4 mr-2" />
-                Акт выполненных работ
+                Открыть акт
               </DropdownMenuItem>
+              
+              <DropdownMenuSeparator />
+              
+              {/* Send by email */}
+              <DropdownMenuItem onClick={() => generateDocument("act", true, false)}>
+                <Mail className="h-4 w-4 mr-2" />
+                Отправить акт на почту
+              </DropdownMenuItem>
+              
+              {/* Send to Telegram */}
+              <DropdownMenuItem onClick={() => generateDocument("act", false, true)}>
+                <Send className="h-4 w-4 mr-2" />
+                Отправить акт в Telegram
+              </DropdownMenuItem>
+              
+              {/* Send both */}
+              <DropdownMenuItem onClick={() => generateDocument("act", true, true)}>
+                <Send className="h-4 w-4 mr-2" />
+                Отправить акт везде
+              </DropdownMenuItem>
+              
               {receiptUrl && (
-                <DropdownMenuItem onClick={() => onOpenBePaidReceipt(receiptUrl)}>
-                  <Download className="h-4 w-4 mr-2" />
-                  Чек bePaid
-                </DropdownMenuItem>
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => onOpenBePaidReceipt(receiptUrl)}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Чек bePaid
+                  </DropdownMenuItem>
+                </>
               )}
             </DropdownMenuContent>
           </DropdownMenu>
