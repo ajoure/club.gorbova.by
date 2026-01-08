@@ -6,6 +6,54 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Translate payment errors to Russian
+function translatePaymentError(error: string): string {
+  const errorMap: Record<string, string> = {
+    'Insufficient funds': 'Недостаточно средств на карте',
+    'insufficient_funds': 'Недостаточно средств на карте',
+    'Declined': 'Отклонено банком',
+    'declined': 'Отклонено банком',
+    'Expired card': 'Срок действия карты истёк',
+    'expired_card': 'Срок действия карты истёк',
+    'Card restricted': 'Ограничения на карте',
+    'card_restricted': 'Ограничения на карте',
+    'Transaction not permitted': 'Операция не разрешена для данной карты',
+    'transaction_not_permitted': 'Операция не разрешена для данной карты',
+    'Invalid amount': 'Неверная сумма',
+    'invalid_amount': 'Неверная сумма',
+    'Authentication failed': 'Ошибка аутентификации 3D Secure',
+    'authentication_failed': 'Ошибка аутентификации 3D Secure',
+    '3-D Secure authentication failed': 'Ошибка подтверждения 3D Secure',
+    'Payment failed': 'Платёж не прошёл',
+    'payment_failed': 'Платёж не прошёл',
+    'Token expired': 'Сохранённая карта устарела',
+    'token_expired': 'Сохранённая карта устарела',
+    'Invalid token': 'Ошибка привязанной карты',
+    'invalid_token': 'Ошибка привязанной карты',
+    'Do not honor': 'Отклонено банком',
+    'do_not_honor': 'Отклонено банком',
+    'Lost card': 'Карта утеряна',
+    'lost_card': 'Карта утеряна',
+    'Stolen card': 'Карта украдена',
+    'stolen_card': 'Карта украдена',
+    'Invalid card': 'Неверные данные карты',
+    'invalid_card': 'Неверные данные карты',
+    'Card number is invalid': 'Неверный номер карты',
+  };
+
+  // Try exact match first
+  if (errorMap[error]) return errorMap[error];
+  
+  // Try case-insensitive partial match
+  const lowerError = error.toLowerCase();
+  for (const [key, value] of Object.entries(errorMap)) {
+    if (lowerError.includes(key.toLowerCase())) return value;
+  }
+  
+  // Return original with prefix if no translation found
+  return `Ошибка платежа: ${error}`;
+}
+
 // Send order to GetCourse
 // Now uses getcourse_offer_id from tariffs table instead of hardcoded mapping
 interface GetCourseUserData {
@@ -783,6 +831,74 @@ Deno.serve(async (req) => {
           .from('orders_v2')
           .update({ status: 'failed' })
           .eq('id', paymentV2.order_id);
+
+        // Send Telegram notification about failed first payment
+        try {
+          const { data: orderV2 } = await supabase
+            .from('orders_v2')
+            .select('user_id, product_id, customer_email, final_price, currency')
+            .eq('id', paymentV2.order_id)
+            .single();
+
+          if (orderV2?.user_id) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('telegram_user_id, telegram_link_status, full_name')
+              .eq('user_id', orderV2.user_id)
+              .single();
+
+            if (profile?.telegram_user_id && profile.telegram_link_status === 'active') {
+              const { data: product } = await supabase
+                .from('products_v2')
+                .select('name')
+                .eq('id', orderV2.product_id)
+                .single();
+
+              const { data: linkBot } = await supabase
+                .from('telegram_bots')
+                .select('token')
+                .eq('is_link_bot', true)
+                .eq('is_active', true)
+                .limit(1)
+                .single();
+
+              if (linkBot?.token) {
+                const userName = profile.full_name || 'Клиент';
+                const errorMessage = transaction?.message || 'Платёж не прошёл';
+                const russianError = translatePaymentError(errorMessage);
+                const amount = orderV2.final_price ? (orderV2.final_price / 100).toFixed(2) : '0.00';
+
+                const message = `❌ *Платёж не прошёл*
+
+${userName}, к сожалению, не удалось провести оплату.
+
+📦 *Продукт:* ${product?.name || 'Продукт'}
+💳 *Сумма:* ${amount} ${orderV2.currency || 'BYN'}
+⚠️ *Причина:* ${russianError}
+
+*Что можно сделать:*
+• Проверьте баланс карты
+• Убедитесь, что карта не заблокирована
+• Попробуйте оплатить другой картой
+
+🔗 [Попробовать снова](https://club.gorbova.by/purchases)`;
+
+                await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    chat_id: profile.telegram_user_id,
+                    text: message,
+                    parse_mode: 'Markdown',
+                  }),
+                });
+                console.log('Sent first payment failure notification to user via Telegram');
+              }
+            }
+          }
+        } catch (notifyError) {
+          console.error('Error sending payment failure Telegram notification:', notifyError);
+        }
       }
 
       return new Response(JSON.stringify({ ok: true, mode: 'v2', status: transactionStatus || 'unknown' }), {

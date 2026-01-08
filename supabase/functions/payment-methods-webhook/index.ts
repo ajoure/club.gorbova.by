@@ -6,6 +6,102 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Translate card tokenization errors to Russian
+function translateTokenizationError(error: string): string {
+  const errorMap: Record<string, string> = {
+    'Declined': 'Карта отклонена банком',
+    'declined': 'Карта отклонена банком',
+    'Expired card': 'Срок действия карты истёк',
+    'expired_card': 'Срок действия карты истёк',
+    'Card restricted': 'На карте установлены ограничения',
+    'card_restricted': 'На карте установлены ограничения',
+    'Invalid card': 'Неверные данные карты',
+    'invalid_card': 'Неверные данные карты',
+    'Card number is invalid': 'Неверный номер карты',
+    'Authentication failed': 'Ошибка подтверждения 3D Secure',
+    'authentication_failed': 'Ошибка подтверждения 3D Secure',
+    '3-D Secure authentication failed': 'Ошибка подтверждения 3D Secure',
+    'Do not honor': 'Операция отклонена банком',
+    'do_not_honor': 'Операция отклонена банком',
+    'Lost card': 'Карта утеряна',
+    'lost_card': 'Карта утеряна',
+    'Stolen card': 'Карта украдена',
+    'stolen_card': 'Карта украдена',
+  };
+
+  if (errorMap[error]) return errorMap[error];
+  
+  const lowerError = error.toLowerCase();
+  for (const [key, value] of Object.entries(errorMap)) {
+    if (lowerError.includes(key.toLowerCase())) return value;
+  }
+  
+  return `Ошибка привязки карты: ${error}`;
+}
+
+// Send Telegram notification for card tokenization failure
+async function sendTokenizationFailureNotification(
+  supabase: any,
+  customerEmail: string,
+  errorMessage: string
+): Promise<void> {
+  try {
+    // Find user by email
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('user_id, telegram_user_id, telegram_link_status, full_name')
+      .ilike('email', customerEmail.toLowerCase().trim())
+      .single();
+
+    if (!profile?.telegram_user_id || profile.telegram_link_status !== 'active') {
+      console.log('User not linked to Telegram, skipping notification');
+      return;
+    }
+
+    const { data: linkBot } = await supabase
+      .from('telegram_bots')
+      .select('token')
+      .eq('is_link_bot', true)
+      .eq('is_active', true)
+      .limit(1)
+      .single();
+
+    if (!linkBot?.token) {
+      console.log('No link bot configured');
+      return;
+    }
+
+    const userName = profile.full_name || 'Клиент';
+    const russianError = translateTokenizationError(errorMessage);
+
+    const message = `❌ *Не удалось привязать карту*
+
+${userName}, к сожалению, не удалось привязать банковскую карту.
+
+⚠️ *Причина:* ${russianError}
+
+*Что можно сделать:*
+• Проверьте правильность данных карты
+• Убедитесь, что карта активна и не заблокирована
+• Попробуйте привязать другую карту
+
+🔗 [Попробовать снова](https://club.gorbova.by/settings/payment-methods)`;
+
+    await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: profile.telegram_user_id,
+        text: message,
+        parse_mode: 'Markdown',
+      }),
+    });
+    console.log('Sent tokenization failure notification via Telegram');
+  } catch (error) {
+    console.error('Error sending tokenization failure notification:', error);
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -48,6 +144,13 @@ serve(async (req) => {
 
     if (status !== 'successful' || !cardToken) {
       console.log('Tokenization not successful or no token');
+      
+      // Send Telegram notification about failed tokenization
+      if (customerEmail && status !== 'successful') {
+        const errorMessage = transaction.message || 'Tokenization failed';
+        await sendTokenizationFailureNotification(supabase, customerEmail, errorMessage);
+      }
+      
       return new Response(JSON.stringify({ status: 'ignored' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
