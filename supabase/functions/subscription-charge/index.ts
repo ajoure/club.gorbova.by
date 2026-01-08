@@ -5,6 +5,11 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Format currency helper
+function formatCurrency(amount: number, currency: string = 'BYN'): string {
+  return `${amount.toFixed(2)} ${currency}`;
+}
+
 // Translate bePaid error messages to Russian
 function translatePaymentError(error: string): string {
   const errorMap: Record<string, string> = {
@@ -40,6 +45,220 @@ function translatePaymentError(error: string): string {
     if (lowerError.includes(key.toLowerCase())) return value;
   }
   return `Ошибка платежа: ${error}`;
+}
+
+// Send email notification for successful renewal
+async function sendRenewalSuccessEmail(
+  supabase: any,
+  userId: string,
+  productName: string,
+  tariffName: string,
+  amount: number,
+  currency: string,
+  newExpiryDate: Date
+): Promise<void> {
+  try {
+    // Get user email
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('user_id', userId)
+      .single();
+
+    let email = profile?.email;
+    if (!email) {
+      const { data: authUser } = await supabase.auth.admin.getUserById(userId);
+      email = authUser?.user?.email;
+    }
+
+    if (!email) return;
+
+    const formattedDate = newExpiryDate.toLocaleDateString('ru-RU', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+
+    const bodyHtml = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h1 style="color: #059669; font-size: 24px; margin-bottom: 20px;">✅ Подписка успешно продлена!</h1>
+        <p>Здравствуйте!</p>
+        <p>Ваша подписка была успешно продлена.</p>
+        
+        <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+          <p style="margin: 0 0 8px 0;"><strong>📦 Продукт:</strong> ${productName}</p>
+          <p style="margin: 0 0 8px 0;"><strong>🎯 Тариф:</strong> ${tariffName}</p>
+          <p style="margin: 0 0 8px 0;"><strong>💳 Списано:</strong> ${formatCurrency(amount, currency)}</p>
+          <p style="margin: 0;"><strong>📆 Доступ до:</strong> ${formattedDate}</p>
+        </div>
+        
+        <p>Спасибо, что остаётесь с нами!</p>
+        
+        <p style="margin-top: 24px;">
+          <a href="https://club.gorbova.by/purchases" style="display: inline-block; background: #059669; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+            Мои подписки
+          </a>
+        </p>
+        
+        <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">
+          С уважением,<br>Команда клуба
+        </p>
+      </div>
+    `;
+
+    await supabase.functions.invoke('send-email', {
+      body: {
+        to: email,
+        subject: '✅ Подписка успешно продлена',
+        html: bodyHtml,
+      },
+    });
+
+    console.log(`Sent renewal success email to ${email}`);
+  } catch (err) {
+    console.error('Failed to send renewal success email:', err);
+  }
+}
+
+// Send email notification for failed payment
+async function sendPaymentFailureEmail(
+  supabase: any,
+  userId: string,
+  productName: string,
+  amount: number,
+  currency: string,
+  errorMessage: string,
+  attemptsLeft: number
+): Promise<void> {
+  try {
+    // Get user email
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('user_id', userId)
+      .single();
+
+    let email = profile?.email;
+    if (!email) {
+      const { data: authUser } = await supabase.auth.admin.getUserById(userId);
+      email = authUser?.user?.email;
+    }
+
+    if (!email) return;
+
+    const russianError = translatePaymentError(errorMessage);
+
+    const bodyHtml = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h1 style="color: #dc2626; font-size: 24px; margin-bottom: 20px;">❌ Платёж не прошёл</h1>
+        <p>Здравствуйте!</p>
+        <p>К сожалению, не удалось списать оплату за продление подписки.</p>
+        
+        <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin: 20px 0;">
+          <p style="margin: 0 0 8px 0;"><strong>📦 Продукт:</strong> ${productName}</p>
+          <p style="margin: 0 0 8px 0;"><strong>💳 Сумма:</strong> ${formatCurrency(amount, currency)}</p>
+          <p style="margin: 0;"><strong>⚠️ Причина:</strong> ${russianError}</p>
+        </div>
+        
+        <p><strong>Что можно сделать:</strong></p>
+        <ul style="color: #4b5563;">
+          <li>Проверьте баланс карты</li>
+          <li>Убедитесь, что карта не заблокирована</li>
+          <li>Попробуйте привязать другую карту</li>
+        </ul>
+        
+        ${attemptsLeft > 0 
+          ? `<p style="color: #d97706;">⚠️ Мы повторим попытку списания через 24 часа. Осталось попыток: ${attemptsLeft}</p>`
+          : `<p style="color: #dc2626;">❗ Это была последняя попытка. Доступ будет закрыт.</p>`
+        }
+        
+        <p style="margin-top: 24px;">
+          <a href="https://club.gorbova.by/settings/payment-methods" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+            Обновить карту
+          </a>
+        </p>
+        
+        <p style="color: #6b7280; margin-top: 32px; font-size: 14px;">
+          С уважением,<br>Команда клуба
+        </p>
+      </div>
+    `;
+
+    await supabase.functions.invoke('send-email', {
+      body: {
+        to: email,
+        subject: '❌ Платёж по подписке не прошёл',
+        html: bodyHtml,
+      },
+    });
+
+    console.log(`Sent payment failure email to ${email}`);
+  } catch (err) {
+    console.error('Failed to send payment failure email:', err);
+  }
+}
+
+// Send Telegram notification about successful renewal
+async function sendRenewalSuccessTelegram(
+  supabase: any,
+  userId: string,
+  productName: string,
+  tariffName: string,
+  amount: number,
+  currency: string,
+  newExpiryDate: Date
+): Promise<void> {
+  try {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('telegram_user_id, telegram_link_status, full_name')
+      .eq('user_id', userId)
+      .single();
+
+    if (!profile?.telegram_user_id || profile.telegram_link_status !== 'active') {
+      return;
+    }
+
+    const { data: linkBot } = await supabase
+      .from('telegram_bots')
+      .select('token')
+      .eq('is_link_bot', true)
+      .eq('is_active', true)
+      .limit(1)
+      .single();
+
+    if (!linkBot?.token) return;
+
+    const userName = profile.full_name?.split(' ')[0] || 'Клиент';
+    const formattedDate = newExpiryDate.toLocaleDateString('ru-RU', {
+      day: 'numeric',
+      month: 'long'
+    });
+
+    const message = `✅ *Подписка успешно продлена!*
+
+${userName}, ваша подписка была автоматически продлена.
+
+📦 *Продукт:* ${productName}
+🎯 *Тариф:* ${tariffName}
+💳 *Списано:* ${formatCurrency(amount, currency)}
+📆 *Доступ до:* ${formattedDate}
+
+Спасибо, что остаётесь с нами! 🎉`;
+
+    await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: profile.telegram_user_id,
+        text: message,
+        parse_mode: 'Markdown',
+      }),
+    });
+    console.log(`Sent renewal success notification to user ${userId} via Telegram`);
+  } catch (err) {
+    console.error('Failed to send renewal success notification:', err);
+  }
 }
 
 // Send Telegram notification about payment failure
@@ -80,7 +299,7 @@ async function sendPaymentFailureNotification(
 ${userName}, к сожалению, не удалось продлить подписку.
 
 📦 *Продукт:* ${productName}
-💳 *Сумма:* ${amount} ${currency}
+💳 *Сумма:* ${formatCurrency(amount, currency)}
 ⚠️ *Причина:* ${russianError}
 
 *Что можно сделать:*
@@ -268,6 +487,26 @@ async function chargeSubscription(
         },
       });
 
+      // Send success notifications (Telegram + Email)
+      await sendRenewalSuccessTelegram(
+        supabase,
+        user_id,
+        tariff.name || 'Подписка',
+        tariff.name || 'Стандартный',
+        amount,
+        currency,
+        newEndDate
+      );
+      await sendRenewalSuccessEmail(
+        supabase,
+        user_id,
+        tariff.name || 'Подписка',
+        tariff.name || 'Стандартный',
+        amount,
+        currency,
+        newEndDate
+      );
+
       return { subscription_id: id, success: true, payment_id: payment.id };
     } else {
       // Payment failed
@@ -316,7 +555,8 @@ async function chargeSubscription(
           .eq('id', id);
       }
 
-      // Send Telegram notification about failed payment
+      // Send failure notifications (Telegram + Email)
+      const attemptsLeft = maxAttempts - attempts;
       await sendPaymentFailureNotification(
         supabase,
         user_id,
@@ -324,6 +564,15 @@ async function chargeSubscription(
         amount,
         currency,
         errorMsg
+      );
+      await sendPaymentFailureEmail(
+        supabase,
+        user_id,
+        tariff.name || 'Подписка',
+        amount,
+        currency,
+        errorMsg,
+        attemptsLeft
       );
 
       return { 

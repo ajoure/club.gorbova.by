@@ -1244,6 +1244,32 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                             </div>
                           )}
                         </div>
+                        
+                        {/* Auto-renewal status */}
+                        {isActive && !isCanceled && (
+                          <div className="flex items-center gap-2 mb-3 p-2 rounded-lg bg-muted/50 text-xs">
+                            {sub.payment_token && paymentMethods && paymentMethods.length > 0 ? (
+                              <>
+                                <CheckCircle className="w-3.5 h-3.5 text-green-600" />
+                                <span className="text-green-700">Автопродление включено</span>
+                                {sub.charge_attempts > 0 && (
+                                  <Badge variant="outline" className="text-amber-600 border-amber-200 text-xs ml-auto">
+                                    Попыток: {sub.charge_attempts}/3
+                                  </Badge>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                <XCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                                <span className="text-muted-foreground">
+                                  {!paymentMethods || paymentMethods.length === 0 
+                                    ? "Нет привязанной карты" 
+                                    : "Автопродление отключено"}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        )}
 
                         {/* Quick actions - mobile friendly */}
                         <div className="flex flex-wrap gap-1.5 sm:gap-2">

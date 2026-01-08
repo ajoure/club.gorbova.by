@@ -134,3 +134,6 @@ verify_jwt = false
 
 [functions.ai-import-analyzer]
 verify_jwt = false
+
+[functions.subscription-renewal-reminders]
+verify_jwt = false
