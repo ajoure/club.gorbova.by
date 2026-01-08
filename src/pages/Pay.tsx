@@ -46,6 +46,26 @@ export default function Pay() {
     enabled: !!productId,
   });
 
+  // Check if this product has club mappings (is a club product)
+  const { data: clubMappings } = useQuery({
+    queryKey: ["product-club-mappings", productId],
+    queryFn: async () => {
+      if (!productId) return null;
+      const { data, error } = await supabase
+        .from("product_club_mappings")
+        .select("id")
+        .eq("product_id", productId)
+        .eq("is_active", true)
+        .limit(1);
+      
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!productId,
+  });
+
+  const isClubProduct = (clubMappings?.length ?? 0) > 0;
+
   const formatPrice = (priceKopecks: number, currency: string) => {
     return `${(priceKopecks / 100).toFixed(2)} ${currency}`;
   };
@@ -227,6 +247,7 @@ export default function Pay() {
         productId={product.id}
         productName={product.name}
         price={priceFormatted}
+        isClubProduct={isClubProduct}
       />
     </div>
   );

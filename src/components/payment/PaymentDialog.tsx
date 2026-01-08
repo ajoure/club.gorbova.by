@@ -13,9 +13,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound } from "lucide-react";
+import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
+import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
 
 interface PaymentDialogProps {
   open: boolean;
@@ -27,6 +28,7 @@ interface PaymentDialogProps {
   offerId?: string;
   isTrial?: boolean;
   trialDays?: number;
+  isClubProduct?: boolean;
 }
 
 const emailSchema = z.string().email("Введите корректный email");
@@ -41,7 +43,7 @@ interface UserFormData {
   password: string;
 }
 
-type Step = "email" | "login" | "additional_info" | "processing" | "ready";
+type Step = "email" | "login" | "additional_info" | "telegram_prompt" | "processing" | "ready";
 
 interface EmailCheckResult {
   exists: boolean;
@@ -59,6 +61,7 @@ export function PaymentDialog({
   offerId,
   isTrial,
   trialDays,
+  isClubProduct,
 }: PaymentDialogProps) {
   const { user, session } = useAuth();
   const { isSuperAdmin, isAdmin } = usePermissions();
@@ -79,12 +82,21 @@ export function PaymentDialog({
   const [savedCard, setSavedCard] = useState<{ id: string; brand: string; last4: string } | null>(null);
   const [isLoadingCard, setIsLoadingCard] = useState(false);
   const [privacyConsent, setPrivacyConsent] = useState(false);
+  const [telegramDeepLink, setTelegramDeepLink] = useState<string | null>(null);
+  
+  // Telegram link hooks
+  const { data: telegramStatus, refetch: refetchTelegramStatus } = useTelegramLinkStatus();
+  const startTelegramLink = useStartTelegramLink();
+
+  // Check if telegram prompt should be shown for club products
+  const shouldShowTelegramPrompt = isClubProduct && telegramStatus?.status !== 'active';
 
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
       setSavedCard(null);
       setIsLoadingCard(false);
+      setTelegramDeepLink(null);
       if (user && session) {
         // User is authenticated - use their data
         setFormData({
@@ -95,7 +107,13 @@ export function PaymentDialog({
           password: "",
         });
         setExistingUserId(user.id);
-        setStep("ready");
+        
+        // For club products without linked Telegram, show telegram prompt first
+        if (isClubProduct && telegramStatus?.status !== 'active') {
+          setStep("telegram_prompt");
+        } else {
+          setStep("ready");
+        }
         
         // Check for saved payment method
         setIsLoadingCard(true);
@@ -226,6 +244,24 @@ export function PaymentDialog({
         }
 
         toast.success("Вход выполнен успешно");
+        
+        // Refresh telegram status and check if prompt needed
+        await refetchTelegramStatus();
+        
+        // For club products without linked Telegram, show telegram prompt
+        if (isClubProduct) {
+          const { data: freshProfile } = await supabase
+            .from("profiles")
+            .select("telegram_link_status")
+            .eq("user_id", data.user.id)
+            .maybeSingle();
+          
+          if (freshProfile?.telegram_link_status !== 'active') {
+            setStep("telegram_prompt");
+            return;
+          }
+        }
+        
         setStep("ready");
       }
     } catch (error) {
@@ -286,6 +322,29 @@ export function PaymentDialog({
       return;
     }
 
+    // For club products (new user flow), show telegram prompt
+    if (isClubProduct) {
+      setStep("telegram_prompt");
+    } else {
+      setStep("ready");
+    }
+  };
+
+  // Handle starting Telegram link
+  const handleStartTelegramLink = async () => {
+    try {
+      const result = await startTelegramLink.mutateAsync();
+      if (result.deep_link) {
+        setTelegramDeepLink(result.deep_link);
+        window.open(result.deep_link, "_blank");
+      }
+    } catch (error) {
+      console.error("Failed to start Telegram link:", error);
+    }
+  };
+
+  // Handle skipping Telegram link
+  const handleSkipTelegramLink = () => {
     setStep("ready");
   };
 
@@ -729,6 +788,81 @@ export function PaymentDialog({
           </form>
         );
 
+      case "telegram_prompt":
+        return (
+          <div className="space-y-4">
+            <div className="rounded-lg bg-primary/10 border border-primary/20 p-4 space-y-3">
+              <div className="flex items-center gap-2 text-primary">
+                <MessageCircle className="h-5 w-5" />
+                <span className="font-medium">Привяжите Telegram для доступа</span>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Для доступа в клуб необходимо привязать Telegram-аккаунт. 
+                После оплаты вы автоматически получите приглашение в закрытый чат/канал.
+              </p>
+            </div>
+
+            {telegramDeepLink ? (
+              <div className="rounded-lg bg-muted/50 p-4 space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Бот открыт в новой вкладке. Нажмите "Start" в Telegram, затем вернитесь сюда.
+                </p>
+                <Button
+                  onClick={async () => {
+                    await refetchTelegramStatus();
+                    if (telegramStatus?.status === 'active') {
+                      toast.success("Telegram успешно привязан!");
+                      setStep("ready");
+                    } else {
+                      toast.info("Telegram ещё не привязан. Нажмите Start в боте.");
+                    }
+                  }}
+                  variant="outline"
+                  className="w-full"
+                  disabled={startTelegramLink.isPending}
+                >
+                  {startTelegramLink.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Проверить привязку
+                </Button>
+              </div>
+            ) : (
+              <Button
+                onClick={handleStartTelegramLink}
+                className="w-full gap-2"
+                disabled={startTelegramLink.isPending}
+              >
+                {startTelegramLink.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <ExternalLink className="h-4 w-4" />
+                )}
+                Привязать Telegram
+              </Button>
+            )}
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border/50" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-background px-2 text-muted-foreground">или</span>
+              </div>
+            </div>
+
+            <Button
+              onClick={handleSkipTelegramLink}
+              variant="ghost"
+              className="w-full text-muted-foreground"
+            >
+              Пропустить и продолжить
+            </Button>
+
+            <p className="text-xs text-center text-muted-foreground">
+              Вы сможете привязать Telegram позже в личном кабинете
+            </p>
+          </div>
+        );
+
       case "ready":
         return (
           <div className="space-y-4">
@@ -839,6 +973,8 @@ export function PaymentDialog({
         return "Вход в аккаунт";
       case "additional_info":
         return "Данные для покупки";
+      case "telegram_prompt":
+        return "Привяжите Telegram";
       case "ready":
       case "processing":
         return "Подтверждение оплаты";
