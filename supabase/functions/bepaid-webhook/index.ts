@@ -735,7 +735,7 @@ Deno.serve(async (req) => {
                 
                 const { data: adminProfiles } = await supabase
                   .from('profiles')
-                  .select('telegram_user_id, full_name')
+                  .select('telegram_user_id, telegram_link_bot_id, full_name')
                   .in('user_id', superAdminUserIds)
                   .not('telegram_user_id', 'is', null);
 
@@ -747,30 +747,26 @@ Deno.serve(async (req) => {
                     .eq('user_id', orderV2.user_id)
                     .single();
 
-                  // Get bot token (reliable: via club.bot_id → telegram_bots)
-                  const { data: club } = await supabase
-                    .from('telegram_clubs')
-                    .select('bot_id')
-                    .eq('is_active', true)
-                    .limit(1)
-                    .maybeSingle();
+                  // Get active bots once and pick the best token per admin:
+                  // - if admin linked via a specific bot -> use that bot
+                  // - else fallback to primary active bot
+                  const { data: bots } = await supabase
+                    .from('telegram_bots')
+                    .select('id, bot_token_encrypted, is_primary')
+                    .eq('status', 'active');
 
-                  const botId = (club as any)?.bot_id;
+                  const botsById = new Map<string, string>();
+                  for (const b of (bots || []) as any[]) {
+                    if (b?.id && b?.bot_token_encrypted) botsById.set(b.id, b.bot_token_encrypted);
+                  }
+                  const primaryBotToken = ((bots || []) as any[])
+                    ?.sort((a, b) => (b?.is_primary ? 1 : 0) - (a?.is_primary ? 1 : 0))
+                    ?.[0]?.bot_token_encrypted as string | undefined;
 
-                  const { data: bot } = botId
-                    ? await supabase
-                        .from('telegram_bots')
-                        .select('bot_token_encrypted')
-                        .eq('id', botId)
-                        .maybeSingle()
-                    : { data: null };
-
-                  const botToken = (bot as any)?.bot_token_encrypted;
-
-                  if (botToken) {
+                  if (primaryBotToken || botsById.size > 0) {
                     const amountFormatted = (paymentV2.amount / 100).toFixed(2);
                     const paymentType = orderV2.is_trial ? '🔔 Пробный период' : '💰 Оплата';
-                    
+
                     const message = `${paymentType}\n\n` +
                       `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
                       `📧 Email: ${customerProfile?.email || orderV2.customer_email || 'Не указан'}\n` +
@@ -782,9 +778,15 @@ Deno.serve(async (req) => {
                       `🆔 Заказ: ${orderV2.order_number}`;
 
                     // Send to all super admins with telegram
-                    for (const admin of adminProfiles) {
+                    for (const admin of adminProfiles as any[]) {
+                      const botTokenForAdmin = (admin?.telegram_link_bot_id && botsById.get(admin.telegram_link_bot_id))
+                        ? botsById.get(admin.telegram_link_bot_id)
+                        : (primaryBotToken || Array.from(botsById.values())[0]);
+
+                      if (!botTokenForAdmin) continue;
+
                       try {
-                        const resp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                        const resp = await fetch(`https://api.telegram.org/bot${botTokenForAdmin}/sendMessage`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
@@ -794,12 +796,18 @@ Deno.serve(async (req) => {
                           }),
                         });
 
-                        if (!resp.ok) {
-                          const body = await resp.text().catch(() => '');
+                        let payload: any = null;
+                        try {
+                          payload = await resp.json();
+                        } catch {
+                          // ignore
+                        }
+
+                        if (!resp.ok || payload?.ok === false) {
                           console.error('Failed to notify admin (telegram error):', {
                             admin: admin.full_name,
                             status: resp.status,
-                            body: body.slice(0, 300),
+                            payload,
                           });
                         }
                       } catch (err) {
@@ -807,6 +815,8 @@ Deno.serve(async (req) => {
                       }
                     }
                     console.log('Super admins notified about new payment');
+                  } else {
+                    console.warn('No active telegram bots found - cannot notify super admins');
                   }
                 }
               }
