@@ -670,6 +670,83 @@ Deno.serve(async (req) => {
                 bepaid_uid: transactionUid,
               },
             });
+
+            // --- Notify super admins about new payment ---
+            try {
+              // Get super admin telegram IDs
+              const { data: superAdmins } = await supabase
+                .from('user_roles_v2')
+                .select(`
+                  user_id,
+                  roles!inner(code)
+                `)
+                .eq('roles.code', 'super_admin');
+
+              if (superAdmins && superAdmins.length > 0) {
+                const superAdminUserIds = superAdmins.map((sa: any) => sa.user_id);
+                
+                const { data: adminProfiles } = await supabase
+                  .from('profiles')
+                  .select('telegram_user_id, full_name')
+                  .in('user_id', superAdminUserIds)
+                  .not('telegram_user_id', 'is', null);
+
+                if (adminProfiles && adminProfiles.length > 0) {
+                  // Get customer info
+                  const { data: customerProfile } = await supabase
+                    .from('profiles')
+                    .select('full_name, email, phone, telegram_username')
+                    .eq('user_id', orderV2.user_id)
+                    .single();
+
+                  // Get bot token
+                  const { data: anyClub } = await supabase
+                    .from('telegram_clubs')
+                    .select('telegram_bots(bot_token_encrypted)')
+                    .eq('is_active', true)
+                    .limit(1)
+                    .maybeSingle();
+
+                  const botToken = (anyClub as any)?.telegram_bots?.bot_token_encrypted;
+
+                  if (botToken) {
+                    const amountFormatted = (paymentV2.amount / 100).toFixed(2);
+                    const paymentType = orderV2.is_trial ? '🔔 Пробный период' : '💰 Оплата';
+                    
+                    const message = `${paymentType}\n\n` +
+                      `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
+                      `📧 Email: ${customerProfile?.email || orderV2.customer_email || 'Не указан'}\n` +
+                      `📱 Телефон: ${customerProfile?.phone || orderV2.customer_phone || 'Не указан'}\n` +
+                      (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
+                      `\n📦 <b>Продукт:</b> ${productV2.name}\n` +
+                      `📋 Тариф: ${tariff.name}\n` +
+                      `💵 Сумма: ${amountFormatted} ${paymentV2.currency}\n` +
+                      `🆔 Заказ: ${orderV2.order_number}`;
+
+                    // Send to all super admins with telegram
+                    for (const admin of adminProfiles) {
+                      try {
+                        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            chat_id: admin.telegram_user_id,
+                            text: message,
+                            parse_mode: 'HTML',
+                          }),
+                        });
+                      } catch (err) {
+                        console.error('Failed to notify admin:', admin.full_name, err);
+                      }
+                    }
+                    console.log('Super admins notified about new payment');
+                  }
+                }
+              }
+            } catch (notifyError) {
+              console.error('Error notifying super admins:', notifyError);
+              // Don't fail the webhook if notification fails
+            }
           }
         }
 

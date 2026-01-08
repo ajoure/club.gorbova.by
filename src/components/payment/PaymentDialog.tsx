@@ -30,6 +30,7 @@ interface PaymentDialogProps {
   isTrial?: boolean;
   trialDays?: number;
   isClubProduct?: boolean;
+  isSubscription?: boolean; // True for recurring payments (auto-renewal)
 }
 
 const emailSchema = z.string().email("Введите корректный email");
@@ -65,6 +66,7 @@ export function PaymentDialog({
   isTrial,
   trialDays,
   isClubProduct,
+  isSubscription,
 }: PaymentDialogProps) {
   const { user, session } = useAuth();
   const { isSuperAdmin, isAdmin } = usePermissions();
@@ -905,8 +907,17 @@ export function PaymentDialog({
                 </p>
               </div>
             ) : (
-              <div className="rounded-lg bg-primary/10 p-3 text-sm">
-                <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.</p>
+              <div className="space-y-2">
+                <div className="rounded-lg bg-primary/10 p-3 text-sm">
+                  <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.</p>
+                </div>
+                {(isSubscription || isTrial) && (
+                  <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-sm">
+                    <p className="text-amber-700 dark:text-amber-400">
+                      <strong>Подписка с автопродлением:</strong> Ваша карта будет сохранена для автоматического списания ежемесячного платежа. Вы можете отменить подписку в любой момент в личном кабинете.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 

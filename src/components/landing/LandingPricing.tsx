@@ -108,6 +108,7 @@ export function LandingPricing() {
     isTrial?: boolean;
     trialDays?: number;
     isClubProduct?: boolean;
+    isSubscription?: boolean;
   } | null>(null);
 
   // Fetch product with tariffs, features and offers from DB
@@ -223,7 +224,8 @@ export function LandingPricing() {
     productId?: string,
     isTrial?: boolean,
     trialDays?: number,
-    offerId?: string
+    offerId?: string,
+    isSubscription?: boolean
   ) => {
     console.log(`[Analytics] click_pricing_plan_${planName.toLowerCase()}${isTrial ? '_trial' : ''}`);
 
@@ -246,6 +248,7 @@ export function LandingPricing() {
         isTrial,
         trialDays,
         isClubProduct: !!productData?.product?.telegram_club_id,
+        isSubscription: isSubscription || isTrial, // Trials and subscriptions require card tokenization
       });
     } else {
       navigate("/auth?mode=signup");
@@ -378,7 +381,7 @@ export function LandingPricing() {
                           {payNowOffers.map((offer, idx) => (
                             <Button
                               key={offer.id}
-                              onClick={() =>
+                            onClick={() =>
                                 handleSelectPlan(
                                   tariff.name,
                                   String(offer.amount),
@@ -386,7 +389,8 @@ export function LandingPricing() {
                                   productData?.product?.id,
                                   false,
                                   undefined,
-                                  offer.id
+                                  offer.id,
+                                  offer.requires_card_tokenization
                                 )
                               }
                               className="w-full gap-2"
@@ -411,7 +415,8 @@ export function LandingPricing() {
                                           productData?.product?.id,
                                           true,
                                           offer.trial_days || 5,
-                                          offer.id
+                                          offer.id,
+                                          true // trials always require card tokenization
                                         )
                                       }
                                       className="w-full gap-2"
@@ -508,6 +513,7 @@ export function LandingPricing() {
           isTrial={selectedPlan.isTrial}
           trialDays={selectedPlan.trialDays}
           isClubProduct={selectedPlan.isClubProduct}
+          isSubscription={selectedPlan.isSubscription}
         />
       )}
     </section>
