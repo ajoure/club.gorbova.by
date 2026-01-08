@@ -323,7 +323,7 @@ export function PaymentDialog({
         if (!data.success) {
           // If payment requires tokenization, fall back to redirect flow below
           if (data.requiresTokenization) {
-            console.log("Falling back to redirect flow");
+            console.log("Falling back to redirect flow - tokenization required");
           } else if (data.requiresRedirect && data.redirectUrl) {
             // 3-D Secure required for saved-card charge
             console.log("3DS redirect required:", data.redirectUrl);
@@ -336,7 +336,12 @@ export function PaymentDialog({
             setStep("ready");
             return;
           } else {
-            throw new Error(data.error || "Ошибка при оплате");
+            // Payment failed (e.g., insufficient funds) - fall back to redirect flow
+            console.log("Direct charge failed, falling back to redirect flow:", data.error);
+            toast.warning(data.error || "Не удалось списать средства с сохранённой карты. Попробуйте оплатить через форму.", {
+              duration: 5000,
+            });
+            // Continue to fallback bepaid-create-token below
           }
         } else {
           // Payment status will be confirmed in UI (and purchases) based on the real provider result
