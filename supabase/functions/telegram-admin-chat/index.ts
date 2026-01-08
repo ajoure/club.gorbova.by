@@ -5,10 +5,17 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+interface FileData {
+  type: "photo" | "video" | "audio" | "document";
+  name: string;
+  base64: string;
+}
+
 interface ChatAction {
   action: "send_message" | "get_messages";
   user_id?: string;
   message?: string;
+  file?: FileData;
   bot_id?: string;
   limit?: number;
 }
@@ -19,6 +26,56 @@ async function telegramRequest(botToken: string, method: string, body: object) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  return response.json();
+}
+
+async function telegramSendFile(
+  botToken: string,
+  chatId: number,
+  file: FileData,
+  caption?: string
+) {
+  // Convert base64 to blob
+  const binaryString = atob(file.base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  const blob = new Blob([bytes]);
+
+  const formData = new FormData();
+  formData.append("chat_id", chatId.toString());
+  if (caption) formData.append("caption", caption);
+
+  // Determine the method and field name based on file type
+  let method: string;
+  let fieldName: string;
+  
+  switch (file.type) {
+    case "photo":
+      method = "sendPhoto";
+      fieldName = "photo";
+      break;
+    case "video":
+      method = "sendVideo";
+      fieldName = "video";
+      break;
+    case "audio":
+      method = "sendAudio";
+      fieldName = "audio";
+      break;
+    default:
+      method = "sendDocument";
+      fieldName = "document";
+  }
+
+  formData.append(fieldName, blob, file.name);
+
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
+    method: "POST",
+    body: formData,
+  });
+  
   return response.json();
 }
 
@@ -70,10 +127,10 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case "send_message": {
-        const { user_id, message, bot_id } = payload;
+        const { user_id, message, file, bot_id } = payload;
 
-        if (!user_id || !message) {
-          return new Response(JSON.stringify({ error: "user_id and message required" }), {
+        if (!user_id || (!message && !file)) {
+          return new Response(JSON.stringify({ error: "user_id and (message or file) required" }), {
             status: 400,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
@@ -96,7 +153,7 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Get bot token - prefer specified bot_id, then user's linked bot, then default
+        // Get bot token
         let botToken: string | null = null;
         let usedBotId: string | null = null;
 
@@ -125,7 +182,6 @@ Deno.serve(async (req) => {
         }
 
         if (!botToken) {
-          // Get default bot
           const { data: defaultBot } = await supabase
             .from("telegram_bots")
             .select("id, bot_token")
@@ -147,12 +203,24 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Send message via Telegram
-        const sendResult = await telegramRequest(botToken, "sendMessage", {
-          chat_id: profile.telegram_user_id,
-          text: message,
-          parse_mode: "HTML",
-        });
+        let sendResult: any;
+        
+        if (file) {
+          // Send file
+          sendResult = await telegramSendFile(
+            botToken, 
+            profile.telegram_user_id, 
+            file, 
+            message || undefined
+          );
+        } else {
+          // Send text message
+          sendResult = await telegramRequest(botToken, "sendMessage", {
+            chat_id: profile.telegram_user_id,
+            text: message,
+            parse_mode: "HTML",
+          });
+        }
 
         // Log the message
         const messageLogData = {
@@ -160,7 +228,9 @@ Deno.serve(async (req) => {
           telegram_user_id: profile.telegram_user_id,
           bot_id: usedBotId,
           direction: "outgoing",
-          message_text: message,
+          message_text: message || null,
+          file_type: file?.type || null,
+          file_name: file?.name || null,
           message_id: sendResult.ok ? sendResult.result.message_id : null,
           sent_by_admin: user.id,
           status: sendResult.ok ? "sent" : "failed",
@@ -173,12 +243,14 @@ Deno.serve(async (req) => {
         // Also log to telegram_logs for consistency
         await supabase.from("telegram_logs").insert({
           user_id,
-          action: "ADMIN_CHAT_MESSAGE",
+          action: file ? "ADMIN_CHAT_FILE" : "ADMIN_CHAT_MESSAGE",
           target: "user",
           status: sendResult.ok ? "ok" : "error",
           error_message: sendResult.ok ? null : sendResult.description,
           meta: {
-            message_preview: message.substring(0, 100),
+            message_preview: message?.substring(0, 100),
+            file_type: file?.type,
+            file_name: file?.name,
             sent_by_admin: user.id,
           },
         });
