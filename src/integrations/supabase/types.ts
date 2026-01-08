@@ -227,6 +227,54 @@ export type Database = {
         }
         Relationships: []
       }
+      course_preregistrations: {
+        Row: {
+          consent: boolean
+          created_at: string
+          email: string
+          id: string
+          name: string
+          notes: string | null
+          phone: string | null
+          product_code: string
+          source: string | null
+          status: string
+          tariff_name: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          consent?: boolean
+          created_at?: string
+          email: string
+          id?: string
+          name: string
+          notes?: string | null
+          phone?: string | null
+          product_code?: string
+          source?: string | null
+          status?: string
+          tariff_name?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          consent?: boolean
+          created_at?: string
+          email?: string
+          id?: string
+          name?: string
+          notes?: string | null
+          phone?: string | null
+          product_code?: string
+          source?: string | null
+          status?: string
+          tariff_name?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       duplicate_cases: {
         Row: {
           created_at: string | null

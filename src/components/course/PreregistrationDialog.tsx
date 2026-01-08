@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
+import { PhoneInput } from "@/components/ui/phone-input";
 
 interface PreregistrationDialogProps {
   open: boolean;
@@ -51,19 +52,35 @@ export function PreregistrationDialog({
     setIsSubmitting(true);
     
     try {
-      const { error } = await supabase
-        .from("contact_requests")
+      // Insert into course_preregistrations table using raw SQL
+      const { data: insertedData, error } = await supabase
+        .from("course_preregistrations" as any)
         .insert({
           name: formData.name,
           email: formData.email,
           phone: formData.phone || null,
-          subject: `Предзапись на курс: ${tariffName || "Ценный бухгалтер"}`,
-          message: `Заявка на предзапись. Тариф: ${tariffName || "Не выбран"}. Код продукта: ${productCode}`,
+          product_code: productCode,
+          tariff_name: tariffName || null,
           consent: formData.consent,
+          source: "landing",
           status: "new"
-        });
+        })
+        .select()
+        .single();
 
       if (error) throw error;
+
+      // Send Telegram notification (fire and forget)
+      supabase.functions.invoke("course-prereg-notify", {
+        body: {
+          id: (insertedData as any)?.id,
+          name: formData.name,
+          email: formData.email,
+          phone: formData.phone,
+          product_code: productCode,
+          tariff_name: tariffName
+        }
+      }).catch(console.error);
 
       toast({
         title: "Заявка отправлена!",
@@ -123,11 +140,9 @@ export function PreregistrationDialog({
 
           <div className="space-y-2">
             <Label htmlFor="phone">Телефон</Label>
-            <Input
-              id="phone"
-              type="tel"
+            <PhoneInput
               value={formData.phone}
-              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+              onChange={(value) => setFormData({ ...formData, phone: value })}
               placeholder="+375 (XX) XXX-XX-XX"
             />
           </div>
