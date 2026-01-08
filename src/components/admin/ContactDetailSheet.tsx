@@ -1193,7 +1193,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                         </div>
                         <div className="flex items-center justify-between text-sm">
                           <div className="flex items-center gap-2 text-muted-foreground">
-                            <Calendar className="w-3 h-3" />
+                            <CalendarIcon className="w-3 h-3" />
                             {format(new Date(deal.created_at), "dd.MM.yy HH:mm")}
                           </div>
                           <div className="flex items-center gap-2">
