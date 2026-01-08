@@ -758,34 +758,39 @@ export default function TelegramClubMembers() {
                   className="pl-9"
                 />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="outline"
+                  size="sm"
                   onClick={handleSync}
                   disabled={syncMembers.isPending || checkingStatuses}
                 >
                   {syncMembers.isPending || checkingStatuses ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
                   ) : (
-                    <RefreshCw className="h-4 w-4 mr-2" />
+                    <RefreshCw className="h-4 w-4 sm:mr-2" />
                   )}
-                  {checkingStatuses ? 'Проверка статусов...' : 'Обновить'}
+                  <span className="hidden sm:inline">{checkingStatuses ? 'Проверка...' : 'Обновить'}</span>
                 </Button>
                 <Button
                   variant="outline"
+                  size="sm"
                   onClick={handleExportCSV}
                   disabled={!filteredMembers.length}
                 >
-                  <Download className="h-4 w-4 mr-2" />
-                  Экспорт
+                  <Download className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Экспорт</span>
                 </Button>
                 {counts.violators > 0 && (
                   <Button
                     variant="destructive"
+                    size="sm"
                     onClick={() => setShowKickDialog(true)}
                   >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Удалить нарушителей ({counts.violators})
+                    <Trash2 className="h-4 w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">Удалить нарушителей</span>
+                    <span className="sm:hidden">({counts.violators})</span>
+                    <span className="hidden sm:inline ml-1">({counts.violators})</span>
                   </Button>
                 )}
               </div>
