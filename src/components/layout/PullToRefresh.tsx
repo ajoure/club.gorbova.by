@@ -7,29 +7,30 @@ interface PullToRefreshProps {
 }
 
 export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
-  const [pulling, setPulling] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
   const startY = useRef(0);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const isPulling = useRef(false);
+  const currentPullDistance = useRef(0);
 
   const threshold = 80;
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    const scrollTop = containerRef.current?.scrollTop || 0;
-    if (scrollTop === 0) {
+    // Check if we're at the top of the page
+    if (window.scrollY === 0 && !refreshing) {
       startY.current = e.touches[0].clientY;
-      setPulling(true);
+      isPulling.current = true;
     }
-  }, []);
+  }, [refreshing]);
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    if (!pulling || refreshing) return;
+    if (!isPulling.current || refreshing) return;
     
-    const scrollTop = containerRef.current?.scrollTop || 0;
-    if (scrollTop > 0) {
-      setPulling(false);
+    // Stop if user scrolled down
+    if (window.scrollY > 0) {
+      isPulling.current = false;
       setPullDistance(0);
+      currentPullDistance.current = 0;
       return;
     }
 
@@ -37,68 +38,77 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
     const diff = currentY - startY.current;
     
     if (diff > 0) {
-      // Apply resistance
+      e.preventDefault();
       const distance = Math.min(diff * 0.5, threshold * 1.5);
       setPullDistance(distance);
+      currentPullDistance.current = distance;
     }
-  }, [pulling, refreshing]);
+  }, [refreshing]);
 
-  const handleTouchEnd = useCallback(async () => {
-    if (!pulling) return;
+  const handleTouchEnd = useCallback(() => {
+    if (!isPulling.current) return;
     
-    setPulling(false);
+    isPulling.current = false;
     
-    if (pullDistance >= threshold) {
+    if (currentPullDistance.current >= threshold) {
       setRefreshing(true);
+      setPullDistance(threshold / 2);
       
-      if (onRefresh) {
-        await onRefresh();
-      } else {
-        window.location.reload();
-      }
-      
-      setRefreshing(false);
+      // Short delay then reload
+      setTimeout(() => {
+        if (onRefresh) {
+          onRefresh().finally(() => {
+            setRefreshing(false);
+            setPullDistance(0);
+            currentPullDistance.current = 0;
+          });
+        } else {
+          window.location.reload();
+        }
+      }, 100);
+    } else {
+      setPullDistance(0);
+      currentPullDistance.current = 0;
     }
-    
-    setPullDistance(0);
-  }, [pulling, pullDistance, onRefresh]);
+  }, [onRefresh]);
 
   const indicatorOpacity = Math.min(pullDistance / threshold, 1);
   const indicatorScale = 0.5 + (indicatorOpacity * 0.5);
 
   return (
     <div
-      ref={containerRef}
-      className="flex-1 overflow-auto relative"
+      className="flex-1 flex flex-col relative touch-pan-y"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
       {/* Pull indicator */}
-      <div
-        className="absolute left-1/2 -translate-x-1/2 z-50 flex items-center justify-center transition-transform duration-200"
-        style={{
-          top: Math.max(pullDistance - 40, -40),
-          opacity: indicatorOpacity,
-          transform: `translateX(-50%) scale(${indicatorScale})`,
-        }}
-      >
-        <div className="bg-background border border-border rounded-full p-2 shadow-lg">
-          <Loader2 
-            className={`h-5 w-5 text-primary ${refreshing ? 'animate-spin' : ''}`}
-            style={{
-              transform: refreshing ? 'none' : `rotate(${pullDistance * 3}deg)`,
-            }}
-          />
+      {pullDistance > 0 && (
+        <div
+          className="absolute left-1/2 z-50 flex items-center justify-center pointer-events-none"
+          style={{
+            top: pullDistance - 40,
+            opacity: indicatorOpacity,
+            transform: `translateX(-50%) scale(${indicatorScale})`,
+          }}
+        >
+          <div className="bg-background border border-border rounded-full p-2 shadow-lg">
+            <Loader2 
+              className={`h-5 w-5 text-primary ${refreshing ? 'animate-spin' : ''}`}
+              style={{
+                transform: refreshing ? 'none' : `rotate(${pullDistance * 4}deg)`,
+              }}
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Content with pull offset */}
       <div
-        className="min-h-full"
+        className="flex-1 min-h-full"
         style={{
-          transform: `translateY(${refreshing ? threshold / 2 : pullDistance}px)`,
-          transition: pulling ? 'none' : 'transform 0.2s ease-out',
+          transform: pullDistance > 0 ? `translateY(${pullDistance}px)` : 'none',
+          transition: isPulling.current ? 'none' : 'transform 0.2s ease-out',
         }}
       >
         {children}

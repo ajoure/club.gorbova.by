@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
@@ -119,21 +119,23 @@ export function ContactTelegramChat({
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch messages
-  const { data: messages, isLoading: messagesLoading } = useQuery({
+  // Fetch messages - optimized with shorter stale time
+  const { data: messages, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
     queryKey: ["telegram-messages", userId],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
-        body: { action: "get_messages", user_id: userId, limit: 100 },
+        body: { action: "get_messages", user_id: userId, limit: 50 },
       });
       if (error) throw error;
       return (data.messages || []).map((m: any) => ({ ...m, type: "message" })) as TelegramMessage[];
     },
     enabled: !!userId,
+    staleTime: 10000,
+    refetchOnWindowFocus: false,
   });
 
-  // Fetch events from telegram_logs
-  const { data: events, isLoading: eventsLoading } = useQuery({
+  // Fetch events from telegram_logs - optimized
+  const { data: events, isLoading: eventsLoading, refetch: refetchEvents } = useQuery({
     queryKey: ["telegram-events", userId],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -142,11 +144,13 @@ export function ContactTelegramChat({
         .eq("user_id", userId)
         .not("action", "in", "(ADMIN_CHAT_MESSAGE,ADMIN_CHAT_FILE)")
         .order("created_at", { ascending: true })
-        .limit(100);
+        .limit(50);
       if (error) throw error;
       return (data || []).map((e: any) => ({ ...e, type: "event" })) as TelegramEvent[];
     },
     enabled: !!userId,
+    staleTime: 30000,
+    refetchOnWindowFocus: false,
   });
 
   // Combine and sort messages + events
@@ -155,10 +159,10 @@ export function ContactTelegramChat({
 
   const isLoading = messagesLoading || eventsLoading;
 
-  const refetch = () => {
-    queryClient.invalidateQueries({ queryKey: ["telegram-messages", userId] });
-    queryClient.invalidateQueries({ queryKey: ["telegram-events", userId] });
-  };
+  const refetch = useCallback(() => {
+    refetchMessages();
+    refetchEvents();
+  }, [refetchMessages, refetchEvents]);
 
   // Send message mutation
   const sendMutation = useMutation({
