@@ -35,6 +35,7 @@ import {
   CalendarClock,
   ClipboardCheck,
   MessageCircle,
+  ClipboardList,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -84,6 +85,7 @@ export function AdminSidebar() {
   const isProductsActive = location.pathname.startsWith("/admin/products-v2");
   const isInstallmentsActive = location.pathname === "/admin/installments";
   const isConsentsActive = location.pathname === "/admin/consents";
+  const isPreregistrationsActive = location.pathname === "/admin/preregistrations";
 
   return (
     <Sidebar
@@ -208,6 +210,26 @@ export function AdminSidebar() {
                     >
                       <CalendarClock className="h-5 w-5 shrink-0" />
                       {!collapsed && <span>Рассрочки</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* Предзаписи */}
+              {hasClientsPermission && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isPreregistrationsActive}
+                    tooltip={collapsed ? "Предзаписи" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/preregistrations"
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
+                    >
+                      <ClipboardList className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>Предзаписи</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
