@@ -13,11 +13,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Phone, UserPlus } from "lucide-react";
+import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
-import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 
 interface PaymentDialogProps {
   open: boolean;
@@ -33,9 +32,7 @@ interface PaymentDialogProps {
 }
 
 const emailSchema = z.string().email("Введите корректный email");
-const phoneSchema = z.string().refine((val) => isValidPhoneNumber(val), {
-  message: "Введите корректный номер телефона",
-});
+const phoneSchema = z.string().min(10, "Введите корректный номер телефона");
 const passwordSchema = z.string().min(6, "Пароль должен быть не менее 6 символов");
 
 interface UserFormData {
@@ -74,7 +71,7 @@ export function PaymentDialog({
     email: "",
     firstName: "",
     lastName: "",
-    phone: "+375",
+    phone: "",
     password: "",
   });
   const [isLoading, setIsLoading] = useState(false);
@@ -142,7 +139,7 @@ export function PaymentDialog({
         })();
       } else {
         // User is not authenticated - start with email step
-        setFormData({ email: "", firstName: "", lastName: "", phone: "+375", password: "" });
+        setFormData({ email: "", firstName: "", lastName: "", phone: "", password: "" });
         setExistingUserId(null);
         setStep("email");
       }
@@ -304,13 +301,13 @@ export function PaymentDialog({
     e.preventDefault();
     const newErrors: Partial<UserFormData> = {};
 
-    if (!formData.firstName.trim() || formData.firstName.trim().length < 2) {
-      newErrors.firstName = "Имя должно содержать минимум 2 символа";
+    if (!formData.firstName.trim()) {
+      newErrors.firstName = "Введите имя";
     }
-    if (!formData.lastName.trim() || formData.lastName.trim().length < 2) {
-      newErrors.lastName = "Фамилия должна содержать минимум 2 символа";
+    if (!formData.lastName.trim()) {
+      newErrors.lastName = "Введите фамилию";
     }
-    const phoneValidation = phoneSchema.safeParse(formData.phone);
+    const phoneValidation = phoneSchema.safeParse(formData.phone.replace(/\D/g, ""));
     if (!phoneValidation.success) {
       newErrors.phone = phoneValidation.error.errors[0].message;
     }
@@ -685,91 +682,77 @@ export function PaymentDialog({
 
       case "additional_info":
         return (
-          <form onSubmit={handleAdditionalInfoSubmit} className="space-y-5">
-            {/* Header with account creation notice */}
-            <div className="rounded-xl bg-primary/10 border border-primary/20 p-4 space-y-2">
-              <div className="flex items-center gap-2 text-primary">
-                <UserPlus className="h-5 w-5" />
-                <span className="font-medium">Создание личного кабинета</span>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                После оплаты мы создадим для вас личный кабинет и отправим данные для входа на email.
-              </p>
-            </div>
-
+          <form onSubmit={handleAdditionalInfoSubmit} className="space-y-4">
             <div className="rounded-lg bg-muted/50 p-3 text-sm">
               <p className="flex items-center gap-2">
-                <Mail className="h-4 w-4 text-primary" />
+                <CheckCircle className="h-4 w-4 text-primary" />
                 Email: {formData.email}
               </p>
             </div>
 
-            {/* First Name & Last Name */}
+            <p className="text-sm text-muted-foreground">
+              Заполним данные — и создадим личный кабинет после оплаты
+            </p>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
-                <Label htmlFor="firstName" className="text-foreground">Имя</Label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <Input
-                    id="firstName"
-                    type="text"
-                    placeholder="Иван"
-                    value={formData.firstName}
-                    onChange={(e) => {
-                      setFormData(prev => ({ ...prev, firstName: e.target.value }));
-                      setErrors(prev => ({ ...prev, firstName: undefined }));
-                    }}
-                    disabled={isLoading}
-                    className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${errors.firstName ? 'border-destructive' : ''}`}
-                  />
-                </div>
+                <Label htmlFor="firstName">Имя</Label>
+                <Input
+                  id="firstName"
+                  placeholder="Иван"
+                  value={formData.firstName}
+                  onChange={(e) => {
+                    setFormData(prev => ({ ...prev, firstName: e.target.value }));
+                    setErrors(prev => ({ ...prev, firstName: undefined }));
+                  }}
+                  disabled={isLoading}
+                />
                 {errors.firstName && (
                   <p className="text-sm text-destructive">{errors.firstName}</p>
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="lastName" className="text-foreground">Фамилия</Label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <Input
-                    id="lastName"
-                    type="text"
-                    placeholder="Иванов"
-                    value={formData.lastName}
-                    onChange={(e) => {
-                      setFormData(prev => ({ ...prev, lastName: e.target.value }));
-                      setErrors(prev => ({ ...prev, lastName: undefined }));
-                    }}
-                    disabled={isLoading}
-                    className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${errors.lastName ? 'border-destructive' : ''}`}
-                  />
-                </div>
+                <Label htmlFor="lastName">Фамилия</Label>
+                <Input
+                  id="lastName"
+                  placeholder="Иванов"
+                  value={formData.lastName}
+                  onChange={(e) => {
+                    setFormData(prev => ({ ...prev, lastName: e.target.value }));
+                    setErrors(prev => ({ ...prev, lastName: undefined }));
+                  }}
+                  disabled={isLoading}
+                />
                 {errors.lastName && (
                   <p className="text-sm text-destructive">{errors.lastName}</p>
                 )}
               </div>
             </div>
 
-            {/* Phone with country selector */}
             <div className="space-y-2">
-              <Label htmlFor="phone" className="text-foreground">Телефон</Label>
-              <PhoneInput
+              <Label htmlFor="phone">Телефон</Label>
+              <Input
                 id="phone"
+                type="tel"
+                placeholder="+375 29 123 45 67"
                 value={formData.phone}
-                onChange={(value) => {
-                  setFormData(prev => ({ ...prev, phone: value }));
+                onChange={(e) => {
+                  setFormData(prev => ({ ...prev, phone: e.target.value }));
                   setErrors(prev => ({ ...prev, phone: undefined }));
                 }}
-                placeholder="Номер телефона"
-                error={!!errors.phone}
+                disabled={isLoading}
               />
               {errors.phone && (
                 <p className="text-sm text-destructive">{errors.phone}</p>
               )}
             </div>
 
+            <div className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
+              <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на email.</p>
+            </div>
+
             {/* Privacy consent checkbox */}
-            <div className="flex items-start gap-3 p-4 rounded-xl border border-border/50 bg-muted/30">
+            <div className="flex items-start gap-3 p-3 rounded-lg border border-border/50 bg-muted/30">
               <Checkbox
                 id="payment-privacy-consent"
                 checked={privacyConsent}
@@ -794,15 +777,11 @@ export function PaymentDialog({
                 variant="outline"
                 onClick={handleChangeEmail}
                 disabled={isLoading}
-                className="flex-1 h-12 rounded-xl"
+                className="flex-1"
               >
                 Назад
               </Button>
-              <Button 
-                type="submit" 
-                disabled={isLoading || !privacyConsent} 
-                className="flex-1 h-12 rounded-xl"
-              >
+              <Button type="submit" disabled={isLoading || !privacyConsent} className="flex-1">
                 Продолжить
               </Button>
             </div>
