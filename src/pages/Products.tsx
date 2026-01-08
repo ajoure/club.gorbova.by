@@ -80,8 +80,8 @@ export default function Products() {
       title: "Платная консультация",
       description: "Индивидуальная консультация Катерины Горбова по вопросам налогообложения, защиты бизнеса и работы с законодательством",
       badge: "Услуга",
-      link: "/consultation",
-      isExternal: false,
+      link: "https://consultation.gorbova.by",
+      isExternal: true,
       price: "от 500 BYN",
     },
   ];
