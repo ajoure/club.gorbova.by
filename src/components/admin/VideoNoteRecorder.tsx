@@ -58,7 +58,7 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   }, [state]);
 
   // Visible + loggable version marker to ensure you test the latest build
-  const VERSION = "2026-01-09.2";
+  const VERSION = "2026-01-09.3";
   useEffect(() => {
     console.log("VideoNoteRecorder version", VERSION);
   }, []);
@@ -98,16 +98,22 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
     }
   }, []);
 
+  // Use ref to track recordedUrl for cleanup without causing re-renders
+  const recordedUrlRef = useRef<string | null>(null);
+
   const resetRecording = useCallback(() => {
     setRecordingTime(0);
     recordedBlobRef.current = null;
-    if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+    if (recordedUrlRef.current) {
+      URL.revokeObjectURL(recordedUrlRef.current);
+      recordedUrlRef.current = null;
+    }
     setRecordedUrl(null);
     setDiagChunkBytes(0);
     setDiagChunkCount(0);
     setDiagActualMime(null);
     setDiagRecorderError(null);
-  }, [recordedUrl]);
+  }, []);
 
   const startCamera = useCallback(async () => {
     try {
@@ -335,7 +341,9 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
 
         // Save blob to ref (protected from state issues)
         recordedBlobRef.current = blob;
-        setRecordedUrl(URL.createObjectURL(blob));
+        const url = URL.createObjectURL(blob);
+        recordedUrlRef.current = url;
+        setRecordedUrl(url);
         
         // CRITICAL: Update stateRef BEFORE stopStream() 
         // so vTrack.onended sees "preview" and doesn't reset to error

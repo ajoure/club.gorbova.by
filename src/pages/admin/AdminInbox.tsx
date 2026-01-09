@@ -702,7 +702,7 @@ export default function AdminInbox() {
         </Card>
 
         {/* Chat View */}
-        <Card className={`${selectedUserId ? "flex" : "hidden md:flex"} flex-1 flex-col overflow-hidden`}>
+        <Card className={`${selectedUserId ? "flex" : "hidden md:flex"} flex-1 flex-col overflow-hidden min-w-0`}>
           {selectedUserId && selectedDialog ? (
             <>
               <CardHeader className="border-b pb-3 shrink-0">
@@ -749,7 +749,7 @@ export default function AdminInbox() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="flex-1 p-4 overflow-hidden">
+              <CardContent className="flex-1 p-4 overflow-hidden min-w-0">
                 <ContactTelegramChat 
                   userId={selectedUserId} 
                   telegramUserId={selectedDialog.profile?.telegram_user_id || null}

@@ -446,7 +446,7 @@ export function ContactTelegramChat({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-w-0 overflow-x-hidden">
       {/* Header - removed as parent already has header, keeping only refresh */}
       <div className="flex items-center justify-end pb-2 border-b">
         <div className="flex items-center gap-1">
