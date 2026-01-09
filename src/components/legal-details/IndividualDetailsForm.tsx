@@ -17,26 +17,28 @@ import { Loader2, Save } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 
 const schema = z.object({
+  // Required fields
   ind_full_name: z.string().min(5, "Введите ФИО полностью"),
   ind_birth_date: z.string().min(1, "Укажите дату рождения"),
-  ind_passport_series: z.string().length(2, "2 буквы").toUpperCase(),
-  ind_passport_number: z.string().length(7, "7 цифр"),
-  ind_passport_issued_by: z.string().min(5, "Укажите кем выдан паспорт"),
-  ind_passport_issued_date: z.string().min(1, "Укажите дату выдачи"),
-  ind_passport_valid_until: z.string().min(1, "Укажите срок действия"),
   ind_personal_number: z.string().min(14, "14 символов").max(14, "14 символов"),
-  ind_address_index: z.string().min(1, "Индекс"),
-  ind_address_region: z.string().min(1, "Область"),
+  email: z.string().min(1, "Email обязателен").email("Некорректный email"),
+  phone: z.string().min(1, "Телефон обязателен"),
+  // Optional fields
+  ind_passport_series: z.string().optional(),
+  ind_passport_number: z.string().optional(),
+  ind_passport_issued_by: z.string().optional(),
+  ind_passport_issued_date: z.string().optional(),
+  ind_passport_valid_until: z.string().optional(),
+  ind_address_index: z.string().optional(),
+  ind_address_region: z.string().optional(),
   ind_address_district: z.string().optional(),
-  ind_address_city: z.string().min(1, "Населённый пункт"),
-  ind_address_street: z.string().min(1, "Улица"),
-  ind_address_house: z.string().min(1, "Дом"),
+  ind_address_city: z.string().optional(),
+  ind_address_street: z.string().optional(),
+  ind_address_house: z.string().optional(),
   ind_address_apartment: z.string().optional(),
-  bank_account: z.string().min(28, "IBAN формат BY...").max(28, "IBAN формат BY...").optional().or(z.literal("")),
+  bank_account: z.string().optional(),
   bank_name: z.string().optional(),
   bank_code: z.string().optional(),
-  phone: z.string().optional(),
-  email: z.string().email("Некорректный email").optional().or(z.literal("")),
 });
 
 type FormData = z.infer<typeof schema>;
@@ -84,16 +86,18 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
-        {/* Personal Info */}
+        {/* Personal Info - Required */}
         <div className="space-y-4">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Личные данные</h3>
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            Основные данные <span className="text-destructive">*</span>
+          </h3>
           
           <FormField
             control={form.control}
             name="ind_full_name"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>ФИО полностью</FormLabel>
+                <FormLabel>ФИО полностью *</FormLabel>
                 <FormControl>
                   <Input placeholder="Иванов Иван Иванович" {...field} />
                 </FormControl>
@@ -102,26 +106,79 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
             )}
           />
 
-          <FormField
-            control={form.control}
-            name="ind_birth_date"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Дата рождения</FormLabel>
-                <FormControl>
-                  <Input type="date" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="ind_birth_date"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Дата рождения *</FormLabel>
+                  <FormControl>
+                    <Input type="date" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="ind_personal_number"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Личный номер *</FormLabel>
+                  <FormControl>
+                    <Input 
+                      placeholder="3140583A009PB1" 
+                      maxLength={14} 
+                      {...field}
+                      onChange={e => field.onChange(e.target.value.toUpperCase())}
+                    />
+                  </FormControl>
+                  <FormDescription>14 символов из паспорта</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email *</FormLabel>
+                  <FormControl>
+                    <Input type="email" placeholder="email@example.com" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="phone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Телефон *</FormLabel>
+                  <FormControl>
+                    <Input placeholder="+375 44 7500084" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         </div>
 
         <Separator />
 
-        {/* Passport */}
+        {/* Passport - Optional */}
         <div className="space-y-4">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Паспортные данные</h3>
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            Паспортные данные <span className="font-normal">(опционально)</span>
+          </h3>
           
           <div className="grid grid-cols-2 gap-4">
             <FormField
@@ -129,7 +186,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
               name="ind_passport_series"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Серия</FormLabel>
+                  <FormLabel>Серия (2 буквы)</FormLabel>
                   <FormControl>
                     <Input 
                       placeholder="MP" 
@@ -147,7 +204,7 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
               name="ind_passport_number"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Номер</FormLabel>
+                  <FormLabel>Номер (7 цифр)</FormLabel>
                   <FormControl>
                     <Input placeholder="1234567" maxLength={7} {...field} />
                   </FormControl>
@@ -200,32 +257,15 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
             />
           </div>
 
-          <FormField
-            control={form.control}
-            name="ind_personal_number"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Личный номер (идентификационный)</FormLabel>
-                <FormControl>
-                  <Input 
-                    placeholder="3140583A009PB1" 
-                    maxLength={14} 
-                    {...field}
-                    onChange={e => field.onChange(e.target.value.toUpperCase())}
-                  />
-                </FormControl>
-                <FormDescription>14 символов, как указано в паспорте</FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
         </div>
 
         <Separator />
 
-        {/* Address */}
+        {/* Address - Optional */}
         <div className="space-y-4">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Адрес регистрации</h3>
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            Адрес регистрации <span className="font-normal">(опционально)</span>
+          </h3>
           
           <div className="grid grid-cols-3 gap-4">
             <FormField
@@ -392,41 +432,6 @@ export function IndividualDetailsForm({ initialData, onSubmit, isSubmitting }: I
           </div>
         </div>
 
-        <Separator />
-
-        {/* Contacts */}
-        <div className="space-y-4">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Контакты</h3>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <FormField
-              control={form.control}
-              name="phone"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Телефон</FormLabel>
-                  <FormControl>
-                    <Input placeholder="+375 44 7500084" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="email"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Email</FormLabel>
-                  <FormControl>
-                    <Input type="email" placeholder="email@example.com" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-        </div>
 
         <Button type="submit" disabled={isSubmitting} className="w-full gap-2">
           {isSubmitting ? (
