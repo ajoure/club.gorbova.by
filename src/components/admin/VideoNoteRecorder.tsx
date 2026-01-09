@@ -3,18 +3,43 @@ import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Circle, RefreshCw, Send, X } from "lucide-react";
+import { Circle, RefreshCw, Send, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { Progress } from "@/components/ui/progress";
+
 interface VideoNoteRecorderProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onRecorded: (file: File) => void;
 }
 
-type RecorderState = "idle" | "ready" | "recording" | "preview" | "error";
+type RecorderState = "idle" | "loading_ffmpeg" | "ready" | "recording" | "processing" | "preview" | "error";
+
+// Singleton FFmpeg instance
+let ffmpegInstance: FFmpeg | null = null;
+let ffmpegLoaded = false;
+
+async function getFFmpeg(): Promise<FFmpeg> {
+  if (ffmpegInstance && ffmpegLoaded) {
+    return ffmpegInstance;
+  }
+
+  ffmpegInstance = new FFmpeg();
+  
+  const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+  
+  await ffmpegInstance.load({
+    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+  });
+  
+  ffmpegLoaded = true;
+  return ffmpegInstance;
+}
 
 export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteRecorderProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -23,18 +48,19 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   const [error, setError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
-  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [recordedFile, setRecordedFile] = useState<File | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [progress, setProgress] = useState(0);
 
   const MAX_DURATION_SEC = 60;
 
   const mimeType = useMemo(() => {
     if (typeof MediaRecorder === "undefined") return null;
     const candidates = [
-      'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
-      "video/mp4",
       "video/webm;codecs=vp8,opus",
       "video/webm",
+      'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+      "video/mp4",
     ];
     return candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? null;
   }, []);
@@ -51,7 +77,8 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
 
   const resetRecording = useCallback(() => {
     setRecordingTime(0);
-    setRecordedBlob(null);
+    setRecordedFile(null);
+    setProgress(0);
     if (recordedUrl) URL.revokeObjectURL(recordedUrl);
     setRecordedUrl(null);
   }, [recordedUrl]);
@@ -59,16 +86,13 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   const startCamera = useCallback(async () => {
     try {
       setError(null);
-
-      // Always stop previous stream first (important on iOS Safari)
       stopStream();
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode,
-          // iOS Safari ignores many constraints, but these help where possible
-          width: { ideal: 720 },
-          height: { ideal: 720 },
+          width: { ideal: 384 },
+          height: { ideal: 384 },
           aspectRatio: { ideal: 1 },
         },
         audio: true,
@@ -92,6 +116,56 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
     }
   }, [facingMode, stopStream]);
 
+  const convertToMp4 = useCallback(async (webmBlob: Blob): Promise<File> => {
+    setState("processing");
+    setProgress(10);
+
+    try {
+      const ffmpeg = await getFFmpeg();
+      setProgress(30);
+
+      // Write input file
+      const inputData = await fetchFile(webmBlob);
+      await ffmpeg.writeFile("input.webm", inputData);
+      setProgress(40);
+
+      // Convert to mp4 with square crop (for Telegram video_note)
+      // -vf "crop=min(iw\,ih):min(iw\,ih),scale=384:384" crops to square, then scales
+      await ffmpeg.exec([
+        "-i", "input.webm",
+        "-vf", "crop=min(iw\\,ih):min(iw\\,ih),scale=384:384",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-c:a", "aac",
+        "-b:a", "64k",
+        "-movflags", "+faststart",
+        "-y",
+        "output.mp4"
+      ]);
+      setProgress(80);
+
+      // Read output
+      const data = await ffmpeg.readFile("output.mp4");
+      setProgress(90);
+
+      // Cleanup
+      await ffmpeg.deleteFile("input.webm");
+      await ffmpeg.deleteFile("output.mp4");
+
+      // Convert to Blob - handle both Uint8Array and string
+      const uint8Data = data as Uint8Array;
+      const mp4Blob = new Blob([uint8Data.slice().buffer], { type: "video/mp4" });
+      const file = new File([mp4Blob], `video_note_${Date.now()}.mp4`, { type: "video/mp4" });
+      
+      setProgress(100);
+      return file;
+    } catch (err) {
+      console.error("FFmpeg conversion error:", err);
+      throw new Error("Не удалось конвертировать видео");
+    }
+  }, []);
+
   const stopRecording = useCallback(() => {
     const mr = mediaRecorderRef.current;
     if (!mr) return;
@@ -103,7 +177,6 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
     }
 
     mediaRecorderRef.current = null;
-    setState("preview");
   }, []);
 
   const startRecording = useCallback(async () => {
@@ -113,8 +186,6 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
     }
 
     if (!streamRef.current) {
-      // On iOS Safari permission works reliably only from a user gesture.
-      // We call startCamera here so "Запись" also works as the gesture.
       await startCamera();
       if (!streamRef.current) return;
     }
@@ -138,11 +209,20 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
       if (ev.data && ev.data.size > 0) chunksRef.current.push(ev.data);
     };
 
-    mr.onstop = () => {
-      const blobType = mimeType ?? "video/mp4";
+    mr.onstop = async () => {
+      const blobType = mimeType ?? "video/webm";
       const blob = new Blob(chunksRef.current, { type: blobType });
-      setRecordedBlob(blob);
-      setRecordedUrl(URL.createObjectURL(blob));
+
+      // Convert to mp4 using FFmpeg
+      try {
+        const mp4File = await convertToMp4(blob);
+        setRecordedFile(mp4File);
+        setRecordedUrl(URL.createObjectURL(mp4File));
+        setState("preview");
+      } catch (err: any) {
+        toast.error(err.message || "Ошибка обработки видео");
+        setState("ready");
+      }
     };
 
     mr.start(250);
@@ -158,9 +238,8 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
       }
     }, 250);
 
-    // store timer for cleanup
     (mr as any)._timer = timer;
-  }, [mimeType, resetRecording, startCamera, stopRecording]);
+  }, [mimeType, resetRecording, startCamera, stopRecording, convertToMp4]);
 
   const handleStopRecordingClick = useCallback(() => {
     const mr = mediaRecorderRef.current as any;
@@ -168,35 +247,30 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
     stopRecording();
   }, [stopRecording]);
 
-  const switchCamera = useCallback(async () => {
+  const switchCamera = useCallback(() => {
     setFacingMode((prev) => (prev === "user" ? "environment" : "user"));
   }, []);
 
   const handleSend = useCallback(() => {
-    if (!recordedBlob) return;
-
-    const ext = mimeType?.includes("mp4") ? "mp4" : "webm";
-    const fileType = mimeType?.includes("mp4") ? "video/mp4" : "video/webm";
-
-    const file = new File([recordedBlob], `video_note_${Date.now()}.${ext}`, {
-      type: fileType,
-    });
-
-    onRecorded(file);
+    if (!recordedFile) return;
+    onRecorded(recordedFile);
     onOpenChange(false);
-  }, [mimeType, onOpenChange, onRecorded, recordedBlob]);
+  }, [onOpenChange, onRecorded, recordedFile]);
+
+  const handleRetry = useCallback(() => {
+    resetRecording();
+    setState("ready");
+  }, [resetRecording]);
 
   // Manage lifecycle
   useEffect(() => {
     if (!open) return;
 
-    // reset every open
     setState("idle");
     setError(null);
     resetRecording();
 
     return () => {
-      // always release camera
       try {
         const mr = mediaRecorderRef.current as any;
         if (mr?._timer) window.clearInterval(mr._timer);
@@ -208,7 +282,7 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
     };
   }, [open, resetRecording, stopStream]);
 
-  // Restart camera when switching lens (only if user already enabled camera)
+  // Restart camera when switching lens
   useEffect(() => {
     if (!open) return;
     if (state !== "ready") return;
@@ -217,6 +291,7 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   }, [facingMode]);
 
   const showCamera = state === "ready" || state === "recording";
+  const showProcessing = state === "processing" || state === "loading_ffmpeg";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -241,17 +316,31 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
                   playsInline
                   muted
                   className="w-[280px] h-[280px] rounded-full border-4 border-primary object-cover bg-muted"
+                  style={{ transform: facingMode === "user" ? "scaleX(-1)" : "none" }}
                 />
               )}
 
               {state === "preview" && recordedUrl && (
                 <video
+                  ref={previewVideoRef}
                   src={recordedUrl}
                   autoPlay
                   loop
                   playsInline
                   className="w-[280px] h-[280px] rounded-full border-4 border-primary object-cover bg-muted"
                 />
+              )}
+
+              {showProcessing && (
+                <div className="w-[280px] h-[280px] rounded-full border-4 border-primary bg-muted flex flex-col items-center justify-center gap-4">
+                  <Loader2 className="w-10 h-10 animate-spin text-primary" />
+                  <div className="text-center px-6">
+                    <p className="text-sm text-muted-foreground mb-2">
+                      Обработка видео...
+                    </p>
+                    <Progress value={progress} className="w-32" />
+                  </div>
+                </div>
               )}
 
               {(state === "idle" || state === "error") && (
@@ -288,13 +377,13 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
                 variant="ghost"
                 size="icon"
                 onClick={switchCamera}
-                disabled={state === "recording" || state === "preview"}
+                disabled={state === "recording" || state === "preview" || showProcessing}
                 title="Переключить камеру"
               >
                 <RefreshCw className="w-5 h-5" />
               </Button>
 
-              {state !== "preview" ? (
+              {state !== "preview" && !showProcessing ? (
                 <button
                   type="button"
                   className={`w-16 h-16 rounded-full border-4 flex items-center justify-center transition-colors ${
@@ -303,6 +392,7 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
                       : "border-border bg-background hover:bg-muted"
                   }`}
                   onClick={state === "recording" ? handleStopRecordingClick : startRecording}
+                  disabled={state === "idle" || state === "error"}
                 >
                   {state === "recording" ? (
                     <div className="w-6 h-6 rounded-sm bg-destructive-foreground" />
@@ -310,9 +400,9 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
                     <Circle className="w-12 h-12 text-destructive fill-destructive" />
                   )}
                 </button>
-              ) : (
+              ) : state === "preview" ? (
                 <>
-                  <Button variant="outline" onClick={resetRecording}>
+                  <Button variant="outline" onClick={handleRetry}>
                     Заново
                   </Button>
                   <Button className="gap-2" onClick={handleSend}>
@@ -320,15 +410,13 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
                     Отправить
                   </Button>
                 </>
-              )}
+              ) : null}
 
               <div className="w-10" />
             </div>
 
             <p className="text-xs text-muted-foreground text-center max-w-[320px]">
-              {mimeType?.includes("mp4")
-                ? "Запись будет отправлена как кружок." 
-                : "Ваш браузер может отправить кружок некорректно. Рекомендуется Chrome/Android или Safari iOS 17+."}
+              Запись будет конвертирована в формат, совместимый с Telegram.
             </p>
           </div>
         </div>
