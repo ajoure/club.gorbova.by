@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Table,
   TableBody,
@@ -55,6 +56,7 @@ interface Contact {
   phone: string | null;
   telegram_username: string | null;
   telegram_user_id: number | null;
+  avatar_url: string | null;
   status: string;
   created_at: string;
   last_seen_at: string | null;
@@ -144,6 +146,7 @@ export default function AdminContacts() {
         phone: profile.phone,
         telegram_username: profile.telegram_username,
         telegram_user_id: profile.telegram_user_id,
+        avatar_url: profile.avatar_url,
         status: profile.status,
         created_at: profile.created_at,
         last_seen_at: profile.last_seen_at,
@@ -455,17 +458,27 @@ export default function AdminContacts() {
                     />
                   </TableCell>
                   <TableCell>
-                    <div>
-                      <div className="font-medium flex items-center gap-2">
-                        {contact.full_name || "—"}
-                        {contact.duplicate_flag && contact.duplicate_flag !== 'none' && (
-                          <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30">
-                            <Copy className="w-3 h-3 mr-1" />
-                            Дубль
-                          </Badge>
+                    <div className="flex items-center gap-3">
+                      <Avatar className="h-9 w-9 shrink-0">
+                        {contact.avatar_url && (
+                          <AvatarImage src={contact.avatar_url} alt={contact.full_name || ""} />
                         )}
+                        <AvatarFallback className="text-xs">
+                          {contact.full_name?.[0]?.toUpperCase() || contact.email?.[0]?.toUpperCase() || "?"}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <div className="font-medium flex items-center gap-2">
+                          <span className="truncate">{contact.full_name || "—"}</span>
+                          {contact.duplicate_flag && contact.duplicate_flag !== 'none' && (
+                            <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30 shrink-0">
+                              <Copy className="w-3 h-3 mr-1" />
+                              Дубль
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="text-sm text-muted-foreground truncate">{contact.email || "—"}</div>
                       </div>
-                      <div className="text-sm text-muted-foreground">{contact.email || "—"}</div>
                     </div>
                   </TableCell>
                   <TableCell>
