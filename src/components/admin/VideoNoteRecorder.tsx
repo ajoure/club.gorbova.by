@@ -42,6 +42,12 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
     return candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? null;
   }, []);
 
+  const isSafari = useMemo(() => {
+    if (typeof navigator === "undefined") return false;
+    const ua = navigator.userAgent;
+    return /safari/i.test(ua) && !/chrome|crios|android/i.test(ua);
+  }, []);
+
   const stopStream = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
@@ -70,25 +76,47 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
         return;
       }
 
-      // Request square-ish video (Telegram crops to circle anyway). On some devices
-      // strict constraints can fail, so we fallback to a simpler request.
-      let stream: MediaStream;
+      // iOS Safari часто игнорирует facingMode. После получения разрешения
+      // пытаемся выбрать нужную камеру по deviceId.
+      let preferredDeviceId: string | null = null;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode,
+        const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        tmp.getTracks().forEach((t) => t.stop());
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const inputs = devices.filter((d) => d.kind === "videoinput");
+        const re = facingMode === "user" ? /front|user|facetime/i : /back|rear|environment/i;
+        preferredDeviceId = inputs.find((d) => re.test(d.label))?.deviceId ?? null;
+      } catch {
+        // ignore
+      }
+
+      const strictVideo: MediaTrackConstraints = preferredDeviceId
+        ? {
+            deviceId: { exact: preferredDeviceId },
             width: { ideal: 384 },
             height: { ideal: 384 },
             aspectRatio: { ideal: 1 },
-          },
-          audio: true,
-        });
+          }
+        : {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 384 },
+            height: { ideal: 384 },
+            aspectRatio: { ideal: 1 },
+          };
+
+      const looseVideo: MediaTrackConstraints = preferredDeviceId
+        ? { deviceId: { exact: preferredDeviceId } }
+        : { facingMode: { ideal: facingMode } };
+
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: strictVideo, audio: true });
       } catch (e: any) {
         if (e?.name === "OverconstrainedError") {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode },
-            audio: true,
-          });
+          stream = await navigator.mediaDevices.getUserMedia({ video: looseVideo, audio: true });
+        } else if (e?.name === "NotFoundError") {
+          toast.message("Микрофон недоступен — запись будет без звука.");
+          stream = await navigator.mediaDevices.getUserMedia({ video: strictVideo, audio: false });
         } else {
           throw e;
         }
@@ -130,6 +158,12 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   const stopRecording = useCallback(() => {
     const mr = mediaRecorderRef.current;
     if (!mr) return;
+
+    try {
+      (mr as any).requestData?.();
+    } catch {
+      // ignore
+    }
 
     try {
       mr.stop();
@@ -179,11 +213,23 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
       // Use the actual mimeType from recorder or fallback
       const actualMime = mr.mimeType || mimeType || "video/webm";
       const blob = new Blob(chunksRef.current, { type: actualMime });
+
+      if (!blob.size) {
+        toast.error("Не удалось сохранить запись. Попробуйте ещё раз.");
+        setState("ready");
+        return;
+      }
+
       setRecordedBlob(blob);
       setRecordedUrl(URL.createObjectURL(blob));
     };
 
-    mr.start(500); // Collect data every 500ms for better compatibility
+    try {
+      if (isSafari) mr.start();
+      else mr.start(500); // Collect data every 500ms for better compatibility
+    } catch {
+      mr.start();
+    }
     setState("recording");
 
     const start = Date.now();
