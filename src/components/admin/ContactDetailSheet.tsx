@@ -183,6 +183,22 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
     }
   };
 
+  // Fetch full profile data for Telegram info
+  const { data: profileData } = useQuery({
+    queryKey: ["contact-profile-details", contact?.id],
+    queryFn: async () => {
+      if (!contact?.id) return null;
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("telegram_linked_at, telegram_link_status")
+        .eq("id", contact.id)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!contact?.id,
+  });
+
   // Fetch deals for this contact
   const { data: deals, isLoading: dealsLoading } = useQuery({
     queryKey: ["contact-deals", contact?.user_id],
@@ -942,7 +958,71 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
                 </CardContent>
               </Card>
 
-              {/* Payment Methods Card */}
+              {/* Telegram Info Card */}
+              {contact.telegram_user_id && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                      <MessageCircle className="w-4 h-4 text-blue-500" />
+                      Telegram
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">ID пользователя</span>
+                      <span className="text-sm font-mono">{contact.telegram_user_id}</span>
+                    </div>
+                    <Separator />
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Username</span>
+                      {contact.telegram_username ? (
+                        <a 
+                          href={`https://t.me/${contact.telegram_username}`} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-sm text-blue-500 hover:underline flex items-center gap-1"
+                        >
+                          @{contact.telegram_username}
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">—</span>
+                      )}
+                    </div>
+                    {profileData?.telegram_linked_at && (
+                      <>
+                        <Separator />
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">Привязан</span>
+                          <span className="text-sm">
+                            {format(new Date(profileData.telegram_linked_at), "dd MMM yyyy HH:mm", { locale: ru })}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    {!contact.avatar_url && (
+                      <>
+                        <Separator />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full gap-2"
+                          onClick={fetchPhotoFromTelegram}
+                          disabled={isFetchingPhoto}
+                        >
+                          {isFetchingPhoto ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <User className="w-4 h-4" />
+                          )}
+                          Загрузить фото из Telegram
+                        </Button>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
               {contact.user_id && (
                 <Card>
                   <CardHeader className="pb-2">

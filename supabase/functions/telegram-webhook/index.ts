@@ -67,6 +67,74 @@ function getSiteUrl(): string {
   return Deno.env.get('SITE_URL') || 'https://fsby.lovable.app';
 }
 
+// Fetch and save Telegram profile photo
+async function fetchAndSaveTelegramPhoto(
+  supabase: any,
+  botToken: string,
+  telegramUserId: number,
+  userId: string
+): Promise<string | null> {
+  try {
+    const photosResponse = await fetch(
+      `https://api.telegram.org/bot${botToken}/getUserProfilePhotos?user_id=${telegramUserId}&limit=1`
+    );
+    const photosData = await photosResponse.json();
+
+    if (!photosData.ok || !photosData.result?.photos?.[0]?.[0]) {
+      console.log('No profile photo found for user', telegramUserId);
+      return null;
+    }
+
+    const photo = photosData.result.photos[0][0];
+    const fileId = photo.file_id;
+
+    const fileResponse = await fetch(
+      `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`
+    );
+    const fileData = await fileResponse.json();
+
+    if (!fileData.ok || !fileData.result?.file_path) {
+      console.log('Failed to get file path');
+      return null;
+    }
+
+    const photoUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
+    const photoResponse = await fetch(photoUrl);
+    const photoBlob = await photoResponse.arrayBuffer();
+
+    const fileName = `avatars/${userId}_telegram_${Date.now()}.jpg`;
+    const { error: uploadError } = await supabase.storage
+      .from('avatars')
+      .upload(fileName, photoBlob, {
+        contentType: 'image/jpeg',
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.error('Failed to upload photo:', uploadError);
+      return null;
+    }
+
+    const { data: urlData } = supabase.storage
+      .from('avatars')
+      .getPublicUrl(fileName);
+
+    const avatarUrl = urlData?.publicUrl;
+
+    if (avatarUrl) {
+      await supabase
+        .from('profiles')
+        .update({ avatar_url: avatarUrl })
+        .eq('user_id', userId);
+    }
+
+    return avatarUrl;
+  } catch (error) {
+    console.error('Error fetching Telegram photo:', error);
+    return null;
+  }
+}
+
 // Check if user has active access to the club
 async function hasActiveAccess(supabase: any, userId: string, clubId: string): Promise<boolean> {
   const now = new Date();
@@ -349,6 +417,14 @@ Deno.serve(async (req) => {
           });
 
           await sendMessage(botToken, chatId, MESSAGES.linkSuccess);
+
+          // Auto-fetch and save Telegram profile photo
+          try {
+            await fetchAndSaveTelegramPhoto(supabase, botToken, telegramUserId, tokenData.user_id);
+            console.log('Profile photo fetched for user', tokenData.user_id);
+          } catch (photoError) {
+            console.error('Failed to fetch profile photo:', photoError);
+          }
 
           // Check subscription and grant access
           const { data: subscription } = await supabase
