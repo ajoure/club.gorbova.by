@@ -12,14 +12,22 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 interface OrderDocumentsProps {
-  orderId: string;
+  orderId: string | null;
   orderNumber?: string;
   trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function OrderDocuments({ orderId, orderNumber, trigger }: OrderDocumentsProps) {
-  const [open, setOpen] = useState(false);
-  const { data: documents = [], isLoading } = useOrderDocuments(orderId);
+export function OrderDocuments({ orderId, orderNumber, trigger, open: controlledOpen, onOpenChange }: OrderDocumentsProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  
+  // Support both controlled and uncontrolled modes
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+  const setOpen = isControlled ? (onOpenChange || (() => {})) : setInternalOpen;
+  
+  const { data: documents = [], isLoading } = useOrderDocuments(orderId || undefined);
 
   const handleDownload = async (doc: GeneratedDocument) => {
     if (!doc.file_path) {
@@ -68,9 +76,11 @@ export function OrderDocuments({ orderId, orderNumber, trigger }: OrderDocuments
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>
-        {trigger || defaultTrigger}
-      </SheetTrigger>
+      {trigger !== undefined || !isControlled ? (
+        <SheetTrigger asChild>
+          {trigger || defaultTrigger}
+        </SheetTrigger>
+      ) : null}
       <SheetContent className="w-[400px] sm:w-[540px]">
         <SheetHeader>
           <SheetTitle>Документы</SheetTitle>

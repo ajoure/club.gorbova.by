@@ -13,12 +13,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Upload, Trash2, Edit, FileText, Copy, Info, Download } from "lucide-react";
+import { Plus, Upload, Trash2, Edit, FileText, Copy, Info, Download, Settings, FileCheck } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useDocumentTemplates, INVOICE_ACT_PLACEHOLDERS, DocumentTemplate } from "@/hooks/useDocumentTemplates";
 import { supabase } from "@/integrations/supabase/client";
+import { DocumentRulesTab } from "@/components/admin/DocumentRulesTab";
+import { DocumentLogTab } from "@/components/admin/DocumentLogTab";
 
 interface TemplateFormData {
   name: string;
@@ -196,8 +198,16 @@ export default function AdminDocumentTemplates() {
         </div>
 
         <Tabs defaultValue="templates" className="space-y-4">
-          <TabsList>
+          <TabsList className="flex-wrap h-auto">
             <TabsTrigger value="templates">Шаблоны</TabsTrigger>
+            <TabsTrigger value="rules" className="flex items-center gap-1">
+              <Settings className="h-3.5 w-3.5" />
+              Правила генерации
+            </TabsTrigger>
+            <TabsTrigger value="log" className="flex items-center gap-1">
+              <FileCheck className="h-3.5 w-3.5" />
+              Журнал документов
+            </TabsTrigger>
             <TabsTrigger value="placeholders">Плейсхолдеры</TabsTrigger>
           </TabsList>
 
@@ -291,6 +301,14 @@ export default function AdminDocumentTemplates() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="rules">
+            <DocumentRulesTab />
+          </TabsContent>
+
+          <TabsContent value="log">
+            <DocumentLogTab />
           </TabsContent>
 
           <TabsContent value="placeholders">

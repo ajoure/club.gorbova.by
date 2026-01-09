@@ -3,9 +3,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CreditCard, ShoppingBag, History, ClipboardList } from "lucide-react";
+import { CreditCard, ShoppingBag, History, ClipboardList, FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { OrderDocuments } from "@/components/purchases/OrderDocuments";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
@@ -124,6 +126,7 @@ export default function Purchases() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedSubscription, setSelectedSubscription] = useState<SubscriptionV2 | null>(null);
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
+  const [documentsOrderId, setDocumentsOrderId] = useState<string | null>(null);
 
   // Fetch orders from orders_v2
   const { data: orders, isLoading: ordersLoading } = useQuery({
@@ -385,12 +388,23 @@ export default function Purchases() {
                 ) : orders && orders.length > 0 ? (
                   <div className="space-y-3">
                     {orders.map((order) => (
-                      <OrderListItem
-                        key={order.id}
-                        order={order}
-                        onDownloadReceipt={downloadReceipt}
-                        onOpenBePaidReceipt={(url) => window.open(url, '_blank')}
-                      />
+                      <div key={order.id} className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <OrderListItem
+                            order={order}
+                            onDownloadReceipt={downloadReceipt}
+                            onOpenBePaidReceipt={(url) => window.open(url, '_blank')}
+                          />
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDocumentsOrderId(order.id)}
+                          title="Документы"
+                        >
+                          <FileText className="h-4 w-4" />
+                        </Button>
+                      </div>
                     ))}
                   </div>
                 ) : (
@@ -496,6 +510,13 @@ export default function Purchases() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Order Documents Sheet */}
+      <OrderDocuments
+        orderId={documentsOrderId}
+        open={!!documentsOrderId}
+        onOpenChange={(open) => !open && setDocumentsOrderId(null)}
+      />
     </DashboardLayout>
   );
 }
