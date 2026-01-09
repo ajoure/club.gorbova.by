@@ -672,6 +672,23 @@ export function ContactTelegramChat({
                       </div>
                     </div>
                   )
+                ) : (fileType === "voice" || fileType === "audio") ? (
+                  msg.meta?.file_url ? (
+                    <audio 
+                      src={msg.meta.file_url as string} 
+                      controls 
+                      className="w-full max-w-[250px]"
+                    />
+                  ) : (
+                    <div className="flex items-center gap-2 p-3 bg-muted/30 border border-border/30 rounded-full w-fit">
+                      <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+                        <Music className="w-4 h-4 text-primary" />
+                      </div>
+                      <span className="text-xs opacity-70">
+                        {fileType === "voice" ? "Голосовое сообщение" : "Аудио"}
+                      </span>
+                    </div>
+                  )
                 ) : (
                   <div className="flex items-center gap-2 p-2 bg-background/20 rounded">
                     {getFileIcon(fileType)}
