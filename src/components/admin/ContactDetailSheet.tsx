@@ -1269,7 +1269,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </TabsContent>
 
             {/* Email History Tab */}
-            <TabsContent value="email" className="m-0">
+            <TabsContent value="email" className="m-0 flex flex-col h-[calc(100vh-280px)] min-h-[400px]">
               <ContactEmailHistory
                 userId={contact.user_id}
                 email={contact.email}

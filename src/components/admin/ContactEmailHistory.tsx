@@ -144,7 +144,7 @@ export function ContactEmailHistory({ userId, email, clientName }: ContactEmailH
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex h-full flex-col gap-3">
       <div className="flex items-center gap-2 pb-2 border-b">
         <Mail className="w-4 h-4 text-muted-foreground" />
         <span className="font-medium">История переписки</span>
@@ -155,7 +155,7 @@ export function ContactEmailHistory({ userId, email, clientName }: ContactEmailH
         )}
       </div>
 
-      <ScrollArea className="h-[350px]">
+      <ScrollArea className="flex-1 min-h-0">
         {isLoading ? (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (

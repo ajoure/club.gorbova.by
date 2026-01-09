@@ -436,14 +436,74 @@ Deno.serve(async (req) => {
 
     console.log('Created order:', order.id, 'for user:', userId, 'amount:', paymentAmount);
 
-    // For admin test payments, skip bePaid integration and just return the order ID
+    // For admin test payments, skip bePaid integration.
+    // IMPORTANT: create an orders_v2 record as well so admin UI (contacts/deals) can see it.
     if (skipRedirect) {
       console.log('Skip redirect requested, returning order without bePaid integration');
+
+      let returnedOrderId = order.id;
+      let v2Created = false;
+
+      if (productInfo.isV2) {
+        try {
+          // Resolve tariff_id if possible
+          let tariffId: string | null = null;
+          if (tariffCode) {
+            const { data: tariffRow } = await supabase
+              .from('tariffs')
+              .select('id')
+              .eq('product_id', productId)
+              .eq('code', tariffCode)
+              .maybeSingle();
+            tariffId = tariffRow?.id ?? null;
+          }
+
+          const orderNumber = `ORD-TEST-${Date.now().toString(36).toUpperCase()}`;
+          const { data: orderV2, error: orderV2Error } = await supabase
+            .from('orders_v2')
+            .insert({
+              order_number: orderNumber,
+              user_id: userId,
+              product_id: productId,
+              tariff_id: tariffId,
+              base_price: paymentAmount,
+              final_price: paymentAmount,
+              currency: productInfo.currency,
+              is_trial: isTrial || false,
+              trial_end_at: (isTrial && trialConfig?.trial_days)
+                ? new Date(Date.now() + trialConfig.trial_days * 24 * 60 * 60 * 1000).toISOString()
+                : null,
+              status: 'pending',
+              customer_email: emailLower,
+              meta: {
+                source: 'admin_test',
+                legacy_order_id: order.id,
+                tariff_code: tariffCode || null,
+                offer_id: offerId || null,
+                test_payment: true,
+              },
+            })
+            .select('id')
+            .single();
+
+          if (orderV2Error) {
+            console.error('Failed to create orders_v2 for test payment:', orderV2Error);
+          } else if (orderV2?.id) {
+            returnedOrderId = orderV2.id;
+            v2Created = true;
+          }
+        } catch (e) {
+          console.error('Failed to create orders_v2 for test payment:', e);
+        }
+      }
+
       return new Response(
         JSON.stringify({
           success: true,
-          orderId: order.id,
+          orderId: returnedOrderId,
+          legacyOrderId: order.id,
           skipped: true,
+          isV2: v2Created,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );

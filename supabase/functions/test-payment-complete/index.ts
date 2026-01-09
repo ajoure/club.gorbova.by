@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
       .select('roles(code)')
       .eq('user_id', user.id);
 
-    const isSuperAdmin = roles?.some((r: any) => 
+    const isSuperAdmin = roles?.some((r: any) =>
       r.roles?.code === 'super_admin' || r.roles?.code === 'superadmin'
     );
 
@@ -62,7 +62,182 @@ Deno.serve(async (req) => {
 
     console.log(`[Test Payment] Super admin ${user.email} simulating payment for order ${orderId}`);
 
-    // Get the order
+    const now = new Date();
+
+    const results: Record<string, any> = {
+      order_updated: false,
+      payment_created: false,
+      subscription_created: false,
+      entitlement_created: false,
+      telegram_access_granted: 0,
+    };
+
+    // -------------------------
+    // V2 flow (preferred)
+    // -------------------------
+    const { data: orderV2 } = await supabase
+      .from('orders_v2')
+      .select('*, products_v2(id, name, code, telegram_club_id), tariffs(id, name, code, access_days)')
+      .eq('id', orderId)
+      .maybeSingle();
+
+    if (orderV2) {
+      if (!orderV2.user_id || !orderV2.product_id) {
+        return new Response(
+          JSON.stringify({ error: 'Order is missing user_id or product_id' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const product = (orderV2 as any).products_v2;
+      const tariff = (orderV2 as any).tariffs;
+
+      const accessDays = orderV2.is_trial
+        ? Math.max(
+            1,
+            Math.ceil(
+              ((orderV2.trial_end_at ? new Date(orderV2.trial_end_at) : now).getTime() - new Date(orderV2.created_at).getTime()) /
+                (24 * 60 * 60 * 1000)
+            )
+          )
+        : (tariff?.access_days || 30);
+
+      const accessStartAt = now.toISOString();
+      const accessEndAt = orderV2.is_trial && orderV2.trial_end_at
+        ? new Date(orderV2.trial_end_at)
+        : new Date(now.getTime() + accessDays * 24 * 60 * 60 * 1000);
+
+      // Mark order paid
+      const testUid = `TEST-${Date.now()}`;
+      const { error: orderUpdateError } = await supabase
+        .from('orders_v2')
+        .update({
+          status: 'paid',
+          paid_amount: orderV2.final_price,
+          meta: {
+            ...(orderV2.meta || {}),
+            test_payment: true,
+            test_payment_by: user.email,
+            test_payment_at: now.toISOString(),
+            bepaid_uid: testUid,
+          },
+          updated_at: now.toISOString(),
+        })
+        .eq('id', orderV2.id);
+
+      if (!orderUpdateError) results.order_updated = true;
+
+      // Create succeeded payment record for history
+      const { data: paymentV2, error: paymentError } = await supabase
+        .from('payments_v2')
+        .insert({
+          order_id: orderV2.id,
+          user_id: orderV2.user_id,
+          amount: orderV2.final_price,
+          currency: orderV2.currency,
+          status: 'succeeded',
+          provider: 'admin_test',
+          paid_at: now.toISOString(),
+          is_recurring: false,
+          meta: {
+            test_payment: true,
+            test_payment_by: user.email,
+          },
+        })
+        .select('id')
+        .single();
+
+      if (!paymentError && paymentV2?.id) {
+        results.payment_created = true;
+        // Link payment id into order meta
+        await supabase
+          .from('orders_v2')
+          .update({
+            meta: {
+              ...(orderV2.meta || {}),
+              payment_id: paymentV2.id,
+              test_payment: true,
+              test_payment_by: user.email,
+              test_payment_at: now.toISOString(),
+              bepaid_uid: testUid,
+            },
+            updated_at: now.toISOString(),
+          })
+          .eq('id', orderV2.id);
+      }
+
+      // Create subscription
+      const { error: subError } = await supabase
+        .from('subscriptions_v2')
+        .insert({
+          user_id: orderV2.user_id,
+          product_id: orderV2.product_id,
+          tariff_id: orderV2.tariff_id,
+          order_id: orderV2.id,
+          status: orderV2.is_trial ? 'trial' : 'active',
+          is_trial: !!orderV2.is_trial,
+          access_start_at: accessStartAt,
+          access_end_at: accessEndAt.toISOString(),
+          trial_end_at: orderV2.is_trial ? accessEndAt.toISOString() : null,
+          payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
+          payment_token: null,
+          next_charge_at: null,
+          updated_at: now.toISOString(),
+        });
+
+      if (!subError) results.subscription_created = true;
+
+      // Entitlement (used by access checks)
+      if (product?.code) {
+        const { error: entError } = await supabase
+          .from('entitlements')
+          .upsert(
+            {
+              user_id: orderV2.user_id,
+              product_code: product.code,
+              status: 'active',
+              expires_at: accessEndAt.toISOString(),
+              meta: { source: 'admin_test', order_id: orderV2.id },
+            },
+            { onConflict: 'user_id,product_code' }
+          );
+        results.entitlement_created = !entError;
+        if (entError) results.entitlement_error = entError.message;
+      }
+
+      // Telegram access
+      if (product?.telegram_club_id) {
+        const grantRes = await supabase.functions.invoke('telegram-grant-access', {
+          body: {
+            user_id: orderV2.user_id,
+            club_ids: [product.telegram_club_id],
+            duration_days: accessDays,
+          },
+        });
+        if (!grantRes.error) results.telegram_access_granted = 1;
+      }
+
+      // Audit log
+      await supabase
+        .from('audit_logs')
+        .insert({
+          action: 'test_payment_complete',
+          actor_user_id: user.id,
+          target_user_id: orderV2.user_id,
+          meta: { order_id: orderV2.id, results },
+        });
+
+      console.log(`[Test Payment] Completed (v2) for order ${orderV2.id}:`, results);
+
+      return new Response(
+        JSON.stringify({ success: true, results }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // -------------------------
+    // Legacy fallback (orders)
+    // -------------------------
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .select('*, products(*)')
@@ -76,11 +251,10 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Update order status to paid (note: 'orders' table uses 'completed', not enum)
     await supabase
       .from('orders')
       .update({
-        status: 'completed', // Legacy 'orders' table uses 'completed'
+        status: 'completed',
         bepaid_uid: `TEST-${Date.now()}`,
         payment_method: 'test_payment',
         meta: {
@@ -92,163 +266,18 @@ Deno.serve(async (req) => {
       })
       .eq('id', orderId);
 
-    const product = order.products;
-    const meta = order.meta as Record<string, any> || {};
-    const results: Record<string, any> = {
-      order_updated: true,
-    };
+    results.order_updated = true;
 
-    // Grant entitlement if product exists
-    if (product && order.user_id) {
-      let expiresAt = null;
-      if (product.duration_days) {
-        expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + product.duration_days);
-      }
-
-      const { error: entitlementError } = await supabase
-        .from('entitlements')
-        .upsert({
-          user_id: order.user_id,
-          product_code: product.product_type === 'subscription' ? (product.tier || 'pro') : product.id,
-          status: 'active',
-          expires_at: expiresAt?.toISOString() || null,
-          meta: {
-            order_id: orderId,
-            product_name: product.name,
-            test_payment: true,
-          },
-        }, {
-          onConflict: 'user_id,product_code',
-        });
-
-      results.entitlement_created = !entitlementError;
-      if (entitlementError) {
-        results.entitlement_error = entitlementError.message;
-      }
-
-      // Update subscription if applicable
-      if (product.product_type === 'subscription' && product.tier) {
-        await supabase
-          .from('subscriptions')
-          .update({
-            tier: product.tier,
-            is_active: true,
-            starts_at: new Date().toISOString(),
-            expires_at: expiresAt?.toISOString() || null,
-          })
-          .eq('user_id', order.user_id);
-
-        results.subscription_updated = true;
-      }
-
-      // Grant Telegram access
-      const { data: mappings } = await supabase
-        .from('product_club_mappings')
-        .select('*, telegram_clubs(id, club_name)')
-        .eq('product_id', product.id)
-        .eq('is_active', true);
-
-      if (mappings && mappings.length > 0) {
-        for (const mapping of mappings) {
-          const durationDays = mapping.duration_days || product.duration_days || 30;
-          
-          const telegramGrantResult = await supabase.functions.invoke('telegram-grant-access', {
-            body: { 
-              user_id: order.user_id,
-              club_ids: [mapping.club_id],
-              duration_days: durationDays
-            },
-          });
-          
-          if (telegramGrantResult.error) {
-            console.error('Failed to grant Telegram access:', telegramGrantResult.error);
-          }
-        }
-        results.telegram_access_granted = mappings.length;
-      }
-
-      // Send to GetCourse
-      const tariffCode = meta.tariff_code as string | undefined;
-      if (tariffCode && order.customer_email) {
-        const GETCOURSE_OFFER_IDS: Record<string, number> = {
-          'chat': 6744625,
-          'full': 6744626,
-          'business': 6744628,
-        };
-        
-        const apiKey = Deno.env.get('GETCOURSE_API_KEY');
-        const offerId = GETCOURSE_OFFER_IDS[tariffCode];
-        
-        if (apiKey && offerId) {
-          const customerFirstName = meta.customer_first_name as string || '';
-          const customerLastName = meta.customer_last_name as string || '';
-          const params = {
-            user: {
-              email: order.customer_email,
-              phone: meta.customer_phone || undefined,
-              first_name: customerFirstName || undefined,
-              last_name: customerLastName || undefined,
-            },
-            system: {
-              refresh_if_exists: 1,
-            },
-            deal: {
-              offer_code: offerId.toString(),
-              deal_number: Date.now(),
-              deal_cost: order.amount / 100,
-              deal_status: 'payed',
-              deal_is_paid: 1,
-              payment_type: 'CARD',
-              manager_email: 'info@ajoure.by',
-              deal_comment: `ТЕСТ: Оплата через сайт club.gorbova.by. Order ID: ${orderId}`,
-            },
-          };
-          
-          const formData = new URLSearchParams();
-          formData.append('action', 'add');
-          formData.append('key', apiKey);
-          formData.append('params', btoa(unescape(encodeURIComponent(JSON.stringify(params)))));
-          
-          try {
-            const response = await fetch(`https://gorbova.getcourse.ru/pl/api/deals`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: formData.toString(),
-            });
-            
-            const responseText = await response.text();
-            console.log('GetCourse test response:', responseText);
-            
-            const data = JSON.parse(responseText);
-            results.getcourse_sync = data.success || data.result?.success ? 'success' : 'failed';
-            if (data.result?.deal_id) {
-              results.getcourse_deal_id = data.result.deal_id;
-            }
-          } catch (gcError) {
-            console.error('GetCourse error:', gcError);
-            results.getcourse_sync = 'error';
-          }
-        } else {
-          results.getcourse_sync = 'skipped (no API key or unknown tariff)';
-        }
-      }
-    }
-
-    // Log the test action
     await supabase
       .from('audit_logs')
       .insert({
         action: 'test_payment_complete',
         actor_user_id: user.id,
         target_user_id: order.user_id,
-        meta: {
-          order_id: orderId,
-          results,
-        },
+        meta: { order_id: orderId, results },
       });
 
-    console.log(`[Test Payment] Completed for order ${orderId}:`, results);
+    console.log(`[Test Payment] Completed (legacy) for order ${orderId}:`, results);
 
     return new Response(
       JSON.stringify({ success: true, results }),
