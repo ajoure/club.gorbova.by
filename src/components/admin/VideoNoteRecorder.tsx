@@ -27,11 +27,27 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   const [recordingTime, setRecordingTime] = useState(0);
   const [cameraLabel, setCameraLabel] = useState<string | null>(null);
 
+  // diagnostics (особенно полезно для iOS Safari)
+  const [diagRequestedMime, setDiagRequestedMime] = useState<string | null>(null);
+  const [diagActualMime, setDiagActualMime] = useState<string | null>(null);
+  const [diagChunkCount, setDiagChunkCount] = useState<number>(0);
+  const [diagChunkBytes, setDiagChunkBytes] = useState<number>(0);
+  const [diagRecorderError, setDiagRecorderError] = useState<string | null>(null);
+
   const MAX_DURATION_SEC = 60;
 
-  // Prefer MP4 for best Telegram compatibility
-  const mimeType = useMemo(() => {
+  const isSafari = useMemo(() => {
+    if (typeof navigator === "undefined") return false;
+    const ua = navigator.userAgent;
+    return /safari/i.test(ua) && !/chrome|crios|android/i.test(ua);
+  }, []);
+
+  // В iOS Safari mimeType часто "supported", но запись выходит пустой.
+  // Поэтому в Safari даём браузеру выбрать формат самостоятельно.
+  const preferredMimeType = useMemo(() => {
     if (typeof MediaRecorder === "undefined") return null;
+    if (isSafari) return null;
+
     const candidates = [
       'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
       "video/mp4",
@@ -40,14 +56,11 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
       "video/webm;codecs=vp8,opus",
       "video/webm",
     ];
-    return candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? null;
-  }, []);
 
-  const isSafari = useMemo(() => {
-    if (typeof navigator === "undefined") return false;
-    const ua = navigator.userAgent;
-    return /safari/i.test(ua) && !/chrome|crios|android/i.test(ua);
-  }, []);
+    const isTypeSupported = typeof (MediaRecorder as any).isTypeSupported === "function";
+    if (!isTypeSupported) return null;
+    return candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? null;
+  }, [isSafari]);
 
   const stopStream = useCallback(() => {
     if (streamRef.current) {
@@ -178,10 +191,15 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   }, []);
 
   const startRecording = useCallback(async () => {
-    if (!mimeType) {
+    if (typeof MediaRecorder === "undefined") {
       toast.error("Запись видео не поддерживается этим браузером");
       return;
     }
+
+    setDiagRecorderError(null);
+    setDiagChunkBytes(0);
+    setDiagChunkCount(0);
+    setDiagRequestedMime(preferredMimeType);
 
     if (!streamRef.current) {
       await startCamera();
@@ -194,27 +212,63 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
     const stream = streamRef.current;
     let mr: MediaRecorder;
 
+    // Safari: создаём без mimeType (так стабильнее). Другие браузеры: пробуем preferredMimeType.
     try {
-      mr = new MediaRecorder(stream, { mimeType });
+      if (!isSafari && preferredMimeType) mr = new MediaRecorder(stream, { mimeType: preferredMimeType });
+      else mr = new MediaRecorder(stream);
     } catch {
       try {
         mr = new MediaRecorder(stream);
-      } catch (e) {
-        toast.error("Не удалось начать запись");
-        return;
+      } catch {
+        try {
+          if (preferredMimeType) mr = new MediaRecorder(stream, { mimeType: preferredMimeType });
+          else throw new Error("no_mime");
+        } catch (e) {
+          console.error("VideoNoteRecorder MediaRecorder create error", e);
+          toast.error("Не удалось начать запись");
+          return;
+        }
       }
     }
 
     mediaRecorderRef.current = mr;
+    setDiagActualMime(mr.mimeType || null);
+
+    mr.onstart = () => {
+      setDiagActualMime(mr.mimeType || null);
+      console.log("VideoNoteRecorder start", {
+        requestedMime: preferredMimeType,
+        actualMime: mr.mimeType,
+        isSafari,
+      });
+    };
+
+    mr.onerror = (ev: any) => {
+      const err = ev?.error;
+      const msg = err?.name ? `${err.name}: ${err.message ?? ""}`.trim() : "MediaRecorder error";
+      setDiagRecorderError(msg);
+      console.error("VideoNoteRecorder recorder error", err ?? ev);
+    };
 
     mr.ondataavailable = (ev) => {
-      if (ev.data && ev.data.size > 0) chunksRef.current.push(ev.data);
+      if (ev.data && ev.data.size > 0) {
+        chunksRef.current.push(ev.data);
+        setDiagChunkCount((c) => c + 1);
+        setDiagChunkBytes((b) => b + ev.data.size);
+      }
     };
 
     mr.onstop = () => {
-      // Use the actual mimeType from recorder or fallback
-      const actualMime = mr.mimeType || mimeType || "video/webm";
-      const blob = new Blob(chunksRef.current, { type: actualMime });
+      const actualMime = mr.mimeType || preferredMimeType || "";
+      const blob = actualMime
+        ? new Blob(chunksRef.current, { type: actualMime })
+        : new Blob(chunksRef.current);
+
+      console.log("VideoNoteRecorder stop", {
+        chunks: chunksRef.current.length,
+        bytes: blob.size,
+        actualMime,
+      });
 
       if (!blob.size) {
         toast.error("Не удалось сохранить запись. Попробуйте ещё раз.");
@@ -228,10 +282,24 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
 
     try {
       if (isSafari) mr.start();
-      else mr.start(500); // Collect data every 500ms for better compatibility
+      else mr.start(500);
     } catch {
       mr.start();
     }
+
+    // iOS Safari иногда не отдаёт данные, пока не вызвать requestData периодически.
+    // Это помогает избежать пустого Blob.
+    if (isSafari) {
+      const dataTimer = window.setInterval(() => {
+        try {
+          (mr as any).requestData?.();
+        } catch {
+          // ignore
+        }
+      }, 700);
+      (mr as any)._dataTimer = dataTimer;
+    }
+
     setState("recording");
 
     const start = Date.now();
@@ -245,11 +313,12 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
     }, 250);
 
     (mr as any)._timer = timer;
-  }, [mimeType, resetRecording, startCamera, stopRecording]);
+  }, [isSafari, preferredMimeType, resetRecording, startCamera, stopRecording]);
 
   const handleStopRecordingClick = useCallback(() => {
     const mr = mediaRecorderRef.current as any;
     if (mr?._timer) window.clearInterval(mr._timer);
+    if (mr?._dataTimer) window.clearInterval(mr._dataTimer);
     stopRecording();
   }, [stopRecording]);
 
@@ -260,13 +329,11 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   const handleSend = useCallback(() => {
     if (!recordedBlob) return;
 
-    // Determine extension based on actual blob type
-    const isWebm = recordedBlob.type.includes("webm");
-    const ext = isWebm ? "webm" : "mp4";
-    const fileType = isWebm ? "video/webm" : "video/mp4";
+    const actualType = recordedBlob.type || "video/mp4";
+    const ext = actualType.includes("webm") ? "webm" : actualType.includes("mp4") ? "mp4" : "mp4";
 
     const file = new File([recordedBlob], `video_note_${Date.now()}.${ext}`, {
-      type: fileType,
+      type: actualType,
     });
 
     onRecorded(file);
@@ -290,6 +357,7 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
       try {
         const mr = mediaRecorderRef.current as any;
         if (mr?._timer) window.clearInterval(mr._timer);
+        if (mr?._dataTimer) window.clearInterval(mr._dataTimer);
       } catch {
         // ignore
       }
@@ -426,6 +494,20 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
             <p className="text-xs text-muted-foreground text-center max-w-[320px]">
               Удерживайте кнопку записи до 60 секунд.
             </p>
+
+            {/* Диагностика (помогает понять, почему iOS Safari отдаёт пустой файл) */}
+            <details className="w-full max-w-[360px]">
+              <summary className="text-xs text-muted-foreground cursor-pointer select-none">
+                Диагностика
+              </summary>
+              <div className="mt-2 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+                <div>Запрошенный формат: {diagRequestedMime ?? "auto"}</div>
+                <div>Фактический формат: {diagActualMime ?? "—"}</div>
+                <div>Чанков: {diagChunkCount}</div>
+                <div>Байт: {diagChunkBytes}</div>
+                {diagRecorderError && <div className="text-destructive">Ошибка: {diagRecorderError}</div>}
+              </div>
+            </details>
           </div>
         </div>
       </DialogContent>
