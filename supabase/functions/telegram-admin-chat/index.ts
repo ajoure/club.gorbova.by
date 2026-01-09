@@ -6,7 +6,7 @@ const corsHeaders = {
 };
 
 interface FileData {
-  type: "photo" | "video" | "audio" | "document";
+  type: "photo" | "video" | "audio" | "video_note" | "document";
   name: string;
   base64: string;
 }
@@ -137,6 +137,12 @@ async function telegramSendFile(
     case "audio":
       method = "sendAudio";
       fieldName = "audio";
+      break;
+    case "video_note":
+      method = "sendVideoNote";
+      fieldName = "video_note";
+      // Video notes don't support captions
+      formData.delete("caption");
       break;
     default:
       method = "sendDocument";
