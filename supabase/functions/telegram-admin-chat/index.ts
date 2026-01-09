@@ -12,7 +12,7 @@ interface FileData {
 }
 
 interface ChatAction {
-  action: "send_message" | "get_messages" | "fetch_profile_photo";
+  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info";
   user_id?: string;
   message?: string;
   file?: FileData;
@@ -447,6 +447,104 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({
           success: !!avatarUrl,
           avatar_url: avatarUrl,
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "get_user_info": {
+        const { user_id } = payload;
+
+        if (!user_id) {
+          return new Response(JSON.stringify({ error: "user_id required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get user's telegram info
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("telegram_user_id, telegram_link_bot_id")
+          .eq("user_id", user_id)
+          .single();
+
+        if (!profile?.telegram_user_id) {
+          return new Response(JSON.stringify({ 
+            error: "User has no linked Telegram account",
+            success: false,
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get bot token
+        let botToken: string | null = null;
+
+        if (profile.telegram_link_bot_id) {
+          const { data: bot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("id", profile.telegram_link_bot_id)
+            .single();
+          if (bot?.bot_token_encrypted) {
+            botToken = bot.bot_token_encrypted;
+          }
+        }
+
+        if (!botToken) {
+          const { data: anyBot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("status", "active")
+            .limit(1)
+            .single();
+          if (anyBot?.bot_token_encrypted) {
+            botToken = anyBot.bot_token_encrypted;
+          }
+        }
+
+        if (!botToken) {
+          return new Response(JSON.stringify({ 
+            error: "No bot available",
+            success: false,
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get chat info from Telegram (includes bio for private chats)
+        const chatInfoResponse = await fetch(
+          `https://api.telegram.org/bot${botToken}/getChat?chat_id=${profile.telegram_user_id}`
+        );
+        const chatInfo = await chatInfoResponse.json();
+
+        if (!chatInfo.ok) {
+          return new Response(JSON.stringify({ 
+            error: chatInfo.description || "Failed to get user info",
+            success: false,
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const result = chatInfo.result;
+        
+        return new Response(JSON.stringify({
+          success: true,
+          user_info: {
+            id: result.id,
+            first_name: result.first_name,
+            last_name: result.last_name,
+            username: result.username,
+            bio: result.bio, // Available in getChat for private chats
+            has_private_forwards: result.has_private_forwards,
+            // Note: Telegram Bot API doesn't provide registration date or name change history
+            // That information is only available through Telegram's MTProto API
+          },
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });

@@ -203,6 +203,22 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     enabled: !!contact?.id,
   });
 
+  // Fetch Telegram user info (bio, etc.) from Telegram API
+  const { data: telegramUserInfo } = useQuery({
+    queryKey: ["contact-telegram-info", contact?.user_id],
+    queryFn: async () => {
+      if (!contact?.user_id || !contact?.telegram_user_id) return null;
+      const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
+        body: { action: "get_user_info", user_id: contact.user_id },
+      });
+      if (error) throw error;
+      if (!data.success) return null;
+      return data.user_info;
+    },
+    enabled: !!contact?.user_id && !!contact?.telegram_user_id,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+  });
+
   // Fetch deals for this contact
   const { data: deals, isLoading: dealsLoading } = useQuery({
     queryKey: ["contact-deals", contact?.user_id],
@@ -1197,6 +1213,22 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               {profileData.telegram_link_status === "active" ? "Активен" : profileData.telegram_link_status}
                             </Badge>
                           </div>
+                        )}
+                        {telegramUserInfo && (
+                          <>
+                            {telegramUserInfo.first_name && (
+                              <div className="flex items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">Имя в TG:</span>
+                                <span>{[telegramUserInfo.first_name, telegramUserInfo.last_name].filter(Boolean).join(" ")}</span>
+                              </div>
+                            )}
+                            {telegramUserInfo.bio && (
+                              <div className="text-sm">
+                                <span className="text-muted-foreground">Bio:</span>
+                                <p className="text-xs mt-1 italic text-muted-foreground">{telegramUserInfo.bio}</p>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                       <Button

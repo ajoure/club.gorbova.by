@@ -20,6 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -342,7 +343,12 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                       !(profile?.user_id || deal?.user_id) && "cursor-default"
                     )}
                   >
-                    <User className="w-4 h-4 text-muted-foreground" />
+                    <Avatar className="h-8 w-8">
+                      <AvatarImage src={profile?.avatar_url} alt={profile?.full_name} />
+                      <AvatarFallback>
+                        <User className="w-4 h-4 text-muted-foreground" />
+                      </AvatarFallback>
+                    </Avatar>
                     <span>{profile?.full_name || "—"}</span>
                     {(profile?.user_id || deal?.user_id) && <ExternalLink className="w-3 h-3" />}
                   </button>
