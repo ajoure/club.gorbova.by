@@ -365,8 +365,10 @@ Deno.serve(async (req) => {
       .in('status', ['active', 'connected'])
       .maybeSingle();
 
+    // For webhook signature: use webhook_secret if set, otherwise fall back to secret_key
+    const bepaidWebhookSecret = bepaidInstance?.config?.webhook_secret || bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
     const bepaidSecretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
-    console.log('Using bePaid secret from:', bepaidInstance?.config?.secret_key ? 'integration_instances' : 'env');
+    console.log('Using bePaid webhook secret from:', bepaidInstance?.config?.webhook_secret ? 'webhook_secret' : (bepaidInstance?.config?.secret_key ? 'secret_key' : 'env'));
 
     // Read body as text for signature verification
     bodyText = await req.text();
@@ -380,7 +382,7 @@ Deno.serve(async (req) => {
     console.log('Webhook signature header:', signatureHeader ? 'present' : 'missing');
     
     // SECURITY: Enforce webhook signature verification when secret is configured
-    if (bepaidSecretKey) {
+    if (bepaidWebhookSecret) {
       if (!signatureHeader) {
         console.error('[WEBHOOK-ERROR] bePaid webhook signature missing - saving to queue');
         
@@ -392,15 +394,16 @@ Deno.serve(async (req) => {
           console.error('Could not parse body for queue:', e);
         }
         
-        const transaction = parsedBody.transaction || {};
+        const transaction = parsedBody.transaction || parsedBody.last_transaction || {};
+        const additionalData = parsedBody.additional_data || {};
         
         // Save to reconcile queue instead of just rejecting
         await supabase.from('payment_reconcile_queue').insert({
           bepaid_uid: transaction.uid || null,
-          tracking_id: transaction.tracking_id || parsedBody.tracking_id || null,
-          amount: transaction.amount ? transaction.amount / 100 : null,
-          currency: transaction.currency || 'BYN',
-          customer_email: transaction.customer?.email || parsedBody.customer?.email || null,
+          tracking_id: parsedBody.tracking_id || transaction.tracking_id || null,
+          amount: transaction.amount ? transaction.amount / 100 : (parsedBody.plan?.amount ? parsedBody.plan.amount / 100 : null),
+          currency: transaction.currency || parsedBody.plan?.currency || 'BYN',
+          customer_email: transaction.customer?.email || parsedBody.customer?.email || additionalData.customer_email || null,
           raw_payload: parsedBody,
           source: 'webhook',
           status: 'pending',
@@ -432,7 +435,7 @@ Deno.serve(async (req) => {
         );
       }
       
-      const isValid = await verifyWebhookSignature(bodyText, signatureHeader, bepaidSecretKey);
+      const isValid = await verifyWebhookSignature(bodyText, signatureHeader, bepaidWebhookSecret);
       
       if (!isValid) {
         console.error('[WEBHOOK-ERROR] bePaid webhook signature verification failed - saving to queue');
