@@ -244,9 +244,15 @@ export function ContactTelegramChat({
         (payload) => {
           console.log("New message received:", payload);
           refetchMessages();
-          // Auto-scroll to bottom on new message
+          // Auto-scroll to bottom on new message - use scrollTo on viewport to avoid layout shift
           setTimeout(() => {
-            bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+            const root = scrollRef.current;
+            const viewport = root?.querySelector(
+              "[data-radix-scroll-area-viewport]"
+            ) as HTMLElement | null;
+            if (viewport) {
+              viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+            }
           }, 100);
         }
       )
@@ -451,9 +457,10 @@ export function ContactTelegramChat({
     const shouldScroll = !didInitialScrollRef.current || isNearBottom;
     if (!shouldScroll) return;
 
-    // Wait for DOM paint
+    // Wait for DOM paint - use scrollTo to avoid layout shift
     requestAnimationFrame(() => {
-      bottomRef.current?.scrollIntoView({ block: "end" });
+      const vp = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
+      if (vp) vp.scrollTo({ top: vp.scrollHeight, behavior: "auto" });
       didInitialScrollRef.current = true;
     });
   }, [userId, isLoading, chatItems.length]);

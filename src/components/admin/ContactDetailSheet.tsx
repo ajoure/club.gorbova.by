@@ -1164,7 +1164,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </TabsContent>
 
             {/* Telegram Chat Tab */}
-            <TabsContent value="telegram" className="m-0 space-y-4">
+            <TabsContent value="telegram" className="m-0 flex flex-col h-[calc(100vh-280px)] min-h-[400px]">
               {/* Telegram Profile Info Card */}
               {contact.telegram_user_id ? (
                 <Card>
@@ -1257,13 +1257,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 </Card>
               )}
               
-              {/* Chat */}
-              <ContactTelegramChat
-                userId={contact.user_id || ""}
-                telegramUserId={contact.telegram_user_id}
-                telegramUsername={contact.telegram_username}
-                clientName={contact.full_name}
-              />
+              {/* Chat - flex-1 to fill remaining space */}
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <ContactTelegramChat
+                  userId={contact.user_id || ""}
+                  telegramUserId={contact.telegram_user_id}
+                  telegramUsername={contact.telegram_username}
+                  clientName={contact.full_name}
+                />
+              </div>
             </TabsContent>
 
             {/* Email History Tab */}
