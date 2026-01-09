@@ -412,6 +412,45 @@ export type Database = {
         }
         Relationships: []
       }
+      document_templates: {
+        Row: {
+          code: string
+          created_at: string
+          description: string | null
+          document_type: string
+          id: string
+          is_active: boolean | null
+          name: string
+          placeholders: Json | null
+          template_path: string
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string | null
+          document_type?: string
+          id?: string
+          is_active?: boolean | null
+          name: string
+          placeholders?: Json | null
+          template_path: string
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string | null
+          document_type?: string
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          placeholders?: Json | null
+          template_path?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       duplicate_cases: {
         Row: {
           created_at: string | null
@@ -743,6 +782,7 @@ export type Database = {
           legal_address: string
           phone: string | null
           short_name: string | null
+          signature_url: string | null
           unp: string
           updated_at: string
         }
@@ -763,6 +803,7 @@ export type Database = {
           legal_address: string
           phone?: string | null
           short_name?: string | null
+          signature_url?: string | null
           unp: string
           updated_at?: string
         }
@@ -783,6 +824,7 @@ export type Database = {
           legal_address?: string
           phone?: string | null
           short_name?: string | null
+          signature_url?: string | null
           unp?: string
           updated_at?: string
         }
@@ -2145,6 +2187,54 @@ export type Database = {
             columns: ["product_id"]
             isOneToOne: false
             referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      product_document_templates: {
+        Row: {
+          auto_generate: boolean | null
+          auto_send_email: boolean | null
+          created_at: string
+          id: string
+          is_active: boolean | null
+          product_id: string
+          template_id: string
+          updated_at: string
+        }
+        Insert: {
+          auto_generate?: boolean | null
+          auto_send_email?: boolean | null
+          created_at?: string
+          id?: string
+          is_active?: boolean | null
+          product_id: string
+          template_id: string
+          updated_at?: string
+        }
+        Update: {
+          auto_generate?: boolean | null
+          auto_send_email?: boolean | null
+          created_at?: string
+          id?: string
+          is_active?: boolean | null
+          product_id?: string
+          template_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_document_templates_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_document_templates_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "document_templates"
             referencedColumns: ["id"]
           },
         ]

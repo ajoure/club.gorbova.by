@@ -37,6 +37,7 @@ import {
   MessageCircle,
   ClipboardList,
   Building2,
+  FileStack,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -366,6 +367,27 @@ export function AdminSidebar() {
                     >
                       <Building2 className="h-5 w-5 shrink-0" />
                       {!collapsed && <span>Исполнители</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* Шаблоны документов */}
+              {hasRolesPermission && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === "/admin/document-templates"}
+                    tooltip={collapsed ? "Шаблоны документов" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/document-templates"
+                      end
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
+                    >
+                      <FileStack className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>Шаблоны документов</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
