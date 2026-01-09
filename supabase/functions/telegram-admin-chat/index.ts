@@ -133,15 +133,32 @@ async function telegramSendFile(
   file: FileData,
   caption?: string
 ) {
-  // Convert base64 to blob
+  // Convert base64 to bytes
   const binaryString = atob(file.base64);
   const bytes = new Uint8Array(binaryString.length);
   for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
 
-  const contentType = guessMimeType(file.name, file.type);
-  const blob = new Blob([bytes], { type: contentType });
+  let contentType = guessMimeType(file.name, file.type);
+  let fileName = file.name;
+  let finalBytes = bytes;
+
+  // For video_note, ensure we have mp4 format
+  // Telegram requires mp4 for video notes to display correctly
+  if (file.type === "video_note") {
+    // If it's webm, we need to ensure proper content type
+    // The file will still be sent - Telegram sometimes accepts webm too
+    // But we force the mp4 extension to help with client rendering
+    if (file.name.toLowerCase().endsWith(".webm")) {
+      // Keep the bytes but change the name to mp4
+      // This is a workaround - Telegram may still reject but worth trying
+      fileName = file.name.replace(/\.webm$/i, ".mp4");
+      contentType = "video/mp4";
+    }
+  }
+
+  const blob = new Blob([finalBytes], { type: contentType });
 
   const formData = new FormData();
   formData.append("chat_id", chatId.toString());
@@ -169,15 +186,15 @@ async function telegramSendFile(
       fieldName = "video_note";
       // Video notes don't support captions
       formData.delete("caption");
-      // Helps Telegram render correctly on some clients
-      formData.append("length", "280");
+      // Required: length parameter for circular video
+      formData.append("length", "384");
       break;
     default:
       method = "sendDocument";
       fieldName = "document";
   }
 
-  formData.append(fieldName, blob, file.name);
+  formData.append(fieldName, blob, fileName);
 
   const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
     method: "POST",
