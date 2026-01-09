@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -47,6 +47,9 @@ import {
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { SmartImportWizard } from "@/components/integrations/SmartImportWizard";
 import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
+import { useDragSelect } from "@/hooks/useDragSelect";
+import { SelectionBox } from "@/components/admin/SelectionBox";
+import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -65,7 +68,6 @@ export default function AdminDeals() {
   const [activePreset, setActivePreset] = useState("all");
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [showImportWizard, setShowImportWizard] = useState(false);
-  const [selectedDealIds, setSelectedDealIds] = useState<Set<string>>(new Set());
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const queryClient = useQueryClient();
 
@@ -208,6 +210,26 @@ export default function AdminDeals() {
 
   const selectedDeal = deals?.find(d => d.id === selectedDealId);
 
+  // Drag select hook
+  const {
+    selectedIds: selectedDealIds,
+    setSelectedIds: setSelectedDealIds,
+    isDragging,
+    selectionBox,
+    containerRef,
+    registerItemRef,
+    toggleSelection,
+    handleRangeSelect,
+    selectAll,
+    clearSelection,
+    handleMouseDown,
+    selectedCount,
+    hasSelection,
+  } = useDragSelect({
+    items: filteredDeals,
+    getItemId: (deal) => deal.id,
+  });
+
   // Bulk delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
@@ -263,7 +285,7 @@ export default function AdminDeals() {
     },
     onSuccess: (count) => {
       toast.success(`Удалено ${count} сделок`);
-      setSelectedDealIds(new Set());
+      clearSelection();
       queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
       queryClient.invalidateQueries({ queryKey: ["admin-subscriptions"] });
     },
@@ -271,24 +293,6 @@ export default function AdminDeals() {
       toast.error("Ошибка удаления: " + (error as Error).message);
     },
   });
-
-  const handleSelectAll = () => {
-    if (selectedDealIds.size === filteredDeals.length) {
-      setSelectedDealIds(new Set());
-    } else {
-      setSelectedDealIds(new Set(filteredDeals.map(d => d.id)));
-    }
-  };
-
-  const handleSelectDeal = (id: string) => {
-    const newSelected = new Set(selectedDealIds);
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-    } else {
-      newSelected.add(id);
-    }
-    setSelectedDealIds(newSelected);
-  };
 
   const handleBulkDelete = () => {
     deleteMutation.mutate(Array.from(selectedDealIds));
@@ -392,23 +396,9 @@ export default function AdminDeals() {
         />
       </div>
 
-      {/* Stats line & bulk actions */}
-      <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
+      {/* Stats line */}
+      <div className="flex items-center gap-4 text-sm text-muted-foreground">
         <span>Найдено: <strong className="text-foreground">{filteredDeals.length}</strong></span>
-        {selectedDealIds.size > 0 && (
-          <div className="flex items-center gap-2">
-            <span>Выбрано: <strong className="text-foreground">{selectedDealIds.size}</strong></span>
-            <Button 
-              variant="destructive" 
-              size="sm"
-              onClick={() => setShowDeleteDialog(true)}
-              disabled={deleteMutation.isPending}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Удалить выбранные
-            </Button>
-          </div>
-        )}
       </div>
 
       {/* Deals Table */}
@@ -425,14 +415,18 @@ export default function AdminDeals() {
             <p>Сделки не найдены</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div 
+            ref={containerRef}
+            onMouseDown={handleMouseDown}
+            className="overflow-x-auto select-none"
+          >
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
                   <Checkbox
                     checked={filteredDeals.length > 0 && selectedDealIds.size === filteredDeals.length}
-                    onCheckedChange={handleSelectAll}
+                    onCheckedChange={() => selectedDealIds.size === filteredDeals.length ? clearSelection() : selectAll()}
                   />
                 </TableHead>
                 <TableHead>Дата</TableHead>
@@ -454,14 +448,24 @@ export default function AdminDeals() {
 
                 return (
                   <TableRow 
-                    key={deal.id} 
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => setSelectedDealId(deal.id)}
+                    key={deal.id}
+                    ref={(el) => registerItemRef(deal.id, el)}
+                    data-selectable-item
+                    className={`cursor-pointer hover:bg-muted/50 ${selectedDealIds.has(deal.id) ? "bg-primary/10" : ""}`}
+                    onClick={(e) => {
+                      if (e.shiftKey) {
+                        handleRangeSelect(deal.id, true);
+                      } else if (e.ctrlKey || e.metaKey) {
+                        toggleSelection(deal.id, true);
+                      } else {
+                        setSelectedDealId(deal.id);
+                      }
+                    }}
                   >
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <Checkbox
                         checked={selectedDealIds.has(deal.id)}
-                        onCheckedChange={() => handleSelectDeal(deal.id)}
+                        onCheckedChange={() => toggleSelection(deal.id, false)}
                       />
                     </TableCell>
                     <TableCell>
@@ -559,13 +563,33 @@ export default function AdminDeals() {
         onOpenChange={setShowImportWizard}
       />
 
+      {/* Selection Box for drag select */}
+      {isDragging && selectionBox && (
+        <SelectionBox
+          startX={selectionBox.startX}
+          startY={selectionBox.startY}
+          endX={selectionBox.endX}
+          endY={selectionBox.endY}
+        />
+      )}
+
+      {/* Bulk Actions Bar */}
+      <BulkActionsBar
+        selectedCount={selectedCount}
+        onClearSelection={clearSelection}
+        onBulkDelete={() => setShowDeleteDialog(true)}
+        totalCount={filteredDeals.length}
+        entityName="сделок"
+        onSelectAll={selectAll}
+      />
+
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Удалить сделки?</AlertDialogTitle>
             <AlertDialogDescription>
-              Вы уверены, что хотите удалить {selectedDealIds.size} сделок? 
+              Вы уверены, что хотите удалить {selectedCount} сделок? 
               Также будут удалены все связанные подписки, платежи и рассрочки. 
               Это действие нельзя отменить.
             </AlertDialogDescription>
