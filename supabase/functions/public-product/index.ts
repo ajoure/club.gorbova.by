@@ -164,6 +164,9 @@ Deno.serve(async (req) => {
           auto_charge_amount,
           auto_charge_delay_days,
           requires_card_tokenization,
+          is_primary,
+          payment_method,
+          installment_count,
           sort_order
         `)
         .in("tariff_id", tariffIds)

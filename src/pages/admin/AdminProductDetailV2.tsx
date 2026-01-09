@@ -21,6 +21,7 @@ import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffPreviewCard } from "@/components/admin/product/TariffPreviewCard";
+import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
 import {
   useProductV2,
@@ -87,6 +88,19 @@ export default function AdminProductDetailV2() {
   const [offerDialog, setOfferDialog] = useState<{ open: boolean; editing: any }>({ open: false, editing: null });
   const [flowDialog, setFlowDialog] = useState<{ open: boolean; editing: any }>({ open: false, editing: null });
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: string; id: string } | null>(null);
+  
+  // Payment dialog state for preview
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [selectedOfferForPayment, setSelectedOfferForPayment] = useState<{
+    offer: any;
+    tariff: any;
+  } | null>(null);
+
+  // Handler for preview card offer selection
+  const handlePreviewSelectOffer = (offer: any, tariff: any) => {
+    setSelectedOfferForPayment({ offer, tariff });
+    setPaymentDialogOpen(true);
+  };
 
   // Tariff form
   const [tariffForm, setTariffForm] = useState({
@@ -594,6 +608,7 @@ export default function AdminProductDetailV2() {
                     tariff={tariff}
                     features={getFeaturesForTariff(tariff.id)}
                     offers={getOffersForTariff(tariff.id)}
+                    onSelectOffer={handlePreviewSelectOffer}
                   />
                 ))}
               </div>
@@ -1150,6 +1165,21 @@ export default function AdminProductDetailV2() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Payment Dialog for Preview Testing */}
+      {selectedOfferForPayment && (
+        <PaymentDialog
+          open={paymentDialogOpen}
+          onOpenChange={setPaymentDialogOpen}
+          productId={productId!}
+          productName={`${product.name} – ${selectedOfferForPayment.tariff.name}`}
+          offerId={selectedOfferForPayment.offer.id}
+          price={String(selectedOfferForPayment.offer.amount)}
+          isTrial={selectedOfferForPayment.offer.offer_type === "trial"}
+          trialDays={selectedOfferForPayment.offer.trial_days}
+          isClubProduct={!!(product as any).telegram_club_id}
+        />
+      )}
     </AdminLayout>
   );
 }

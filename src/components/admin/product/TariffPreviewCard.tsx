@@ -31,6 +31,7 @@ interface TariffPreviewCardProps {
   features: TariffFeature[];
   offers: TariffOffer[];
   showButtons?: boolean;
+  onSelectOffer?: (offer: TariffOffer, tariff: any) => void;
 }
 
 export function TariffPreviewCard({
@@ -38,6 +39,7 @@ export function TariffPreviewCard({
   features,
   offers,
   showButtons = true,
+  onSelectOffer,
 }: TariffPreviewCardProps) {
   // Primary offer takes precedence for price display, fallback to first active pay_now
   const mainOffer = offers.find(o => o.offer_type === "pay_now" && o.is_active && o.is_primary) 
@@ -138,6 +140,7 @@ export function TariffPreviewCard({
                 <Button
                   className="w-full gap-2"
                   variant={tariff.is_popular ? "default" : "outline"}
+                  onClick={() => onSelectOffer?.(mainOffer, tariff)}
                 >
                   <CreditCard size={16} />
                   {mainOffer.button_label}
@@ -152,7 +155,11 @@ export function TariffPreviewCard({
             {/* Trial Button Row - only render if exists */}
             {trialOffer && (
               <div className="min-h-[40px]">
-                <Button className="w-full gap-2" variant="secondary">
+                <Button
+                  className="w-full gap-2"
+                  variant="secondary"
+                  onClick={() => onSelectOffer?.(trialOffer, tariff)}
+                >
                   <Zap size={16} />
                   {trialOffer.button_label}
                 </Button>
