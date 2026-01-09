@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ContactTelegramChat } from "@/components/admin/ContactTelegramChat";
 import { 
@@ -29,6 +29,7 @@ interface Dialog {
     email: string | null;
     telegram_username: string | null;
     telegram_user_id: number | null;
+    avatar_url: string | null;
   } | null;
   last_message: string;
   last_message_at: string;
@@ -85,16 +86,17 @@ export default function AdminInbox() {
         }
       });
 
-      // Get profiles for all users
+      // Get profiles for all users - FIX: use user_id column instead of id
       const userIds = Array.from(dialogMap.keys());
       if (userIds.length === 0) return [];
 
       const { data: profiles } = await supabase
         .from("profiles")
-        .select("id, full_name, email, telegram_username, telegram_user_id")
+        .select("id, user_id, full_name, email, telegram_username, telegram_user_id, avatar_url")
         .in("user_id", userIds);
 
-      const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
+      // Map by user_id field, not id
+      const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
 
       // Combine and filter
       let result: Dialog[] = Array.from(dialogMap.values()).map(d => ({
@@ -116,7 +118,7 @@ export default function AdminInbox() {
 
       return result;
     },
-    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchInterval: 30000,
   });
 
   // Get total unread count
@@ -259,6 +261,9 @@ export default function AdminInbox() {
                       }`}
                     >
                       <Avatar className="h-10 w-10 shrink-0">
+                        {dialog.profile?.avatar_url && (
+                          <AvatarImage src={dialog.profile.avatar_url} alt={dialog.profile.full_name || ""} />
+                        )}
                         <AvatarFallback>
                           {dialog.profile?.full_name?.[0]?.toUpperCase() || 
                            dialog.profile?.telegram_username?.[0]?.toUpperCase() || 
@@ -319,6 +324,9 @@ export default function AdminInbox() {
                     <ArrowLeft className="h-5 w-5" />
                   </Button>
                   <Avatar className="h-10 w-10">
+                    {selectedDialog.profile?.avatar_url && (
+                      <AvatarImage src={selectedDialog.profile.avatar_url} alt={selectedDialog.profile.full_name || ""} />
+                    )}
                     <AvatarFallback>
                       {selectedDialog.profile?.full_name?.[0]?.toUpperCase() || "?"}
                     </AvatarFallback>
@@ -337,12 +345,14 @@ export default function AdminInbox() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="flex-1 p-0 overflow-hidden">
+              <CardContent className="flex-1 p-4 overflow-hidden">
                 <ContactTelegramChat 
                   userId={selectedUserId} 
                   telegramUserId={selectedDialog.profile?.telegram_user_id || null}
                   telegramUsername={selectedDialog.profile?.telegram_username || null}
                   clientName={selectedDialog.profile?.full_name}
+                  avatarUrl={selectedDialog.profile?.avatar_url}
+                  onAvatarUpdated={() => refetch()}
                 />
               </CardContent>
             </>

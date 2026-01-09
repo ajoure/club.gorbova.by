@@ -42,6 +42,8 @@ interface ContactTelegramChatProps {
   telegramUserId: number | null;
   telegramUsername: string | null;
   clientName?: string | null;
+  avatarUrl?: string | null;
+  onAvatarUpdated?: (url: string) => void;
 }
 
 interface TelegramMessage {
@@ -111,6 +113,8 @@ export function ContactTelegramChat({
   telegramUserId,
   telegramUsername,
   clientName,
+  avatarUrl,
+  onAvatarUpdated,
 }: ContactTelegramChatProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
@@ -163,6 +167,28 @@ export function ContactTelegramChat({
     refetchMessages();
     refetchEvents();
   }, [refetchMessages, refetchEvents]);
+
+  // Fetch profile photo from Telegram
+  const fetchPhotoMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
+        body: { action: "fetch_profile_photo", user_id: userId },
+      });
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error || "Failed to fetch photo");
+      return data.avatar_url;
+    },
+    onSuccess: (newAvatarUrl) => {
+      if (newAvatarUrl && onAvatarUpdated) {
+        onAvatarUpdated(newAvatarUrl);
+      }
+      queryClient.invalidateQueries({ queryKey: ["inbox-dialogs"] });
+      toast.success("Фото профиля обновлено");
+    },
+    onError: (error) => {
+      toast.error("Ошибка загрузки фото: " + (error as Error).message);
+    },
+  });
 
   // Send message mutation
   const sendMutation = useMutation({
@@ -333,26 +359,34 @@ export function ContactTelegramChat({
   };
 
   return (
-    <div className="flex flex-col h-[500px]">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-3 border-b">
-        <div className="flex items-center gap-2">
-          <MessageCircle className="w-4 h-4 text-blue-500" />
-          <span className="font-medium">Telegram</span>
-          {telegramUsername && (
-            <Badge variant="secondary" className="text-xs">
-              @{telegramUsername}
-            </Badge>
-          )}
+    <div className="flex flex-col h-full">
+      {/* Header - removed as parent already has header, keeping only refresh */}
+      <div className="flex items-center justify-end pb-2 border-b">
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => fetchPhotoMutation.mutate()}
+            disabled={fetchPhotoMutation.isPending}
+            className="h-8 px-2 text-xs"
+            title="Загрузить фото из Telegram"
+          >
+            {fetchPhotoMutation.isPending ? (
+              <RefreshCw className="w-4 h-4 animate-spin" />
+            ) : (
+              <ImageIcon className="w-4 h-4" />
+            )}
+            <span className="ml-1 hidden sm:inline">Фото TG</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={refetch}
+            className="h-8 w-8 p-0"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={refetch}
-          className="h-8 w-8 p-0"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </Button>
       </div>
 
       {/* Messages + Events */}

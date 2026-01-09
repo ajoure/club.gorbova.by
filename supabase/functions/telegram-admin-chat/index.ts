@@ -12,12 +12,86 @@ interface FileData {
 }
 
 interface ChatAction {
-  action: "send_message" | "get_messages";
+  action: "send_message" | "get_messages" | "fetch_profile_photo";
   user_id?: string;
   message?: string;
   file?: FileData;
   bot_id?: string;
   limit?: number;
+}
+
+async function fetchAndSaveTelegramPhoto(
+  supabase: any,
+  botToken: string,
+  telegramUserId: number,
+  userId: string
+): Promise<string | null> {
+  try {
+    // Get user profile photos from Telegram
+    const photosResponse = await fetch(
+      `https://api.telegram.org/bot${botToken}/getUserProfilePhotos?user_id=${telegramUserId}&limit=1`
+    );
+    const photosData = await photosResponse.json();
+
+    if (!photosData.ok || !photosData.result?.photos?.[0]?.[0]) {
+      console.log("No profile photo found for user", telegramUserId);
+      return null;
+    }
+
+    // Get the smallest photo (good enough for avatar)
+    const photo = photosData.result.photos[0][0];
+    const fileId = photo.file_id;
+
+    // Get file path
+    const fileResponse = await fetch(
+      `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`
+    );
+    const fileData = await fileResponse.json();
+
+    if (!fileData.ok || !fileData.result?.file_path) {
+      console.log("Failed to get file path");
+      return null;
+    }
+
+    // Download the photo
+    const photoUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
+    const photoResponse = await fetch(photoUrl);
+    const photoBlob = await photoResponse.arrayBuffer();
+
+    // Upload to storage
+    const fileName = `avatars/${userId}_telegram_${Date.now()}.jpg`;
+    const { error: uploadError } = await supabase.storage
+      .from("avatars")
+      .upload(fileName, photoBlob, {
+        contentType: "image/jpeg",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      console.error("Failed to upload photo:", uploadError);
+      return null;
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from("avatars")
+      .getPublicUrl(fileName);
+
+    const avatarUrl = urlData?.publicUrl;
+
+    if (avatarUrl) {
+      // Update profile with avatar
+      await supabase
+        .from("profiles")
+        .update({ avatar_url: avatarUrl })
+        .eq("user_id", userId);
+    }
+
+    return avatarUrl;
+  } catch (error) {
+    console.error("Error fetching Telegram photo:", error);
+    return null;
+  }
 }
 
 async function telegramRequest(botToken: string, method: string, body: object) {
@@ -296,6 +370,84 @@ Deno.serve(async (req) => {
         }
 
         return new Response(JSON.stringify({ messages: messages || [] }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "fetch_profile_photo": {
+        const { user_id } = payload;
+
+        if (!user_id) {
+          return new Response(JSON.stringify({ error: "user_id required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get user's telegram info
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("telegram_user_id, telegram_link_bot_id, avatar_url")
+          .eq("user_id", user_id)
+          .single();
+
+        if (!profile?.telegram_user_id) {
+          return new Response(JSON.stringify({ 
+            error: "User has no linked Telegram account",
+            success: false,
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get bot token
+        let botToken: string | null = null;
+
+        if (profile.telegram_link_bot_id) {
+          const { data: bot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("id", profile.telegram_link_bot_id)
+            .single();
+          if (bot?.bot_token_encrypted) {
+            botToken = bot.bot_token_encrypted;
+          }
+        }
+
+        if (!botToken) {
+          const { data: anyBot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("status", "active")
+            .limit(1)
+            .single();
+          if (anyBot?.bot_token_encrypted) {
+            botToken = anyBot.bot_token_encrypted;
+          }
+        }
+
+        if (!botToken) {
+          return new Response(JSON.stringify({ 
+            error: "No bot available",
+            success: false,
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const avatarUrl = await fetchAndSaveTelegramPhoto(
+          supabase,
+          botToken,
+          profile.telegram_user_id,
+          user_id
+        );
+
+        return new Response(JSON.stringify({
+          success: !!avatarUrl,
+          avatar_url: avatarUrl,
+        }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
