@@ -64,6 +64,7 @@ interface ContactTelegramChatProps {
   clientName?: string | null;
   avatarUrl?: string | null;
   onAvatarUpdated?: (url: string) => void;
+  hidePhotoButton?: boolean;
 }
 
 interface TelegramMessage {
@@ -151,6 +152,7 @@ export function ContactTelegramChat({
   clientName,
   avatarUrl,
   onAvatarUpdated,
+  hidePhotoButton = false,
 }: ContactTelegramChatProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
@@ -608,24 +610,26 @@ export function ContactTelegramChat({
 
   return (
     <div className="flex flex-col h-full min-w-0 overflow-x-hidden">
-      {/* Header - removed as parent already has header, keeping only refresh */}
-      <div className="flex items-center justify-end pb-2 border-b">
+      {/* Header - minimal, only refresh button (photo button hidden via prop) */}
+      <div className="flex items-center justify-end pb-2 border-b border-border/30">
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => fetchPhotoMutation.mutate()}
-            disabled={fetchPhotoMutation.isPending}
-            className="h-8 px-2 text-xs"
-            title="Загрузить фото из Telegram"
-          >
-            {fetchPhotoMutation.isPending ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <ImageIcon className="w-4 h-4" />
-            )}
-            <span className="ml-1 hidden sm:inline">Фото TG</span>
-          </Button>
+          {!hidePhotoButton && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => fetchPhotoMutation.mutate()}
+              disabled={fetchPhotoMutation.isPending}
+              className="h-8 px-2 text-xs"
+              title="Загрузить фото из Telegram"
+            >
+              {fetchPhotoMutation.isPending ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <ImageIcon className="w-4 h-4" />
+              )}
+              <span className="ml-1 hidden sm:inline">Фото TG</span>
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"

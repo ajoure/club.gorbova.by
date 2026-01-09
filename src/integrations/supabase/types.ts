@@ -71,6 +71,42 @@ export type Database = {
         }
         Relationships: []
       }
+      chat_preferences: {
+        Row: {
+          admin_user_id: string
+          contact_user_id: string
+          created_at: string | null
+          id: string
+          is_favorite: boolean | null
+          is_pinned: boolean | null
+          is_read: boolean | null
+          notes: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          admin_user_id: string
+          contact_user_id: string
+          created_at?: string | null
+          id?: string
+          is_favorite?: boolean | null
+          is_pinned?: boolean | null
+          is_read?: boolean | null
+          notes?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          admin_user_id?: string
+          contact_user_id?: string
+          created_at?: string | null
+          id?: string
+          is_favorite?: boolean | null
+          is_pinned?: boolean | null
+          is_read?: boolean | null
+          notes?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       client_duplicates: {
         Row: {
           case_id: string
@@ -3689,6 +3725,8 @@ export type Database = {
           direction: string
           error_message: string | null
           id: string
+          is_favorite: boolean | null
+          is_pinned: boolean | null
           is_read: boolean | null
           message_id: number | null
           message_text: string | null
@@ -3705,6 +3743,8 @@ export type Database = {
           direction: string
           error_message?: string | null
           id?: string
+          is_favorite?: boolean | null
+          is_pinned?: boolean | null
           is_read?: boolean | null
           message_id?: number | null
           message_text?: string | null
@@ -3721,6 +3761,8 @@ export type Database = {
           direction?: string
           error_message?: string | null
           id?: string
+          is_favorite?: boolean | null
+          is_pinned?: boolean | null
           is_read?: boolean | null
           message_id?: number | null
           message_text?: string | null
