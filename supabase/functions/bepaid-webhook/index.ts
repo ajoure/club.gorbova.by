@@ -363,19 +363,30 @@ Deno.serve(async (req) => {
                             req.headers.get('Authorization')?.replace('Bearer ', '') || null;
     console.log('Webhook signature header:', signatureHeader ? 'present' : 'missing');
     
-    // NOTE: bePaid subscription webhooks may not include signature in all cases
-    // We still process the webhook but log a warning
-    if (bepaidSecretKey && signatureHeader) {
+    // SECURITY: Enforce webhook signature verification when secret is configured
+    if (bepaidSecretKey) {
+      if (!signatureHeader) {
+        console.error('bePaid webhook signature missing - rejecting request');
+        return new Response(
+          JSON.stringify({ error: 'Signature required' }), 
+          { status: 401, headers: corsHeaders }
+        );
+      }
+      
       const isValid = await verifyWebhookSignature(bodyText, signatureHeader, bepaidSecretKey);
       
       if (!isValid) {
-        // Log warning but don't reject - bePaid may use different signature format
-        console.warn('bePaid webhook signature verification failed - processing anyway');
-      } else {
-        console.log('bePaid webhook signature verified successfully');
+        console.error('bePaid webhook signature verification failed - rejecting request');
+        return new Response(
+          JSON.stringify({ error: 'Invalid signature' }), 
+          { status: 401, headers: corsHeaders }
+        );
       }
+      
+      console.log('bePaid webhook signature verified successfully');
     } else {
-      console.log('Webhook signature verification skipped (no signature or secret)');
+      // No secret configured - allow processing but log warning for monitoring
+      console.warn('BEPAID_SECRET_KEY not configured - webhook signature verification skipped');
     }
 
     const body = JSON.parse(bodyText);
