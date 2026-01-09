@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -9,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { User, Mail, Phone, Save, X } from "lucide-react";
+import { User, Mail, Phone, Save, X, FileText, ChevronRight } from "lucide-react";
 
 interface ProfileData {
   id: string;
@@ -23,6 +24,7 @@ interface ProfileData {
 
 export default function ProfileSettings() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   
   const [firstName, setFirstName] = useState("");
@@ -253,6 +255,27 @@ export default function ProfileSettings() {
               </>
             )}
           </CardContent>
+        </Card>
+
+        {/* Legal Details Card */}
+        <Card 
+          className="cursor-pointer hover:bg-accent/5 transition-colors"
+          onClick={() => navigate("/settings/legal-details")}
+        >
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <FileText className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <CardTitle className="text-base">Реквизиты</CardTitle>
+                  <CardDescription>
+                    Данные для автоматического формирования документов
+                  </CardDescription>
+                </div>
+              </div>
+              <ChevronRight className="h-5 w-5 text-muted-foreground" />
+            </div>
+          </CardHeader>
         </Card>
       </div>
     </DashboardLayout>
