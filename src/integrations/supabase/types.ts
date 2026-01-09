@@ -1927,6 +1927,74 @@ export type Database = {
           },
         ]
       }
+      payment_reconcile_queue: {
+        Row: {
+          amount: number | null
+          attempts: number | null
+          bepaid_uid: string | null
+          created_at: string | null
+          currency: string | null
+          customer_email: string | null
+          id: string
+          last_error: string | null
+          max_attempts: number | null
+          next_retry_at: string | null
+          processed_at: string | null
+          processed_order_id: string | null
+          raw_payload: Json | null
+          source: string | null
+          status: string | null
+          tracking_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          amount?: number | null
+          attempts?: number | null
+          bepaid_uid?: string | null
+          created_at?: string | null
+          currency?: string | null
+          customer_email?: string | null
+          id?: string
+          last_error?: string | null
+          max_attempts?: number | null
+          next_retry_at?: string | null
+          processed_at?: string | null
+          processed_order_id?: string | null
+          raw_payload?: Json | null
+          source?: string | null
+          status?: string | null
+          tracking_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          amount?: number | null
+          attempts?: number | null
+          bepaid_uid?: string | null
+          created_at?: string | null
+          currency?: string | null
+          customer_email?: string | null
+          id?: string
+          last_error?: string | null
+          max_attempts?: number | null
+          next_retry_at?: string | null
+          processed_at?: string | null
+          processed_order_id?: string | null
+          raw_payload?: Json | null
+          source?: string | null
+          status?: string | null
+          tracking_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_reconcile_queue_processed_order_id_fkey"
+            columns: ["processed_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_settings: {
         Row: {
           created_at: string

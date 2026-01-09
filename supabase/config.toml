@@ -140,3 +140,6 @@ verify_jwt = false
 
 [functions.payments-reconcile]
 verify_jwt = false
+
+[functions.bepaid-fetch-transactions]
+verify_jwt = false

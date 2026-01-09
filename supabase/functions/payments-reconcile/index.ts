@@ -63,7 +63,17 @@ serve(async (req) => {
       });
     }
 
-    // Find pending orders from the last 48 hours that might have missed webhooks
+    const results = {
+      checked: 0,
+      fixed: 0,
+      queue_processed: 0,
+      errors: 0,
+      details: [] as any[],
+    };
+
+    // =====================================================================
+    // LEVEL 1: Process pending orders with local payment check
+    // =====================================================================
     const { data: pendingOrders, error: ordersError } = await supabase
       .from("orders_v2")
       .select(`
@@ -88,13 +98,6 @@ serve(async (req) => {
     }
 
     console.info(`Found ${pendingOrders?.length || 0} pending orders to check`);
-
-    const results = {
-      checked: 0,
-      fixed: 0,
-      errors: 0,
-      details: [] as any[],
-    };
 
     for (const order of pendingOrders || []) {
       results.checked++;
@@ -168,7 +171,9 @@ serve(async (req) => {
       }
     }
 
-    // Also check for payments that are succeeded but orders are still pending
+    // =====================================================================
+    // LEVEL 2: Check for orphan payments (succeeded payment, pending order)
+    // =====================================================================
     const { data: orphanPayments } = await supabase
       .from("payments_v2")
       .select(`
@@ -212,6 +217,102 @@ serve(async (req) => {
       }
     }
 
+    // =====================================================================
+    // LEVEL 3: Process payment_reconcile_queue (rejected webhooks)
+    // =====================================================================
+    const { data: queueItems } = await supabase
+      .from("payment_reconcile_queue")
+      .select("*")
+      .eq("status", "pending")
+      .lte("next_retry_at", new Date().toISOString())
+      .lt("attempts", 5)
+      .order("created_at", { ascending: true })
+      .limit(50);
+
+    console.info(`Found ${queueItems?.length || 0} queue items to process`);
+
+    for (const item of queueItems || []) {
+      try {
+        // Mark as processing
+        await supabase
+          .from("payment_reconcile_queue")
+          .update({ status: "processing", attempts: item.attempts + 1 })
+          .eq("id", item.id);
+
+        let processed = false;
+
+        // Try to match by tracking_id first
+        if (item.tracking_id) {
+          const { data: order } = await supabase
+            .from("orders_v2")
+            .select("*")
+            .or(`id.eq.${item.tracking_id},order_number.eq.${item.tracking_id}`)
+            .single();
+
+          if (order) {
+            await processQueueItem(supabase, item, order);
+            processed = true;
+            results.queue_processed++;
+            results.details.push({
+              queue_id: item.id,
+              action: "queue_item_processed",
+              order_number: order.order_number,
+              bepaid_uid: item.bepaid_uid,
+            });
+          }
+        }
+
+        // Try to match by email + amount
+        if (!processed && item.customer_email && item.amount) {
+          const { data: order } = await supabase
+            .from("orders_v2")
+            .select("*")
+            .eq("customer_email", item.customer_email)
+            .eq("final_price", item.amount)
+            .eq("status", "pending")
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single();
+
+          if (order) {
+            await processQueueItem(supabase, item, order);
+            processed = true;
+            results.queue_processed++;
+            results.details.push({
+              queue_id: item.id,
+              action: "queue_item_processed_by_email",
+              order_number: order.order_number,
+              bepaid_uid: item.bepaid_uid,
+            });
+          }
+        }
+
+        if (!processed) {
+          // Could not match - increment retry
+          const nextRetry = new Date(Date.now() + 6 * 60 * 60 * 1000); // 6 hours
+          await supabase
+            .from("payment_reconcile_queue")
+            .update({
+              status: "pending",
+              next_retry_at: nextRetry.toISOString(),
+              last_error: "Could not match to order",
+            })
+            .eq("id", item.id);
+        }
+      } catch (queueError) {
+        console.error(`Error processing queue item ${item.id}:`, queueError);
+        await supabase
+          .from("payment_reconcile_queue")
+          .update({
+            status: "pending",
+            last_error: String(queueError),
+            next_retry_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour
+          })
+          .eq("id", item.id);
+        results.errors++;
+      }
+    }
+
     console.info("Payments reconciliation completed:", results);
 
     // Log the reconciliation run
@@ -222,7 +323,7 @@ serve(async (req) => {
     });
 
     // Send notification if any fixes were made
-    if (results.fixed > 0) {
+    if (results.fixed > 0 || results.queue_processed > 0) {
       await notifyAdmins(supabase, results);
     }
 
@@ -266,6 +367,40 @@ async function checkBepaidTransaction(
     console.error("Error checking bePaid transaction:", error);
     return null;
   }
+}
+
+async function processQueueItem(supabase: any, item: any, order: any) {
+  const now = new Date();
+  const payload = item.raw_payload || {};
+
+  // Create payment record
+  await supabase.from("payments_v2").insert({
+    order_id: order.id,
+    amount: item.amount || order.final_price,
+    currency: item.currency || "BYN",
+    provider: "bepaid",
+    provider_payment_id: item.bepaid_uid,
+    status: "succeeded",
+    paid_at: payload.paid_at || now.toISOString(),
+    card_brand: payload.credit_card?.brand,
+    card_last4: payload.credit_card?.last_4,
+    provider_response: payload,
+  });
+
+  // Fix order and create subscription
+  await fixOrderAndCreateSubscription(supabase, order, {
+    provider_payment_id: item.bepaid_uid,
+  });
+
+  // Mark queue item as completed
+  await supabase
+    .from("payment_reconcile_queue")
+    .update({
+      status: "completed",
+      processed_at: now.toISOString(),
+      processed_order_id: order.id,
+    })
+    .eq("id", item.id);
 }
 
 async function fixOrderAndCreateSubscription(
@@ -364,36 +499,19 @@ async function fixOrderAndCreateSubscription(
 
 async function notifyAdmins(supabase: any, results: any) {
   try {
-    // Get admin telegram IDs
-    const { data: admins } = await supabase
-      .from("profiles")
-      .select("telegram_user_id")
-      .not("telegram_user_id", "is", null)
-      .in(
-        "user_id",
-        supabase
-          .from("user_roles_v2")
-          .select("user_id")
-          .in(
-            "role_id",
-            supabase
-              .from("roles")
-              .select("id")
-              .in("code", ["admin", "super_admin"])
-          )
-      );
-
-    if (!admins?.length) return;
-
-    const message = `🔄 Reconciliation Report\n\n` +
+    const message =
+      `🔄 Reconciliation Report\n\n` +
       `Проверено заказов: ${results.checked}\n` +
       `Исправлено: ${results.fixed}\n` +
+      `Из очереди: ${results.queue_processed}\n` +
       `Ошибок: ${results.errors}\n\n` +
-      results.details.map((d: any) => 
-        `• ${d.order_number}: ${d.action}`
-      ).join("\n");
+      (results.details.length > 0
+        ? results.details
+            .slice(0, 10)
+            .map((d: any) => `• ${d.order_number || d.queue_id}: ${d.action}`)
+            .join("\n")
+        : "");
 
-    // Send via telegram-notify-admins function
     await supabase.functions.invoke("telegram-notify-admins", {
       body: { message, type: "reconciliation" },
     });

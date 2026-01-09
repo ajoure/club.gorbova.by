@@ -372,15 +372,52 @@ Deno.serve(async (req) => {
     // SECURITY: Enforce webhook signature verification when secret is configured
     if (bepaidSecretKey) {
       if (!signatureHeader) {
-        console.error('[WEBHOOK-ERROR] bePaid webhook signature missing - rejecting request');
+        console.error('[WEBHOOK-ERROR] bePaid webhook signature missing - saving to queue');
+        
+        // Parse body to extract useful info for queue
+        let parsedBody: any = {};
+        try {
+          parsedBody = JSON.parse(bodyText);
+        } catch (e) {
+          console.error('Could not parse body for queue:', e);
+        }
+        
+        const transaction = parsedBody.transaction || {};
+        
+        // Save to reconcile queue instead of just rejecting
+        await supabase.from('payment_reconcile_queue').insert({
+          bepaid_uid: transaction.uid || null,
+          tracking_id: transaction.tracking_id || parsedBody.tracking_id || null,
+          amount: transaction.amount ? transaction.amount / 100 : null,
+          currency: transaction.currency || 'BYN',
+          customer_email: transaction.customer?.email || parsedBody.customer?.email || null,
+          raw_payload: parsedBody,
+          source: 'webhook',
+          status: 'pending',
+          last_error: 'missing_signature',
+        });
+        
         // Log failed webhook attempt
         await supabase.from('audit_logs').insert({
           actor_user_id: '00000000-0000-0000-0000-000000000000',
-          action: 'webhook.rejected',
+          action: 'webhook.rejected_queued',
           meta: { reason: 'missing_signature', body_preview: bodyText.substring(0, 500) },
         });
+        
+        // Notify admins about rejected webhook
+        try {
+          await supabase.functions.invoke('telegram-notify-admins', {
+            body: {
+              message: `⚠️ Webhook без подписи сохранён в очередь\n\nUID: ${transaction.uid || 'N/A'}\nEmail: ${transaction.customer?.email || 'N/A'}\nСумма: ${transaction.amount ? transaction.amount / 100 : 'N/A'} BYN`,
+              type: 'webhook_rejected',
+            },
+          });
+        } catch (notifyError) {
+          console.error('Failed to notify admins:', notifyError);
+        }
+        
         return new Response(
-          JSON.stringify({ error: 'Signature required' }), 
+          JSON.stringify({ error: 'Signature required', queued: true }), 
           { status: 401, headers: corsHeaders }
         );
       }
@@ -388,15 +425,52 @@ Deno.serve(async (req) => {
       const isValid = await verifyWebhookSignature(bodyText, signatureHeader, bepaidSecretKey);
       
       if (!isValid) {
-        console.error('[WEBHOOK-ERROR] bePaid webhook signature verification failed - rejecting request');
+        console.error('[WEBHOOK-ERROR] bePaid webhook signature verification failed - saving to queue');
+        
+        // Parse body to extract useful info for queue
+        let parsedBody: any = {};
+        try {
+          parsedBody = JSON.parse(bodyText);
+        } catch (e) {
+          console.error('Could not parse body for queue:', e);
+        }
+        
+        const transaction = parsedBody.transaction || {};
+        
+        // Save to reconcile queue instead of just rejecting
+        await supabase.from('payment_reconcile_queue').insert({
+          bepaid_uid: transaction.uid || null,
+          tracking_id: transaction.tracking_id || parsedBody.tracking_id || null,
+          amount: transaction.amount ? transaction.amount / 100 : null,
+          currency: transaction.currency || 'BYN',
+          customer_email: transaction.customer?.email || parsedBody.customer?.email || null,
+          raw_payload: parsedBody,
+          source: 'webhook',
+          status: 'pending',
+          last_error: 'invalid_signature',
+        });
+        
         // Log failed webhook attempt
         await supabase.from('audit_logs').insert({
           actor_user_id: '00000000-0000-0000-0000-000000000000',
-          action: 'webhook.rejected',
+          action: 'webhook.rejected_queued',
           meta: { reason: 'invalid_signature', body_preview: bodyText.substring(0, 500) },
         });
+        
+        // Notify admins about rejected webhook
+        try {
+          await supabase.functions.invoke('telegram-notify-admins', {
+            body: {
+              message: `⚠️ Webhook с неверной подписью сохранён в очередь\n\nUID: ${transaction.uid || 'N/A'}\nEmail: ${transaction.customer?.email || 'N/A'}\nСумма: ${transaction.amount ? transaction.amount / 100 : 'N/A'} BYN`,
+              type: 'webhook_rejected',
+            },
+          });
+        } catch (notifyError) {
+          console.error('Failed to notify admins:', notifyError);
+        }
+        
         return new Response(
-          JSON.stringify({ error: 'Invalid signature' }), 
+          JSON.stringify({ error: 'Invalid signature', queued: true }), 
           { status: 401, headers: corsHeaders }
         );
       }
