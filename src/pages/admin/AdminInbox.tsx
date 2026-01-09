@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ContactTelegramChat } from "@/components/admin/ContactTelegramChat";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Sheet,
   SheetContent,
@@ -49,6 +50,8 @@ import {
   Pin,
   Check,
   CheckCheck,
+  MoreHorizontal,
+  Trash2,
 } from "lucide-react";
 import { format, formatDistanceToNow, isAfter, isBefore, startOfDay, endOfDay } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -56,6 +59,9 @@ import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+
+// Notification sound URL - можно заменить на собственный звук
+const NOTIFICATION_SOUND_URL = "https://notificationsounds.com/storage/sounds/file-sounds-1150-pristine.mp3";
 
 interface Dialog {
   user_id: string;
@@ -111,6 +117,22 @@ export default function AdminInbox() {
   const [filter, setFilter] = useState<"all" | "unread" | "read" | "favorites" | "pinned">("all");
   const [advancedFilters, setAdvancedFilters] = useState<Filters>(initialFilters);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedChats, setSelectedChats] = useState<Set<string>>(new Set());
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastMessageCountRef = useRef<number>(0);
+
+  // Initialize audio for notifications
+  useEffect(() => {
+    audioRef.current = new Audio(NOTIFICATION_SOUND_URL);
+    audioRef.current.volume = 0.5;
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
 
   const hasActiveFilters = useMemo(() => {
     return (
@@ -311,6 +333,26 @@ export default function AdminInbox() {
     },
   });
 
+  // Bulk mark as read
+  const bulkMarkAsRead = useMutation({
+    mutationFn: async (userIds: string[]) => {
+      const { error } = await supabase
+        .from("telegram_messages")
+        .update({ is_read: true })
+        .in("user_id", userIds)
+        .eq("direction", "incoming")
+        .eq("is_read", false);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["inbox-dialogs"] });
+      queryClient.invalidateQueries({ queryKey: ["unread-messages-count"] });
+      setSelectedChats(new Set());
+      setSelectionMode(false);
+      toast.success("Чаты отмечены как прочитанные");
+    },
+  });
+
   // Mark single chat as read without opening
   const markChatAsRead = (userId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -335,6 +377,40 @@ export default function AdminInbox() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [refetch]);
+
+  // Handle chat selection toggle
+  const toggleChatSelection = (userId: string, e: React.MouseEvent | React.ChangeEvent) => {
+    e.stopPropagation();
+    setSelectedChats(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(userId)) {
+        newSet.delete(userId);
+      } else {
+        newSet.add(userId);
+      }
+      return newSet;
+    });
+  };
+
+  // Select all visible chats
+  const selectAllChats = () => {
+    setSelectedChats(new Set(filteredDialogs.map(d => d.user_id)));
+  };
+
+  // Play notification sound for new incoming messages
+  useEffect(() => {
+    const currentUnread = dialogs.reduce((sum, d) => sum + d.unread_count, 0);
+    if (lastMessageCountRef.current > 0 && currentUnread > lastMessageCountRef.current) {
+      // New messages arrived - play sound
+      if (audioRef.current) {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().catch(() => {
+          // Autoplay may be blocked by browser
+        });
+      }
+    }
+    lastMessageCountRef.current = currentUnread;
+  }, [dialogs]);
 
   // Filter dialogs
   const filteredDialogs = useMemo(() => {
@@ -408,113 +484,156 @@ export default function AdminInbox() {
             selectedUserId ? "hidden md:flex" : "flex"
           )}>
             {/* Header */}
-            <div className="p-4 space-y-3 border-b border-border/30">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 rounded-xl bg-primary/10">
-                    <MessageSquare className="h-5 w-5 text-primary" />
+            <div className="p-3 space-y-2 border-b border-border/30">
+              {selectionMode ? (
+                // Selection mode header
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" className="h-8" onClick={() => { setSelectionMode(false); setSelectedChats(new Set()); }}>
+                      <X className="h-4 w-4 mr-1" />
+                      Отмена
+                    </Button>
+                    <span className="text-sm text-muted-foreground">
+                      Выбрано: {selectedChats.size}
+                    </span>
                   </div>
-                  <h2 className="font-semibold text-lg">Чаты</h2>
-                  {totalUnread > 0 && (
-                    <Badge className="bg-destructive/90 text-destructive-foreground animate-pulse">
-                      {totalUnread}
-                    </Badge>
-                  )}
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="sm" className="h-8" onClick={selectAllChats}>
+                      Все
+                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-8 w-8"
+                          disabled={selectedChats.size === 0}
+                          onClick={() => bulkMarkAsRead.mutate(Array.from(selectedChats))}
+                        >
+                          <CheckCheck className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Отметить прочитанными</TooltipContent>
+                    </Tooltip>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
-                    <SheetTrigger asChild>
-                      <Button
-                        variant={hasActiveFilters ? "default" : "ghost"}
-                        size="icon"
-                        className="h-8 w-8 rounded-lg"
-                      >
-                        <Filter className="h-4 w-4" />
-                      </Button>
-                    </SheetTrigger>
-                    <SheetContent side="right" className="w-full sm:max-w-md">
-                      <SheetHeader>
-                        <SheetTitle className="flex items-center justify-between">
-                          <span className="flex items-center gap-2">
-                            <Filter className="h-5 w-5" />
-                            Фильтры
-                          </span>
-                          {hasActiveFilters && (
-                            <Button variant="ghost" size="sm" onClick={clearFilters}>
-                              <X className="h-4 w-4 mr-1" />
-                              Сбросить
-                            </Button>
-                          )}
-                        </SheetTitle>
-                      </SheetHeader>
-                      <div className="mt-6 space-y-6">
-                        <div className="space-y-2">
-                          <Label className="text-sm font-medium">Период</Label>
-                          <div className="grid grid-cols-2 gap-2">
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <Button variant="outline" className={cn("justify-start text-left font-normal h-10", !advancedFilters.dateFrom && "text-muted-foreground")}>
-                                  <CalendarIcon className="mr-2 h-4 w-4" />
-                                  {advancedFilters.dateFrom ? format(advancedFilters.dateFrom, "dd.MM.yy") : "От"}
-                                </Button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-auto p-0" align="start">
-                                <Calendar mode="single" selected={advancedFilters.dateFrom} onSelect={(date) => setAdvancedFilters(f => ({ ...f, dateFrom: date }))} locale={ru} />
-                              </PopoverContent>
-                            </Popover>
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <Button variant="outline" className={cn("justify-start text-left font-normal h-10", !advancedFilters.dateTo && "text-muted-foreground")}>
-                                  <CalendarIcon className="mr-2 h-4 w-4" />
-                                  {advancedFilters.dateTo ? format(advancedFilters.dateTo, "dd.MM.yy") : "До"}
-                                </Button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-auto p-0" align="start">
-                                <Calendar mode="single" selected={advancedFilters.dateTo} onSelect={(date) => setAdvancedFilters(f => ({ ...f, dateTo: date }))} locale={ru} />
-                              </PopoverContent>
-                            </Popover>
+              ) : (
+                // Normal header
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-primary/10">
+                      <MessageSquare className="h-4 w-4 text-primary" />
+                    </div>
+                    <h2 className="font-semibold">Чаты</h2>
+                    {totalUnread > 0 && (
+                      <Badge className="bg-destructive/90 text-destructive-foreground text-xs h-5 px-1.5">
+                        {totalUnread}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-0.5">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={() => setSelectionMode(true)}>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Выбрать чаты</TooltipContent>
+                    </Tooltip>
+                    <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+                      <SheetTrigger asChild>
+                        <Button
+                          variant={hasActiveFilters ? "default" : "ghost"}
+                          size="icon"
+                          className="h-7 w-7 rounded-lg"
+                        >
+                          <Filter className="h-4 w-4" />
+                        </Button>
+                      </SheetTrigger>
+                      <SheetContent side="right" className="w-full sm:max-w-md">
+                        <SheetHeader>
+                          <SheetTitle className="flex items-center justify-between">
+                            <span className="flex items-center gap-2">
+                              <Filter className="h-5 w-5" />
+                              Фильтры
+                            </span>
+                            {hasActiveFilters && (
+                              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                                <X className="h-4 w-4 mr-1" />
+                                Сбросить
+                              </Button>
+                            )}
+                          </SheetTitle>
+                        </SheetHeader>
+                        <div className="mt-6 space-y-6">
+                          <div className="space-y-2">
+                            <Label className="text-sm font-medium">Период</Label>
+                            <div className="grid grid-cols-2 gap-2">
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <Button variant="outline" className={cn("justify-start text-left font-normal h-10", !advancedFilters.dateFrom && "text-muted-foreground")}>
+                                    <CalendarIcon className="mr-2 h-4 w-4" />
+                                    {advancedFilters.dateFrom ? format(advancedFilters.dateFrom, "dd.MM.yy") : "От"}
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                  <Calendar mode="single" selected={advancedFilters.dateFrom} onSelect={(date) => setAdvancedFilters(f => ({ ...f, dateFrom: date }))} locale={ru} />
+                                </PopoverContent>
+                              </Popover>
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <Button variant="outline" className={cn("justify-start text-left font-normal h-10", !advancedFilters.dateTo && "text-muted-foreground")}>
+                                    <CalendarIcon className="mr-2 h-4 w-4" />
+                                    {advancedFilters.dateTo ? format(advancedFilters.dateTo, "dd.MM.yy") : "До"}
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                  <Calendar mode="single" selected={advancedFilters.dateTo} onSelect={(date) => setAdvancedFilters(f => ({ ...f, dateTo: date }))} locale={ru} />
+                                </PopoverContent>
+                              </Popover>
+                            </div>
                           </div>
+                          <div className="space-y-2">
+                            <Label className="text-sm font-medium flex items-center gap-2">
+                              <Handshake className="h-4 w-4" />
+                              Номер сделки
+                            </Label>
+                            <Input placeholder="ORD-25-00001" value={advancedFilters.orderNumber} onChange={(e) => setAdvancedFilters(f => ({ ...f, orderNumber: e.target.value }))} />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-sm font-medium flex items-center gap-2">
+                              <Package className="h-4 w-4" />
+                              Продукт
+                            </Label>
+                            <Select value={advancedFilters.productId || "all"} onValueChange={(v) => setAdvancedFilters(f => ({ ...f, productId: v === "all" ? "" : v }))}>
+                              <SelectTrigger><SelectValue placeholder="Любой" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">Любой</SelectItem>
+                                {products?.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-sm font-medium">Подписка</Label>
+                            <Select value={advancedFilters.hasActiveSubscription} onValueChange={(v) => setAdvancedFilters(f => ({ ...f, hasActiveSubscription: v as any }))}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">Все</SelectItem>
+                                <SelectItem value="yes">С активной</SelectItem>
+                                <SelectItem value="no">Без активной</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Button className="w-full" onClick={() => setFiltersOpen(false)}>Применить</Button>
                         </div>
-                        <div className="space-y-2">
-                          <Label className="text-sm font-medium flex items-center gap-2">
-                            <Handshake className="h-4 w-4" />
-                            Номер сделки
-                          </Label>
-                          <Input placeholder="ORD-25-00001" value={advancedFilters.orderNumber} onChange={(e) => setAdvancedFilters(f => ({ ...f, orderNumber: e.target.value }))} />
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-sm font-medium flex items-center gap-2">
-                            <Package className="h-4 w-4" />
-                            Продукт
-                          </Label>
-                          <Select value={advancedFilters.productId || "all"} onValueChange={(v) => setAdvancedFilters(f => ({ ...f, productId: v === "all" ? "" : v }))}>
-                            <SelectTrigger><SelectValue placeholder="Любой" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="all">Любой</SelectItem>
-                              {products?.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-sm font-medium">Подписка</Label>
-                          <Select value={advancedFilters.hasActiveSubscription} onValueChange={(v) => setAdvancedFilters(f => ({ ...f, hasActiveSubscription: v as any }))}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="all">Все</SelectItem>
-                              <SelectItem value="yes">С активной</SelectItem>
-                              <SelectItem value="no">Без активной</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <Button className="w-full" onClick={() => setFiltersOpen(false)}>Применить</Button>
-                      </div>
-                    </SheetContent>
-                  </Sheet>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => refetch()} disabled={isLoading}>
-                    <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
-                  </Button>
+                      </SheetContent>
+                    </Sheet>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={() => refetch()} disabled={isLoading}>
+                      <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Search */}
               <div className="relative">
@@ -596,119 +715,145 @@ export default function AdminInbox() {
                   )}
                 </div>
               ) : (
-                <div className="p-2 space-y-1">
+                <div className="p-1.5 space-y-0.5">
                   {filteredDialogs.map((dialog) => (
                     <div
                       key={dialog.user_id}
-                      onClick={() => handleSelectDialog(dialog.user_id)}
+                      onClick={() => selectionMode 
+                        ? toggleChatSelection(dialog.user_id, { stopPropagation: () => {} } as React.MouseEvent)
+                        : handleSelectDialog(dialog.user_id)
+                      }
                       className={cn(
-                        "group relative flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all duration-200",
-                        "hover:bg-muted/60 active:scale-[0.99]",
+                        "group relative flex items-center gap-2.5 p-2 rounded-lg cursor-pointer transition-all duration-150",
+                        "hover:bg-muted/60",
                         selectedUserId === dialog.user_id && "bg-primary/10 ring-1 ring-primary/20",
-                        dialog.is_pinned && "bg-amber-50/50 dark:bg-amber-950/20"
+                        dialog.is_pinned && "bg-amber-50/30 dark:bg-amber-950/10",
+                        selectedChats.has(dialog.user_id) && "bg-primary/5 ring-1 ring-primary/30"
                       )}
                     >
+                      {/* Selection checkbox in selection mode */}
+                      {selectionMode && (
+                        <Checkbox
+                          checked={selectedChats.has(dialog.user_id)}
+                          onCheckedChange={(checked) => {
+                            setSelectedChats(prev => {
+                              const newSet = new Set(prev);
+                              if (checked) {
+                                newSet.add(dialog.user_id);
+                              } else {
+                                newSet.delete(dialog.user_id);
+                              }
+                              return newSet;
+                            });
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="shrink-0"
+                        />
+                      )}
+
                       {/* Pinned indicator */}
-                      {dialog.is_pinned && (
-                        <div className="absolute -top-1 -left-1">
-                          <Pin className="h-3 w-3 text-amber-500 fill-amber-500" />
+                      {dialog.is_pinned && !selectionMode && (
+                        <div className="absolute -top-0.5 -left-0.5">
+                          <Pin className="h-2.5 w-2.5 text-amber-500 fill-amber-500" />
                         </div>
                       )}
 
                       {/* Avatar */}
                       <div className="relative shrink-0">
-                        <Avatar className="h-11 w-11 ring-2 ring-background shadow-md">
+                        <Avatar className="h-10 w-10 ring-1 ring-background shadow-sm">
                           {dialog.profile?.avatar_url && <AvatarImage src={dialog.profile.avatar_url} />}
                           <AvatarFallback className="bg-gradient-to-br from-primary/20 to-primary/5 text-primary text-sm font-medium">
                             {dialog.profile?.full_name?.[0]?.toUpperCase() || dialog.profile?.telegram_username?.[0]?.toUpperCase() || "?"}
                           </AvatarFallback>
                         </Avatar>
                         {dialog.unread_count > 0 && (
-                          <span className="absolute -top-1 -right-1 h-5 min-w-5 flex items-center justify-center bg-destructive text-destructive-foreground text-xs font-bold rounded-full px-1 ring-2 ring-background">
+                          <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 flex items-center justify-center bg-destructive text-destructive-foreground text-[10px] font-bold rounded-full px-1 ring-1 ring-background">
                             {dialog.unread_count}
                           </span>
                         )}
                       </div>
 
                       {/* Content */}
-                      <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0 overflow-hidden">
                         <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1.5 min-w-0">
+                          <div className="flex items-center gap-1 min-w-0 overflow-hidden">
                             <span className={cn(
-                              "font-medium text-sm truncate",
+                              "font-medium text-sm truncate whitespace-nowrap",
                               dialog.unread_count > 0 && "font-semibold"
                             )}>
                               {dialog.profile?.full_name || dialog.profile?.telegram_username || "Без имени"}
                             </span>
                             {dialog.is_favorite && <Star className="h-3 w-3 text-amber-500 fill-amber-500 shrink-0" />}
                           </div>
-                          <span className="text-[11px] text-muted-foreground shrink-0">
+                          <span className="text-[10px] text-muted-foreground shrink-0 whitespace-nowrap">
                             {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: false, locale: ru })}
                           </span>
                         </div>
                         <p className={cn(
-                          "text-xs truncate mt-0.5",
+                          "text-xs truncate",
                           dialog.unread_count > 0 ? "text-foreground" : "text-muted-foreground"
                         )}>
                           {dialog.last_message || "—"}
                         </p>
-                        <div className="flex items-center gap-1.5 mt-1">
+                        <div className="flex items-center gap-1 mt-0.5">
                           {dialog.profile?.telegram_username && (
-                            <span className="text-[10px] text-muted-foreground">@{dialog.profile.telegram_username}</span>
+                            <span className="text-[10px] text-muted-foreground truncate">@{dialog.profile.telegram_username}</span>
                           )}
                           {dialog.subscriptions?.some(s => s.status === "active") && (
-                            <Badge className="text-[9px] h-4 px-1 bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/30 border-0">
+                            <Badge className="text-[9px] h-3.5 px-1 bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/30 border-0 shrink-0">
                               Активен
                             </Badge>
                           )}
                         </div>
                       </div>
 
-                      {/* Quick Actions - appear on hover */}
-                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {dialog.unread_count > 0 && (
+                      {/* Quick Actions - appear on hover (not in selection mode) */}
+                      {!selectionMode && (
+                        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm rounded-lg p-0.5">
+                          {dialog.unread_count > 0 && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button size="icon" variant="ghost" className="h-6 w-6 rounded-md" onClick={(e) => markChatAsRead(dialog.user_id, e)}>
+                                  <CheckCheck className="h-3 w-3" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Прочитано</TooltipContent>
+                            </Tooltip>
+                          )}
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg" onClick={(e) => markChatAsRead(dialog.user_id, e)}>
-                                <CheckCheck className="h-3.5 w-3.5" />
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className={cn("h-6 w-6 rounded-md", dialog.is_favorite && "text-amber-500")}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  togglePrefMutation.mutate({ contactUserId: dialog.user_id, field: "is_favorite", value: !dialog.is_favorite });
+                                }}
+                              >
+                                <Star className={cn("h-3 w-3", dialog.is_favorite && "fill-amber-500")} />
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent>Прочитано</TooltipContent>
+                            <TooltipContent>{dialog.is_favorite ? "Убрать из избранного" : "В избранное"}</TooltipContent>
                           </Tooltip>
-                        )}
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className={cn("h-7 w-7 rounded-lg", dialog.is_favorite && "text-amber-500")}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                togglePrefMutation.mutate({ contactUserId: dialog.user_id, field: "is_favorite", value: !dialog.is_favorite });
-                              }}
-                            >
-                              <Star className={cn("h-3.5 w-3.5", dialog.is_favorite && "fill-amber-500")} />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>{dialog.is_favorite ? "Убрать из избранного" : "В избранное"}</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className={cn("h-7 w-7 rounded-lg", dialog.is_pinned && "text-amber-500")}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                togglePrefMutation.mutate({ contactUserId: dialog.user_id, field: "is_pinned", value: !dialog.is_pinned });
-                              }}
-                            >
-                              <Pin className={cn("h-3.5 w-3.5", dialog.is_pinned && "fill-amber-500")} />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>{dialog.is_pinned ? "Открепить" : "Закрепить"}</TooltipContent>
-                        </Tooltip>
-                      </div>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className={cn("h-6 w-6 rounded-md", dialog.is_pinned && "text-amber-500")}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  togglePrefMutation.mutate({ contactUserId: dialog.user_id, field: "is_pinned", value: !dialog.is_pinned });
+                                }}
+                              >
+                                <Pin className={cn("h-3 w-3", dialog.is_pinned && "fill-amber-500")} />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{dialog.is_pinned ? "Открепить" : "Закрепить"}</TooltipContent>
+                          </Tooltip>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -754,6 +899,21 @@ export default function AdminInbox() {
                     )}
                   </div>
                   <div className="flex items-center gap-1">
+                    {selectedDialog.unread_count > 0 && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 rounded-lg"
+                            onClick={() => markAsRead.mutate(selectedUserId)}
+                          >
+                            <CheckCheck className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Отметить прочитанным</TooltipContent>
+                      </Tooltip>
+                    )}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button

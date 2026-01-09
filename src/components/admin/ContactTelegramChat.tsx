@@ -143,6 +143,13 @@ const EVENT_LABELS: Record<string, string> = {
   MANUAL_REVOKE: "Ручной отзыв доступа",
   AUTO_KICK_VIOLATOR: "Исключён из группы",
   manual_notification: "Уведомление отправлено",
+  ADMIN_DELETE_MESSAGE: "Сообщение удалено администратором",
+  ADMIN_EDIT_MESSAGE: "Сообщение отредактировано",
+  BOT_START: "Запустил бота",
+  SUBSCRIPTION_EXPIRED: "Подписка истекла",
+  SUBSCRIPTION_ACTIVATED: "Подписка активирована",
+  PAYMENT_SUCCESS: "Платёж успешен",
+  PAYMENT_FAILED: "Платёж не прошёл",
 };
 
 export function ContactTelegramChat({
