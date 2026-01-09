@@ -1148,7 +1148,84 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </TabsContent>
 
             {/* Telegram Chat Tab */}
-            <TabsContent value="telegram" className="m-0">
+            <TabsContent value="telegram" className="m-0 space-y-4">
+              {/* Telegram Profile Info Card */}
+              {contact.telegram_user_id ? (
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="text-muted-foreground">ID:</span>
+                          <span className="font-mono">{contact.telegram_user_id}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => {
+                              navigator.clipboard.writeText(String(contact.telegram_user_id));
+                              toast.success("ID скопирован");
+                            }}
+                          >
+                            <Copy className="h-3 w-3" />
+                          </Button>
+                        </div>
+                        {contact.telegram_username && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="text-muted-foreground">Username:</span>
+                            <a
+                              href={`https://t.me/${contact.telegram_username}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline flex items-center gap-1"
+                            >
+                              @{contact.telegram_username}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </div>
+                        )}
+                        {profileData?.telegram_linked_at && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="text-muted-foreground">Привязан:</span>
+                            <span>{format(new Date(profileData.telegram_linked_at), "dd.MM.yyyy HH:mm", { locale: ru })}</span>
+                          </div>
+                        )}
+                        {profileData?.telegram_link_status && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="text-muted-foreground">Статус:</span>
+                            <Badge variant={profileData.telegram_link_status === "active" ? "default" : "secondary"}>
+                              {profileData.telegram_link_status === "active" ? "Активен" : profileData.telegram_link_status}
+                            </Badge>
+                          </div>
+                        )}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={fetchPhotoFromTelegram}
+                        disabled={isFetchingPhoto}
+                        className="gap-1"
+                      >
+                        {isFetchingPhoto ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Download className="h-4 w-4" />
+                        )}
+                        Загрузить фото
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <CardContent className="p-4 text-center text-muted-foreground">
+                    <MessageCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">Telegram не привязан</p>
+                  </CardContent>
+                </Card>
+              )}
+              
+              {/* Chat */}
               <ContactTelegramChat
                 userId={contact.user_id || ""}
                 telegramUserId={contact.telegram_user_id}
