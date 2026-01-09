@@ -590,7 +590,8 @@ export function PaymentDialog({
       );
       
       onOpenChange(false);
-      setTimeout(() => window.location.reload(), 2000);
+      // Redirect to purchases with payment success params so GlobalPaymentHandler shows the success modal
+      window.location.href = `/purchases?payment=success&order=${orderId}`;
     } catch (error) {
       console.error("Test payment error:", error);
       toast.error(
