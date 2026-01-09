@@ -147,7 +147,9 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
         vTrack.onended = () => {
           stopStream();
           setError("Камера отключилась. Нажмите «Включить камеру» ещё раз.");
-          setState("error");
+          // Важно: если запись уже остановлена и мы в превью — не сбрасываем превью,
+          // иначе на iOS пропадают кнопки «Заново/Отправить».
+          setState((prev) => (prev === "preview" ? prev : "error"));
         };
       }
 
@@ -175,11 +177,19 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   }, [facingMode, stopStream]);
 
   const stopRecording = useCallback(() => {
-    const mr = mediaRecorderRef.current;
+    const mr = mediaRecorderRef.current as any;
     if (!mr) return;
 
+    // очищаем таймеры в одном месте (и по кнопке, и по автолимиту)
     try {
-      (mr as any).requestData?.();
+      if (mr._timer) window.clearInterval(mr._timer);
+      if (mr._dataTimer) window.clearInterval(mr._dataTimer);
+    } catch {
+      // ignore
+    }
+
+    try {
+      mr.requestData?.();
     } catch {
       // ignore
     }
