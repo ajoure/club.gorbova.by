@@ -346,6 +346,9 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const startTime = Date.now();
+  let bodyText = '';
+
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -356,7 +359,10 @@ Deno.serve(async (req) => {
     const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
     // Read body as text for signature verification
-    const bodyText = await req.text();
+    bodyText = await req.text();
+    
+    // Log webhook receipt for audit trail
+    console.log(`[WEBHOOK-RECEIVED] Timestamp: ${new Date().toISOString()}, Size: ${bodyText.length} bytes`);
     
     // Log webhook signature header for debugging
     const signatureHeader = req.headers.get('X-Webhook-Signature') || 
@@ -366,7 +372,13 @@ Deno.serve(async (req) => {
     // SECURITY: Enforce webhook signature verification when secret is configured
     if (bepaidSecretKey) {
       if (!signatureHeader) {
-        console.error('bePaid webhook signature missing - rejecting request');
+        console.error('[WEBHOOK-ERROR] bePaid webhook signature missing - rejecting request');
+        // Log failed webhook attempt
+        await supabase.from('audit_logs').insert({
+          actor_user_id: '00000000-0000-0000-0000-000000000000',
+          action: 'webhook.rejected',
+          meta: { reason: 'missing_signature', body_preview: bodyText.substring(0, 500) },
+        });
         return new Response(
           JSON.stringify({ error: 'Signature required' }), 
           { status: 401, headers: corsHeaders }
@@ -376,21 +388,27 @@ Deno.serve(async (req) => {
       const isValid = await verifyWebhookSignature(bodyText, signatureHeader, bepaidSecretKey);
       
       if (!isValid) {
-        console.error('bePaid webhook signature verification failed - rejecting request');
+        console.error('[WEBHOOK-ERROR] bePaid webhook signature verification failed - rejecting request');
+        // Log failed webhook attempt
+        await supabase.from('audit_logs').insert({
+          actor_user_id: '00000000-0000-0000-0000-000000000000',
+          action: 'webhook.rejected',
+          meta: { reason: 'invalid_signature', body_preview: bodyText.substring(0, 500) },
+        });
         return new Response(
           JSON.stringify({ error: 'Invalid signature' }), 
           { status: 401, headers: corsHeaders }
         );
       }
       
-      console.log('bePaid webhook signature verified successfully');
+      console.log('[WEBHOOK-OK] bePaid webhook signature verified successfully');
     } else {
       // No secret configured - allow processing but log warning for monitoring
-      console.warn('BEPAID_SECRET_KEY not configured - webhook signature verification skipped');
+      console.warn('[WEBHOOK-WARN] BEPAID_SECRET_KEY not configured - webhook signature verification skipped');
     }
 
     const body = JSON.parse(bodyText);
-    console.log('bePaid webhook received:', JSON.stringify(body, null, 2));
+    console.log('[WEBHOOK-BODY] bePaid webhook received:', JSON.stringify(body, null, 2));
 
     // bePaid sends subscription webhooks with data directly in body (not nested in .subscription)
     // Check if this is a subscription webhook (has 'state' and 'plan' fields directly in body)
@@ -1895,7 +1913,27 @@ ${userName}, к сожалению, не удалось провести опл�
     );
 
   } catch (error) {
-    console.error('Webhook processing error:', error);
+    console.error('[WEBHOOK-FATAL] Webhook processing error:', error);
+    
+    // Log the error to audit_logs for visibility
+    try {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const supabase = createClient(supabaseUrl, supabaseServiceKey);
+      
+      await supabase.from('audit_logs').insert({
+        actor_user_id: '00000000-0000-0000-0000-000000000000',
+        action: 'webhook.error',
+        meta: { 
+          error: String(error), 
+          body_preview: bodyText?.substring(0, 1000) || 'no body',
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (logErr) {
+      console.error('[WEBHOOK-LOG-ERROR] Failed to log webhook error:', logErr);
+    }
+    
     return new Response(
       JSON.stringify({ error: 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

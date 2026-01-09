@@ -60,8 +60,29 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
-// Notification sound URL - можно заменить на собственный звук
-const NOTIFICATION_SOUND_URL = "https://notificationsounds.com/storage/sounds/file-sounds-1150-pristine.mp3";
+// Notification sound - base64 encoded simple beep to avoid CORS/autoplay issues
+// This is a very short notification beep that plays reliably
+const playNotificationSound = () => {
+  try {
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    oscillator.frequency.value = 800;
+    oscillator.type = 'sine';
+    
+    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+    
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.3);
+  } catch (e) {
+    console.log('Sound notification not available');
+  }
+};
 
 interface Dialog {
   user_id: string;
@@ -119,18 +140,21 @@ export default function AdminInbox() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedChats, setSelectedChats] = useState<Set<string>>(new Set());
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastMessageCountRef = useRef<number>(0);
+  const soundEnabledRef = useRef<boolean>(false);
 
-  // Initialize audio for notifications
+  // Enable sound after first user interaction
   useEffect(() => {
-    audioRef.current = new Audio(NOTIFICATION_SOUND_URL);
-    audioRef.current.volume = 0.5;
+    const enableSound = () => {
+      soundEnabledRef.current = true;
+      document.removeEventListener('click', enableSound);
+      document.removeEventListener('keydown', enableSound);
+    };
+    document.addEventListener('click', enableSound);
+    document.addEventListener('keydown', enableSound);
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
+      document.removeEventListener('click', enableSound);
+      document.removeEventListener('keydown', enableSound);
     };
   }, []);
 
@@ -401,12 +425,9 @@ export default function AdminInbox() {
   useEffect(() => {
     const currentUnread = dialogs.reduce((sum, d) => sum + d.unread_count, 0);
     if (lastMessageCountRef.current > 0 && currentUnread > lastMessageCountRef.current) {
-      // New messages arrived - play sound
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.play().catch(() => {
-          // Autoplay may be blocked by browser
-        });
+      // New messages arrived - play sound if enabled
+      if (soundEnabledRef.current) {
+        playNotificationSound();
       }
     }
     lastMessageCountRef.current = currentUnread;
