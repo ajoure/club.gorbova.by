@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -43,6 +43,9 @@ import {
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
+import { useDragSelect } from "@/hooks/useDragSelect";
+import { SelectionBox } from "@/components/admin/SelectionBox";
+import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
 
 interface Contact {
   id: string;
@@ -98,7 +101,6 @@ export default function AdminContacts() {
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
   const [activePreset, setActivePreset] = useState("all");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
-  const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   
   // Check for contact query param to auto-open contact card
@@ -245,6 +247,26 @@ export default function AdminContacts() {
 
   const selectedContact = contacts?.find(c => c.id === selectedContactId);
 
+  // Drag select hook
+  const {
+    selectedIds: selectedContactIds,
+    setSelectedIds: setSelectedContactIds,
+    isDragging,
+    selectionBox,
+    containerRef,
+    registerItemRef,
+    toggleSelection,
+    handleRangeSelect,
+    selectAll,
+    clearSelection,
+    handleMouseDown,
+    selectedCount,
+    hasSelection,
+  } = useDragSelect({
+    items: filteredContacts,
+    getItemId: (contact) => contact.id,
+  });
+
   // Bulk delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
@@ -293,31 +315,13 @@ export default function AdminContacts() {
     },
     onSuccess: (count) => {
       toast.success(`Удалено ${count} контактов`);
-      setSelectedContactIds(new Set());
+      clearSelection();
       queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
     },
     onError: (error) => {
       toast.error("Ошибка: " + (error as Error).message);
     },
   });
-
-  const handleSelectAll = () => {
-    if (selectedContactIds.size === filteredContacts.length) {
-      setSelectedContactIds(new Set());
-    } else {
-      setSelectedContactIds(new Set(filteredContacts.map(c => c.id)));
-    }
-  };
-
-  const handleSelectContact = (id: string) => {
-    const newSelected = new Set(selectedContactIds);
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-    } else {
-      newSelected.add(id);
-    }
-    setSelectedContactIds(newSelected);
-  };
 
   const handleBulkDelete = () => {
     deleteMutation.mutate(Array.from(selectedContactIds));
@@ -380,30 +384,14 @@ export default function AdminContacts() {
         />
       </div>
 
-      {/* Stats & Bulk Actions */}
-      <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
-        <div className="flex items-center gap-4">
-          <span>Найдено: <strong className="text-foreground">{filteredContacts.length}</strong></span>
-          {contacts && (
-            <>
-              <span>•</span>
-              <span>Всего: {contacts.length}</span>
-            </>
-          )}
-        </div>
-        {selectedContactIds.size > 0 && (
-          <div className="flex items-center gap-2">
-            <span>Выбрано: <strong className="text-foreground">{selectedContactIds.size}</strong></span>
-            <Button 
-              variant="destructive" 
-              size="sm"
-              onClick={() => setShowDeleteDialog(true)}
-              disabled={deleteMutation.isPending}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Удалить выбранные
-            </Button>
-          </div>
+      {/* Stats */}
+      <div className="flex items-center gap-4 text-sm text-muted-foreground">
+        <span>Найдено: <strong className="text-foreground">{filteredContacts.length}</strong></span>
+        {contacts && (
+          <>
+            <span>•</span>
+            <span>Всего: {contacts.length}</span>
+          </>
         )}
       </div>
 
@@ -421,14 +409,18 @@ export default function AdminContacts() {
             <p>Контакты не найдены</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div 
+            ref={containerRef}
+            onMouseDown={handleMouseDown}
+            className="overflow-x-auto select-none"
+          >
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
                   <Checkbox
                     checked={filteredContacts.length > 0 && selectedContactIds.size === filteredContacts.length}
-                    onCheckedChange={handleSelectAll}
+                    onCheckedChange={() => selectedContactIds.size === filteredContacts.length ? clearSelection() : selectAll()}
                   />
                 </TableHead>
                 <TableHead>Имя / Email</TableHead>
@@ -442,14 +434,24 @@ export default function AdminContacts() {
             <TableBody>
               {filteredContacts.map((contact) => (
                 <TableRow 
-                  key={contact.id} 
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => setSelectedContactId(contact.id)}
+                  key={contact.id}
+                  ref={(el) => registerItemRef(contact.id, el)}
+                  data-selectable-item
+                  className={`cursor-pointer hover:bg-muted/50 ${selectedContactIds.has(contact.id) ? "bg-primary/10" : ""}`}
+                  onClick={(e) => {
+                    if (e.shiftKey) {
+                      handleRangeSelect(contact.id, true);
+                    } else if (e.ctrlKey || e.metaKey) {
+                      toggleSelection(contact.id, true);
+                    } else {
+                      setSelectedContactId(contact.id);
+                    }
+                  }}
                 >
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       checked={selectedContactIds.has(contact.id)}
-                      onCheckedChange={() => handleSelectContact(contact.id)}
+                      onCheckedChange={() => toggleSelection(contact.id, false)}
                     />
                   </TableCell>
                   <TableCell>
@@ -517,13 +519,33 @@ export default function AdminContacts() {
         onOpenChange={(open) => !open && setSelectedContactId(null)}
       />
 
+      {/* Selection Box for drag select */}
+      {isDragging && selectionBox && (
+        <SelectionBox
+          startX={selectionBox.startX}
+          startY={selectionBox.startY}
+          endX={selectionBox.endX}
+          endY={selectionBox.endY}
+        />
+      )}
+
+      {/* Bulk Actions Bar */}
+      <BulkActionsBar
+        selectedCount={selectedCount}
+        onClearSelection={clearSelection}
+        onBulkDelete={() => setShowDeleteDialog(true)}
+        totalCount={filteredContacts.length}
+        entityName="контактов"
+        onSelectAll={selectAll}
+      />
+
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Удалить контакты?</AlertDialogTitle>
             <AlertDialogDescription>
-              Это действие нельзя отменить. Будут удалены {selectedContactIds.size} контактов, 
+              Это действие нельзя отменить. Будут удалены {selectedCount} контактов, 
               а также связанные с ними сделки, платежи и подписки.
             </AlertDialogDescription>
           </AlertDialogHeader>
