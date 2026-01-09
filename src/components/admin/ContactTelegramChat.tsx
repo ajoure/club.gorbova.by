@@ -222,12 +222,25 @@ export function ContactTelegramChat({
       if (!data.success) throw new Error(data.error || "Failed to send message");
       return data;
     },
+    onMutate: () => {
+      // Optimistically add message to UI immediately
+      const tempMessage: TelegramMessage = {
+        id: `temp-${Date.now()}`,
+        type: "message",
+        direction: "outgoing",
+        message_text: message.trim() || (selectedFile ? `📎 ${selectedFile.name}` : null),
+        status: "pending",
+        created_at: new Date().toISOString(),
+      };
+      queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => 
+        [...(old || []), tempMessage]
+      );
+    },
     onSuccess: () => {
       setMessage("");
       setSelectedFile(null);
       setIsUploading(false);
       refetch();
-      toast.success("Сообщение отправлено");
     },
     onError: (error) => {
       setIsUploading(false);
