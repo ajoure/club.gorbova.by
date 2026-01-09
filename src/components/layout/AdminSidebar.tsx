@@ -40,6 +40,7 @@ import {
   Building2,
   FileStack,
   Inbox,
+  Send,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -272,6 +273,27 @@ export function AdminSidebar() {
                     >
                       <ClipboardList className="h-5 w-5 shrink-0" />
                       {!collapsed && <span>Предзаписи</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* Рассылки */}
+              {hasClientsPermission && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === "/admin/broadcasts"}
+                    tooltip={collapsed ? "Рассылки" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/broadcasts"
+                      end
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
+                    >
+                      <Send className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>Рассылки</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
