@@ -131,35 +131,35 @@ export function DocumentLogTab() {
               </Button>
             </div>
 
-            <Select
-              value={filters.status || ""}
-              onValueChange={(v) => setFilters({ ...filters, status: v || undefined })}
-            >
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Статус" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">Все статусы</SelectItem>
-                {Object.entries(DOCUMENT_STATUS_LABELS).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+             <Select
+               value={filters.status ?? "__all__"}
+               onValueChange={(v) => setFilters({ ...filters, status: v === "__all__" ? undefined : v })}
+             >
+               <SelectTrigger className="w-[150px]">
+                 <SelectValue placeholder="Статус" />
+               </SelectTrigger>
+               <SelectContent>
+                 <SelectItem value="__all__">Все статусы</SelectItem>
+                 {Object.entries(DOCUMENT_STATUS_LABELS).map(([value, label]) => (
+                   <SelectItem key={value} value={value}>{label}</SelectItem>
+                 ))}
+               </SelectContent>
+             </Select>
 
-            <Select
-              value={filters.document_type || ""}
-              onValueChange={(v) => setFilters({ ...filters, document_type: v || undefined })}
-            >
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Тип" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">Все типы</SelectItem>
-                {Object.entries(DOCUMENT_TYPE_LABELS).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+             <Select
+               value={filters.document_type ?? "__all__"}
+               onValueChange={(v) => setFilters({ ...filters, document_type: v === "__all__" ? undefined : v })}
+             >
+               <SelectTrigger className="w-[150px]">
+                 <SelectValue placeholder="Тип" />
+               </SelectTrigger>
+               <SelectContent>
+                 <SelectItem value="__all__">Все типы</SelectItem>
+                 {Object.entries(DOCUMENT_TYPE_LABELS).map(([value, label]) => (
+                   <SelectItem key={value} value={value}>{label}</SelectItem>
+                 ))}
+               </SelectContent>
+             </Select>
           </div>
 
           {/* Table */}
