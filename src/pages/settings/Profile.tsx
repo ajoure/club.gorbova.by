@@ -10,7 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { User, Mail, Phone, Save, X, FileText, ChevronRight, Key, Eye, EyeOff, Loader2 } from "lucide-react";
+import { User, Mail, Phone, Save, X, FileText, ChevronRight, Key, Eye, EyeOff, Loader2, Camera, Upload } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+
 interface ProfileData {
   id: string;
   user_id: string;
@@ -19,6 +21,8 @@ interface ProfileData {
   first_name: string | null;
   last_name: string | null;
   phone: string | null;
+  avatar_url: string | null;
+  telegram_user_id: number | null;
 }
 
 export default function ProfileSettings() {
@@ -37,7 +41,7 @@ export default function ProfileSettings() {
       if (!user) return null;
       const { data, error } = await supabase
         .from("profiles")
-        .select("id, user_id, email, full_name, first_name, last_name, phone")
+        .select("id, user_id, email, full_name, first_name, last_name, phone, avatar_url, telegram_user_id")
         .eq("user_id", user.id)
         .single();
       
@@ -138,6 +142,64 @@ export default function ProfileSettings() {
   const handleChange = (setter: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setter(e.target.value);
     setIsDirty(true);
+  };
+
+  // Avatar upload mutation
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [isFetchingFromTg, setIsFetchingFromTg] = useState(false);
+
+  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !user?.id) return;
+
+    setIsUploadingAvatar(true);
+    try {
+      const fileExt = file.name.split(".").pop();
+      const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(fileName, file, { upsert: true });
+      
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from("avatars")
+        .getPublicUrl(fileName);
+
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({ avatar_url: publicUrl })
+        .eq("user_id", user.id);
+      
+      if (updateError) throw updateError;
+
+      queryClient.invalidateQueries({ queryKey: ["user-profile"] });
+      toast.success("Фото профиля обновлено");
+    } catch (error) {
+      toast.error("Ошибка загрузки: " + (error as Error).message);
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
+
+  const fetchAvatarFromTelegram = async () => {
+    if (!user?.id) return;
+    setIsFetchingFromTg(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
+        body: { action: "fetch_profile_photo", user_id: user.id },
+      });
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error || "Не удалось получить фото");
+      
+      queryClient.invalidateQueries({ queryKey: ["user-profile"] });
+      toast.success("Фото профиля обновлено из Telegram");
+    } catch (error) {
+      toast.error("Ошибка: " + (error as Error).message);
+    } finally {
+      setIsFetchingFromTg(false);
+    }
   };
 
   // Password change component
@@ -335,6 +397,51 @@ export default function ProfileSettings() {
               </div>
             ) : (
               <>
+                {/* Avatar */}
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <Avatar className="h-20 w-20">
+                      {profile?.avatar_url && <AvatarImage src={profile.avatar_url} alt={profile.full_name || ""} />}
+                      <AvatarFallback className="text-xl bg-gradient-to-br from-primary/30 to-primary/10 text-primary">
+                        {firstName?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "?"}
+                      </AvatarFallback>
+                    </Avatar>
+                    {(isUploadingAvatar || isFetchingFromTg) && (
+                      <div className="absolute inset-0 bg-background/50 rounded-full flex items-center justify-center">
+                        <Loader2 className="h-6 w-6 animate-spin" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm text-muted-foreground">Фото профиля</Label>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" asChild disabled={isUploadingAvatar}>
+                        <label className="cursor-pointer">
+                          <Upload className="h-4 w-4 mr-1" />
+                          Загрузить
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={handleAvatarUpload}
+                          />
+                        </label>
+                      </Button>
+                      {profile?.telegram_user_id && (
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={fetchAvatarFromTelegram}
+                          disabled={isFetchingFromTg}
+                        >
+                          <Camera className="h-4 w-4 mr-1" />
+                          Из Telegram
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 {/* User ID */}
                 <div className="space-y-2">
                   <Label className="text-muted-foreground">ID пользователя</Label>

@@ -160,6 +160,9 @@ export default function AdminContacts() {
     },
   });
 
+  // Store the "from" parameter for navigation back
+  const fromPage = searchParams.get("from");
+
   // Auto-open contact card when contact param is in URL
   useEffect(() => {
     if (contactFromUrl && contacts) {
@@ -167,11 +170,13 @@ export default function AdminContacts() {
       const contact = contacts.find(c => c.user_id === contactFromUrl);
       if (contact) {
         setSelectedContactId(contact.id);
-        // Clear the URL param without reload
-        setSearchParams({}, { replace: true });
+        // Clear only the contact param, keep "from" for navigation
+        const newParams = new URLSearchParams();
+        if (fromPage) newParams.set("from", fromPage);
+        setSearchParams(newParams, { replace: true });
       }
     }
-  }, [contactFromUrl, contacts, setSearchParams]);
+  }, [contactFromUrl, contacts, setSearchParams, fromPage]);
 
   // Fetch duplicate count
   const { data: duplicateCount } = useQuery({
@@ -608,7 +613,16 @@ export default function AdminContacts() {
       <ContactDetailSheet
         contact={selectedContact || null}
         open={!!selectedContactId}
-        onOpenChange={(open) => !open && setSelectedContactId(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedContactId(null);
+            // Clear the "from" param when closing
+            if (fromPage) {
+              setSearchParams({}, { replace: true });
+            }
+          }
+        }}
+        returnTo={fromPage || undefined}
       />
 
       {/* Selection Box for drag select */}

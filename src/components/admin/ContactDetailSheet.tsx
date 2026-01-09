@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { format, addDays, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -74,6 +75,7 @@ import {
   Pencil,
   LogIn,
   Loader2,
+  ArrowLeft,
 } from "lucide-react";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
@@ -112,9 +114,11 @@ interface ContactDetailSheetProps {
   contact: Contact | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  returnTo?: string;
 }
 
-export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetailSheetProps) {
+export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: ContactDetailSheetProps) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { hasPermission, isSuperAdmin } = usePermissions();
   const { startImpersonation, resetPassword } = useAdminUsers();
@@ -805,10 +809,25 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
               )}
             </Badge>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setEditDialogOpen(true)} className="mt-2">
-            <Pencil className="w-3 h-3 mr-1" />
-            Редактировать
-          </Button>
+          <div className="flex items-center gap-2 mt-2">
+            {returnTo && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => {
+                  onOpenChange(false);
+                  navigate(`/admin/${returnTo}`);
+                }}
+              >
+                <ArrowLeft className="w-3 h-3 mr-1" />
+                {returnTo === "deals" ? "К сделкам" : "Назад"}
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={() => setEditDialogOpen(true)}>
+              <Pencil className="w-3 h-3 mr-1" />
+              Редактировать
+            </Button>
+          </div>
         </SheetHeader>
 
         <Tabs defaultValue="profile" className="flex-1 flex flex-col min-h-0 overflow-hidden">

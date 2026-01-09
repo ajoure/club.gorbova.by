@@ -44,6 +44,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { SmartImportWizard } from "@/components/integrations/SmartImportWizard";
 import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
@@ -110,7 +111,7 @@ export default function AdminDeals() {
     queryFn: async () => {
       const { data } = await supabase
         .from("profiles")
-        .select("user_id, email, full_name, phone");
+        .select("user_id, email, full_name, phone, avatar_url");
       const map = new Map<string, any>();
       data?.forEach(p => map.set(p.user_id, p));
       return map;
@@ -481,16 +482,26 @@ export default function AdminDeals() {
                       onClick={(e) => {
                         e.stopPropagation();
                         if (deal.user_id && profile) {
-                          navigate(`/admin/contacts?contact=${profile.user_id}`);
+                          navigate(`/admin/contacts?contact=${profile.user_id}&from=deals`);
                         }
                       }}
                       className={deal.user_id && profile ? "cursor-pointer hover:text-primary" : ""}
                     >
-                      <div className="font-medium">
-                        {profile?.full_name || deal.customer_email || "—"}
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        {profile?.email || deal.customer_email || "—"}
+                      <div className="flex items-center gap-2">
+                        <Avatar className="h-8 w-8 shrink-0">
+                          {profile?.avatar_url && <AvatarImage src={profile.avatar_url} alt={profile?.full_name || ""} />}
+                          <AvatarFallback className="text-xs">
+                            {profile?.full_name?.[0]?.toUpperCase() || deal.customer_email?.[0]?.toUpperCase() || "?"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">
+                            {profile?.full_name || deal.customer_email || "—"}
+                          </div>
+                          <div className="text-sm text-muted-foreground truncate">
+                            {profile?.email || deal.customer_email || "—"}
+                          </div>
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell>
