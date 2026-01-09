@@ -61,7 +61,7 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
   const isPaid = order.status === "paid" || payment?.status === "succeeded";
   const receiptUrl = payment?.provider_response?.transaction?.receipt_url;
 
-  // Fetch generated documents for this order
+  // Fetch the most recent generated document for this order (only one)
   useEffect(() => {
     if (isPaid && order.id) {
       supabase
@@ -70,6 +70,7 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
         .eq("order_id", order.id)
         .eq("status", "generated")
         .order("created_at", { ascending: false })
+        .limit(1)
         .then(({ data }) => {
           if (data) setGeneratedDocs(data);
         });
