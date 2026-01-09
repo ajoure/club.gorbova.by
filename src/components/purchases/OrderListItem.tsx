@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { CreditCard, Download, FileText, Loader2, Mail, Send } from "lucide-react";
+import { CreditCard, Download, Eye, FileText, Loader2, Mail, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { InvoiceActPreviewDialog } from "./InvoiceActPreviewDialog";
 
 interface Order {
   id: string;
@@ -51,6 +52,10 @@ interface OrderListItemProps {
 export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }: OrderListItemProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewData, setPreviewData] = useState<any>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  
   const payment = order.payments_v2?.[0];
   const isPaid = order.status === "paid" || payment?.status === "succeeded";
   const receiptUrl = payment?.provider_response?.transaction?.receipt_url;
@@ -59,12 +64,43 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
     return format(new Date(dateString), "d MMM yyyy, HH:mm", { locale: ru });
   };
 
-  const generateDocument = async (sendEmail = false, sendTelegram = false) => {
-    if (sendEmail || sendTelegram) {
-      setIsSending(true);
-    } else {
-      setIsGenerating(true);
+  const openPreview = async () => {
+    setPreviewOpen(true);
+    setIsLoadingPreview(true);
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error("Необходима авторизация");
+        setPreviewOpen(false);
+        return;
+      }
+
+      const { data, error } = await supabase.functions.invoke("generate-invoice-act", {
+        body: { order_id: order.id },
+      });
+
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error);
+
+      setPreviewData({
+        documentNumber: data.document.document_number,
+        documentDate: new Date().toISOString(),
+        executor: data.document.executor,
+        client: data.document.client,
+        order: data.document.order,
+      });
+    } catch (error) {
+      console.error("Preview error:", error);
+      toast.error("Ошибка загрузки документа");
+      setPreviewOpen(false);
+    } finally {
+      setIsLoadingPreview(false);
     }
+  };
+
+  const sendDocument = async (sendEmail = false, sendTelegram = false) => {
+    setIsSending(true);
     
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -85,45 +121,33 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
       if (!data.success) throw new Error(data.error);
 
       const results = data.send_results;
+      const messages: string[] = [];
       
-      if (sendEmail || sendTelegram) {
-        const messages: string[] = [];
-        if (sendEmail && results?.email_sent) {
-          messages.push("✉️ Отправлено на почту");
-        }
-        if (sendEmail && results?.email_error) {
-          messages.push(`❌ Почта: ${results.email_error}`);
-        }
-        if (sendTelegram && results?.telegram_sent) {
-          messages.push("📱 Отправлено в Telegram");
-        }
-        if (sendTelegram && results?.telegram_error) {
-          messages.push(`❌ Telegram: ${results.telegram_error}`);
-        }
-        
-        if (results?.email_sent || results?.telegram_sent) {
-          toast.success(messages.join("\n"));
-        } else {
-          toast.error(messages.join("\n"));
-        }
+      if (sendEmail && results?.email_sent) {
+        messages.push("✉️ Отправлено на почту");
+      }
+      if (sendEmail && results?.email_error) {
+        messages.push(`❌ Почта: ${results.email_error}`);
+      }
+      if (sendTelegram && results?.telegram_sent) {
+        messages.push("📱 Отправлено в Telegram");
+      }
+      if (sendTelegram && results?.telegram_error) {
+        messages.push(`❌ Telegram: ${results.telegram_error}`);
+      }
+      
+      if (results?.email_sent || results?.telegram_sent) {
+        toast.success(messages.join("\n"));
       } else {
-        // Open document in new window
-        const docWindow = window.open("", "_blank");
-        if (docWindow) {
-          docWindow.document.write(data.document.html);
-          docWindow.document.close();
-          toast.success("Счёт-акт сформирован");
-        }
+        toast.error(messages.join("\n"));
       }
     } catch (error) {
-      console.error("Generate error:", error);
-      toast.error("Ошибка генерации документа");
+      console.error("Send error:", error);
+      toast.error("Ошибка отправки документа");
     } finally {
-      setIsGenerating(false);
       setIsSending(false);
     }
   };
-
 
   const getStatusBadge = () => {
     if (order.status === "refunded") {
@@ -192,74 +216,83 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
   };
 
   return (
-    <div className="flex items-center justify-between p-4 rounded-lg border bg-card">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <h3 className="font-medium text-foreground truncate">{getProductName()}</h3>
-          {getStatusBadge()}
+    <>
+      <div className="flex items-center justify-between p-4 rounded-lg border bg-card">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="font-medium text-foreground truncate">{getProductName()}</h3>
+            {getStatusBadge()}
+          </div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mt-1 text-sm text-muted-foreground">
+            <span>{formatShortDate(order.created_at)}</span>
+            <span className="font-medium text-foreground">
+              {order.final_price.toFixed(2)} {order.currency}
+            </span>
+            <span className="flex items-center gap-1">
+              <CreditCard className="h-3 w-3" />
+              {getPaymentMethod()}
+            </span>
+          </div>
         </div>
-        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 mt-1 text-sm text-muted-foreground">
-          <span>{formatShortDate(order.created_at)}</span>
-          <span className="font-medium text-foreground">
-            {order.final_price.toFixed(2)} {order.currency}
-          </span>
-          <span className="flex items-center gap-1">
-            <CreditCard className="h-3 w-3" />
-            {getPaymentMethod()}
-          </span>
-        </div>
-      </div>
-      {isPaid && (
-        <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-          {/* BePaid receipt button - always visible for paid orders with receipt */}
-          {receiptUrl && (
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => onOpenBePaidReceipt(receiptUrl)}
-              title="Чек bePaid"
-            >
-              <Download className="h-4 w-4" />
-              <span className="hidden sm:inline ml-1">Чек</span>
-            </Button>
-          )}
-          
-          {/* Document generation dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" disabled={isGenerating || isSending}>
-                {isGenerating || isSending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <FileText className="h-4 w-4" />
-                )}
-                <span className="hidden sm:inline ml-1">Документы</span>
+        {isPaid && (
+          <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+            {/* BePaid receipt button */}
+            {receiptUrl && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => onOpenBePaidReceipt(receiptUrl)}
+                title="Чек bePaid"
+              >
+                <Download className="h-4 w-4" />
+                <span className="hidden sm:inline ml-1">Чек</span>
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem onClick={() => generateDocument()}>
-                <FileText className="h-4 w-4 mr-2" />
-                Открыть счёт-акт
-              </DropdownMenuItem>
-              
-              <DropdownMenuSeparator />
-              
-              <DropdownMenuItem onClick={() => generateDocument(true, false)}>
-                <Mail className="h-4 w-4 mr-2" />
-                Отправить на почту
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => generateDocument(false, true)}>
-                <Send className="h-4 w-4 mr-2" />
-                Отправить в Telegram
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => generateDocument(true, true)}>
-                <Send className="h-4 w-4 mr-2" />
-                Отправить везде
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      )}
-    </div>
+            )}
+            
+            {/* Document actions dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" disabled={isGenerating || isSending}>
+                  {isGenerating || isSending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileText className="h-4 w-4" />
+                  )}
+                  <span className="hidden sm:inline ml-1">Документы</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem onClick={openPreview}>
+                  <Eye className="h-4 w-4 mr-2" />
+                  Просмотр и скачивание PDF
+                </DropdownMenuItem>
+                
+                <DropdownMenuSeparator />
+                
+                <DropdownMenuItem onClick={() => sendDocument(true, false)}>
+                  <Mail className="h-4 w-4 mr-2" />
+                  Отправить на почту
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => sendDocument(false, true)}>
+                  <Send className="h-4 w-4 mr-2" />
+                  Отправить в Telegram
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => sendDocument(true, true)}>
+                  <Send className="h-4 w-4 mr-2" />
+                  Отправить везде
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
+      </div>
+
+      <InvoiceActPreviewDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        data={previewData}
+        isLoading={isLoadingPreview}
+      />
+    </>
   );
 }
