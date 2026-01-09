@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { CreditCard, Download, Eye, FileText, Loader2, Mail, Send } from "lucide-react";
+import { CreditCard, Download, Eye, FileText, Loader2, Mail, Send, FileDown, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuLabel } from "@/components/ui/dropdown-menu";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { InvoiceActPreviewDialog } from "./InvoiceActPreviewDialog";
@@ -55,10 +55,26 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewData, setPreviewData] = useState<any>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [generatedDocs, setGeneratedDocs] = useState<any[]>([]);
   
   const payment = order.payments_v2?.[0];
   const isPaid = order.status === "paid" || payment?.status === "succeeded";
   const receiptUrl = payment?.provider_response?.transaction?.receipt_url;
+
+  // Fetch generated documents for this order
+  useEffect(() => {
+    if (isPaid && order.id) {
+      supabase
+        .from("generated_documents")
+        .select("id, document_number, document_type, file_path, created_at, status")
+        .eq("order_id", order.id)
+        .eq("status", "generated")
+        .order("created_at", { ascending: false })
+        .then(({ data }) => {
+          if (data) setGeneratedDocs(data);
+        });
+    }
+  }, [order.id, isPaid]);
 
   const formatShortDate = (dateString: string) => {
     return format(new Date(dateString), "d MMM yyyy, HH:mm", { locale: ru });
@@ -147,6 +163,22 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
       toast.error("Ошибка отправки документа");
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const downloadGeneratedDoc = async (filePath: string, docNumber: string) => {
+    try {
+      const { data, error } = await supabase.storage
+        .from("documents")
+        .createSignedUrl(filePath, 3600);
+      
+      if (error) throw error;
+      
+      // Open in new tab
+      window.open(data.signedUrl, "_blank");
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("Ошибка скачивания документа");
     }
   };
 
@@ -282,6 +314,25 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
                   <Send className="h-4 w-4 mr-2" />
                   Отправить везде
                 </DropdownMenuItem>
+                
+                {/* Generated documents from templates */}
+                {generatedDocs.length > 0 && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel className="text-xs text-muted-foreground">
+                      Сгенерированные документы
+                    </DropdownMenuLabel>
+                    {generatedDocs.map((doc) => (
+                      <DropdownMenuItem 
+                        key={doc.id}
+                        onClick={() => downloadGeneratedDoc(doc.file_path, doc.document_number)}
+                      >
+                        <FileDown className="h-4 w-4 mr-2" />
+                        {doc.document_number}
+                      </DropdownMenuItem>
+                    ))}
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

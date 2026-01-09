@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,10 +11,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Pencil, Trash2, Building2, Star, Copy } from "lucide-react";
+import { Plus, Pencil, Trash2, Building2, Star, Copy, Upload, X, Image } from "lucide-react";
 import { toast } from "sonner";
 import { useExecutors, Executor } from "@/hooks/useLegalDetails";
 import { PhoneInput } from "@/components/ui/phone-input";
+import { supabase } from "@/integrations/supabase/client";
 
 // Предустановленные должности руководителя
 const DIRECTOR_POSITIONS = [
@@ -52,6 +53,7 @@ interface ExecutorFormData {
   acts_on_basis_details: string;
   phone: string;
   email: string;
+  signature_url: string;
 }
 
 const defaultFormData: ExecutorFormData = {
@@ -70,6 +72,7 @@ const defaultFormData: ExecutorFormData = {
   acts_on_basis_details: "",
   phone: "",
   email: "",
+  signature_url: "",
 };
 
 // Генерация краткого ФИО из полного
@@ -102,6 +105,8 @@ export default function AdminExecutors() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<ExecutorFormData>(defaultFormData);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [isUploadingSignature, setIsUploadingSignature] = useState(false);
+  const signatureInputRef = useRef<HTMLInputElement>(null);
 
   // Автогенерация краткого ФИО
   const directorShortName = useMemo(() => {
@@ -148,6 +153,7 @@ export default function AdminExecutors() {
         acts_on_basis_details: basisDetails,
         phone: executor.phone || "",
         email: executor.email || "",
+        signature_url: executor.signature_url || "",
       });
     } else {
       setEditingId(null);
@@ -209,6 +215,7 @@ export default function AdminExecutors() {
         acts_on_basis: actsOnBasis,
         phone: formData.phone,
         email: formData.email,
+        signature_url: formData.signature_url || null,
       };
 
       if (editingId) {
@@ -579,6 +586,92 @@ export default function AdminExecutors() {
                     placeholder="info@company.by"
                   />
                 </div>
+              </div>
+            </div>
+
+            {/* Подпись */}
+            <div className="border-t pt-4">
+              <h4 className="text-sm font-medium text-muted-foreground mb-3">Подпись (изображение)</h4>
+              <div className="flex items-start gap-4">
+                {formData.signature_url ? (
+                  <div className="relative">
+                    <img 
+                      src={formData.signature_url} 
+                      alt="Подпись" 
+                      className="h-20 object-contain border rounded bg-white p-2"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      onClick={() => setFormData({ ...formData, signature_url: "" })}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <input
+                      ref={signatureInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        
+                        if (file.size > 2 * 1024 * 1024) {
+                          toast.error("Файл слишком большой (макс. 2 МБ)");
+                          return;
+                        }
+                        
+                        setIsUploadingSignature(true);
+                        try {
+                          const fileExt = file.name.split('.').pop();
+                          const fileName = `${Date.now()}.${fileExt}`;
+                          const filePath = `signatures/${fileName}`;
+                          
+                          const { error: uploadError } = await supabase.storage
+                            .from("signatures")
+                            .upload(filePath, file, { upsert: true });
+                          
+                          if (uploadError) throw uploadError;
+                          
+                          const { data: urlData } = supabase.storage
+                            .from("signatures")
+                            .getPublicUrl(filePath);
+                          
+                          setFormData({ ...formData, signature_url: urlData.publicUrl });
+                          toast.success("Подпись загружена");
+                        } catch (error) {
+                          console.error("Upload error:", error);
+                          toast.error("Ошибка загрузки");
+                        } finally {
+                          setIsUploadingSignature(false);
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => signatureInputRef.current?.click()}
+                      disabled={isUploadingSignature}
+                    >
+                      {isUploadingSignature ? (
+                        "Загрузка..."
+                      ) : (
+                        <>
+                          <Upload className="h-4 w-4 mr-2" />
+                          Загрузить PNG/JPG
+                        </>
+                      )}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      Рекомендуемый размер: 200x100 пикселей, прозрачный фон
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

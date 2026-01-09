@@ -827,6 +827,57 @@ Deno.serve(async (req) => {
           }
         }
 
+        // --- Auto-generate documents from templates ---
+        try {
+          // Check if product has document templates linked
+          const { data: templateLinks } = await supabase
+            .from('product_document_templates')
+            .select(`
+              id,
+              auto_generate,
+              auto_send_email,
+              document_templates(id, name, is_active)
+            `)
+            .eq('product_id', orderV2.product_id)
+            .eq('auto_generate', true);
+
+          if (templateLinks && templateLinks.length > 0) {
+            console.log(`Found ${templateLinks.length} document templates for auto-generation`);
+            
+            for (const link of templateLinks) {
+              const template = (link as any).document_templates;
+              if (!template?.is_active) continue;
+
+              try {
+                // Call generate-from-template edge function
+                const generateResponse = await fetch(
+                  `${Deno.env.get('SUPABASE_URL')}/functions/v1/generate-from-template`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                    },
+                    body: JSON.stringify({
+                      order_id: orderV2.id,
+                      template_id: template.id,
+                      send_email: link.auto_send_email || false,
+                    }),
+                  }
+                );
+
+                const genResult = await generateResponse.json();
+                console.log(`Document generation result for template ${template.name}:`, genResult);
+              } catch (genError) {
+                console.error(`Error generating document from template ${template.id}:`, genError);
+              }
+            }
+          }
+        } catch (docError) {
+          console.error('Error in auto-document generation:', docError);
+          // Don't fail the webhook if document generation fails
+        }
+
         return new Response(JSON.stringify({ ok: true, mode: 'v2', status: 'successful' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
