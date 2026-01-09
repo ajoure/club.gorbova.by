@@ -12,12 +12,14 @@ interface FileData {
 }
 
 interface ChatAction {
-  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info";
+  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message";
   user_id?: string;
   message?: string;
   file?: FileData;
   bot_id?: string;
   limit?: number;
+  message_id?: number;
+  db_message_id?: string;
 }
 
 async function fetchAndSaveTelegramPhoto(
@@ -596,6 +598,208 @@ Deno.serve(async (req) => {
             // Note: Telegram Bot API doesn't provide registration date or name change history
             // That information is only available through Telegram's MTProto API
           },
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "edit_message": {
+        const { user_id, message, message_id, db_message_id } = payload;
+
+        if (!user_id || !message || !message_id) {
+          return new Response(JSON.stringify({ error: "user_id, message, and message_id required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get user's telegram_user_id from profile
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("telegram_user_id, telegram_link_bot_id")
+          .eq("user_id", user_id)
+          .single();
+
+        if (!profile?.telegram_user_id) {
+          return new Response(JSON.stringify({ 
+            error: "User has no linked Telegram account",
+            success: false,
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get bot token
+        let botToken: string | null = null;
+
+        if (profile.telegram_link_bot_id) {
+          const { data: bot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("id", profile.telegram_link_bot_id)
+            .single();
+          if (bot?.bot_token_encrypted) {
+            botToken = bot.bot_token_encrypted;
+          }
+        }
+
+        if (!botToken) {
+          const { data: anyBot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("status", "active")
+            .limit(1)
+            .single();
+          if (anyBot?.bot_token_encrypted) {
+            botToken = anyBot.bot_token_encrypted;
+          }
+        }
+
+        if (!botToken) {
+          return new Response(JSON.stringify({ 
+            error: "No bot available",
+            success: false,
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const editResult = await telegramRequest(botToken, "editMessageText", {
+          chat_id: profile.telegram_user_id,
+          message_id: message_id,
+          text: message,
+          parse_mode: "HTML",
+        });
+
+        if (editResult.ok && db_message_id) {
+          // Update message in database
+          await supabase
+            .from("telegram_messages")
+            .update({ 
+              message_text: message,
+              meta: { edited: true, edited_at: new Date().toISOString() }
+            })
+            .eq("id", db_message_id);
+        }
+
+        // Log the edit action
+        await supabase.from("telegram_logs").insert({
+          user_id,
+          action: "ADMIN_EDIT_MESSAGE",
+          target: "message",
+          status: editResult.ok ? "ok" : "error",
+          error_message: editResult.ok ? null : editResult.description,
+          meta: {
+            message_id,
+            edited_by: user.id,
+          },
+        });
+
+        return new Response(JSON.stringify({
+          success: editResult.ok,
+          error: editResult.ok ? null : editResult.description,
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "delete_message": {
+        const { user_id, message_id, db_message_id } = payload;
+
+        if (!user_id || !message_id) {
+          return new Response(JSON.stringify({ error: "user_id and message_id required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get user's telegram_user_id from profile
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("telegram_user_id, telegram_link_bot_id")
+          .eq("user_id", user_id)
+          .single();
+
+        if (!profile?.telegram_user_id) {
+          return new Response(JSON.stringify({ 
+            error: "User has no linked Telegram account",
+            success: false,
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get bot token
+        let botToken: string | null = null;
+
+        if (profile.telegram_link_bot_id) {
+          const { data: bot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("id", profile.telegram_link_bot_id)
+            .single();
+          if (bot?.bot_token_encrypted) {
+            botToken = bot.bot_token_encrypted;
+          }
+        }
+
+        if (!botToken) {
+          const { data: anyBot } = await supabase
+            .from("telegram_bots")
+            .select("bot_token_encrypted")
+            .eq("status", "active")
+            .limit(1)
+            .single();
+          if (anyBot?.bot_token_encrypted) {
+            botToken = anyBot.bot_token_encrypted;
+          }
+        }
+
+        if (!botToken) {
+          return new Response(JSON.stringify({ 
+            error: "No bot available",
+            success: false,
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const deleteResult = await telegramRequest(botToken, "deleteMessage", {
+          chat_id: profile.telegram_user_id,
+          message_id: message_id,
+        });
+
+        if (deleteResult.ok && db_message_id) {
+          // Mark message as deleted in database
+          await supabase
+            .from("telegram_messages")
+            .update({ 
+              status: "deleted",
+              meta: { deleted: true, deleted_at: new Date().toISOString() }
+            })
+            .eq("id", db_message_id);
+        }
+
+        // Log the delete action
+        await supabase.from("telegram_logs").insert({
+          user_id,
+          action: "ADMIN_DELETE_MESSAGE",
+          target: "message",
+          status: deleteResult.ok ? "ok" : "error",
+          error_message: deleteResult.ok ? null : deleteResult.description,
+          meta: {
+            message_id,
+            deleted_by: user.id,
+          },
+        });
+
+        return new Response(JSON.stringify({
+          success: deleteResult.ok,
+          error: deleteResult.ok ? null : deleteResult.description,
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });

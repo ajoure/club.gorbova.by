@@ -10,6 +10,13 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -43,6 +50,9 @@ import {
   Video,
   Music,
   Circle,
+  Edit2,
+  Trash2,
+  MoreVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 import { VideoNoteRecorder } from "./VideoNoteRecorder";
@@ -61,12 +71,15 @@ interface TelegramMessage {
   type: "message";
   direction: "outgoing" | "incoming";
   message_text: string | null;
+  message_id: number | null;
   status: string;
   created_at: string;
   sent_by_admin?: string | null;
   meta?: {
     file_type?: string | null;
     file_name?: string | null;
+    edited?: boolean;
+    deleted?: boolean;
     [key: string]: unknown;
   } | null;
 }
@@ -146,6 +159,8 @@ export function ContactTelegramChat({
   const [isUploading, setIsUploading] = useState(false);
   const [showMediaMenu, setShowMediaMenu] = useState(false);
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
+  const [editingMessage, setEditingMessage] = useState<TelegramMessage | null>(null);
+  const [editText, setEditText] = useState("");
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -299,6 +314,7 @@ export function ContactTelegramChat({
         type: "message",
         direction: "outgoing",
         message_text: message.trim() || (selectedFile ? `📎 ${selectedFile.name}` : null),
+        message_id: null,
         status: "pending",
         created_at: new Date().toISOString(),
       };
@@ -319,7 +335,57 @@ export function ContactTelegramChat({
     },
   });
 
-  // Scroll to bottom when opening a chat and when new items arrive
+  // Edit message mutation
+  const editMutation = useMutation({
+    mutationFn: async ({ dbMessageId, messageId, text }: { dbMessageId: string; messageId: number; text: string }) => {
+      const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
+        body: { 
+          action: "edit_message", 
+          user_id: userId, 
+          message: text,
+          message_id: messageId,
+          db_message_id: dbMessageId,
+        },
+      });
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error || "Не удалось отредактировать сообщение");
+      return data;
+    },
+    onSuccess: () => {
+      setEditingMessage(null);
+      setEditText("");
+      refetch();
+      toast.success("Сообщение отредактировано");
+    },
+    onError: (error) => {
+      toast.error("Ошибка редактирования: " + translateTelegramError((error as Error).message));
+    },
+  });
+
+  // Delete message mutation
+  const deleteMutation = useMutation({
+    mutationFn: async ({ dbMessageId, messageId }: { dbMessageId: string; messageId: number }) => {
+      const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
+        body: { 
+          action: "delete_message", 
+          user_id: userId, 
+          message_id: messageId,
+          db_message_id: dbMessageId,
+        },
+      });
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error || "Не удалось удалить сообщение");
+      return data;
+    },
+    onSuccess: () => {
+      refetch();
+      toast.success("Сообщение удалено");
+    },
+    onError: (error) => {
+      toast.error("Ошибка удаления: " + translateTelegramError((error as Error).message));
+    },
+  });
+
   useEffect(() => {
     if (!userId) return;
     if (isLoading) return;
@@ -424,52 +490,116 @@ export function ContactTelegramChat({
     const msg = item as TelegramMessage;
     const fileType = msg.meta?.file_type as string | null;
     const fileName = msg.meta?.file_name as string | null;
+    const isEdited = msg.meta?.edited as boolean | undefined;
+    const isDeleted = msg.status === "deleted" || msg.meta?.deleted as boolean | undefined;
+    const canEdit = msg.direction === "outgoing" && msg.message_id && msg.status === "sent" && !fileType && !isDeleted;
+    const canDelete = msg.direction === "outgoing" && msg.message_id && msg.status === "sent" && !isDeleted;
+
+    if (isDeleted) {
+      return (
+        <div
+          key={msg.id}
+          className={`flex ${msg.direction === "outgoing" ? "justify-end" : "justify-start"}`}
+        >
+          <div className="max-w-[80%] rounded-lg p-3 bg-muted/50 border border-dashed">
+            <p className="text-sm text-muted-foreground italic">Сообщение удалено</p>
+            <span className="text-xs opacity-60">
+              {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
+            </span>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div
         key={msg.id}
-        className={`flex ${msg.direction === "outgoing" ? "justify-end" : "justify-start"}`}
+        className={`flex ${msg.direction === "outgoing" ? "justify-end" : "justify-start"} group`}
       >
-        <div
-          className={`max-w-[80%] rounded-lg p-3 ${
-            msg.direction === "outgoing"
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted"
-          }`}
-        >
-          <div className="flex items-center gap-1 mb-1">
-            {msg.direction === "outgoing" ? (
-              <Bot className="w-3 h-3" />
-            ) : (
-              <User className="w-3 h-3" />
-            )}
-            <span className="text-xs opacity-70">
-              {msg.direction === "outgoing" ? "Вы" : (clientName || "Клиент")}
-            </span>
-          </div>
-          
-          {fileType && (
-            <div className="flex items-center gap-2 mb-2 p-2 rounded bg-background/20">
-              {getFileIcon(fileType)}
-              <span className="text-xs truncate">{fileName || "Файл"}</span>
+        <div className="flex items-start gap-1">
+          {msg.direction === "outgoing" && (canEdit || canDelete) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <MoreVertical className="w-3 h-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {canEdit && (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setEditingMessage(msg);
+                      setEditText(msg.message_text || "");
+                    }}
+                  >
+                    <Edit2 className="w-4 h-4 mr-2" />
+                    Редактировать
+                  </DropdownMenuItem>
+                )}
+                {canDelete && (
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => {
+                      if (msg.message_id) {
+                        deleteMutation.mutate({ dbMessageId: msg.id, messageId: msg.message_id });
+                      }
+                    }}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Удалить
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          <div
+            className={`max-w-[80%] rounded-lg p-3 ${
+              msg.direction === "outgoing"
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted"
+            }`}
+          >
+            <div className="flex items-center gap-1 mb-1">
+              {msg.direction === "outgoing" ? (
+                <Bot className="w-3 h-3" />
+              ) : (
+                <User className="w-3 h-3" />
+              )}
+              <span className="text-xs opacity-70">
+                {msg.direction === "outgoing" ? "Вы" : (clientName || "Клиент")}
+              </span>
             </div>
-          )}
-          
-          {msg.message_text && (
-            <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
-          )}
-          
-          <div className="flex items-center justify-end gap-1 mt-1">
-            <span className="text-xs opacity-60">
-              {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
-            </span>
-            {msg.direction === "outgoing" && (
-              <>
-                {msg.status === "sent" && <CheckCircle className="w-3 h-3 opacity-60" />}
-                {msg.status === "failed" && <AlertCircle className="w-3 h-3 text-destructive" />}
-                {msg.status === "pending" && <Clock className="w-3 h-3 opacity-60" />}
-              </>
+            
+            {fileType && (
+              <div className="flex items-center gap-2 mb-2 p-2 rounded bg-background/20">
+                {getFileIcon(fileType)}
+                <span className="text-xs truncate">{fileName || "Файл"}</span>
+              </div>
             )}
+            
+            {msg.message_text && (
+              <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+            )}
+            
+            <div className="flex items-center justify-end gap-1 mt-1">
+              {isEdited && (
+                <span className="text-xs opacity-60 mr-1">ред.</span>
+              )}
+              <span className="text-xs opacity-60">
+                {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
+              </span>
+              {msg.direction === "outgoing" && (
+                <>
+                  {msg.status === "sent" && <CheckCircle className="w-3 h-3 opacity-60" />}
+                  {msg.status === "failed" && <AlertCircle className="w-3 h-3 text-destructive" />}
+                  {msg.status === "pending" && <Clock className="w-3 h-3 opacity-60" />}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -721,6 +851,40 @@ export function ContactTelegramChat({
           setSelectedFileType("video_note");
         }}
       />
+
+      {/* Edit Message Dialog */}
+      <Dialog open={!!editingMessage} onOpenChange={(open) => !open && setEditingMessage(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Редактировать сообщение</DialogTitle>
+          </DialogHeader>
+          <Textarea
+            value={editText}
+            onChange={(e) => setEditText(e.target.value)}
+            placeholder="Введите новый текст..."
+            className="min-h-[100px]"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingMessage(null)}>
+              Отмена
+            </Button>
+            <Button
+              onClick={() => {
+                if (editingMessage && editingMessage.message_id && editText.trim()) {
+                  editMutation.mutate({
+                    dbMessageId: editingMessage.id,
+                    messageId: editingMessage.message_id,
+                    text: editText.trim(),
+                  });
+                }
+              }}
+              disabled={!editText.trim() || editMutation.isPending}
+            >
+              {editMutation.isPending ? "Сохранение..." : "Сохранить"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
