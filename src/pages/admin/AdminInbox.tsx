@@ -479,14 +479,14 @@ export default function AdminInbox() {
                           Продукт
                         </Label>
                         <Select
-                          value={advancedFilters.productId}
-                          onValueChange={(v) => setAdvancedFilters(f => ({ ...f, productId: v }))}
+                          value={advancedFilters.productId || "all"}
+                          onValueChange={(v) => setAdvancedFilters(f => ({ ...f, productId: v === "all" ? "" : v }))}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Любой продукт" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">Любой продукт</SelectItem>
+                            <SelectItem value="all">Любой продукт</SelectItem>
                             {products?.map(p => (
                               <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                             ))}
