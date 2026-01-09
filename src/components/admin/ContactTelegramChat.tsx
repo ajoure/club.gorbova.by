@@ -39,6 +39,7 @@ import {
   Circle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { VideoNoteRecorder } from "./VideoNoteRecorder";
 
 interface ContactTelegramChatProps {
   userId: string;
@@ -125,6 +126,7 @@ export function ContactTelegramChat({
   const [selectedFileType, setSelectedFileType] = useState<"photo" | "video" | "audio" | "video_note" | "document" | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [showMediaMenu, setShowMediaMenu] = useState(false);
+  const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -536,15 +538,12 @@ export function ContactTelegramChat({
                     size="sm"
                     className="w-full justify-start gap-2"
                     onClick={() => {
-                      if (fileInputRef.current) {
-                        fileInputRef.current.accept = "video/mp4";
-                        fileInputRef.current.dataset.mediaType = "video_note";
-                        fileInputRef.current.click();
-                      }
+                      setShowMediaMenu(false);
+                      setShowVideoNoteRecorder(true);
                     }}
                   >
                     <Circle className="w-4 h-4" />
-                    Кружок
+                    Записать кружок
                   </Button>
                   <Button
                     variant="ghost"
@@ -627,6 +626,16 @@ export function ContactTelegramChat({
           Enter для отправки, Shift+Enter для новой строки
         </p>
       </div>
+
+      {/* Video Note Recorder */}
+      <VideoNoteRecorder
+        open={showVideoNoteRecorder}
+        onOpenChange={setShowVideoNoteRecorder}
+        onRecorded={(file) => {
+          setSelectedFile(file);
+          setSelectedFileType("video_note");
+        }}
+      />
     </div>
   );
 }
