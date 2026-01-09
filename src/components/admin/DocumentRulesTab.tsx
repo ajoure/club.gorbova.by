@@ -346,14 +346,14 @@ export function DocumentRulesTab() {
               <div className="space-y-2">
                 <Label>Продукт (опционально)</Label>
                 <Select
-                  value={formData.product_id}
-                  onValueChange={(v) => setFormData({ ...formData, product_id: v, tariff_id: "" })}
+                  value={formData.product_id || "__all__"}
+                  onValueChange={(v) => setFormData({ ...formData, product_id: v === "__all__" ? "" : v, tariff_id: "" })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Все продукты" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Все продукты</SelectItem>
+                    <SelectItem value="__all__">Все продукты</SelectItem>
                     {products.map(p => (
                       <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                     ))}
@@ -364,15 +364,15 @@ export function DocumentRulesTab() {
               <div className="space-y-2">
                 <Label>Тариф (опционально)</Label>
                 <Select
-                  value={formData.tariff_id}
-                  onValueChange={(v) => setFormData({ ...formData, tariff_id: v })}
+                  value={formData.tariff_id || "__all__"}
+                  onValueChange={(v) => setFormData({ ...formData, tariff_id: v === "__all__" ? "" : v })}
                   disabled={!formData.product_id}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Все тарифы" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Все тарифы</SelectItem>
+                    <SelectItem value="__all__">Все тарифы</SelectItem>
                     {tariffs.map(t => (
                       <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
                     ))}
