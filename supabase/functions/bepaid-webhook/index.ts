@@ -495,11 +495,29 @@ Deno.serve(async (req) => {
     const transaction = body.transaction || subscription?.last_transaction || null;
 
     // Get tracking_id from multiple possible locations
-    const orderId = body.tracking_id ||
+    const rawTrackingId = body.tracking_id ||
                     body.additional_data?.order_id ||
                     transaction?.tracking_id ||
                     subscription?.tracking_id ||
                     null;
+
+    // Parse tracking_id: format can be {order_id}_{offer_id} or just {order_id}
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let parsedOrderId: string | null = null;
+    let parsedOfferId: string | null = null;
+    
+    if (rawTrackingId) {
+      const parts = rawTrackingId.split('_');
+      if (parts.length >= 1 && uuidRegex.test(parts[0])) {
+        parsedOrderId = parts[0];
+        if (parts.length >= 2 && uuidRegex.test(parts[1])) {
+          parsedOfferId = parts[1];
+        }
+      }
+    }
+    
+    // For backward compatibility, orderId is the parsed order ID
+    const orderId = parsedOrderId;
 
     const transactionStatus = transaction?.status || null;
     const transactionUid = transaction?.uid || null;
@@ -507,7 +525,7 @@ Deno.serve(async (req) => {
     const subscriptionId = body.id || subscription?.id || null;
     const subscriptionState = body.state || subscription?.state || null;
 
-    console.log(`Processing bePaid webhook: order=${orderId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}, state=${subscriptionState}`);
+    console.log(`Processing bePaid webhook: tracking=${rawTrackingId}, orderId=${orderId}, offerId=${parsedOfferId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}, state=${subscriptionState}`);
 
     // ---------------------------------------------------------------------
     // V2 direct-charge support
@@ -523,6 +541,105 @@ Deno.serve(async (req) => {
         .maybeSingle();
 
       if (!p2Err && p2) paymentV2 = p2;
+    }
+    
+    // ---------------------------------------------------------------------
+    // ORPHAN ORDER DETECTION: If order_id from tracking doesn't exist,
+    // and transaction is successful, create the missing order automatically
+    // ---------------------------------------------------------------------
+    if (!paymentV2 && orderId && transactionStatus === 'successful' && transaction?.amount) {
+      // Check if order exists in orders_v2
+      const { data: existingOrder } = await supabase
+        .from('orders_v2')
+        .select('id')
+        .eq('id', orderId)
+        .maybeSingle();
+      
+      // Also check legacy orders table
+      const { data: legacyOrder } = await supabase
+        .from('orders')
+        .select('id')
+        .eq('id', orderId)
+        .maybeSingle();
+      
+      if (!existingOrder && !legacyOrder) {
+        // ORDER NOT FOUND - this is the Людмила case!
+        console.warn(`[WEBHOOK] Orphan payment detected! Order ${orderId} doesn't exist. Creating from webhook data...`);
+        
+        try {
+          const createdOrder = await createOrderFromWebhook(
+            supabase,
+            orderId,
+            parsedOfferId,
+            transaction,
+            subscription,
+            body
+          );
+          
+          if (createdOrder) {
+            console.log(`[WEBHOOK] Created orphan order: ${createdOrder.order_number}`);
+            
+            // Notify admins immediately
+            try {
+              await supabase.functions.invoke('telegram-notify-admins', {
+                body: {
+                  message: `🔧 Автоматически создан пропущенный заказ!\n\n` +
+                    `Заказ: ${createdOrder.order_number}\n` +
+                    `Email: ${transaction.customer?.email || 'N/A'}\n` +
+                    `Сумма: ${transaction.amount / 100} ${transaction.currency || 'BYN'}\n` +
+                    `bePaid UID: ${transactionUid || 'N/A'}\n` +
+                    `Подписка: ${subscriptionId || 'N/A'}`,
+                  type: 'orphan_order_created',
+                },
+              });
+            } catch (notifyErr) {
+              console.error('Failed to notify admins:', notifyErr);
+            }
+            
+            // Return success - order was created and processed
+            return new Response(
+              JSON.stringify({ 
+                success: true, 
+                message: 'Orphan order created and processed',
+                order_number: createdOrder.order_number,
+              }),
+              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        } catch (createErr) {
+          console.error('[WEBHOOK] Failed to create orphan order:', createErr);
+          
+          // Queue for manual review instead of failing
+          await supabase.from('payment_reconcile_queue').insert({
+            bepaid_uid: transactionUid,
+            tracking_id: rawTrackingId,
+            amount: transaction.amount / 100,
+            currency: transaction.currency || 'BYN',
+            customer_email: transaction.customer?.email,
+            raw_payload: body,
+            source: 'webhook_orphan',
+            status: 'pending',
+            last_error: `Failed to create order: ${String(createErr)}`,
+          });
+          
+          // Notify admins
+          try {
+            await supabase.functions.invoke('telegram-notify-admins', {
+              body: {
+                message: `⚠️ Не удалось создать пропущенный заказ\n\n` +
+                  `Email: ${transaction.customer?.email || 'N/A'}\n` +
+                  `Сумма: ${transaction.amount / 100} ${transaction.currency || 'BYN'}\n` +
+                  `bePaid UID: ${transactionUid || 'N/A'}\n` +
+                  `Ошибка: ${String(createErr)}\n\n` +
+                  `Добавлено в очередь на ручную обработку.`,
+                type: 'orphan_order_failed',
+              },
+            });
+          } catch (notifyErr) {
+            console.error('Failed to notify admins:', notifyErr);
+          }
+        }
+      }
     }
 
     if (paymentV2) {
@@ -2014,3 +2131,212 @@ ${userName}, к сожалению, не удалось провести опл�
     );
   }
 });
+
+/**
+ * Creates an order from webhook data when the original order is missing.
+ * This handles the "Людмила case" where bePaid subscription was created
+ * but our order creation failed/timed out.
+ */
+async function createOrderFromWebhook(
+  supabase: any,
+  orderId: string,
+  offerId: string | null,
+  transaction: any,
+  subscription: any,
+  body: any
+): Promise<any> {
+  const now = new Date();
+  const amountBYN = transaction.amount / 100;
+  const currency = transaction.currency || 'BYN';
+  const customerEmail = transaction.customer?.email?.toLowerCase();
+  
+  if (!customerEmail) {
+    throw new Error('Customer email is required to create order');
+  }
+  
+  // Find or create user
+  let userId: string | null = null;
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('user_id')
+    .eq('email', customerEmail)
+    .maybeSingle();
+
+  userId = profile?.user_id || null;
+  
+  // Get offer details
+  let productId: string | null = null;
+  let tariffId: string | null = null;
+  
+  if (offerId) {
+    const { data: offer } = await supabase
+      .from('tariff_offers')
+      .select(`
+        id,
+        tariff_id,
+        tariffs!inner (
+          id,
+          product_id
+        )
+      `)
+      .eq('id', offerId)
+      .maybeSingle();
+
+    if (offer) {
+      tariffId = offer.tariff_id;
+      productId = offer.tariffs?.product_id;
+    }
+  }
+
+  // Generate order number
+  const yearPart = now.getFullYear().toString().slice(-2);
+  const { count } = await supabase
+    .from('orders_v2')
+    .select('id', { count: 'exact', head: true })
+    .like('order_number', `ORD-${yearPart}-%`);
+
+  const seqPart = ((count || 0) + 1).toString().padStart(5, '0');
+  const orderNumber = `ORD-${yearPart}-${seqPart}`;
+
+  // Extract subscription ID from body
+  const bepaidSubscriptionId = body.id || subscription?.id || null;
+
+  // Create order
+  const { data: order, error } = await supabase
+    .from('orders_v2')
+    .insert({
+      id: orderId,
+      order_number: orderNumber,
+      user_id: userId,
+      product_id: productId,
+      tariff_id: tariffId,
+      base_price: amountBYN,
+      final_price: amountBYN,
+      currency: currency,
+      status: 'paid',
+      customer_email: customerEmail,
+      customer_phone: subscription?.customer?.phone || null,
+      bepaid_subscription_id: bepaidSubscriptionId,
+      reconcile_source: 'webhook_orphan',
+      paid_amount: amountBYN,
+      meta: {
+        reconstructed_from_webhook: true,
+        bepaid_uid: transaction.uid,
+        bepaid_subscription_id: bepaidSubscriptionId,
+        original_tracking_id: transaction.tracking_id,
+        reconstructed_at: now.toISOString(),
+        customer_first_name: transaction.customer?.first_name || subscription?.customer?.first_name,
+        customer_last_name: transaction.customer?.last_name || subscription?.customer?.last_name,
+      },
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  // Create payment record
+  await supabase.from('payments_v2').insert({
+    order_id: order.id,
+    amount: amountBYN,
+    currency: currency,
+    provider: 'bepaid',
+    provider_payment_id: transaction.uid,
+    status: 'succeeded',
+    paid_at: transaction.paid_at || now.toISOString(),
+    card_brand: transaction.credit_card?.brand,
+    card_last4: transaction.credit_card?.last_4,
+    provider_response: body,
+  });
+
+  // Create subscription if user and product known
+  if (userId && productId) {
+    let accessEndAt = new Date();
+    accessEndAt.setMonth(accessEndAt.getMonth() + 1);
+
+    if (tariffId) {
+      const { data: tariff } = await supabase
+        .from('tariffs')
+        .select('access_duration_days')
+        .eq('id', tariffId)
+        .single();
+
+      if (tariff?.access_duration_days) {
+        accessEndAt = new Date();
+        accessEndAt.setDate(accessEndAt.getDate() + tariff.access_duration_days);
+      }
+    }
+
+    await supabase.from('subscriptions_v2').insert({
+      order_id: order.id,
+      user_id: userId,
+      product_id: productId,
+      tariff_id: tariffId,
+      status: 'active',
+      access_start_at: now.toISOString(),
+      access_end_at: accessEndAt.toISOString(),
+      is_trial: false,
+      meta: {
+        source: 'webhook_orphan_reconstruction',
+        bepaid_subscription_id: bepaidSubscriptionId,
+        reconstructed_at: now.toISOString(),
+      },
+    });
+
+    // Create entitlement
+    const { data: product } = await supabase
+      .from('products_v2')
+      .select('code')
+      .eq('id', productId)
+      .single();
+
+    if (product?.code) {
+      await supabase.from('entitlements').upsert(
+        {
+          user_id: userId,
+          product_code: product.code,
+          status: 'active',
+          expires_at: accessEndAt.toISOString(),
+          meta: { source: 'webhook_reconstruction', order_id: order.id },
+        },
+        { onConflict: 'user_id,product_code' }
+      );
+    }
+
+    // Grant Telegram access
+    try {
+      await supabase.functions.invoke('telegram-grant-access', {
+        body: { userId, productId },
+      });
+    } catch (e) {
+      console.error('Error granting Telegram access:', e);
+    }
+
+    // Save card token if available
+    const cardToken = transaction.credit_card?.token || subscription?.credit_card?.token;
+    if (cardToken) {
+      const { data: existingMethod } = await supabase
+        .from('payment_methods')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('provider_token', cardToken)
+        .maybeSingle();
+
+      if (!existingMethod) {
+        await supabase.from('payment_methods').insert({
+          user_id: userId,
+          provider: 'bepaid',
+          provider_token: cardToken,
+          brand: transaction.credit_card?.brand,
+          last4: transaction.credit_card?.last_4,
+          exp_month: transaction.credit_card?.exp_month,
+          exp_year: transaction.credit_card?.exp_year,
+          status: 'active',
+          is_default: true,
+        });
+      }
+    }
+  }
+
+  console.log(`[WEBHOOK] Created orphan order ${orderNumber} for ${customerEmail}`);
+  return order;
+}
