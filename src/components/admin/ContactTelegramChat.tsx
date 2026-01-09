@@ -34,6 +34,9 @@ import {
   Link,
   Unlink,
   Bell,
+  Video,
+  Music,
+  Circle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -119,7 +122,9 @@ export function ContactTelegramChat({
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFileType, setSelectedFileType] = useState<"photo" | "video" | "audio" | "video_note" | "document" | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [showMediaMenu, setShowMediaMenu] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -192,7 +197,7 @@ export function ContactTelegramChat({
 
   // Send message mutation
   const sendMutation = useMutation({
-    mutationFn: async ({ text, file }: { text?: string; file?: File }) => {
+    mutationFn: async ({ text, file, fileType }: { text?: string; file?: File; fileType?: string }) => {
       let fileData: { type: string; name: string; base64: string } | undefined;
       
       if (file) {
@@ -202,10 +207,13 @@ export function ContactTelegramChat({
           new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
         );
         
-        let type = "document";
-        if (file.type.startsWith("image/")) type = "photo";
-        else if (file.type.startsWith("video/")) type = "video";
-        else if (file.type.startsWith("audio/")) type = "audio";
+        // Use provided fileType or auto-detect
+        let type = fileType || "document";
+        if (!fileType) {
+          if (file.type.startsWith("image/")) type = "photo";
+          else if (file.type.startsWith("video/")) type = "video";
+          else if (file.type.startsWith("audio/")) type = "audio";
+        }
         
         fileData = { type, name: file.name, base64 };
       }
@@ -239,6 +247,7 @@ export function ContactTelegramChat({
     onSuccess: () => {
       setMessage("");
       setSelectedFile(null);
+      setSelectedFileType(null);
       setIsUploading(false);
       refetch();
     },
@@ -258,7 +267,7 @@ export function ContactTelegramChat({
   const handleSend = () => {
     const trimmed = message.trim();
     if (!trimmed && !selectedFile) return;
-    sendMutation.mutate({ text: trimmed, file: selectedFile || undefined });
+    sendMutation.mutate({ text: trimmed, file: selectedFile || undefined, fileType: selectedFileType || undefined });
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -268,14 +277,22 @@ export function ContactTelegramChat({
     }
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, type?: "photo" | "video" | "audio" | "video_note" | "document") => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 20 * 1024 * 1024) {
-        toast.error("Файл слишком большой (макс. 20 МБ)");
+      // Validate file size
+      const maxSize = type === "video" || type === "video_note" ? 50 * 1024 * 1024 : 20 * 1024 * 1024;
+      if (file.size > maxSize) {
+        toast.error(`Файл слишком большой (макс. ${maxSize / 1024 / 1024} МБ)`);
         return;
       }
       setSelectedFile(file);
+      setSelectedFileType(type || null);
+      setShowMediaMenu(false);
+    }
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
   };
 
@@ -283,8 +300,11 @@ export function ContactTelegramChat({
     setMessage(prev => prev + emoji);
   };
 
-  const getFileIcon = (fileType: string | null) => {
+  const getFileIcon = (fileType: string | null | undefined) => {
     if (fileType === "photo") return <ImageIcon className="w-4 h-4" />;
+    if (fileType === "video") return <Video className="w-4 h-4" />;
+    if (fileType === "audio") return <Music className="w-4 h-4" />;
+    if (fileType === "video_note") return <Circle className="w-4 h-4" />;
     return <FileText className="w-4 h-4" />;
   };
 
@@ -428,15 +448,21 @@ export function ContactTelegramChat({
       {/* Selected file preview */}
       {selectedFile && (
         <div className="flex items-center gap-2 px-2 py-1 bg-muted rounded-md mb-2">
-          <Paperclip className="w-4 h-4 text-muted-foreground" />
+          {getFileIcon(selectedFileType)}
           <span className="text-sm truncate flex-1">{selectedFile.name}</span>
+          {selectedFileType === "video_note" && (
+            <Badge variant="secondary" className="text-xs">Кружок</Badge>
+          )}
           <span className="text-xs text-muted-foreground">
             {(selectedFile.size / 1024).toFixed(0)} KB
           </span>
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setSelectedFile(null)}
+            onClick={() => {
+              setSelectedFile(null);
+              setSelectedFileType(null);
+            }}
             className="h-6 w-6 p-0"
           >
             <X className="w-4 h-4" />
@@ -469,20 +495,115 @@ export function ContactTelegramChat({
               </PopoverContent>
             </Popover>
             
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="h-8 w-8 p-0"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Paperclip className="w-4 h-4" />
-            </Button>
+            <Popover open={showMediaMenu} onOpenChange={setShowMediaMenu}>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                  <Paperclip className="w-4 h-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-48 p-2" align="start">
+                <div className="space-y-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start gap-2"
+                    onClick={() => {
+                      if (fileInputRef.current) {
+                        fileInputRef.current.accept = "image/*";
+                        fileInputRef.current.click();
+                      }
+                    }}
+                  >
+                    <ImageIcon className="w-4 h-4" />
+                    Фото
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start gap-2"
+                    onClick={() => {
+                      if (fileInputRef.current) {
+                        fileInputRef.current.accept = "video/*";
+                        fileInputRef.current.click();
+                      }
+                    }}
+                  >
+                    <Video className="w-4 h-4" />
+                    Видео
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start gap-2"
+                    onClick={() => {
+                      if (fileInputRef.current) {
+                        fileInputRef.current.accept = "video/mp4";
+                        fileInputRef.current.dataset.mediaType = "video_note";
+                        fileInputRef.current.click();
+                      }
+                    }}
+                  >
+                    <Circle className="w-4 h-4" />
+                    Кружок
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start gap-2"
+                    onClick={() => {
+                      if (fileInputRef.current) {
+                        fileInputRef.current.accept = "audio/*";
+                        fileInputRef.current.click();
+                      }
+                    }}
+                  >
+                    <Music className="w-4 h-4" />
+                    Аудио
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start gap-2"
+                    onClick={() => {
+                      if (fileInputRef.current) {
+                        fileInputRef.current.accept = "*/*";
+                        fileInputRef.current.click();
+                      }
+                    }}
+                  >
+                    <FileText className="w-4 h-4" />
+                    Документ
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
             <input
               ref={fileInputRef}
               type="file"
               className="hidden"
-              onChange={handleFileSelect}
-              accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar"
+              onChange={(e) => {
+                const mediaType = fileInputRef.current?.dataset.mediaType as "video_note" | undefined;
+                const file = e.target.files?.[0];
+                if (file) {
+                  let type: "photo" | "video" | "audio" | "video_note" | "document" | undefined;
+                  if (mediaType === "video_note") {
+                    type = "video_note";
+                  } else if (file.type.startsWith("image/")) {
+                    type = "photo";
+                  } else if (file.type.startsWith("video/")) {
+                    type = "video";
+                  } else if (file.type.startsWith("audio/")) {
+                    type = "audio";
+                  } else {
+                    type = "document";
+                  }
+                  handleFileSelect(e, type);
+                }
+                // Reset the data attribute
+                if (fileInputRef.current) {
+                  delete fileInputRef.current.dataset.mediaType;
+                }
+              }}
             />
           </div>
           
