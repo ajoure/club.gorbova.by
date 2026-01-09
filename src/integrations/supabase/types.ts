@@ -1703,6 +1703,7 @@ export type Database = {
       orders_v2: {
         Row: {
           base_price: number
+          bepaid_subscription_id: string | null
           created_at: string
           currency: string
           customer_email: string | null
@@ -1723,6 +1724,7 @@ export type Database = {
           pricing_stage_id: string | null
           product_id: string | null
           purchase_snapshot: Json | null
+          reconcile_source: string | null
           status: Database["public"]["Enums"]["order_status"]
           tariff_id: string | null
           trial_end_at: string | null
@@ -1731,6 +1733,7 @@ export type Database = {
         }
         Insert: {
           base_price: number
+          bepaid_subscription_id?: string | null
           created_at?: string
           currency?: string
           customer_email?: string | null
@@ -1751,6 +1754,7 @@ export type Database = {
           pricing_stage_id?: string | null
           product_id?: string | null
           purchase_snapshot?: Json | null
+          reconcile_source?: string | null
           status?: Database["public"]["Enums"]["order_status"]
           tariff_id?: string | null
           trial_end_at?: string | null
@@ -1759,6 +1763,7 @@ export type Database = {
         }
         Update: {
           base_price?: number
+          bepaid_subscription_id?: string | null
           created_at?: string
           currency?: string
           customer_email?: string | null
@@ -1779,6 +1784,7 @@ export type Database = {
           pricing_stage_id?: string | null
           product_id?: string | null
           purchase_snapshot?: Json | null
+          reconcile_source?: string | null
           status?: Database["public"]["Enums"]["order_status"]
           tariff_id?: string | null
           trial_end_at?: string | null
