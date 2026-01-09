@@ -561,7 +561,7 @@ export default function AdminContacts() {
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       checked={selectedContactIds.has(contact.id)}
-                      onCheckedChange={() => toggleSelection(contact.id, false)}
+                      onCheckedChange={() => toggleSelection(contact.id, true)}
                     />
                   </TableCell>
                   <TableCell>

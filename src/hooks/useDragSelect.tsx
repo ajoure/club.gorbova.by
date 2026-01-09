@@ -13,12 +13,16 @@ interface SelectionBox {
   endY: number;
 }
 
+const DRAG_THRESHOLD = 8; // pixels - minimum movement to start drag-select
+
 export function useDragSelect<T>({ items, getItemId, onSelectionChange }: DragSelectOptions<T>) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isDragging, setIsDragging] = useState(false);
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const dragStartRef = useRef<{ x: number; y: number; ctrlKey: boolean } | null>(null);
+  const hasDragStartedRef = useRef(false);
 
   // Register item ref
   const registerItemRef = useCallback((id: string, element: HTMLElement | null) => {
@@ -107,48 +111,60 @@ export function useDragSelect<T>({ items, getItemId, onSelectionChange }: DragSe
     );
   };
 
-  // Mouse down handler
+  // Mouse down handler - just record starting position
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    // Only start drag if clicking on container background, not on items or interactive elements
-    const target = e.target as HTMLElement;
-    if (target.closest("[data-selectable-item]")) {
-      return;
-    }
-    
     // Don't start drag on interactive elements
+    const target = e.target as HTMLElement;
     if (target.closest("button, input, [role=checkbox], a, [data-radix-collection-item]")) {
       return;
     }
 
     if (e.button !== 0) return; // Only left click
 
-    const containerRect = containerRef.current?.getBoundingClientRect();
-    if (!containerRect) return;
-
-    const startX = e.clientX;
-    const startY = e.clientY;
-
-    setIsDragging(true);
-    setSelectionBox({ startX, startY, endX: startX, endY: startY });
-
-    if (!e.ctrlKey && !e.metaKey) {
-      setSelectedIds(new Set());
-    }
+    // Record start position but don't start dragging yet
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      ctrlKey: e.ctrlKey || e.metaKey,
+    };
+    hasDragStartedRef.current = false;
   }, []);
 
-  // Mouse move handler
+  // Mouse move and up handlers
   useEffect(() => {
-    if (!isDragging) return;
-
     const handleMouseMove = (e: MouseEvent) => {
-      setSelectionBox((prev) => {
-        if (!prev) return null;
-        return { ...prev, endX: e.clientX, endY: e.clientY };
-      });
+      if (!dragStartRef.current) return;
+
+      const dx = Math.abs(e.clientX - dragStartRef.current.x);
+      const dy = Math.abs(e.clientY - dragStartRef.current.y);
+
+      // Check if we've moved past the threshold
+      if (!hasDragStartedRef.current && (dx > DRAG_THRESHOLD || dy > DRAG_THRESHOLD)) {
+        hasDragStartedRef.current = true;
+        setIsDragging(true);
+        
+        // Clear selection if not holding ctrl
+        if (!dragStartRef.current.ctrlKey) {
+          setSelectedIds(new Set());
+        }
+        
+        setSelectionBox({
+          startX: dragStartRef.current.x,
+          startY: dragStartRef.current.y,
+          endX: e.clientX,
+          endY: e.clientY,
+        });
+      } else if (hasDragStartedRef.current) {
+        // Update selection box
+        setSelectionBox((prev) => {
+          if (!prev) return null;
+          return { ...prev, endX: e.clientX, endY: e.clientY };
+        });
+      }
     };
 
     const handleMouseUp = () => {
-      if (selectionBox) {
+      if (hasDragStartedRef.current && selectionBox) {
         // Find items that intersect with selection box
         const intersectingIds: string[] = [];
         
@@ -166,6 +182,9 @@ export function useDragSelect<T>({ items, getItemId, onSelectionChange }: DragSe
         });
       }
 
+      // Reset state
+      dragStartRef.current = null;
+      hasDragStartedRef.current = false;
       setIsDragging(false);
       setSelectionBox(null);
     };
@@ -177,7 +196,7 @@ export function useDragSelect<T>({ items, getItemId, onSelectionChange }: DragSe
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDragging, selectionBox]);
+  }, [selectionBox]);
 
   // Keyboard shortcuts
   useEffect(() => {

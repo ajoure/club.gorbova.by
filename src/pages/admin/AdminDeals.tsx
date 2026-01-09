@@ -497,7 +497,7 @@ export default function AdminDeals() {
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <Checkbox
                         checked={selectedDealIds.has(deal.id)}
-                        onCheckedChange={() => toggleSelection(deal.id, false)}
+                        onCheckedChange={() => toggleSelection(deal.id, true)}
                       />
                     </TableCell>
                     <TableCell>

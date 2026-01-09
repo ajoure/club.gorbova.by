@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { format, addDays, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -148,6 +148,22 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const [isImpersonating, setIsImpersonating] = useState(false);
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [isFetchingPhoto, setIsFetchingPhoto] = useState(false);
+  const [activeTab, setActiveTab] = useState("profile");
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Reset scroll position when tab changes
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+  }, [activeTab]);
+
+  // Reset tab when sheet opens with new contact
+  useEffect(() => {
+    if (open) {
+      setActiveTab("profile");
+    }
+  }, [open, contact?.id]);
 
   // Fetch profile photo from Telegram
   const fetchPhotoFromTelegram = async () => {
@@ -846,7 +862,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           </div>
         </SheetHeader>
 
-        <Tabs defaultValue="profile" className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Scrollable tabs for mobile */}
           <div className="flex-shrink-0 border-b overflow-x-auto">
             <TabsList className="mx-4 sm:mx-6 my-2 sm:my-3 inline-flex w-auto whitespace-nowrap">
@@ -882,7 +898,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </TabsList>
           </div>
 
-          <div className="flex-1 overflow-y-auto">
+          <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
             <div className="px-4 sm:px-6 py-4 pb-24">
             <TabsContent value="profile" className="m-0 space-y-4">
               <Card>
@@ -1164,7 +1180,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </TabsContent>
 
             {/* Telegram Chat Tab */}
-            <TabsContent value="telegram" className="m-0 flex flex-col h-[calc(100vh-280px)] min-h-[400px]">
+            <TabsContent value="telegram" className="m-0 space-y-4">
               {/* Telegram Profile Info Card */}
               {contact.telegram_user_id ? (
                 <Card>
@@ -1269,7 +1285,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </TabsContent>
 
             {/* Email History Tab */}
-            <TabsContent value="email" className="m-0 flex flex-col h-[calc(100vh-280px)] min-h-[400px]">
+            <TabsContent value="email" className="m-0 space-y-4">
               <ContactEmailHistory
                 userId={contact.user_id}
                 email={contact.email}
