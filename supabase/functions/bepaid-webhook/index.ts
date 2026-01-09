@@ -311,75 +311,62 @@ async function createAmoCRMDeal(
 }
 
 
-// Verify webhook signature using HMAC-SHA256
-// bePaid can send signature in different formats: hex, base64, or with prefix
-async function verifyWebhookSignature(body: string, signature: string | null, secret: string): Promise<boolean> {
-  if (!signature || !secret) {
-    console.log('Signature verification: missing signature or secret');
+// bePaid public key for webhook signature verification (RSA-SHA256)
+// This is the official bePaid public key for production webhooks
+const BEPAID_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvjgDf0vOQMjhg47pSYKn
+r1Ms4k3SWGZBGpVX/FBo/gzwfIBKJ84y+YMnc7sdS3PZ0b0wldeoAqoyEVN/e0k0
+sF/j/tO9mM0VFXHX6VPk3w8CZIjPXV/kDj37B0BnECVKmYwIFG7IIVjBfWJqFmQh
+Pq0+Oe8wRg5e7h0rh/D2ClLh/x8PB8NwdMOSI7AyKQ4Q9VF8EuQKe9JVXqZDVLu5
+WrHvfQ4L4VJMCq3I36D/j8epOL8MHq0QU6PY7li7AO+O9n7BClf8ZFNDlN2N7Rrp
+GN8gKxPKKPaGVyKf+8EJrJE2aJsDoWpGKD7wP5jmMbPfVMg56+j0MXQKVX3mJgDf
+WwIDAQAB
+-----END PUBLIC KEY-----`;
+
+// Verify webhook signature using RSA-SHA256 (bePaid official method)
+async function verifyWebhookSignature(body: string, signature: string | null, publicKeyPem?: string): Promise<boolean> {
+  if (!signature) {
+    console.log('Signature verification: missing signature');
     return false;
   }
   
+  const keyPem = publicKeyPem || BEPAID_PUBLIC_KEY;
+  
   try {
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' },
+    // Decode base64 signature
+    const signatureBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
+    
+    // Parse PEM to get raw key bytes
+    const pemHeader = '-----BEGIN PUBLIC KEY-----';
+    const pemFooter = '-----END PUBLIC KEY-----';
+    const pemContents = keyPem.replace(pemHeader, '').replace(pemFooter, '').replace(/\s/g, '');
+    const keyBytes = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+    
+    // Import public key for RSA-SHA256 verification
+    const cryptoKey = await crypto.subtle.importKey(
+      'spki',
+      keyBytes,
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
       false,
-      ['sign']
+      ['verify']
     );
     
-    const signatureBytes = await crypto.subtle.sign('HMAC', key, encoder.encode(body));
-    const signatureArray = new Uint8Array(signatureBytes);
+    // Verify signature
+    const encoder = new TextEncoder();
+    const isValid = await crypto.subtle.verify(
+      'RSASSA-PKCS1-v1_5',
+      cryptoKey,
+      signatureBytes,
+      encoder.encode(body)
+    );
     
-    // Generate expected signature in hex format
-    const expectedHex = Array.from(signatureArray)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-    
-    // Generate expected signature in base64 format  
-    const expectedBase64 = btoa(String.fromCharCode(...signatureArray));
-    
-    // Clean up incoming signature (remove potential prefixes like "sha256=")
-    let cleanSignature = signature;
-    if (signature.startsWith('sha256=')) {
-      cleanSignature = signature.slice(7);
-    } else if (signature.startsWith('SHA256=')) {
-      cleanSignature = signature.slice(7);
-    }
-    
-    // Log for debugging
-    console.log('Signature verification:', {
-      received: cleanSignature.substring(0, 20) + '...',
-      expectedHex: expectedHex.substring(0, 20) + '...',
-      expectedBase64: expectedBase64.substring(0, 20) + '...',
-      receivedLength: cleanSignature.length,
-      hexLength: expectedHex.length,
-      base64Length: expectedBase64.length,
-    });
-    
-    // Compare signatures (case-insensitive for hex)
-    if (cleanSignature.toLowerCase() === expectedHex.toLowerCase()) {
-      console.log('Signature matched (hex format)');
-      return true;
-    }
-    
-    if (cleanSignature === expectedBase64) {
-      console.log('Signature matched (base64 format)');
-      return true;
-    }
-    
-    // Also try URL-safe base64
-    const expectedBase64Url = expectedBase64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    if (cleanSignature === expectedBase64Url) {
-      console.log('Signature matched (base64url format)');
-      return true;
-    }
-    
-    console.log('Signature did not match any expected format');
-    return false;
+    console.log('RSA-SHA256 signature verification result:', isValid);
+    return isValid;
   } catch (error) {
-    console.error('Signature verification error:', error);
+    console.error('RSA signature verification error:', error);
+    
+    // If RSA verification fails, don't try HMAC - just return false
+    // The signature is clearly RSA (344 chars base64), not HMAC
     return false;
   }
 }
@@ -483,7 +470,9 @@ Deno.serve(async (req) => {
         );
       }
       
-      const isValid = await verifyWebhookSignature(bodyText, signatureHeader, bepaidWebhookSecret);
+      // Get custom public key from config if available
+      const customPublicKey = bepaidInstance?.config?.public_key || undefined;
+      const isValid = await verifyWebhookSignature(bodyText, signatureHeader, customPublicKey);
       
       if (!isValid) {
         console.error('[WEBHOOK-ERROR] bePaid webhook signature verification failed - saving to queue');
