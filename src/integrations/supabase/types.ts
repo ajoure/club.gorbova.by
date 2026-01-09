@@ -3683,6 +3683,7 @@ export type Database = {
           direction: string
           error_message: string | null
           id: string
+          is_read: boolean | null
           message_id: number | null
           message_text: string | null
           meta: Json | null
@@ -3698,6 +3699,7 @@ export type Database = {
           direction: string
           error_message?: string | null
           id?: string
+          is_read?: boolean | null
           message_id?: number | null
           message_text?: string | null
           meta?: Json | null
@@ -3713,6 +3715,7 @@ export type Database = {
           direction?: string
           error_message?: string | null
           id?: string
+          is_read?: boolean | null
           message_id?: number | null
           message_text?: string | null
           meta?: Json | null

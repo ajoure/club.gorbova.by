@@ -57,6 +57,7 @@ import LegalDetailsSettings from "./pages/settings/LegalDetails";
 import AdminInstallments from "./pages/admin/AdminInstallments";
 import AdminConsents from "./pages/admin/AdminConsents";
 import AdminPreregistrations from "./pages/admin/AdminPreregistrations";
+import AdminInbox from "./pages/admin/AdminInbox";
 import Products from "./pages/Products";
 import AdminExecutors from "./pages/admin/AdminExecutors";
 import AdminDocumentTemplates from "./pages/admin/AdminDocumentTemplates";
@@ -116,6 +117,7 @@ const App = () => (
               
               {/* Admin routes - CRM */}
               <Route path="/admin" element={<Navigate to="/admin/deals" replace />} />
+              <Route path="/admin/inbox" element={<ProtectedRoute><AdminInbox /></ProtectedRoute>} />
               <Route path="/admin/contacts" element={<ProtectedRoute><AdminLayout><AdminContacts /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/contacts/duplicates" element={<ProtectedRoute><AdminLayout><AdminDuplicates /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/deals" element={<ProtectedRoute><AdminLayout><AdminDeals /></AdminLayout></ProtectedRoute>} />

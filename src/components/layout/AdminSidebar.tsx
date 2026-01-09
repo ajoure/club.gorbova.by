@@ -2,6 +2,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Sidebar,
@@ -38,6 +39,7 @@ import {
   ClipboardList,
   Building2,
   FileStack,
+  Inbox,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -46,6 +48,7 @@ export function AdminSidebar() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { hasPermission, hasAnyPermission } = usePermissions();
+  const unreadMessagesCount = useUnreadMessagesCount();
   const collapsed = state === "collapsed";
 
   // Fetch duplicate count
@@ -81,6 +84,7 @@ export function AdminSidebar() {
   const hasContentPermission = hasAnyPermission(["content.view", "content.edit", "content.publish"]);
   const hasAuditPermission = hasPermission("audit.view");
 
+  const isInboxActive = location.pathname === "/admin/inbox";
   const isIntegrationsActive = location.pathname.startsWith("/admin/integrations");
   const isContactsActive = location.pathname === "/admin/contacts" || location.pathname.startsWith("/admin/contacts/");
   const isDealsActive = location.pathname === "/admin/deals" || location.pathname.startsWith("/admin/deals/");
@@ -123,7 +127,43 @@ export function AdminSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {/* Сделки - первыми */}
+              {/* Входящие */}
+              {hasClientsPermission && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isInboxActive}
+                    tooltip={collapsed ? "Входящие" : undefined}
+                  >
+                    <NavLink
+                      to="/admin/inbox"
+                      end
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary"
+                    >
+                      <Inbox className="h-5 w-5 shrink-0" />
+                      {!collapsed && (
+                        <>
+                          <span className="flex-1">Входящие</span>
+                          {unreadMessagesCount > 0 && (
+                            <Badge 
+                              variant="destructive" 
+                              className="h-5 min-w-5 px-1.5 text-xs"
+                            >
+                              {unreadMessagesCount}
+                            </Badge>
+                          )}
+                        </>
+                      )}
+                      {collapsed && unreadMessagesCount > 0 && (
+                        <span className="absolute top-0 right-0 h-2 w-2 bg-destructive rounded-full" />
+                      )}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* Сделки */}
               {hasEntitlementsPermission && (
                 <SidebarMenuItem>
                   <SidebarMenuButton
