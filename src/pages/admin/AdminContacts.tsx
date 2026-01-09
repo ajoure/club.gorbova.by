@@ -40,6 +40,7 @@ import {
   Handshake,
   RefreshCw,
   Ghost,
+  Camera,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
@@ -331,6 +332,67 @@ export default function AdminContacts() {
     setShowDeleteDialog(false);
   };
 
+  // Bulk fetch photos mutation
+  const [isFetchingPhotos, setIsFetchingPhotos] = useState(false);
+  const fetchPhotosMutation = useMutation({
+    mutationFn: async () => {
+      // Get contacts with telegram_user_id but no avatar_url
+      const contactsToFetch = contacts?.filter(c => c.telegram_user_id && !c.avatar_url) || [];
+      
+      if (contactsToFetch.length === 0) {
+        throw new Error("Нет контактов для загрузки фото");
+      }
+
+      let successCount = 0;
+      let errorCount = 0;
+
+      for (const contact of contactsToFetch) {
+        try {
+          const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
+            body: {
+              action: "fetch_profile_photo",
+              user_id: contact.user_id,
+              telegram_user_id: contact.telegram_user_id,
+            },
+          });
+
+          if (error) {
+            errorCount++;
+          } else if (data?.success) {
+            successCount++;
+          } else {
+            errorCount++;
+          }
+        } catch {
+          errorCount++;
+        }
+      }
+
+      return { successCount, errorCount, total: contactsToFetch.length };
+    },
+    onSuccess: ({ successCount, errorCount, total }) => {
+      if (successCount > 0) {
+        toast.success(`Загружено ${successCount} из ${total} фото`);
+      }
+      if (errorCount > 0) {
+        toast.warning(`${errorCount} фото не удалось загрузить`);
+      }
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+      setIsFetchingPhotos(false);
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + (error as Error).message);
+      setIsFetchingPhotos(false);
+    },
+  });
+
+  const handleFetchPhotos = () => {
+    setIsFetchingPhotos(true);
+    fetchPhotosMutation.mutate();
+  };
+
+  const contactsWithoutPhoto = contacts?.filter(c => c.telegram_user_id && !c.avatar_url).length || 0;
+
   return (
     <div className="space-y-6 pb-24">
       {/* Header */}
@@ -353,6 +415,23 @@ export default function AdminContacts() {
               Дубли
               <Badge variant="destructive" className="ml-2 h-5 min-w-5 px-1.5 text-xs">
                 {duplicateCount}
+              </Badge>
+            </Button>
+          )}
+          {contactsWithoutPhoto > 0 && (
+            <Button 
+              variant="outline" 
+              onClick={handleFetchPhotos}
+              disabled={isFetchingPhotos}
+            >
+              {isFetchingPhotos ? (
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Camera className="w-4 h-4 mr-2" />
+              )}
+              Фото TG
+              <Badge variant="secondary" className="ml-2 h-5 min-w-5 px-1.5 text-xs">
+                {contactsWithoutPhoto}
               </Badge>
             </Button>
           )}
