@@ -132,15 +132,18 @@ serve(async (req) => {
     }
 
     const shopId = bepaidInstance.config.shop_id;
-    const secretKey = Deno.env.get("BEPAID_SECRET_KEY");
+    // Get secret from integration config (primary) or fallback to env
+    const secretKey = bepaidInstance.config.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
 
     if (!shopId || !secretKey) {
-      console.error("Missing bePaid credentials");
+      console.error("Missing bePaid credentials - shop_id:", !!shopId, "secret_key:", !!secretKey);
       return new Response(JSON.stringify({ error: "Missing credentials" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    
+    console.log("Using bePaid credentials from:", bepaidInstance.config.secret_key ? "integration_instances" : "env");
 
     const auth = btoa(`${shopId}:${secretKey}`);
     const fromDate = new Date(Date.now() - 48 * 60 * 60 * 1000);

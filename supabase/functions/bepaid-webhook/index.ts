@@ -352,11 +352,21 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY');
     const resendApiKey = Deno.env.get('RESEND_API_KEY');
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const resend = resendApiKey ? new Resend(resendApiKey) : null;
+    
+    // Get bePaid credentials from integration_instances (primary) or fallback to env
+    const { data: bepaidInstance } = await supabase
+      .from('integration_instances')
+      .select('config')
+      .eq('provider', 'bepaid')
+      .in('status', ['active', 'connected'])
+      .maybeSingle();
+
+    const bepaidSecretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
+    console.log('Using bePaid secret from:', bepaidInstance?.config?.secret_key ? 'integration_instances' : 'env');
 
     // Read body as text for signature verification
     bodyText = await req.text();

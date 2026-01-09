@@ -46,17 +46,30 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY');
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Get bePaid credentials from integration_instances (primary) or fallback to env
+    const { data: bepaidInstance } = await supabase
+      .from('integration_instances')
+      .select('config')
+      .eq('provider', 'bepaid')
+      .in('status', ['active', 'connected'])
+      .maybeSingle();
+
+    const bepaidSecretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
+    const bepaidShopId = bepaidInstance?.config?.shop_id || null;
+    const bepaidSuccessUrl = bepaidInstance?.config?.success_url || null;
+    const bepaidFailUrl = bepaidInstance?.config?.fail_url || null;
     
     if (!bepaidSecretKey) {
-      console.error('BEPAID_SECRET_KEY not configured');
+      console.error('bePaid secret key not configured in integration or env');
       return new Response(
-        JSON.stringify({ success: false, error: 'Payment service not configured' }),
+        JSON.stringify({ success: false, error: 'Платёжная система не настроена' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    
+    console.log('Using bePaid credentials from:', bepaidInstance ? 'integration_instances' : 'env');
 
     // Get user from auth header (if logged in)
     const authHeader = req.headers.get('Authorization');
@@ -291,15 +304,16 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Get payment settings
+    // Get payment settings - use integration_instances values if available, fallback to payment_settings
     const { data: settings } = await supabase
       .from('payment_settings')
       .select('key, value');
 
     const settingsMap: Record<string, string> = settings?.reduce((acc: Record<string, string>, s: { key: string; value: string }) => ({ ...acc, [s.key]: s.value }), {}) || {};
-    const shopId = settingsMap['bepaid_shop_id'] || '14588';
-    const successUrl = settingsMap['bepaid_success_url'] || '/purchases?payment=processing';
-    const failUrl = settingsMap['bepaid_fail_url'] || '/purchases?payment=failed';
+    // Priority: integration_instances > payment_settings > default
+    const shopId = bepaidShopId || settingsMap['bepaid_shop_id'] || '33524';
+    const successUrl = bepaidSuccessUrl || settingsMap['bepaid_success_url'] || '/dashboard?payment=processing';
+    const failUrl = bepaidFailUrl || settingsMap['bepaid_fail_url'] || '/pricing?payment=failed';
     
     // Get origin from request for URLs
     const origin = req.headers.get('origin') || 'https://lovable.app';

@@ -24,7 +24,6 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // Auth check - must be admin
@@ -62,7 +61,28 @@ Deno.serve(async (req) => {
     const body: ManualChargeRequest = await req.json();
     const { action } = body;
 
-    // Get bePaid settings
+    // Get bePaid credentials from integration_instances (primary) or fallback
+    const { data: bepaidInstance } = await supabase
+      .from('integration_instances')
+      .select('config')
+      .eq('provider', 'bepaid')
+      .in('status', ['active', 'connected'])
+      .maybeSingle();
+
+    const bepaidSecretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
+    const bepaidShopIdFromInstance = bepaidInstance?.config?.shop_id || null;
+    
+    if (!bepaidSecretKey) {
+      console.error('bePaid secret key not configured');
+      return new Response(JSON.stringify({ success: false, error: 'Платёжная система не настроена' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    
+    console.log('Using bePaid credentials from:', bepaidInstance?.config?.secret_key ? 'integration_instances' : 'env');
+
+    // Get additional settings from payment_settings
     const { data: settings } = await supabase
       .from('payment_settings')
       .select('key, value')
@@ -73,7 +93,8 @@ Deno.serve(async (req) => {
       {}
     ) || {};
 
-    const shopId = settingsMap['bepaid_shop_id'] || '33524';
+    // Priority: integration_instances > payment_settings > default
+    const shopId = bepaidShopIdFromInstance || settingsMap['bepaid_shop_id'] || '33524';
     const testMode = settingsMap['bepaid_test_mode'] === 'true';
     const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
 

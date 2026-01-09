@@ -316,16 +316,18 @@ Deno.serve(async (req) => {
 
       // Process refund through bePaid if we have a payment UID
       if (successfulPayment?.provider_payment_id) {
-        const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY');
+        // Get bePaid credentials from integration_instances (primary) or fallback to env
+        const { data: bepaidInstance } = await supabase
+          .from('integration_instances')
+          .select('config')
+          .eq('provider', 'bepaid')
+          .in('status', ['active', 'connected'])
+          .maybeSingle();
+
+        const bepaidSecretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
+        const shopId = bepaidInstance?.config?.shop_id || '33524';
         
-        // Get shop ID from settings
-        const { data: settings } = await supabase
-          .from('payment_settings')
-          .select('key, value')
-          .eq('key', 'bepaid_shop_id')
-          .single();
-        
-        const shopId = settings?.value || '33524';
+        console.log('Using bePaid credentials from:', bepaidInstance?.config?.secret_key ? 'integration_instances' : 'env');
 
         if (bepaidSecretKey) {
           try {
