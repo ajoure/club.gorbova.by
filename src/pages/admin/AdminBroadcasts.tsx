@@ -20,6 +20,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -445,8 +450,7 @@ export default function AdminBroadcasts() {
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <Label>Вложение</Label>
-                        <div className="flex gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
                           <input
                             type="file"
                             ref={fileInputRef}
@@ -468,66 +472,78 @@ export default function AdminBroadcasts() {
                               }
                             }}
                           />
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-2"
-                            onClick={() => {
-                              if (fileInputRef.current) {
-                                fileInputRef.current.accept = "image/*";
-                                fileInputRef.current.click();
-                              }
-                            }}
-                          >
-                            <Image className="h-4 w-4" />
-                            Фото
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-2"
-                            onClick={() => {
-                              if (fileInputRef.current) {
-                                fileInputRef.current.accept = "video/*";
-                                fileInputRef.current.click();
-                              }
-                            }}
-                          >
-                            <Video className="h-4 w-4" />
-                            Видео
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-2"
-                            onClick={() => {
-                              if (fileInputRef.current) {
-                                fileInputRef.current.accept = "audio/*";
-                                fileInputRef.current.click();
-                              }
-                            }}
-                          >
-                            <Music className="h-4 w-4" />
-                            Аудио
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-2"
-                            onClick={() => {
-                              if (fileInputRef.current) {
-                                fileInputRef.current.accept = "video/mp4";
-                                fileInputRef.current.click();
-                              }
-                            }}
-                          >
-                            <Circle className="h-4 w-4" />
-                            Кружок
-                          </Button>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button variant="outline" size="sm" className="gap-2">
+                                <Paperclip className="h-4 w-4" />
+                                Вложение
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-40 p-2" align="start">
+                              <div className="space-y-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full justify-start gap-2"
+                                  onClick={() => {
+                                    if (fileInputRef.current) {
+                                      fileInputRef.current.accept = "image/*";
+                                      fileInputRef.current.click();
+                                    }
+                                  }}
+                                >
+                                  <Image className="h-4 w-4" />
+                                  Фото
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full justify-start gap-2"
+                                  onClick={() => {
+                                    if (fileInputRef.current) {
+                                      fileInputRef.current.accept = "video/*";
+                                      fileInputRef.current.click();
+                                    }
+                                  }}
+                                >
+                                  <Video className="h-4 w-4" />
+                                  Видео
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full justify-start gap-2"
+                                  onClick={() => {
+                                    if (fileInputRef.current) {
+                                      fileInputRef.current.accept = "audio/*";
+                                      fileInputRef.current.click();
+                                    }
+                                  }}
+                                >
+                                  <Music className="h-4 w-4" />
+                                  Аудио
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full justify-start gap-2"
+                                  onClick={() => {
+                                    if (fileInputRef.current) {
+                                      fileInputRef.current.accept = "video/mp4";
+                                      fileInputRef.current.click();
+                                    }
+                                  }}
+                                >
+                                  <Circle className="h-4 w-4" />
+                                  Кружок
+                                </Button>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                          <span className="text-xs text-muted-foreground">
+                            до 10 МБ, видео до 50 МБ
+                          </span>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          Фото/аудио до 10 МБ, видео до 50 МБ
-                        </p>
                       </div>
                     )}
 
