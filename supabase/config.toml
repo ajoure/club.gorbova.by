@@ -137,3 +137,6 @@ verify_jwt = false
 
 [functions.subscription-renewal-reminders]
 verify_jwt = false
+
+[functions.payments-reconcile]
+verify_jwt = false
