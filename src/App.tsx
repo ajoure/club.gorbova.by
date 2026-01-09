@@ -59,6 +59,7 @@ import AdminConsents from "./pages/admin/AdminConsents";
 import AdminPreregistrations from "./pages/admin/AdminPreregistrations";
 import Products from "./pages/Products";
 import AdminExecutors from "./pages/admin/AdminExecutors";
+import AdminDocumentTemplates from "./pages/admin/AdminDocumentTemplates";
 import Consultation from "./pages/Consultation";
 import CourseAccountant from "./pages/CourseAccountant";
 
@@ -148,6 +149,7 @@ const App = () => (
               <Route path="/admin/preregistrations" element={<ProtectedRoute><AdminPreregistrations /></ProtectedRoute>} />
               <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/executors" element={<ProtectedRoute><AdminExecutors /></ProtectedRoute>} />
+              <Route path="/admin/document-templates" element={<ProtectedRoute><AdminDocumentTemplates /></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
