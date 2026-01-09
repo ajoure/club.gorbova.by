@@ -508,26 +508,84 @@ Deno.serve(async (req) => {
           // Determine file info if present
           let fileType: string | null = null;
           let fileName: string | null = null;
+          let fileId: string | null = null;
+          let fileUrl: string | null = null;
           const msgAny = msg as any;
           
-          if (msgAny.photo) {
+          if (msgAny.photo && msgAny.photo.length > 0) {
             fileType = 'photo';
             fileName = 'photo.jpg';
+            // Get the largest photo (last in array)
+            fileId = msgAny.photo[msgAny.photo.length - 1].file_id;
           } else if (msgAny.video) {
             fileType = 'video';
             fileName = msgAny.video?.file_name || 'video.mp4';
+            fileId = msgAny.video.file_id;
+          } else if (msgAny.video_note) {
+            fileType = 'video_note';
+            fileName = 'video_note.mp4';
+            fileId = msgAny.video_note.file_id;
           } else if (msgAny.audio) {
             fileType = 'audio';
             fileName = msgAny.audio?.file_name || 'audio.mp3';
+            fileId = msgAny.audio.file_id;
           } else if (msgAny.voice) {
             fileType = 'voice';
             fileName = 'voice.ogg';
+            fileId = msgAny.voice.file_id;
           } else if (msgAny.document) {
             fileType = 'document';
             fileName = msgAny.document?.file_name || 'file';
+            fileId = msgAny.document.file_id;
           } else if (msgAny.sticker) {
             fileType = 'sticker';
             fileName = msgAny.sticker?.emoji || 'sticker';
+            fileId = msgAny.sticker.file_id;
+          }
+          
+          // Download file from Telegram and upload to Storage
+          if (fileId && botToken) {
+            try {
+              // Get file path from Telegram
+              const fileInfoRes = await fetch(
+                `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`
+              );
+              const fileInfo = await fileInfoRes.json();
+              
+              if (fileInfo.ok && fileInfo.result?.file_path) {
+                // Download file from Telegram
+                const telegramFileUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
+                const fileResponse = await fetch(telegramFileUrl);
+                const fileBlob = await fileResponse.blob();
+                
+                // Determine content type
+                let contentType = 'application/octet-stream';
+                if (fileType === 'photo') contentType = 'image/jpeg';
+                else if (fileType === 'video' || fileType === 'video_note') contentType = 'video/mp4';
+                else if (fileType === 'voice') contentType = 'audio/ogg';
+                else if (fileType === 'audio') contentType = 'audio/mpeg';
+                
+                // Upload to Supabase Storage
+                const storagePath = `chat-media/${profile.user_id}/${Date.now()}_${fileName}`;
+                const { data: uploadData, error: uploadError } = await supabase.storage
+                  .from('documents')
+                  .upload(storagePath, fileBlob, { 
+                    contentType,
+                    upsert: false 
+                  });
+                
+                if (uploadData && !uploadError) {
+                  const { data: { publicUrl } } = supabase.storage
+                    .from('documents')
+                    .getPublicUrl(storagePath);
+                  fileUrl = publicUrl;
+                  console.log(`Uploaded incoming file to storage: ${storagePath}`);
+                }
+              }
+            } catch (uploadErr) {
+              console.error("Failed to upload incoming file to storage:", uploadErr);
+              // Continue without file_url - message still saved
+            }
           }
 
           await supabase.from('telegram_messages').insert({
@@ -542,6 +600,7 @@ Deno.serve(async (req) => {
             meta: { 
               file_type: fileType, 
               file_name: fileName,
+              file_url: fileUrl,
               raw: msg 
             },
           });
