@@ -572,11 +572,15 @@ export function ContactTelegramChat({
                 : "bg-muted"
             }`}
           >
-            <div className="flex items-center gap-1 mb-1">
+            <div className="flex items-center gap-1.5 mb-1">
               {msg.direction === "outgoing" ? (
                 <Bot className="w-3 h-3" />
               ) : (
-                <User className="w-3 h-3" />
+                avatarUrl ? (
+                  <img src={avatarUrl} alt="" className="w-4 h-4 rounded-full object-cover" />
+                ) : (
+                  <User className="w-3 h-3" />
+                )
               )}
               <span className="text-xs opacity-70">
                 {msg.direction === "outgoing" ? "Вы" : (clientName || "Клиент")}

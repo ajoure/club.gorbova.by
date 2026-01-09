@@ -70,9 +70,12 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
 
 const PAYMENT_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   pending: { label: "Ожидает", color: "bg-amber-500/20 text-amber-600" },
+  processing: { label: "Обработка", color: "bg-blue-500/20 text-blue-600" },
   paid: { label: "Оплачен", color: "bg-green-500/20 text-green-600" },
+  succeeded: { label: "Оплачен", color: "bg-green-500/20 text-green-600" },
   failed: { label: "Ошибка", color: "bg-red-500/20 text-red-600" },
   refunded: { label: "Возврат", color: "bg-muted text-muted-foreground" },
+  canceled: { label: "Отменён", color: "bg-muted text-muted-foreground" },
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -114,7 +117,9 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       if (error) throw error;
       return data;
     },
-    enabled: !!deal?.id,
+    enabled: !!deal?.id && open,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   // Fetch subscription for this deal
@@ -130,7 +135,9 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       if (error) throw error;
       return data;
     },
-    enabled: !!deal?.id,
+    enabled: !!deal?.id && open,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   // Fetch audit logs for this deal with actor info

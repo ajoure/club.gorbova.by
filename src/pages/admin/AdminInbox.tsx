@@ -500,7 +500,7 @@ export default function AdminInbox() {
         <div className="flex h-[calc(100vh-8rem)] gap-3">
           {/* Dialog List - Glass Design */}
           <div className={cn(
-            "flex flex-col w-full md:w-[380px] shrink-0 overflow-hidden",
+            "flex flex-col w-full md:w-[380px] md:min-w-[320px] md:max-w-[400px] shrink-0 overflow-hidden",
             "bg-background/60 backdrop-blur-xl border border-border/50 rounded-2xl shadow-xl",
             selectedUserId ? "hidden md:flex" : "flex"
           )}>
@@ -745,7 +745,7 @@ export default function AdminInbox() {
                         : handleSelectDialog(dialog.user_id)
                       }
                       className={cn(
-                        "group relative flex items-center gap-2.5 p-2 rounded-lg cursor-pointer transition-all duration-150",
+                        "group relative flex items-center gap-2.5 p-2 rounded-lg cursor-pointer transition-all duration-150 overflow-hidden",
                         "hover:bg-muted/60",
                         selectedUserId === dialog.user_id && "bg-primary/10 ring-1 ring-primary/20",
                         dialog.is_pinned && "bg-amber-50/30 dark:bg-amber-950/10",
@@ -795,30 +795,30 @@ export default function AdminInbox() {
                       </div>
 
                       {/* Content */}
-                      <div className="flex-1 min-w-0 overflow-hidden">
+                      <div className="flex-1 min-w-0 pr-1">
                         <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 min-w-0 overflow-hidden">
+                          <div className="flex items-center gap-1 min-w-0 flex-1">
                             <span className={cn(
-                              "font-medium text-sm truncate whitespace-nowrap",
+                              "font-medium text-sm truncate",
                               dialog.unread_count > 0 && "font-semibold"
                             )}>
                               {dialog.profile?.full_name || dialog.profile?.telegram_username || "Без имени"}
                             </span>
                             {dialog.is_favorite && <Star className="h-3 w-3 text-amber-500 fill-amber-500 shrink-0" />}
                           </div>
-                          <span className="text-[10px] text-muted-foreground shrink-0 whitespace-nowrap">
+                          <span className="text-[10px] text-muted-foreground shrink-0 ml-1">
                             {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: false, locale: ru })}
                           </span>
                         </div>
                         <p className={cn(
-                          "text-xs truncate",
+                          "text-xs truncate max-w-[180px]",
                           dialog.unread_count > 0 ? "text-foreground" : "text-muted-foreground"
                         )}>
                           {dialog.last_message || "—"}
                         </p>
-                        <div className="flex items-center gap-1 mt-0.5">
+                        <div className="flex items-center gap-1 mt-0.5 max-w-[200px]">
                           {dialog.profile?.telegram_username && (
-                            <span className="text-[10px] text-muted-foreground truncate">@{dialog.profile.telegram_username}</span>
+                            <span className="text-[10px] text-muted-foreground truncate max-w-[100px]">@{dialog.profile.telegram_username}</span>
                           )}
                           {dialog.subscriptions?.some(s => s.status === "active") && (
                             <Badge className="text-[9px] h-3.5 px-1 bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/30 border-0 shrink-0">
