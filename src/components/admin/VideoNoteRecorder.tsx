@@ -25,6 +25,7 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [cameraLabel, setCameraLabel] = useState<string | null>(null);
 
   const MAX_DURATION_SEC = 60;
 
@@ -125,6 +126,7 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
       // If browser/OS revokes camera later, show a recoverable error.
       const vTrack = stream.getVideoTracks()?.[0];
       if (vTrack) {
+        setCameraLabel(vTrack.label || null);
         vTrack.onended = () => {
           stopStream();
           setError("Камера отключилась. Нажмите «Включить камеру» ещё раз.");
@@ -416,6 +418,11 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
               <div className="w-10" />
             </div>
 
+            {showCamera && cameraLabel && (
+              <p className="text-[10px] text-muted-foreground/60 text-center truncate max-w-[280px]">
+                {cameraLabel}
+              </p>
+            )}
             <p className="text-xs text-muted-foreground text-center max-w-[320px]">
               Удерживайте кнопку записи до 60 секунд.
             </p>
