@@ -64,6 +64,11 @@ import AdminDocumentTemplates from "./pages/admin/AdminDocumentTemplates";
 import Consultation from "./pages/Consultation";
 import CourseAccountant from "./pages/CourseAccountant";
 import AdminBroadcasts from "./pages/admin/AdminBroadcasts";
+import Library from "./pages/Library";
+import LibraryModule from "./pages/LibraryModule";
+import LibraryLesson from "./pages/LibraryLesson";
+import AdminTrainingModules from "./pages/admin/AdminTrainingModules";
+import AdminTrainingLessons from "./pages/admin/AdminTrainingLessons";
 
 const queryClient = new QueryClient();
 
@@ -107,6 +112,9 @@ const App = () => (
               <Route path="/tools/eisenhower" element={<ProtectedRoute><EisenhowerMatrix /></ProtectedRoute>} />
               <Route path="/tools/balance-wheel" element={<ProtectedRoute><BalanceWheel /></ProtectedRoute>} />
               <Route path="/docs" element={<ProtectedRoute><Documentation /></ProtectedRoute>} />
+              <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
+              <Route path="/library/:moduleSlug" element={<ProtectedRoute><LibraryModule /></ProtectedRoute>} />
+              <Route path="/library/:moduleSlug/:lessonSlug" element={<ProtectedRoute><LibraryLesson /></ProtectedRoute>} />
               
               {/* Settings routes */}
               <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
@@ -154,6 +162,8 @@ const App = () => (
               <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/executors" element={<ProtectedRoute><AdminExecutors /></ProtectedRoute>} />
               <Route path="/admin/document-templates" element={<ProtectedRoute><AdminDocumentTemplates /></ProtectedRoute>} />
+              <Route path="/admin/training-modules" element={<ProtectedRoute><AdminTrainingModules /></ProtectedRoute>} />
+              <Route path="/admin/training-modules/:moduleId/lessons" element={<ProtectedRoute><AdminTrainingLessons /></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
