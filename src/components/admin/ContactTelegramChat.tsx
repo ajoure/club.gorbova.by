@@ -178,7 +178,9 @@ export function ContactTelegramChat({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch messages - optimized with shorter stale time
+  const prevMessageCountRef = useRef<number>(0);
+
+  // Fetch messages - with polling interval as backup
   const { data: messages, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
     queryKey: ["telegram-messages", userId],
     queryFn: async () => {
@@ -189,8 +191,10 @@ export function ContactTelegramChat({
       return (data.messages || []).map((m: any) => ({ ...m, type: "message" })) as TelegramMessage[];
     },
     enabled: !!userId,
-    staleTime: 10000,
-    refetchOnWindowFocus: false,
+    staleTime: 5000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: "always",
+    refetchInterval: 10000, // Poll every 10 seconds as backup
   });
 
   // Fetch events from telegram_logs - optimized
@@ -222,6 +226,36 @@ export function ContactTelegramChat({
     refetchMessages();
     refetchEvents();
   }, [refetchMessages, refetchEvents]);
+
+  // Subscribe to realtime messages for this user
+  useEffect(() => {
+    if (!userId) return;
+
+    const channel = supabase
+      .channel(`chat-messages-${userId}`)
+      .on(
+        "postgres_changes",
+        { 
+          event: "INSERT", 
+          schema: "public", 
+          table: "telegram_messages",
+          filter: `user_id=eq.${userId}`
+        },
+        (payload) => {
+          console.log("New message received:", payload);
+          refetchMessages();
+          // Auto-scroll to bottom on new message
+          setTimeout(() => {
+            bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+          }, 100);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId, refetchMessages]);
 
   // Helper function to translate Telegram API errors to Russian
   const translateTelegramError = (errorMessage: string): string => {

@@ -60,27 +60,43 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
-// Notification sound - base64 encoded simple beep to avoid CORS/autoplay issues
-// This is a very short notification beep that plays reliably
+// Notification sound using Web Audio API
 const playNotificationSound = () => {
   try {
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    // Create audio context on demand
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    
+    const audioContext = new AudioContextClass();
+    
+    // Resume context if suspended (required for autoplay policy)
+    if (audioContext.state === 'suspended') {
+      audioContext.resume();
+    }
+    
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
     
     oscillator.connect(gainNode);
     gainNode.connect(audioContext.destination);
     
-    oscillator.frequency.value = 800;
+    // Two-tone notification sound
+    oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+    oscillator.frequency.setValueAtTime(1100, audioContext.currentTime + 0.1);
     oscillator.type = 'sine';
     
-    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+    gainNode.gain.setValueAtTime(0.4, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
     
     oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.3);
+    oscillator.stop(audioContext.currentTime + 0.4);
+    
+    // Clean up
+    oscillator.onended = () => {
+      audioContext.close();
+    };
   } catch (e) {
-    console.log('Sound notification not available');
+    console.log('Sound notification not available:', e);
   }
 };
 
@@ -389,13 +405,26 @@ export default function AdminInbox() {
     markAsRead.mutate(userId);
   };
 
-  // Subscribe to realtime updates
+  // Subscribe to realtime updates for new messages
   useEffect(() => {
     const channel = supabase
-      .channel("inbox-messages")
+      .channel("inbox-messages-realtime")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "telegram_messages" },
+        (payload) => {
+          console.log("New inbox message:", payload);
+          refetch();
+          // Play sound for incoming messages only
+          const newMsg = payload.new as any;
+          if (newMsg?.direction === "incoming" && soundEnabledRef.current) {
+            playNotificationSound();
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "telegram_messages" },
         () => refetch()
       )
       .subscribe();
