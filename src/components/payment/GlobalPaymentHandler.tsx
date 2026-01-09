@@ -214,6 +214,11 @@ export function GlobalPaymentHandler() {
   useEffect(() => {
     const paymentParam = searchParams.get("payment");
 
+    // Skip if no payment param
+    if (!paymentParam) {
+      return;
+    }
+
     if (paymentParam === "failed") {
       stopPolling();
       setFailedOpen(true);
@@ -237,15 +242,20 @@ export function GlobalPaymentHandler() {
       }
       return;
     }
-
-    // No payment flow in URL → close dialogs
-    stopPolling();
-    setSuccessOpen(false);
-    setFailedOpen(false);
-    setOrderInfo(null);
-    setChecking(false);
-    setTimedOut(false);
   }, [searchParams, user]);
+
+  // Separate effect to handle dialog closing when payment param is removed
+  useEffect(() => {
+    const paymentParam = searchParams.get("payment");
+    if (!paymentParam && (successOpen || failedOpen)) {
+      stopPolling();
+      setSuccessOpen(false);
+      setFailedOpen(false);
+      setOrderInfo(null);
+      setChecking(false);
+      setTimedOut(false);
+    }
+  }, [searchParams]);
 
   useEffect(() => () => stopPolling(), []);
 
@@ -278,17 +288,21 @@ export function GlobalPaymentHandler() {
 
   return (
     <>
-      {/* Processing / Success Dialog */}
-      <Dialog open={successOpen} onOpenChange={(isOpen) => !isOpen && handleSuccessClose()}>
-        <DialogContent className="sm:max-w-md">
+      {/* Processing / Success Dialog - modal that user must interact with */}
+      <Dialog open={successOpen} onOpenChange={() => {}}>
+        <DialogContent 
+          className="sm:max-w-md" 
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               {flowState === "success" ? (
-                <CheckCircle className="h-6 w-6" />
+                <CheckCircle className="h-6 w-6 text-green-500" />
               ) : (
-                <Loader2 className="h-6 w-6 animate-spin" />
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
               )}
-              {flowState === "success" ? "Оплата подтверждена" : "Проверяем оплату"}
+              {flowState === "success" ? "Оплата подтверждена!" : "Проверяем оплату..."}
             </DialogTitle>
           </DialogHeader>
 
@@ -333,9 +347,16 @@ export function GlobalPaymentHandler() {
             </div>
           ) : orderInfo ? (
             <div className="space-y-4">
+              {/* Success banner */}
+              <div className="rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 p-4">
+                <p className="text-sm text-green-800 dark:text-green-200 font-medium">
+                  🎉 Поздравляем! Ваш платёж успешно обработан.
+                </p>
+              </div>
+
               <div className="rounded-lg border border-border bg-card p-4 space-y-3">
                 <div className="flex items-start gap-3">
-                  <CreditCard className="h-5 w-5 mt-0.5 shrink-0" />
+                  <CreditCard className="h-5 w-5 mt-0.5 shrink-0 text-primary" />
                   <div className="min-w-0">
                     <p className="font-medium text-foreground truncate">{orderInfo.product_name}</p>
                     <p className="text-sm text-muted-foreground truncate">{orderInfo.tariff_name}</p>
@@ -343,10 +364,10 @@ export function GlobalPaymentHandler() {
                 </div>
 
                 <div className="flex items-start gap-3">
-                  <Calendar className="h-5 w-5 mt-0.5 shrink-0" />
+                  <Calendar className="h-5 w-5 mt-0.5 shrink-0 text-primary" />
                   <div className="space-y-1">
                     <p className="text-sm text-foreground">
-                      <span className="font-medium">Тип доступа:</span> {orderInfo.is_trial ? "Триал" : "Оплата"}
+                      <span className="font-medium">Тип доступа:</span> {orderInfo.is_trial ? "Пробный период" : "Полный доступ"}
                     </p>
                     <p className="text-sm text-muted-foreground">
                       С {formatDateRu(orderInfo.access_start_at)} по {formatDateRu(orderInfo.access_end_at)}
@@ -356,24 +377,39 @@ export function GlobalPaymentHandler() {
               </div>
 
               <div className="flex items-center justify-between text-sm bg-muted/50 rounded-lg p-3">
-                <span className="text-muted-foreground">Сумма:</span>
-                <span className="font-semibold text-foreground">
+                <span className="text-muted-foreground">Сумма платежа:</span>
+                <span className="font-semibold text-foreground text-lg">
                   {formatCurrency(orderInfo.final_price, orderInfo.currency)}
                 </span>
               </div>
 
-              <Button className="w-full" onClick={goToPurchases}>
-                Перейти в мои покупки
-              </Button>
+              <div className="flex flex-col gap-2">
+                <Button className="w-full" onClick={goToPurchases}>
+                  Перейти в мои покупки
+                </Button>
+                <Button variant="outline" className="w-full" onClick={handleSuccessClose}>
+                  Закрыть
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="space-y-4">
+              <div className="rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 p-4">
+                <p className="text-sm text-green-800 dark:text-green-200">
+                  Платёж успешно подтверждён!
+                </p>
+              </div>
               <p className="text-sm text-muted-foreground">
-                Платёж подтверждён, но детали заказа не удалось загрузить. Проверьте «Мои покупки».
+                Детали заказа загружаются. Проверьте раздел «Мои покупки».
               </p>
-              <Button className="w-full" onClick={goToPurchases}>
-                Перейти в мои покупки
-              </Button>
+              <div className="flex flex-col gap-2">
+                <Button className="w-full" onClick={goToPurchases}>
+                  Перейти в мои покупки
+                </Button>
+                <Button variant="outline" className="w-full" onClick={handleSuccessClose}>
+                  Закрыть
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>

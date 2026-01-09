@@ -312,8 +312,9 @@ Deno.serve(async (req) => {
     const settingsMap: Record<string, string> = settings?.reduce((acc: Record<string, string>, s: { key: string; value: string }) => ({ ...acc, [s.key]: s.value }), {}) || {};
     // Priority: integration_instances > payment_settings > default
     const shopId = bepaidShopId || settingsMap['bepaid_shop_id'] || '33524';
-    const successUrl = bepaidSuccessUrl || settingsMap['bepaid_success_url'] || '/dashboard?payment=processing';
-    const failUrl = bepaidFailUrl || settingsMap['bepaid_fail_url'] || '/pricing?payment=failed';
+    // Always redirect to /purchases after payment so user sees their order in "Мои покупки"
+    const successUrl = bepaidSuccessUrl || settingsMap['bepaid_success_url'] || '/purchases?payment=processing';
+    const failUrl = bepaidFailUrl || settingsMap['bepaid_fail_url'] || '/purchases?payment=failed';
     
     // Get origin from request for URLs
     const origin = req.headers.get('origin') || 'https://lovable.app';
