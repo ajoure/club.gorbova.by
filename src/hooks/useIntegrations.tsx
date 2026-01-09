@@ -85,7 +85,8 @@ export const PROVIDERS: ProviderConfig[] = [
     description: "Платежный шлюз bePaid",
     fields: [
       { key: "shop_id", label: "ID магазина", type: "text", required: true },
-      { key: "secret_key", label: "Секретный ключ", type: "text", required: true },
+      { key: "secret_key", label: "Секретный ключ API", type: "text", required: true },
+      { key: "webhook_secret", label: "Секрет для вебхуков (если отличается)", type: "text", required: false, placeholder: "Оставьте пустым, если совпадает с API ключом" },
       { key: "test_mode", label: "Тестовый режим", type: "checkbox" },
       { key: "success_url", label: "URL успешной оплаты", type: "url", placeholder: "/dashboard?payment=success" },
       { key: "fail_url", label: "URL неудачной оплаты", type: "url", placeholder: "/pricing?payment=failed" },
