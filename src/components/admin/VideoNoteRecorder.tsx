@@ -207,7 +207,16 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
 
     if (!streamRef.current) {
       await startCamera();
+      // Даём время на инициализацию стрима
+      await new Promise((r) => setTimeout(r, 300));
       if (!streamRef.current) return;
+    }
+
+    // Проверяем, что видео трек активен
+    const videoTrack = streamRef.current.getVideoTracks()[0];
+    if (!videoTrack || videoTrack.readyState !== "live") {
+      toast.error("Камера не готова. Попробуйте ещё раз.");
+      return;
     }
 
     resetRecording();
@@ -284,25 +293,31 @@ export function VideoNoteRecorder({ open, onOpenChange, onRecorded }: VideoNoteR
       setRecordedUrl(URL.createObjectURL(blob));
     };
 
+    // iOS Safari: используем timeslice для получения данных
+    // Это критично для Safari — без timeslice данные часто не приходят
     try {
-      if (isSafari) mr.start();
-      else mr.start(500);
+      mr.start(1000); // 1 секунда — работает стабильнее на iOS
     } catch {
-      mr.start();
+      try {
+        mr.start();
+      } catch (e) {
+        console.error("MediaRecorder.start failed", e);
+        toast.error("Не удалось начать запись");
+        return;
+      }
     }
 
-    // iOS Safari иногда не отдаёт данные, пока не вызвать requestData периодически.
-    // Это помогает избежать пустого Blob.
-    if (isSafari) {
-      const dataTimer = window.setInterval(() => {
-        try {
+    // iOS Safari: периодически запрашиваем данные как fallback
+    const dataTimer = window.setInterval(() => {
+      try {
+        if (mr.state === "recording") {
           (mr as any).requestData?.();
-        } catch {
-          // ignore
         }
-      }, 700);
-      (mr as any)._dataTimer = dataTimer;
-    }
+      } catch {
+        // ignore
+      }
+    }, 800);
+    (mr as any)._dataTimer = dataTimer;
 
     setState("recording");
 
