@@ -199,6 +199,37 @@ export function ContactTelegramChat({
     refetchEvents();
   }, [refetchMessages, refetchEvents]);
 
+  // Helper function to translate Telegram API errors to Russian
+  const translateTelegramError = (errorMessage: string): string => {
+    const translations: Record<string, string> = {
+      "Forbidden: bot can't initiate conversation with a user": "Бот не может начать диалог с пользователем. Пользователь должен сначала написать боту.",
+      "Forbidden: bot was blocked by the user": "Бот заблокирован пользователем",
+      "Bad Request: chat not found": "Чат не найден",
+      "Bad Request: message is too long": "Сообщение слишком длинное",
+      "Bad Request: PEER_ID_INVALID": "Неверный идентификатор пользователя",
+      "Unauthorized": "Ошибка авторизации бота",
+      "Failed to fetch photo": "Не удалось загрузить фото",
+      "Failed to send message": "Не удалось отправить сообщение",
+      "Bad Request: have no rights to send a message": "Нет прав для отправки сообщения",
+      "Bad Request: user not found": "Пользователь не найден",
+    };
+    
+    // Check for exact match first
+    if (translations[errorMessage]) {
+      return translations[errorMessage];
+    }
+    
+    // Check for partial matches
+    for (const [key, value] of Object.entries(translations)) {
+      if (errorMessage.includes(key)) {
+        return value;
+      }
+    }
+    
+    // Return original if no translation found
+    return errorMessage;
+  };
+
   // Fetch profile photo from Telegram
   const fetchPhotoMutation = useMutation({
     mutationFn: async () => {
@@ -206,7 +237,7 @@ export function ContactTelegramChat({
         body: { action: "fetch_profile_photo", user_id: userId },
       });
       if (error) throw error;
-      if (!data.success) throw new Error(data.error || "Failed to fetch photo");
+      if (!data.success) throw new Error(data.error || "Не удалось загрузить фото");
       return data.avatar_url;
     },
     onSuccess: (newAvatarUrl) => {
@@ -217,7 +248,7 @@ export function ContactTelegramChat({
       toast.success("Фото профиля обновлено");
     },
     onError: (error) => {
-      toast.error("Ошибка загрузки фото: " + (error as Error).message);
+      toast.error("Ошибка загрузки фото: " + translateTelegramError((error as Error).message));
     },
   });
 
@@ -258,7 +289,7 @@ export function ContactTelegramChat({
         },
       });
       if (error) throw error;
-      if (!data.success) throw new Error(data.error || "Failed to send message");
+      if (!data.success) throw new Error(data.error || "Не удалось отправить сообщение");
       return data;
     },
     onMutate: () => {
@@ -284,7 +315,7 @@ export function ContactTelegramChat({
     },
     onError: (error) => {
       setIsUploading(false);
-      toast.error("Ошибка отправки: " + (error as Error).message);
+      toast.error("Ошибка отправки: " + translateTelegramError((error as Error).message));
     },
   });
 
