@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Collapsible,
   CollapsibleContent,
@@ -143,6 +144,21 @@ export function EditIntegrationDialog({
                       ))}
                     </SelectContent>
                   </Select>
+                </>
+              ) : field.type === "textarea" ? (
+                <>
+                  <Label htmlFor={field.key}>
+                    {field.label}
+                    {field.required && <span className="text-destructive ml-1">*</span>}
+                  </Label>
+                  <Textarea
+                    id={field.key}
+                    value={String(formData[field.key] || "")}
+                    onChange={(e) => handleFieldChange(field.key, e.target.value)}
+                    placeholder={field.placeholder}
+                    className="font-mono text-xs"
+                    rows={4}
+                  />
                 </>
               ) : (
                 <>
