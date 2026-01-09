@@ -312,8 +312,10 @@ async function createAmoCRMDeal(
 
 
 // Verify webhook signature using HMAC-SHA256
+// bePaid can send signature in different formats: hex, base64, or with prefix
 async function verifyWebhookSignature(body: string, signature: string | null, secret: string): Promise<boolean> {
   if (!signature || !secret) {
+    console.log('Signature verification: missing signature or secret');
     return false;
   }
   
@@ -328,12 +330,54 @@ async function verifyWebhookSignature(body: string, signature: string | null, se
     );
     
     const signatureBytes = await crypto.subtle.sign('HMAC', key, encoder.encode(body));
-    const expectedSignature = Array.from(new Uint8Array(signatureBytes))
+    const signatureArray = new Uint8Array(signatureBytes);
+    
+    // Generate expected signature in hex format
+    const expectedHex = Array.from(signatureArray)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
     
-    // Compare signatures (case-insensitive)
-    return signature.toLowerCase() === expectedSignature.toLowerCase();
+    // Generate expected signature in base64 format  
+    const expectedBase64 = btoa(String.fromCharCode(...signatureArray));
+    
+    // Clean up incoming signature (remove potential prefixes like "sha256=")
+    let cleanSignature = signature;
+    if (signature.startsWith('sha256=')) {
+      cleanSignature = signature.slice(7);
+    } else if (signature.startsWith('SHA256=')) {
+      cleanSignature = signature.slice(7);
+    }
+    
+    // Log for debugging
+    console.log('Signature verification:', {
+      received: cleanSignature.substring(0, 20) + '...',
+      expectedHex: expectedHex.substring(0, 20) + '...',
+      expectedBase64: expectedBase64.substring(0, 20) + '...',
+      receivedLength: cleanSignature.length,
+      hexLength: expectedHex.length,
+      base64Length: expectedBase64.length,
+    });
+    
+    // Compare signatures (case-insensitive for hex)
+    if (cleanSignature.toLowerCase() === expectedHex.toLowerCase()) {
+      console.log('Signature matched (hex format)');
+      return true;
+    }
+    
+    if (cleanSignature === expectedBase64) {
+      console.log('Signature matched (base64 format)');
+      return true;
+    }
+    
+    // Also try URL-safe base64
+    const expectedBase64Url = expectedBase64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    if (cleanSignature === expectedBase64Url) {
+      console.log('Signature matched (base64url format)');
+      return true;
+    }
+    
+    console.log('Signature did not match any expected format');
+    return false;
   } catch (error) {
     console.error('Signature verification error:', error);
     return false;
