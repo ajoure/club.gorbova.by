@@ -448,6 +448,131 @@ export type Database = {
         }
         Relationships: []
       }
+      document_generation_rules: {
+        Row: {
+          auto_send_email: boolean | null
+          auto_send_telegram: boolean | null
+          created_at: string | null
+          description: string | null
+          field_overrides: Json | null
+          id: string
+          is_active: boolean | null
+          max_amount: number | null
+          min_amount: number | null
+          name: string
+          offer_id: string | null
+          payer_type_filter: string[] | null
+          priority: number | null
+          product_id: string | null
+          tariff_id: string | null
+          template_id: string
+          trigger_type: string
+          updated_at: string | null
+        }
+        Insert: {
+          auto_send_email?: boolean | null
+          auto_send_telegram?: boolean | null
+          created_at?: string | null
+          description?: string | null
+          field_overrides?: Json | null
+          id?: string
+          is_active?: boolean | null
+          max_amount?: number | null
+          min_amount?: number | null
+          name: string
+          offer_id?: string | null
+          payer_type_filter?: string[] | null
+          priority?: number | null
+          product_id?: string | null
+          tariff_id?: string | null
+          template_id: string
+          trigger_type: string
+          updated_at?: string | null
+        }
+        Update: {
+          auto_send_email?: boolean | null
+          auto_send_telegram?: boolean | null
+          created_at?: string | null
+          description?: string | null
+          field_overrides?: Json | null
+          id?: string
+          is_active?: boolean | null
+          max_amount?: number | null
+          min_amount?: number | null
+          name?: string
+          offer_id?: string | null
+          payer_type_filter?: string[] | null
+          priority?: number | null
+          product_id?: string | null
+          tariff_id?: string | null
+          template_id?: string
+          trigger_type?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_generation_rules_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_generation_rules_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_generation_rules_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_generation_rules_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "document_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_number_sequences: {
+        Row: {
+          created_at: string | null
+          document_type: string
+          format: string | null
+          id: string
+          last_number: number | null
+          prefix: string
+          updated_at: string | null
+          year: number
+        }
+        Insert: {
+          created_at?: string | null
+          document_type: string
+          format?: string | null
+          id?: string
+          last_number?: number | null
+          prefix?: string
+          updated_at?: string | null
+          year: number
+        }
+        Update: {
+          created_at?: string | null
+          document_type?: string
+          format?: string | null
+          id?: string
+          last_number?: number | null
+          prefix?: string
+          updated_at?: string | null
+          year?: number
+        }
+        Relationships: []
+      }
       document_templates: {
         Row: {
           code: string
@@ -1039,7 +1164,11 @@ export type Database = {
         Row: {
           client_details_id: string | null
           client_snapshot: Json
+          contract_date: string | null
+          contract_number: string | null
+          contract_total_amount: number | null
           created_at: string
+          currency: string | null
           document_date: string
           document_number: string
           document_type: string
@@ -1050,20 +1179,36 @@ export type Database = {
           file_path: string | null
           file_size: number | null
           file_url: string | null
+          generation_log: Json | null
           id: string
+          installment_payment_id: string | null
           last_downloaded_at: string | null
+          mismatch_warning: string | null
           order_id: string
           order_snapshot: Json
+          paid_amount: number | null
+          payer_type: string | null
+          payer_type_mismatch: boolean | null
           profile_id: string
+          rule_id: string | null
           sent_at: string | null
           sent_to_email: string | null
+          sent_to_telegram: string | null
+          service_period_from: string | null
+          service_period_to: string | null
           status: string
+          template_id: string | null
+          trigger_type: string | null
           updated_at: string
         }
         Insert: {
           client_details_id?: string | null
           client_snapshot: Json
+          contract_date?: string | null
+          contract_number?: string | null
+          contract_total_amount?: number | null
           created_at?: string
+          currency?: string | null
           document_date?: string
           document_number: string
           document_type?: string
@@ -1074,20 +1219,36 @@ export type Database = {
           file_path?: string | null
           file_size?: number | null
           file_url?: string | null
+          generation_log?: Json | null
           id?: string
+          installment_payment_id?: string | null
           last_downloaded_at?: string | null
+          mismatch_warning?: string | null
           order_id: string
           order_snapshot: Json
+          paid_amount?: number | null
+          payer_type?: string | null
+          payer_type_mismatch?: boolean | null
           profile_id: string
+          rule_id?: string | null
           sent_at?: string | null
           sent_to_email?: string | null
+          sent_to_telegram?: string | null
+          service_period_from?: string | null
+          service_period_to?: string | null
           status?: string
+          template_id?: string | null
+          trigger_type?: string | null
           updated_at?: string
         }
         Update: {
           client_details_id?: string | null
           client_snapshot?: Json
+          contract_date?: string | null
+          contract_number?: string | null
+          contract_total_amount?: number | null
           created_at?: string
+          currency?: string | null
           document_date?: string
           document_number?: string
           document_type?: string
@@ -1098,14 +1259,26 @@ export type Database = {
           file_path?: string | null
           file_size?: number | null
           file_url?: string | null
+          generation_log?: Json | null
           id?: string
+          installment_payment_id?: string | null
           last_downloaded_at?: string | null
+          mismatch_warning?: string | null
           order_id?: string
           order_snapshot?: Json
+          paid_amount?: number | null
+          payer_type?: string | null
+          payer_type_mismatch?: boolean | null
           profile_id?: string
+          rule_id?: string | null
           sent_at?: string | null
           sent_to_email?: string | null
+          sent_to_telegram?: string | null
+          service_period_from?: string | null
+          service_period_to?: string | null
           status?: string
+          template_id?: string | null
+          trigger_type?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -1124,6 +1297,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "generated_documents_installment_payment_id_fkey"
+            columns: ["installment_payment_id"]
+            isOneToOne: false
+            referencedRelation: "installment_payments"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "generated_documents_order_id_fkey"
             columns: ["order_id"]
             isOneToOne: false
@@ -1135,6 +1315,20 @@ export type Database = {
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "generated_documents_rule_id_fkey"
+            columns: ["rule_id"]
+            isOneToOne: false
+            referencedRelation: "document_generation_rules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "generated_documents_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "document_templates"
             referencedColumns: ["id"]
           },
         ]
@@ -3109,6 +3303,7 @@ export type Database = {
           discount_enabled: boolean | null
           discount_percent: number | null
           display_order: number | null
+          document_params: Json | null
           features: Json | null
           getcourse_offer_code: string | null
           getcourse_offer_id: number | null
@@ -3140,6 +3335,7 @@ export type Database = {
           discount_enabled?: boolean | null
           discount_percent?: number | null
           display_order?: number | null
+          document_params?: Json | null
           features?: Json | null
           getcourse_offer_code?: string | null
           getcourse_offer_id?: number | null
@@ -3171,6 +3367,7 @@ export type Database = {
           discount_enabled?: boolean | null
           discount_percent?: number | null
           display_order?: number | null
+          document_params?: Json | null
           features?: Json | null
           getcourse_offer_code?: string | null
           getcourse_offer_id?: number | null
@@ -4176,6 +4373,10 @@ export type Database = {
     }
     Functions: {
       generate_order_number: { Args: never; Returns: string }
+      get_next_document_number: {
+        Args: { p_document_type: string; p_prefix?: string }
+        Returns: string
+      }
       get_pending_notifications_for_user: {
         Args: { p_user_id: string }
         Returns: {
