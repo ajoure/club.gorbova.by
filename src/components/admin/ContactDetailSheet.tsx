@@ -87,6 +87,7 @@ import { EditSubscriptionDialog } from "./EditSubscriptionDialog";
 import { EditDealDialog } from "./EditDealDialog";
 import { ComposeEmailDialog } from "./ComposeEmailDialog";
 import { AdminChargeDialog } from "./AdminChargeDialog";
+import { AvatarZoomDialog } from "./AvatarZoomDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 
@@ -98,6 +99,7 @@ interface Contact {
   phone: string | null;
   telegram_username: string | null;
   telegram_user_id: number | null;
+  avatar_url: string | null;
   status: string;
   created_at: string;
   last_seen_at: string | null;
@@ -141,6 +143,28 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
   const [chargeDialogOpen, setChargeDialogOpen] = useState(false);
   const [isImpersonating, setIsImpersonating] = useState(false);
   const [isResettingPassword, setIsResettingPassword] = useState(false);
+  const [isFetchingPhoto, setIsFetchingPhoto] = useState(false);
+
+  // Fetch profile photo from Telegram
+  const fetchPhotoFromTelegram = async () => {
+    if (!contact?.user_id) return;
+    
+    setIsFetchingPhoto(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
+        body: { action: "fetch_profile_photo", user_id: contact.user_id },
+      });
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error || "Failed to fetch photo");
+      
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+      toast.success("Фото профиля обновлено");
+    } catch (error) {
+      toast.error("Ошибка: " + (error as Error).message);
+    } finally {
+      setIsFetchingPhoto(false);
+    }
+  };
 
   // Sync days input with date range
   const handleDaysChange = (days: number) => {
@@ -742,9 +766,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange }: ContactDetai
         <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 border-b flex-shrink-0">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-3 min-w-0 flex-1">
-              <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center flex-shrink-0">
-                <User className="w-5 h-5 sm:w-7 sm:h-7 text-primary" />
-              </div>
+              <AvatarZoomDialog
+                avatarUrl={contact.avatar_url}
+                fallbackText={contact.full_name?.[0]?.toUpperCase() || contact.email?.[0]?.toUpperCase() || "?"}
+                name={contact.full_name || undefined}
+                onFetchFromTelegram={contact.telegram_user_id ? fetchPhotoFromTelegram : undefined}
+                isFetchingPhoto={isFetchingPhoto}
+                size="md"
+              />
               <div className="min-w-0 flex-1">
                 <SheetTitle className="text-lg sm:text-xl truncate">{contact.full_name || "Без имени"}</SheetTitle>
                 <p className="text-xs sm:text-sm text-muted-foreground truncate">{contact.email}</p>
