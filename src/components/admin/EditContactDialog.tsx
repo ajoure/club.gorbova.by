@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import { MultiContactInput, ContactItem } from "@/components/ui/MultiContactInput";
 
 interface Contact {
   id: string;
@@ -29,6 +30,8 @@ interface Contact {
   phone: string | null;
   telegram_username: string | null;
   status: string;
+  emails?: unknown;
+  phones?: unknown;
 }
 
 interface EditContactDialogProps {
@@ -53,6 +56,8 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
     telegram_username: "",
     status: "",
   });
+  const [emails, setEmails] = useState<ContactItem[]>([]);
+  const [phones, setPhones] = useState<ContactItem[]>([]);
 
   useEffect(() => {
     if (contact) {
@@ -63,6 +68,8 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
         telegram_username: contact.telegram_username || "",
         status: contact.status || "active",
       });
+      setEmails(Array.isArray(contact.emails) ? contact.emails as ContactItem[] : []);
+      setPhones(Array.isArray(contact.phones) ? contact.phones as ContactItem[] : []);
     }
   }, [contact]);
 
@@ -78,6 +85,8 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
           phone: formData.phone || null,
           telegram_username: formData.telegram_username || null,
           status: formData.status,
+          emails: emails as unknown as null,
+          phones: phones as unknown as null,
         })
         .eq("id", contact.id);
       
@@ -98,7 +107,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Редактирование контакта</DialogTitle>
         </DialogHeader>
@@ -114,7 +123,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
           </div>
 
           <div className="space-y-2">
-            <Label>Email</Label>
+            <Label>Основной Email</Label>
             <Input
               type="email"
               value={formData.email}
@@ -124,7 +133,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
           </div>
 
           <div className="space-y-2">
-            <Label>Телефон</Label>
+            <Label>Основной телефон</Label>
             <Input
               type="tel"
               value={formData.phone}
@@ -155,6 +164,20 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
               </SelectContent>
             </Select>
           </div>
+
+          {/* Multiple phones */}
+          <MultiContactInput
+            type="phone"
+            value={phones}
+            onChange={setPhones}
+          />
+
+          {/* Multiple emails */}
+          <MultiContactInput
+            type="email"
+            value={emails}
+            onChange={setEmails}
+          />
         </div>
 
         <DialogFooter>

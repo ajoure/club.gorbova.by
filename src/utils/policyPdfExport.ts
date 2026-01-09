@@ -48,7 +48,7 @@ export function generatePolicyPdf() {
   addText("UNP 193405000");
   addText("220035, g. Minsk, ul. Panfilova, 2, ofis 49L");
   addText("Pochtovyj adres: 220052, Respublika Belarus, g. Minsk, a/ja 63");
-  addText("Telefon: +375 29 172-43-21");
+  addText("Telefon: +375 29 171-43-21");
   addText("Email: info@ajoure.by");
   addText("Direktor: Kovrizhkin Aleksej Igorevich");
   addSpace(6);

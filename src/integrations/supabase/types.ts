@@ -2399,6 +2399,7 @@ export type Database = {
           duplicate_flag: string | null
           duplicate_group_id: string | null
           email: string | null
+          emails: Json | null
           first_name: string | null
           full_name: string | null
           id: string
@@ -2408,6 +2409,7 @@ export type Database = {
           marketing_consent: boolean | null
           merged_to_profile_id: string | null
           phone: string | null
+          phones: Json | null
           primary_in_group: boolean | null
           status: string
           telegram_last_check_at: string | null
@@ -2428,6 +2430,7 @@ export type Database = {
           duplicate_flag?: string | null
           duplicate_group_id?: string | null
           email?: string | null
+          emails?: Json | null
           first_name?: string | null
           full_name?: string | null
           id?: string
@@ -2437,6 +2440,7 @@ export type Database = {
           marketing_consent?: boolean | null
           merged_to_profile_id?: string | null
           phone?: string | null
+          phones?: Json | null
           primary_in_group?: boolean | null
           status?: string
           telegram_last_check_at?: string | null
@@ -2457,6 +2461,7 @@ export type Database = {
           duplicate_flag?: string | null
           duplicate_group_id?: string | null
           email?: string | null
+          emails?: Json | null
           first_name?: string | null
           full_name?: string | null
           id?: string
@@ -2466,6 +2471,7 @@ export type Database = {
           marketing_consent?: boolean | null
           merged_to_profile_id?: string | null
           phone?: string | null
+          phones?: Json | null
           primary_in_group?: boolean | null
           status?: string
           telegram_last_check_at?: string | null

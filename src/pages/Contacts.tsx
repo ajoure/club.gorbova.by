@@ -142,10 +142,10 @@ export default function Contacts() {
                     <div>
                       <p className="font-medium">Телефон</p>
                       <a 
-                        href="tel:+375447594321" 
+                        href="tel:+375291714321" 
                         className="text-sm text-primary hover:underline"
                       >
-                        +375 44 759-43-21
+                        +375 29 171-43-21
                       </a>
                     </div>
                   </div>

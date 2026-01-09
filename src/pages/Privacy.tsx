@@ -62,7 +62,7 @@ export default function Privacy() {
                   </p>
                   <p className="flex items-center gap-2">
                     <Phone className="h-4 w-4 shrink-0" />
-                    +375 29 172-43-21
+                    +375 29 171-43-21
                   </p>
                   <p className="flex items-center gap-2">
                     <Mail className="h-4 w-4 shrink-0" />

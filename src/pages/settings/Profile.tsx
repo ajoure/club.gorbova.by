@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { User, Mail, Phone, Save, X, FileText, ChevronRight, Key, Eye, EyeOff, Loader2, Camera, Upload } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { MultiContactInput, ContactItem } from "@/components/ui/MultiContactInput";
 
 interface ProfileData {
   id: string;
@@ -23,6 +24,8 @@ interface ProfileData {
   phone: string | null;
   avatar_url: string | null;
   telegram_user_id: number | null;
+  emails: unknown;
+  phones: unknown;
 }
 
 export default function ProfileSettings() {
@@ -33,6 +36,8 @@ export default function ProfileSettings() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
+  const [emails, setEmails] = useState<ContactItem[]>([]);
+  const [phones, setPhones] = useState<ContactItem[]>([]);
   const [isDirty, setIsDirty] = useState(false);
 
   const { data: profile, isLoading } = useQuery({
@@ -41,7 +46,7 @@ export default function ProfileSettings() {
       if (!user) return null;
       const { data, error } = await supabase
         .from("profiles")
-        .select("id, user_id, email, full_name, first_name, last_name, phone, avatar_url, telegram_user_id")
+        .select("id, user_id, email, full_name, first_name, last_name, phone, avatar_url, telegram_user_id, emails, phones")
         .eq("user_id", user.id)
         .single();
       
@@ -63,12 +68,14 @@ export default function ProfileSettings() {
         setLastName(parts.slice(1).join(" ") || "");
       }
       setPhone(profile.phone || "");
+      setEmails(Array.isArray(profile.emails) ? profile.emails : []);
+      setPhones(Array.isArray(profile.phones) ? profile.phones : []);
       setIsDirty(false);
     }
   }, [profile]);
 
   const updateProfileMutation = useMutation({
-    mutationFn: async (data: { first_name: string; last_name: string; phone: string }) => {
+    mutationFn: async (data: { first_name: string; last_name: string; phone: string; emails: ContactItem[]; phones: ContactItem[] }) => {
       if (!user) throw new Error("Не авторизован");
       
       const { error } = await supabase
@@ -78,6 +85,8 @@ export default function ProfileSettings() {
           last_name: data.last_name,
           full_name: `${data.first_name} ${data.last_name}`.trim(),
           phone: data.phone,
+          emails: data.emails as unknown as null,
+          phones: data.phones as unknown as null,
           updated_at: new Date().toISOString(),
         })
         .eq("user_id", user.id);
@@ -121,6 +130,8 @@ export default function ProfileSettings() {
       first_name: firstName.trim(),
       last_name: lastName.trim(),
       phone: phone.trim(),
+      emails,
+      phones,
     });
   };
 
@@ -135,6 +146,8 @@ export default function ProfileSettings() {
         setLastName(parts.slice(1).join(" ") || "");
       }
       setPhone(profile.phone || "");
+      setEmails(Array.isArray(profile.emails) ? profile.emails : []);
+      setPhones(Array.isArray(profile.phones) ? profile.phones : []);
       setIsDirty(false);
     }
   };
@@ -490,11 +503,11 @@ export default function ProfileSettings() {
                   />
                 </div>
 
-                {/* Phone */}
+                {/* Phone - legacy single field */}
                 <div className="space-y-2">
                   <Label htmlFor="phone" className="flex items-center gap-2">
                     <Phone className="h-4 w-4" />
-                    Телефон
+                    Основной телефон
                   </Label>
                   <Input 
                     id="phone"
@@ -504,6 +517,26 @@ export default function ProfileSettings() {
                     placeholder="+375 29 123 45 67"
                   />
                 </div>
+
+                {/* Multiple Phones */}
+                <MultiContactInput
+                  type="phone"
+                  value={phones}
+                  onChange={(newPhones) => {
+                    setPhones(newPhones);
+                    setIsDirty(true);
+                  }}
+                />
+
+                {/* Multiple Emails */}
+                <MultiContactInput
+                  type="email"
+                  value={emails}
+                  onChange={(newEmails) => {
+                    setEmails(newEmails);
+                    setIsDirty(true);
+                  }}
+                />
 
                 {/* Actions */}
                 <div className="flex gap-3 pt-4">
