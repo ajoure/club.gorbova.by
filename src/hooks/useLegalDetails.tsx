@@ -74,6 +74,7 @@ export interface Executor {
   director_full_name: string | null;
   director_short_name: string | null;
   acts_on_basis: string | null;
+  signature_url: string | null;
   is_default: boolean;
   is_active: boolean;
   created_at: string;
