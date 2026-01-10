@@ -5,6 +5,88 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// GetCourse sync helper
+interface GetCourseUserData {
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  phone?: string;
+}
+
+async function sendToGetCourse(
+  userData: GetCourseUserData,
+  orderId: string,
+  orderNumber: string,
+  amount: number,
+  productName: string,
+  tariffName: string,
+  gcOfferId: number | null
+): Promise<{ success: boolean; error?: string; gcOrderId?: string }> {
+  const gcApiKey = Deno.env.get('GETCOURSE_API_KEY');
+  const gcEmail = Deno.env.get('GETCOURSE_EMAIL') || 'gorbovaclub';
+  
+  if (!gcApiKey) {
+    console.log('[Test Payment] GetCourse API key not configured');
+    return { success: false, error: 'API key not configured' };
+  }
+
+  try {
+    const gcUrl = `https://${gcEmail}.getcourse.ru/pl/api/deals`;
+    
+    const dealData: Record<string, any> = {
+      user: {
+        email: userData.email,
+        first_name: userData.first_name || '',
+        phone: userData.phone || '',
+      },
+      system: {
+        refresh_if_exists: 1,
+      },
+      deal: {
+        deal_number: orderNumber,
+        deal_cost: amount,
+        deal_status: 'payed',
+        deal_is_paid: true,
+        product_title: productName,
+        deal_comment: `Тест-оплата. Заказ: ${orderNumber}. Тариф: ${tariffName}`,
+      },
+    };
+
+    // Add offer_code if available
+    if (gcOfferId) {
+      dealData.deal.offer_code = gcOfferId.toString();
+    }
+
+    console.log('[Test Payment] Sending to GetCourse:', JSON.stringify(dealData));
+
+    const response = await fetch(gcUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: `action=add&key=${gcApiKey}&params=${encodeURIComponent(JSON.stringify(dealData))}`,
+    });
+
+    const result = await response.json();
+    console.log('[Test Payment] GetCourse response:', JSON.stringify(result));
+
+    if (result.success) {
+      return { 
+        success: true, 
+        gcOrderId: result.info?.deal_id?.toString() || result.info?.id?.toString()
+      };
+    } else {
+      return { 
+        success: false, 
+        error: result.error_message || JSON.stringify(result) 
+      };
+    }
+  } catch (error) {
+    console.error('[Test Payment] GetCourse sync error:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 // Simulate payment completion for testing purposes
 // Only accessible by super admins
 
@@ -236,6 +318,54 @@ Deno.serve(async (req) => {
           },
         });
         if (!grantRes.error) results.telegram_access_granted = 1;
+      }
+
+      // GetCourse sync
+      const gcOfferId = offerGetcourseId || orderMeta.getcourse_offer_id || tariff?.getcourse_offer_id || null;
+      
+      // Get user profile for GetCourse
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('email, full_name, first_name, last_name, phone')
+        .eq('user_id', orderV2.user_id)
+        .maybeSingle();
+
+      if (userProfile?.email) {
+        const gcResult = await sendToGetCourse(
+          {
+            email: userProfile.email,
+            first_name: userProfile.first_name || userProfile.full_name?.split(' ')[0] || '',
+            last_name: userProfile.last_name || userProfile.full_name?.split(' ').slice(1).join(' ') || '',
+            phone: userProfile.phone || '',
+          },
+          orderV2.id,
+          orderV2.order_number,
+          orderV2.final_price,
+          product?.name || 'Unknown Product',
+          tariff?.name || orderMeta.tariff_name || 'Unknown Tariff',
+          gcOfferId ? Number(gcOfferId) : null
+        );
+
+        results.getcourse_sync = gcResult.success;
+        if (gcResult.error) results.getcourse_error = gcResult.error;
+        if (gcResult.gcOrderId) results.getcourse_order_id = gcResult.gcOrderId;
+
+        // Update order meta with GC sync result
+        await supabase
+          .from('orders_v2')
+          .update({
+            meta: {
+              ...(orderV2.meta || {}),
+              gc_sync: gcResult.success,
+              gc_sync_at: now.toISOString(),
+              getcourse_order_id: gcResult.gcOrderId || null,
+              gc_error: gcResult.error || null,
+            },
+          })
+          .eq('id', orderV2.id);
+      } else {
+        results.getcourse_sync = false;
+        results.getcourse_error = 'No user profile found';
       }
 
       // Audit log
