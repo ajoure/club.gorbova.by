@@ -23,7 +23,14 @@ async function sendToGetCourse(
   gcOfferId: number | null
 ): Promise<{ success: boolean; error?: string; gcOrderId?: string }> {
   const gcApiKey = Deno.env.get('GETCOURSE_API_KEY');
-  const gcEmail = Deno.env.get('GETCOURSE_EMAIL') || 'gorbovaclub';
+  const gcEmailRaw = Deno.env.get('GETCOURSE_EMAIL') || 'gorbova';
+  
+  // Handle both formats: full URL (https://xxx.getcourse.ru) or just account name
+  let gcAccount = gcEmailRaw;
+  if (gcEmailRaw.includes('getcourse.ru')) {
+    const match = gcEmailRaw.match(/(?:https?:\/\/)?([^.]+)\.getcourse\.ru/);
+    gcAccount = match ? match[1] : 'gorbova';
+  }
   
   if (!gcApiKey) {
     console.log('[Test Payment] GetCourse API key not configured');
@@ -31,7 +38,8 @@ async function sendToGetCourse(
   }
 
   try {
-    const gcUrl = `https://${gcEmail}.getcourse.ru/pl/api/deals`;
+    const gcUrl = `https://${gcAccount}.getcourse.ru/pl/api/deals`;
+    console.log('[Test Payment] GC URL:', gcUrl);
     
     const dealData: Record<string, any> = {
       user: {
