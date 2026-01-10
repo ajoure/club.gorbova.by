@@ -3035,6 +3035,9 @@ export type Database = {
           phone: string | null
           phones: Json | null
           primary_in_group: boolean | null
+          reentry_penalty_waived: boolean
+          reentry_penalty_waived_at: string | null
+          reentry_penalty_waived_by: string | null
           status: string
           telegram_last_check_at: string | null
           telegram_last_error: string | null
@@ -3069,6 +3072,9 @@ export type Database = {
           phone?: string | null
           phones?: Json | null
           primary_in_group?: boolean | null
+          reentry_penalty_waived?: boolean
+          reentry_penalty_waived_at?: string | null
+          reentry_penalty_waived_by?: string | null
           status?: string
           telegram_last_check_at?: string | null
           telegram_last_error?: string | null
@@ -3103,6 +3109,9 @@ export type Database = {
           phone?: string | null
           phones?: Json | null
           primary_in_group?: boolean | null
+          reentry_penalty_waived?: boolean
+          reentry_penalty_waived_at?: string | null
+          reentry_penalty_waived_by?: string | null
           status?: string
           telegram_last_check_at?: string | null
           telegram_last_error?: string | null
