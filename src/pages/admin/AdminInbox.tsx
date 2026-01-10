@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ContactTelegramChat } from "@/components/admin/ContactTelegramChat";
+import { EmailInboxView } from "@/components/admin/email";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -52,6 +53,7 @@ import {
   CheckCheck,
   MoreHorizontal,
   Trash2,
+  Mail,
 } from "lucide-react";
 import { format, formatDistanceToNow, isAfter, isBefore, startOfDay, endOfDay } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -149,6 +151,7 @@ export default function AdminInbox() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [channel, setChannel] = useState<"telegram" | "email">("telegram");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "unread" | "read" | "favorites" | "pinned">("all");
@@ -526,7 +529,33 @@ export default function AdminInbox() {
   return (
     <AdminLayout>
       <TooltipProvider>
-        <div className="flex h-[calc(100vh-8rem)] gap-3">
+        {/* Channel Tabs Header */}
+        <div className="mb-4">
+          <Tabs value={channel} onValueChange={(v) => setChannel(v as "telegram" | "email")}>
+            <TabsList className="grid w-full max-w-md grid-cols-2">
+              <TabsTrigger value="telegram" className="gap-2">
+                <MessageSquare className="h-4 w-4" />
+                Telegram
+                {totalUnread > 0 && (
+                  <Badge variant="destructive" className="h-5 px-1.5 text-xs">{totalUnread}</Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="email" className="gap-2">
+                <Mail className="h-4 w-4" />
+                Email
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+
+        {channel === "email" ? (
+          <div className="h-[calc(100vh-12rem)] bg-background/60 backdrop-blur-xl border border-border/50 rounded-2xl shadow-xl overflow-hidden">
+            <EmailInboxView 
+              onContactClick={(userId) => navigate(`/admin/contacts?contact=${userId}`)}
+            />
+          </div>
+        ) : (
+        <div className="flex h-[calc(100vh-12rem)] gap-3">
           {/* Dialog List - Glass Design */}
           <div className={cn(
             "flex flex-col w-full md:w-[380px] md:min-w-[320px] md:max-w-[400px] shrink-0 overflow-hidden",
@@ -1017,6 +1046,7 @@ export default function AdminInbox() {
             )}
           </div>
         </div>
+        )}
       </TooltipProvider>
     </AdminLayout>
   );

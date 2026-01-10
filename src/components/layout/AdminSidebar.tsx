@@ -51,6 +51,8 @@ export function AdminSidebar() {
   const { user, signOut } = useAuth();
   const { hasPermission, hasAnyPermission } = usePermissions();
   const unreadMessagesCount = useUnreadMessagesCount();
+  const { data: unreadEmailCount = 0 } = useUnreadEmailCount();
+  const totalUnread = unreadMessagesCount + unreadEmailCount;
   const collapsed = state === "collapsed";
 
   // Fetch duplicate count
@@ -147,17 +149,17 @@ export function AdminSidebar() {
                       {!collapsed && (
                         <>
                           <span className="flex-1">Входящие</span>
-                          {unreadMessagesCount > 0 && (
+                          {totalUnread > 0 && (
                             <Badge 
                               variant="destructive" 
                               className="h-5 min-w-5 px-1.5 text-xs"
                             >
-                              {unreadMessagesCount}
+                              {totalUnread}
                             </Badge>
                           )}
                         </>
                       )}
-                      {collapsed && unreadMessagesCount > 0 && (
+                      {collapsed && totalUnread > 0 && (
                         <span className="absolute top-0 right-0 h-2 w-2 bg-destructive rounded-full" />
                       )}
                     </NavLink>

@@ -822,6 +822,7 @@ export type Database = {
           message_uid: string
           received_at: string | null
           subject: string | null
+          thread_id: string | null
           to_email: string
           updated_at: string | null
         }
@@ -843,6 +844,7 @@ export type Database = {
           message_uid: string
           received_at?: string | null
           subject?: string | null
+          thread_id?: string | null
           to_email: string
           updated_at?: string | null
         }
@@ -864,6 +866,7 @@ export type Database = {
           message_uid?: string
           received_at?: string | null
           subject?: string | null
+          thread_id?: string | null
           to_email?: string
           updated_at?: string | null
         }
@@ -990,6 +993,50 @@ export type Database = {
           variables?: Json | null
         }
         Relationships: []
+      }
+      email_threads: {
+        Row: {
+          created_at: string
+          id: string
+          last_message_at: string | null
+          message_count: number | null
+          profile_id: string | null
+          subject: string | null
+          thread_id: string
+          unread_count: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          message_count?: number | null
+          profile_id?: string | null
+          subject?: string | null
+          thread_id: string
+          unread_count?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          message_count?: number | null
+          profile_id?: string | null
+          subject?: string | null
+          thread_id?: string
+          unread_count?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_threads_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       entitlements: {
         Row: {
