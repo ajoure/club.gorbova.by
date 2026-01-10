@@ -23,7 +23,10 @@ import {
   Loader2,
   Video,
   Link,
-  FileText
+  FileText,
+  Sparkles,
+  ArrowLeft,
+  X
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -396,175 +399,308 @@ export function ExcelTrainingImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileSpreadsheet className="h-5 w-5" />
-            Импорт тренингов из Excel
-          </DialogTitle>
-          <DialogDescription>
-            {step === 'upload' && "Загрузите файл Excel с уроками"}
-            {step === 'preview' && `Найдено ${lessons.length} уроков. Выберите для импорта.`}
-            {step === 'importing' && "Импорт в процессе..."}
-            {step === 'complete' && "Импорт завершён!"}
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col p-0 gap-0 bg-background/80 backdrop-blur-xl border-border/50 shadow-2xl overflow-hidden">
+        {/* iOS-style header */}
+        <div className="relative px-6 py-5 border-b border-border/30 bg-gradient-to-b from-background/90 to-background/70">
+          {step === 'preview' && (
+            <button
+              onClick={resetDialog}
+              className="absolute left-4 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-muted/50 transition-colors"
+            >
+              <ArrowLeft className="h-5 w-5 text-primary" />
+            </button>
+          )}
+          
+          <div className="text-center">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 mb-3 ring-1 ring-primary/20">
+              <FileSpreadsheet className="h-6 w-6 text-primary" />
+            </div>
+            <DialogTitle className="text-xl font-semibold tracking-tight">
+              {step === 'complete' ? 'Импорт завершён' : 'Импорт из Excel'}
+            </DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground mt-1">
+              {step === 'upload' && "Перетащите файл или выберите вручную"}
+              {step === 'preview' && `${lessons.length} уроков найдено`}
+              {step === 'importing' && "Пожалуйста, подождите..."}
+              {step === 'complete' && "Все данные успешно импортированы"}
+            </DialogDescription>
+          </div>
 
+          <button
+            onClick={handleClose}
+            className="absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-muted/50 transition-colors"
+          >
+            <X className="h-5 w-5 text-muted-foreground" />
+          </button>
+        </div>
+
+        {/* Content */}
         <div className="flex-1 overflow-hidden">
           {step === 'upload' && (
-            <div
-              className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${
-                isDragging ? 'border-primary bg-primary/5' : 'border-muted-foreground/25'
-              }`}
-              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={handleDrop}
-            >
-              <Upload className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-lg font-medium mb-2">Перетащите файл Excel сюда</p>
-              <p className="text-sm text-muted-foreground mb-4">или</p>
-              <Button asChild variant="outline">
-                <label className="cursor-pointer">
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls"
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
-                  Выбрать файл
-                </label>
-              </Button>
-              <p className="text-xs text-muted-foreground mt-4">
-                Поддерживаемые форматы: .xlsx, .xls
-              </p>
+            <div className="p-6">
+              <div
+                className={`relative rounded-2xl border-2 border-dashed transition-all duration-300 ${
+                  isDragging 
+                    ? 'border-primary bg-primary/5 scale-[0.99]' 
+                    : 'border-border/50 hover:border-primary/50 hover:bg-muted/30'
+                }`}
+                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={handleDrop}
+              >
+                <div className="py-16 px-8 text-center">
+                  <div className={`inline-flex items-center justify-center w-16 h-16 rounded-full mb-6 transition-all duration-300 ${
+                    isDragging 
+                      ? 'bg-primary/20 scale-110' 
+                      : 'bg-muted/50'
+                  }`}>
+                    <Upload className={`h-8 w-8 transition-colors ${
+                      isDragging ? 'text-primary' : 'text-muted-foreground'
+                    }`} />
+                  </div>
+                  
+                  <h3 className="text-lg font-medium mb-2">
+                    Перетащите файл сюда
+                  </h3>
+                  <p className="text-sm text-muted-foreground mb-6">
+                    или нажмите для выбора
+                  </p>
+                  
+                  <Button 
+                    asChild 
+                    variant="outline" 
+                    className="rounded-full px-6 bg-background/50 backdrop-blur-sm border-border/50 hover:bg-muted/50"
+                  >
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        accept=".xlsx,.xls"
+                        onChange={handleFileSelect}
+                        className="hidden"
+                      />
+                      Выбрать файл
+                    </label>
+                  </Button>
+                  
+                  <p className="text-xs text-muted-foreground/70 mt-6">
+                    Поддерживаются форматы .xlsx и .xls
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 
           {step === 'preview' && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Название модуля</Label>
+            <div className="flex flex-col h-full">
+              {/* Module name input */}
+              <div className="px-6 py-4 border-b border-border/30 bg-muted/20">
+                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 block">
+                  Название модуля
+                </Label>
                 <Input
                   value={moduleName}
                   onChange={(e) => setModuleName(e.target.value)}
-                  placeholder="Введите название модуля..."
+                  placeholder="Введите название..."
+                  className="bg-background/50 border-border/50 rounded-xl h-11 focus:ring-2 focus:ring-primary/20"
                 />
               </div>
 
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">
-                  Выбрано: {selectedCount} из {lessons.length}
+              {/* Selection controls */}
+              <div className="flex items-center justify-between px-6 py-3 bg-muted/10">
+                <span className="text-sm font-medium">
+                  <span className="text-primary">{selectedCount}</span>
+                  <span className="text-muted-foreground"> из {lessons.length} выбрано</span>
                 </span>
-                <div className="space-x-2">
-                  <Button variant="outline" size="sm" onClick={() => toggleAll(true)}>
-                    Выбрать все
+                <div className="flex gap-2">
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => toggleAll(true)}
+                    className="text-xs h-8 px-3 rounded-full"
+                  >
+                    Все
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => toggleAll(false)}>
-                    Снять все
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => toggleAll(false)}
+                    className="text-xs h-8 px-3 rounded-full"
+                  >
+                    Снять
                   </Button>
                 </div>
               </div>
 
-              <ScrollArea className="h-[400px] border rounded-lg">
-                <div className="p-2 space-y-1">
+              {/* Lessons list */}
+              <ScrollArea className="flex-1">
+                <div className="px-4 py-2 space-y-1">
                   {lessons.map((lesson, index) => (
                     <div
                       key={lesson.id}
-                      className={`flex items-start gap-3 p-3 rounded-lg transition-colors ${
-                        lesson.selected ? 'bg-primary/5' : 'bg-muted/30'
+                      onClick={() => toggleLesson(lesson.id)}
+                      className={`group flex items-start gap-3 p-4 rounded-2xl cursor-pointer transition-all duration-200 ${
+                        lesson.selected 
+                          ? 'bg-primary/10 ring-1 ring-primary/20' 
+                          : 'bg-muted/30 hover:bg-muted/50'
                       }`}
                     >
-                      <Checkbox
-                        checked={lesson.selected}
-                        onCheckedChange={() => toggleLesson(lesson.id)}
-                        className="mt-1"
-                      />
+                      <div className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center transition-all ${
+                        lesson.selected 
+                          ? 'bg-primary text-primary-foreground' 
+                          : 'bg-muted/50 text-muted-foreground'
+                      }`}>
+                        {lesson.selected ? (
+                          <CheckCircle2 className="h-4 w-4" />
+                        ) : (
+                          <span className="text-xs font-medium">{index + 1}</span>
+                        )}
+                      </div>
+                      
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{lesson.title}</p>
-                        <div className="flex flex-wrap gap-1 mt-1">
+                        <p className={`font-medium truncate transition-colors ${
+                          lesson.selected ? 'text-foreground' : 'text-muted-foreground'
+                        }`}>
+                          {lesson.title}
+                        </p>
+                        <div className="flex flex-wrap gap-2 mt-2">
                           {lesson.videos.length > 0 && (
-                            <Badge variant="secondary" className="text-xs">
-                              <Video className="h-3 w-3 mr-1" />
-                              {lesson.videos.length} видео
-                            </Badge>
+                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
+                              <Video className="h-3 w-3" />
+                              {lesson.videos.length}
+                            </span>
                           )}
                           {lesson.buttons.length > 0 && (
-                            <Badge variant="secondary" className="text-xs">
-                              <Link className="h-3 w-3 mr-1" />
-                              {lesson.buttons.length} ссылок
-                            </Badge>
+                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
+                              <Link className="h-3 w-3" />
+                              {lesson.buttons.length}
+                            </span>
                           )}
                           {lesson.textContent && (
-                            <Badge variant="secondary" className="text-xs">
-                              <FileText className="h-3 w-3 mr-1" />
+                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
+                              <FileText className="h-3 w-3" />
                               Текст
-                            </Badge>
+                            </span>
                           )}
                         </div>
                       </div>
-                      <span className="text-xs text-muted-foreground shrink-0">#{index + 1}</span>
                     </div>
                   ))}
                 </div>
               </ScrollArea>
+
+              {/* Footer */}
+              <div className="px-6 py-4 border-t border-border/30 bg-gradient-to-t from-background to-background/80">
+                <Button 
+                  onClick={startImport} 
+                  disabled={selectedCount === 0 || !moduleName.trim()}
+                  className="w-full h-12 rounded-2xl font-medium bg-primary hover:bg-primary/90 shadow-lg shadow-primary/20"
+                >
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  Импортировать {selectedCount} уроков
+                </Button>
+              </div>
             </div>
           )}
 
           {(step === 'importing' || step === 'complete') && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Прогресс</span>
-                  <span>{Math.round(importProgress)}%</span>
+            <div className="p-6 space-y-6">
+              {/* Progress circle - iOS style */}
+              <div className="flex flex-col items-center py-6">
+                <div className="relative w-32 h-32">
+                  {/* Background circle */}
+                  <svg className="w-full h-full -rotate-90">
+                    <circle
+                      cx="64"
+                      cy="64"
+                      r="56"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="8"
+                      className="text-muted/30"
+                    />
+                    <circle
+                      cx="64"
+                      cy="64"
+                      r="56"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="8"
+                      strokeLinecap="round"
+                      strokeDasharray={`${2 * Math.PI * 56}`}
+                      strokeDashoffset={`${2 * Math.PI * 56 * (1 - importProgress / 100)}`}
+                      className="text-primary transition-all duration-500 ease-out"
+                    />
+                  </svg>
+                  
+                  {/* Center content */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    {step === 'complete' ? (
+                      <CheckCircle2 className="h-12 w-12 text-primary animate-in zoom-in-50 duration-300" />
+                    ) : (
+                      <span className="text-3xl font-semibold tabular-nums">
+                        {Math.round(importProgress)}%
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <Progress value={importProgress} />
+                
+                <p className="text-sm text-muted-foreground mt-4">
+                  {step === 'complete' 
+                    ? 'Все данные успешно импортированы' 
+                    : 'Импортируем уроки...'
+                  }
+                </p>
               </div>
 
-              <ScrollArea className="h-[350px] border rounded-lg p-3">
-                <div className="space-y-1">
-                  {importLog.map((entry, index) => (
-                    <div key={index} className="flex items-start gap-2 text-sm">
-                      {entry.type === 'success' && <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />}
-                      {entry.type === 'error' && <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />}
-                      {entry.type === 'info' && <Loader2 className="h-4 w-4 text-blue-500 mt-0.5 shrink-0 animate-spin" />}
-                      <span className={entry.type === 'error' ? 'text-red-600' : ''}>
-                        {entry.message}
-                      </span>
-                    </div>
-                  ))}
+              {/* Import log */}
+              <div className="rounded-2xl bg-muted/20 border border-border/30 overflow-hidden">
+                <div className="px-4 py-3 border-b border-border/30 bg-muted/10">
+                  <h4 className="text-sm font-medium">Журнал импорта</h4>
                 </div>
-              </ScrollArea>
+                <ScrollArea className="h-[200px]">
+                  <div className="p-3 space-y-1">
+                    {importLog.map((entry, index) => (
+                      <div
+                        key={index}
+                        className={`flex items-start gap-2 text-sm py-2 px-3 rounded-xl ${
+                          entry.type === 'error' 
+                            ? 'bg-destructive/10 text-destructive' 
+                            : entry.type === 'success'
+                            ? 'bg-primary/5 text-foreground'
+                            : 'text-muted-foreground'
+                        }`}
+                      >
+                        {entry.type === 'success' && (
+                          <CheckCircle2 className="h-4 w-4 flex-shrink-0 mt-0.5 text-primary" />
+                        )}
+                        {entry.type === 'error' && (
+                          <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                        )}
+                        {entry.type === 'info' && (
+                          <Loader2 className="h-4 w-4 flex-shrink-0 mt-0.5 animate-spin text-muted-foreground" />
+                        )}
+                        <span className="flex-1">{entry.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              {/* Complete button */}
+              {step === 'complete' && (
+                <Button 
+                  onClick={() => {
+                    onImportComplete?.();
+                    handleClose();
+                  }}
+                  className="w-full h-12 rounded-2xl font-medium"
+                >
+                  Готово
+                </Button>
+              )}
             </div>
           )}
         </div>
-
-        <DialogFooter>
-          {step === 'upload' && (
-            <Button variant="outline" onClick={handleClose}>Отмена</Button>
-          )}
-          
-          {step === 'preview' && (
-            <>
-              <Button variant="outline" onClick={() => setStep('upload')}>Назад</Button>
-              <Button onClick={startImport} disabled={selectedCount === 0 || !moduleName.trim()}>
-                Импортировать {selectedCount} уроков
-              </Button>
-            </>
-          )}
-          
-          {step === 'importing' && (
-            <Button variant="outline" disabled>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Импорт...
-            </Button>
-          )}
-          
-          {step === 'complete' && (
-            <Button onClick={() => { handleClose(); onImportComplete?.(); }}>
-              Готово
-            </Button>
-          )}
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
