@@ -10,6 +10,7 @@ export interface TariffOffer {
   offer_type: "pay_now" | "trial";
   button_label: string;
   amount: number;
+  reentry_amount: number | null; // Price for re-entry (former club members)
   trial_days: number | null;
   auto_charge_after_trial: boolean;
   auto_charge_amount: number | null;
@@ -32,13 +33,14 @@ export interface TariffOffer {
   updated_at: string;
 }
 
-export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated_at" | "getcourse_offer_id" | "payment_method" | "installment_count" | "installment_interval_days" | "first_payment_delay_days" | "auto_charge_offer_id"> & { 
+export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated_at" | "getcourse_offer_id" | "payment_method" | "installment_count" | "installment_interval_days" | "first_payment_delay_days" | "auto_charge_offer_id" | "reentry_amount"> & { 
   getcourse_offer_id?: string | null;
   payment_method?: PaymentMethod;
   installment_count?: number | null;
   installment_interval_days?: number | null;
   first_payment_delay_days?: number | null;
   auto_charge_offer_id?: string | null;
+  reentry_amount?: number | null;
 };
 export type TariffOfferUpdate = Partial<Omit<TariffOffer, "id" | "created_at" | "updated_at">> & { id: string };
 
