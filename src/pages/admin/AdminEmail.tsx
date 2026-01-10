@@ -705,7 +705,8 @@ export default function AdminEmail() {
               <Label>Пароль приложения</Label>
               <Input
                 required={!accountDialog.account?.id}
-                type="password"
+                name="smtp_app_password"
+                type="text"
                 placeholder="Пароль или App Password"
                 value={accountDialog.account?.smtp_password || ""}
                 onChange={(e) =>
@@ -714,6 +715,7 @@ export default function AdminEmail() {
                     account: { ...prev.account, smtp_password: e.target.value },
                   }))
                 }
+                className="[&:not(:placeholder-shown)]:[-webkit-text-security:disc]"
               />
               <p className="text-xs text-muted-foreground">
                 Для Gmail, Yandex и других рекомендуется использовать пароль приложения

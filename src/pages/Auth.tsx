@@ -435,6 +435,8 @@ export default function Auth() {
                     className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('password') ? 'border-destructive' : ''}`}
                     placeholder="••••••••"
                     required
+                    allowAutofill
+                    autoComplete="new-password"
                   />
                 </div>
                 {getFieldError('password') && (
@@ -458,6 +460,8 @@ export default function Auth() {
                     className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('confirmPassword') || (touched.confirmPassword && !passwordsMatch && confirmPassword) ? 'border-destructive' : ''}`}
                     placeholder="••••••••"
                     required
+                    allowAutofill
+                    autoComplete="new-password"
                   />
                 </div>
                 {getFieldError('confirmPassword') && (
@@ -500,6 +504,8 @@ export default function Auth() {
                     className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('email') ? 'border-destructive' : ''}`}
                     placeholder="your@email.com"
                     required
+                    allowAutofill
+                    autoComplete="username"
                   />
                 </div>
                 {getFieldError('email') && (
@@ -619,6 +625,8 @@ export default function Auth() {
                       className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('email') ? 'border-destructive' : ''}`}
                       placeholder="your@email.com"
                       required
+                      allowAutofill
+                      autoComplete="username"
                     />
                   </div>
                   {getFieldError('email') && (
@@ -652,6 +660,8 @@ export default function Auth() {
                       className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('password') ? 'border-destructive' : ''}`}
                       placeholder="••••••••"
                       required
+                      allowAutofill
+                      autoComplete="current-password"
                     />
                   </div>
                   {getFieldError('password') && (
@@ -677,6 +687,8 @@ export default function Auth() {
                         className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('confirmPassword') || (touched.confirmPassword && !passwordsMatch && confirmPassword) ? 'border-destructive' : ''}`}
                         placeholder="••••••••"
                         required
+                        allowAutofill
+                        autoComplete="new-password"
                       />
                     </div>
                     {getFieldError('confirmPassword') && (

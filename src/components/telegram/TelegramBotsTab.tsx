@@ -190,11 +190,13 @@ export function TelegramBotsTab() {
                     Токен бота
                   </HelpLabel>
                   <Input
-                    id="bot_token"
-                    type="password"
+                    id="telegram_bot_token"
+                    name="telegram_bot_token"
+                    type="text"
                     placeholder="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
                     value={newBot.bot_token_encrypted}
                     onChange={(e) => setNewBot({ ...newBot, bot_token_encrypted: e.target.value })}
+                    className="[&:not(:placeholder-shown)]:[-webkit-text-security:disc]"
                   />
                 </div>
               </div>

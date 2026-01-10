@@ -96,8 +96,8 @@ function SortableFeatureItem({
             onChange={(e) => setEditText(e.target.value)}
             onBlur={handleSave}
             onKeyDown={(e) => e.key === "Enter" && handleSave()}
-            autoFocus
             className="h-8"
+            name="feature_edit_text"
           />
         ) : (
           <div

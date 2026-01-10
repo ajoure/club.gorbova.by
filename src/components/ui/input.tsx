@@ -2,8 +2,23 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
-  ({ className, type, ...props }, ref) => {
+interface InputProps extends React.ComponentProps<"input"> {
+  /** Set to true for auth pages (login, register, etc.) to enable password manager */
+  allowAutofill?: boolean;
+}
+
+const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ className, type, allowAutofill, ...props }, ref) => {
+    // Default autofill prevention for non-auth contexts
+    const autofillProps = allowAutofill
+      ? {}
+      : {
+          autoComplete: props.autoComplete ?? "off",
+          "data-form-type": "other",
+          "data-lpignore": "true",
+          "data-1p-ignore": true,
+        };
+
     return (
       <input
         type={type}
@@ -12,6 +27,7 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
           className,
         )}
         ref={ref}
+        {...autofillProps}
         {...props}
       />
     );

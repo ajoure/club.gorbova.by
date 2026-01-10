@@ -685,7 +685,8 @@ export function PaymentDialog({
             <div className="space-y-2">
               <Label htmlFor="password">Пароль</Label>
               <Input
-                id="password"
+                id="dialog_auth_password"
+                name="dialog_auth_password"
                 type="password"
                 placeholder="••••••••"
                 value={formData.password}
@@ -696,7 +697,8 @@ export function PaymentDialog({
                 }}
                 required
                 disabled={isLoading}
-                autoFocus
+                allowAutofill
+                autoComplete="current-password"
               />
               {errors.password && (
                 <p className="text-sm text-destructive">{errors.password}</p>

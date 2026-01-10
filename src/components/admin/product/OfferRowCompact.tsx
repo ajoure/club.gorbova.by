@@ -119,7 +119,7 @@ export function OfferRowCompact({
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={handleKeyDown}
                 className="h-7 text-sm"
-                autoFocus
+                name="offer_edit_value"
               />
               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleSave}>
                 <Check className="h-4 w-4 text-green-500" />

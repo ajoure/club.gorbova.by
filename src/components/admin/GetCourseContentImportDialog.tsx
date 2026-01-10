@@ -436,22 +436,23 @@ export function GetCourseContentImportDialog({
                     <Label htmlFor="getcourseEmail" className="text-sm">Логин (email)</Label>
                     <Input
                       id="getcourseEmail"
+                      name="gc_import_email"
                       type="email"
                       value={getCourseEmail}
                       onChange={(e) => setGetCourseEmail(e.target.value)}
                       placeholder="email@domain.com"
-                      autoComplete="username"
                     />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="getcoursePassword" className="text-sm">Пароль</Label>
                     <Input
                       id="getcoursePassword"
-                      type="password"
+                      name="gc_import_password"
+                      type="text"
                       value={getCoursePassword}
                       onChange={(e) => setGetCoursePassword(e.target.value)}
                       placeholder="••••••••"
-                      autoComplete="current-password"
+                      className="[&:not(:placeholder-shown)]:[-webkit-text-security:disc]"
                     />
                   </div>
                 </div>
@@ -578,11 +579,11 @@ export function GetCourseContentImportDialog({
                 <Label htmlFor="twoFactorCode">Код подтверждения</Label>
                 <Input
                   id="twoFactorCode"
+                  name="gc_2fa_code"
                   value={twoFactorCode}
                   onChange={(e) => setTwoFactorCode(e.target.value)}
                   placeholder="Введите код из письма"
                   className="text-center text-lg tracking-widest"
-                  autoFocus
                 />
                 <Button
                   onClick={submitTwoFactorCode}

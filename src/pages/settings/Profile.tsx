@@ -303,10 +303,13 @@ export default function ProfileSettings() {
             <div className="relative">
               <Input
                 id="currentPassword"
+                name="profile_current_password"
                 type={showCurrent ? "text" : "password"}
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 placeholder="Введите текущий пароль"
+                allowAutofill
+                autoComplete="current-password"
               />
               <Button
                 type="button"
@@ -325,10 +328,13 @@ export default function ProfileSettings() {
             <div className="relative">
               <Input
                 id="newPassword"
+                name="profile_new_password"
                 type={showNew ? "text" : "password"}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="Введите новый пароль"
+                allowAutofill
+                autoComplete="new-password"
               />
               <Button
                 type="button"
@@ -348,10 +354,13 @@ export default function ProfileSettings() {
             <div className="relative">
               <Input
                 id="confirmPassword"
+                name="profile_confirm_password"
                 type={showConfirm ? "text" : "password"}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Повторите новый пароль"
+                allowAutofill
+                autoComplete="new-password"
               />
               <Button
                 type="button"

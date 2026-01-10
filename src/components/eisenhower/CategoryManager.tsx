@@ -95,7 +95,7 @@ export function CategoryManager({
                         value={editName}
                         onChange={(e) => setEditName(e.target.value)}
                         className="flex-1 h-8"
-                        autoFocus
+                        name="category_edit_name"
                       />
                       <div className="flex gap-1">
                         {defaultColors.map((color) => (

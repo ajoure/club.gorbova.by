@@ -232,11 +232,12 @@ export function AddIntegrationDialog({
                     </Label>
                     <Input
                       id={field.key}
-                      type={field.type === "password" ? "password" : "text"}
+                      name={`integration_${field.key}`}
+                      type="text"
                       value={String(formData[field.key] || "")}
                       onChange={(e) => handleFieldChange(field.key, e.target.value)}
                       placeholder={field.placeholder}
-                      autoComplete={field.type === "password" ? "new-password" : "off"}
+                      className={field.type === "password" ? "[&:not(:placeholder-shown)]:[-webkit-text-security:disc]" : ""}
                     />
                   </>
                 )}
