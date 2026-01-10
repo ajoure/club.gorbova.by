@@ -733,8 +733,14 @@ export type Database = {
           from_email: string | null
           from_name: string | null
           id: string
+          imap_enabled: boolean | null
+          imap_encryption: string | null
+          imap_host: string | null
+          imap_port: number | null
           is_active: boolean | null
           is_default: boolean | null
+          last_fetched_at: string | null
+          last_fetched_uid: string | null
           provider: string
           reply_to: string | null
           smtp_encryption: string | null
@@ -752,8 +758,14 @@ export type Database = {
           from_email?: string | null
           from_name?: string | null
           id?: string
+          imap_enabled?: boolean | null
+          imap_encryption?: string | null
+          imap_host?: string | null
+          imap_port?: number | null
           is_active?: boolean | null
           is_default?: boolean | null
+          last_fetched_at?: string | null
+          last_fetched_uid?: string | null
           provider?: string
           reply_to?: string | null
           smtp_encryption?: string | null
@@ -771,8 +783,14 @@ export type Database = {
           from_email?: string | null
           from_name?: string | null
           id?: string
+          imap_enabled?: boolean | null
+          imap_encryption?: string | null
+          imap_host?: string | null
+          imap_port?: number | null
           is_active?: boolean | null
           is_default?: boolean | null
+          last_fetched_at?: string | null
+          last_fetched_uid?: string | null
           provider?: string
           reply_to?: string | null
           smtp_encryption?: string | null
@@ -784,6 +802,87 @@ export type Database = {
           use_for?: Json | null
         }
         Relationships: []
+      }
+      email_inbox: {
+        Row: {
+          attachments: Json | null
+          body_html: string | null
+          body_text: string | null
+          created_at: string | null
+          email_account_id: string | null
+          folder: string | null
+          from_email: string
+          from_name: string | null
+          headers: Json | null
+          id: string
+          is_archived: boolean | null
+          is_read: boolean | null
+          is_starred: boolean | null
+          linked_profile_id: string | null
+          message_uid: string
+          received_at: string | null
+          subject: string | null
+          to_email: string
+          updated_at: string | null
+        }
+        Insert: {
+          attachments?: Json | null
+          body_html?: string | null
+          body_text?: string | null
+          created_at?: string | null
+          email_account_id?: string | null
+          folder?: string | null
+          from_email: string
+          from_name?: string | null
+          headers?: Json | null
+          id?: string
+          is_archived?: boolean | null
+          is_read?: boolean | null
+          is_starred?: boolean | null
+          linked_profile_id?: string | null
+          message_uid: string
+          received_at?: string | null
+          subject?: string | null
+          to_email: string
+          updated_at?: string | null
+        }
+        Update: {
+          attachments?: Json | null
+          body_html?: string | null
+          body_text?: string | null
+          created_at?: string | null
+          email_account_id?: string | null
+          folder?: string | null
+          from_email?: string
+          from_name?: string | null
+          headers?: Json | null
+          id?: string
+          is_archived?: boolean | null
+          is_read?: boolean | null
+          is_starred?: boolean | null
+          linked_profile_id?: string | null
+          message_uid?: string
+          received_at?: string | null
+          subject?: string | null
+          to_email?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_inbox_email_account_id_fkey"
+            columns: ["email_account_id"]
+            isOneToOne: false
+            referencedRelation: "email_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_inbox_linked_profile_id_fkey"
+            columns: ["linked_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       email_logs: {
         Row: {

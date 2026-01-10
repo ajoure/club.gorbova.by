@@ -51,6 +51,8 @@ import {
   Server,
   ChevronDown,
   Settings2,
+  Download,
+  Inbox,
 } from "lucide-react";
 import {
   Collapsible,
@@ -76,6 +78,12 @@ interface EmailAccount {
   is_active: boolean;
   use_for: string[];
   created_at: string;
+  // IMAP fields
+  imap_host: string | null;
+  imap_port: number | null;
+  imap_encryption: string | null;
+  imap_enabled: boolean;
+  last_fetched_at: string | null;
 }
 
 interface EmailTemplate {
@@ -127,6 +135,28 @@ const getSmtpSettings = (email: string) => {
   return smtpConfigs[domain] || null;
 };
 
+// Auto-detect IMAP settings based on email domain  
+const getImapSettings = (email: string) => {
+  const domain = email.split("@")[1]?.toLowerCase();
+  
+  const imapConfigs: Record<string, { host: string; port: number }> = {
+    "gmail.com": { host: "imap.gmail.com", port: 993 },
+    "googlemail.com": { host: "imap.gmail.com", port: 993 },
+    "yandex.ru": { host: "imap.yandex.ru", port: 993 },
+    "yandex.com": { host: "imap.yandex.com", port: 993 },
+    "ya.ru": { host: "imap.yandex.ru", port: 993 },
+    "mail.ru": { host: "imap.mail.ru", port: 993 },
+    "inbox.ru": { host: "imap.mail.ru", port: 993 },
+    "list.ru": { host: "imap.mail.ru", port: 993 },
+    "bk.ru": { host: "imap.mail.ru", port: 993 },
+    "outlook.com": { host: "outlook.office365.com", port: 993 },
+    "hotmail.com": { host: "outlook.office365.com", port: 993 },
+    "live.com": { host: "outlook.office365.com", port: 993 },
+  };
+
+  return imapConfigs[domain] || null;
+};
+
 const getProviderName = (email: string): string => {
   const domain = email.split("@")[1]?.toLowerCase();
   if (!domain) return "smtp";
@@ -160,6 +190,8 @@ export default function AdminEmail() {
   
   const [testingSend, setTestingSend] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showImapSettings, setShowImapSettings] = useState(false);
+  const [fetchingEmail, setFetchingEmail] = useState<string | null>(null);
 
   // Fetch email accounts
   const { data: accounts = [], isLoading: loadingAccounts } = useQuery({
@@ -306,6 +338,37 @@ export default function AdminEmail() {
     },
   });
 
+  // Fetch inbox mutation  
+  const fetchInboxMutation = useMutation({
+    mutationFn: async (accountId: string) => {
+      const { data, error } = await supabase.functions.invoke("email-fetch-inbox", {
+        body: { account_id: accountId },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      const total = data.results?.reduce((sum: number, r: { fetched?: number }) => sum + (r.fetched || 0), 0) || 0;
+      if (total > 0) {
+        toast.success(`Получено ${total} новых писем`);
+      } else {
+        toast.info("Новых писем нет");
+      }
+      queryClient.invalidateQueries({ queryKey: ["email-accounts"] });
+    },
+    onError: (error: Error) => {
+      toast.error(`Ошибка: ${error.message}`);
+    },
+    onSettled: () => {
+      setFetchingEmail(null);
+    },
+  });
+
+  const handleFetchInbox = (accountId: string) => {
+    setFetchingEmail(accountId);
+    fetchInboxMutation.mutate(accountId);
+  };
+
   const handleTestSend = (accountId: string) => {
     setTestingSend(accountId);
     testSendMutation.mutate(accountId);
@@ -444,11 +507,27 @@ export default function AdminEmail() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
+                      {account.imap_enabled && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleFetchInbox(account.id)}
+                          disabled={fetchingEmail === account.id}
+                          title="Загрузить входящие"
+                        >
+                          {fetchingEmail === account.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Download className="w-4 h-4" />
+                          )}
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"
                         onClick={() => handleTestSend(account.id)}
                         disabled={testingSend === account.id}
+                        title="Отправить тестовое письмо"
                       >
                         {testingSend === account.id ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
@@ -749,6 +828,77 @@ export default function AdminEmail() {
                     }
                   />
                 </div>
+              </CollapsibleContent>
+            </Collapsible>
+
+            {/* IMAP Settings */}
+            <Collapsible open={showImapSettings} onOpenChange={setShowImapSettings}>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="w-full justify-between">
+                  <span className="flex items-center gap-2">
+                    <Inbox className="w-4 h-4" />
+                    Входящая почта (IMAP)
+                  </span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showImapSettings ? "rotate-180" : ""}`} />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-4 pt-4">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={accountDialog.account?.imap_enabled ?? false}
+                    onCheckedChange={(checked) => {
+                      const imapSettings = accountDialog.account?.email ? getImapSettings(accountDialog.account.email) : null;
+                      setAccountDialog((prev) => ({
+                        ...prev,
+                        account: { 
+                          ...prev.account, 
+                          imap_enabled: checked,
+                          ...(checked && imapSettings && !prev.account?.imap_host ? {
+                            imap_host: imapSettings.host,
+                            imap_port: imapSettings.port,
+                          } : {}),
+                        },
+                      }));
+                    }}
+                  />
+                  <Label>Получать входящие письма</Label>
+                </div>
+
+                {accountDialog.account?.imap_enabled && (
+                  <>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="space-y-2 col-span-2">
+                        <Label>IMAP Host</Label>
+                        <Input
+                          value={accountDialog.account?.imap_host || ""}
+                          onChange={(e) =>
+                            setAccountDialog((prev) => ({
+                              ...prev,
+                              account: { ...prev.account, imap_host: e.target.value },
+                            }))
+                          }
+                          placeholder="imap.yandex.ru"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Port</Label>
+                        <Input
+                          type="number"
+                          value={accountDialog.account?.imap_port || 993}
+                          onChange={(e) =>
+                            setAccountDialog((prev) => ({
+                              ...prev,
+                              account: { ...prev.account, imap_port: parseInt(e.target.value) || 993 },
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Используется тот же пароль, что и для SMTP
+                    </p>
+                  </>
+                )}
               </CollapsibleContent>
             </Collapsible>
 
