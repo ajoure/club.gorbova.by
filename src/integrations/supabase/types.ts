@@ -4785,6 +4785,72 @@ export type Database = {
           },
         ]
       }
+      user_lesson_progress: {
+        Row: {
+          attempts: number | null
+          block_id: string | null
+          completed_at: string | null
+          created_at: string | null
+          id: string
+          is_correct: boolean | null
+          lesson_id: string
+          max_score: number | null
+          response: Json | null
+          score: number | null
+          started_at: string | null
+          time_spent_seconds: number | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          attempts?: number | null
+          block_id?: string | null
+          completed_at?: string | null
+          created_at?: string | null
+          id?: string
+          is_correct?: boolean | null
+          lesson_id: string
+          max_score?: number | null
+          response?: Json | null
+          score?: number | null
+          started_at?: string | null
+          time_spent_seconds?: number | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          attempts?: number | null
+          block_id?: string | null
+          completed_at?: string | null
+          created_at?: string | null
+          id?: string
+          is_correct?: boolean | null
+          lesson_id?: string
+          max_score?: number | null
+          response?: Json | null
+          score?: number | null
+          started_at?: string | null
+          time_spent_seconds?: number | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_lesson_progress_block_id_fkey"
+            columns: ["block_id"]
+            isOneToOne: false
+            referencedRelation: "lesson_blocks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_lesson_progress_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "training_lessons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string

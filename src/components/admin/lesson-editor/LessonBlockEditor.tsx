@@ -92,6 +92,10 @@ import { CalloutBlock } from "./blocks/CalloutBlock";
 import { TimelineBlock } from "./blocks/TimelineBlock";
 import { StepsBlock } from "./blocks/StepsBlock";
 import { QuoteBlock } from "./blocks/QuoteBlock";
+import { QuizSingleBlock } from "./blocks/QuizSingleBlock";
+import { QuizMultipleBlock } from "./blocks/QuizMultipleBlock";
+import { QuizTrueFalseBlock } from "./blocks/QuizTrueFalseBlock";
+import { QuizFillBlankBlock } from "./blocks/QuizFillBlankBlock";
 
 // Block configuration with categories
 interface BlockConfig {
@@ -157,11 +161,12 @@ const categoryConfig = {
   meta: { icon: Box, label: "Структура", color: "text-gray-600" },
 };
 
-// Blocks available in Iteration 1
+// Blocks available (Iteration 1 + 2)
 const availableBlocks: BlockType[] = [
   'heading', 'text', 'accordion', 'tabs', 'spoiler', 'callout', 'quote',
   'video', 'audio', 'image', 'file',
   'button', 'embed', 'divider', 'timeline', 'steps',
+  'quiz_single', 'quiz_multiple', 'quiz_true_false', 'quiz_fill_blank',
 ];
 
 function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
@@ -196,6 +201,14 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
       return { items: [] };
     case 'steps':
       return { steps: [], orientation: 'vertical' };
+    case 'quiz_single':
+      return { question: "", options: [], explanation: "", points: 1 };
+    case 'quiz_multiple':
+      return { question: "", options: [], explanation: "", points: 1 };
+    case 'quiz_true_false':
+      return { question: "", correctAnswer: true, explanation: "", points: 1 };
+    case 'quiz_fill_blank':
+      return { textBefore: "", blanks: [], explanation: "", points: 1 };
     case 'divider':
     default:
       return {};
@@ -261,6 +274,14 @@ function SortableBlockItem({ block, onUpdate, onDelete }: SortableBlockItemProps
         return <TimelineBlock content={block.content as any} onChange={onUpdate} />;
       case 'steps':
         return <StepsBlock content={block.content as any} onChange={onUpdate} />;
+      case 'quiz_single':
+        return <QuizSingleBlock content={block.content as any} onChange={onUpdate} />;
+      case 'quiz_multiple':
+        return <QuizMultipleBlock content={block.content as any} onChange={onUpdate} />;
+      case 'quiz_true_false':
+        return <QuizTrueFalseBlock content={block.content as any} onChange={onUpdate} />;
+      case 'quiz_fill_blank':
+        return <QuizFillBlankBlock content={block.content as any} onChange={onUpdate} />;
       default:
         return (
           <div className="text-center py-8 text-muted-foreground">

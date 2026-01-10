@@ -94,6 +94,46 @@ export interface StepsContentData {
   orientation?: 'vertical' | 'horizontal';
 }
 
+// Quiz content types (Iteration 2)
+export interface QuizSingleContentData {
+  question: string;
+  options: { id: string; text: string; isCorrect: boolean }[];
+  explanation?: string;
+  points?: number;
+}
+
+export interface QuizMultipleContentData {
+  question: string;
+  options: { id: string; text: string; isCorrect: boolean }[];
+  explanation?: string;
+  points?: number;
+  partialCredit?: boolean;
+}
+
+export interface QuizTrueFalseContentData {
+  question: string;
+  correctAnswer: boolean;
+  trueLabel?: string;
+  falseLabel?: string;
+  explanation?: string;
+  points?: number;
+}
+
+export interface QuizFillBlankContentData {
+  textBefore: string;
+  blanks: {
+    id: string;
+    correctAnswer: string;
+    acceptedVariants?: string[];
+    inputType: 'text' | 'dropdown';
+    dropdownOptions?: string[];
+  }[];
+  textAfter?: string;
+  explanation?: string;
+  points?: number;
+  caseSensitive?: boolean;
+}
+
 export interface BlockSettings {
   alignment?: 'left' | 'center' | 'right';
   padding?: string;
@@ -104,7 +144,7 @@ export interface LessonBlock {
   id: string;
   lesson_id: string;
   block_type: BlockType;
-  content: HeadingContent | TextContent | VideoContent | AudioContent | ImageContent | FileContent | ButtonContent | EmbedContent | AccordionContentData | TabsContentData | SpoilerContentData | CalloutContentData | QuoteContentData | TimelineContentData | StepsContentData | Record<string, never>;
+  content: HeadingContent | TextContent | VideoContent | AudioContent | ImageContent | FileContent | ButtonContent | EmbedContent | AccordionContentData | TabsContentData | SpoilerContentData | CalloutContentData | QuoteContentData | TimelineContentData | StepsContentData | QuizSingleContentData | QuizMultipleContentData | QuizTrueFalseContentData | QuizFillBlankContentData | Record<string, never>;
   sort_order: number;
   settings: BlockSettings;
   parent_id?: string | null;
