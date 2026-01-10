@@ -314,23 +314,45 @@ Deno.serve(async (req) => {
       const grantRes = await supabase.functions.invoke('telegram-grant-access', {
         body: {
           user_id: orderV2.user_id,
-          club_ids: [product.telegram_club_id],
-          duration_days: accessDays,
+          club_id: product.telegram_club_id,
+          source: 'card_payment',
+          source_id: orderV2.id,
         },
       });
       if (!grantRes.error) results.telegram_access_granted = 1;
       else results.telegram_grant_error = grantRes.error.message;
     }
 
-    // GetCourse sync
-    const gcOfferId = offerGetcourseId || orderMeta.getcourse_offer_id || tariff?.getcourse_offer_id || null;
-    
-    // Get user profile for GetCourse - profiles.id IS the user_id
+    // Get user profile early for notifications and GetCourse (profiles.user_id = auth user id)
     const { data: userProfile } = await supabase
       .from('profiles')
       .select('email, full_name, first_name, last_name, phone')
-      .eq('id', orderV2.user_id)
+      .eq('user_id', orderV2.user_id)
       .maybeSingle();
+
+    // Notify admins about new paid deal
+    const adminMessage = `🎉 <b>Новая оплата!</b>
+
+👤 ${userProfile?.full_name || userProfile?.email || orderV2.customer_email || 'Клиент'}
+📧 ${userProfile?.email || orderV2.customer_email}
+📦 ${product?.name || 'Продукт'} — ${tariff?.name || 'Тариф'}
+💰 ${orderV2.final_price} ${orderV2.currency}
+${orderV2.is_trial ? '🎁 Триал' : '✅ Полная оплата'}
+🧾 ${orderV2.order_number}`;
+
+    try {
+      const notifyRes = await supabase.functions.invoke('telegram-notify-admins', {
+        body: { message: adminMessage, parse_mode: 'HTML' },
+      });
+      results.admin_notification_sent = !notifyRes.error;
+      if (notifyRes.error) results.admin_notification_error = notifyRes.error.message;
+      if (notifyRes.data) results.admin_notification_result = notifyRes.data;
+    } catch (notifyErr) {
+      results.admin_notification_error = notifyErr instanceof Error ? notifyErr.message : String(notifyErr);
+    }
+
+    // GetCourse sync
+    const gcOfferId = offerGetcourseId || orderMeta.getcourse_offer_id || tariff?.getcourse_offer_id || null;
 
     if (userProfile?.email) {
       // Generate a unique deal_number for GetCourse based on order_number
