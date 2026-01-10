@@ -492,6 +492,11 @@ Deno.serve(async (req) => {
           is_installment: isInternalInstallment,
           installment_count: isInternalInstallment ? installmentCount : null,
           first_payment_amount: isInternalInstallment ? amount : null,
+          offer_id: offer?.id || null,
+          getcourse_offer_id: offer?.getcourse_offer_id || tariff.getcourse_offer_id || null,
+          tariff_code: tariffCode,
+          trial_days: isTrial ? effectiveTrialDays : null,
+          is_trial: isTrial || false,
         },
       })
       .select()

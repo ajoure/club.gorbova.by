@@ -1833,7 +1833,7 @@ ${userName}, к сожалению, не удалось провести опл�
       if (tariffCode && order.customer_email) {
         console.log(`Sending order to GetCourse: tariff=${tariffCode}, email=${order.customer_email}`);
         
-        // Get order_v2 record to retrieve order_number
+        // Get order_v2 record to retrieve order_number and getcourse_offer_id from meta
         const { data: orderV2Data } = await supabase
           .from('orders_v2')
           .select('id, order_number, meta')
@@ -1844,16 +1844,24 @@ ${userName}, к сожалению, не удалось провести опл�
         const orderNumber = orderV2Data?.order_number || `ORD-LEGACY-${internalOrderId.substring(0, 8)}`;
         const orderV2Meta = (orderV2Data?.meta as Record<string, unknown>) || {};
         
-        // Get getcourse_offer_id from tariffs table
-        const { data: tariffData } = await supabase
-          .from('tariffs')
-          .select('getcourse_offer_id')
-          .eq('code', tariffCode)
-          .maybeSingle();
+        // Priority: 1) getcourse_offer_id from order meta (set by direct-charge from offer)
+        //           2) getcourse_offer_id from tariffs table (fallback)
+        let getcourseOfferId = orderV2Meta.getcourse_offer_id as string | undefined;
         
-        const getcourseOfferId = tariffData?.getcourse_offer_id;
+        if (!getcourseOfferId) {
+          // Fallback to tariffs table
+          const { data: tariffGCData } = await supabase
+            .from('tariffs')
+            .select('getcourse_offer_id')
+            .eq('code', tariffCode)
+            .maybeSingle();
+          
+          getcourseOfferId = tariffGCData?.getcourse_offer_id;
+        }
         
         if (getcourseOfferId) {
+          const gcOfferId = typeof getcourseOfferId === 'string' ? parseInt(getcourseOfferId, 10) : getcourseOfferId;
+          
           gcSyncResult = await sendToGetCourse(
             {
               email: order.customer_email,
@@ -1861,7 +1869,7 @@ ${userName}, к сожалению, не удалось провести опл�
               firstName: meta.customer_first_name || null,
               lastName: meta.customer_last_name || null,
             },
-            getcourseOfferId,
+            gcOfferId,
             orderNumber,
             order.amount,
             tariffCode
