@@ -87,7 +87,8 @@ async function scrapeWithFirecrawl(opts: {
 
   const data = json?.data ?? json;
   return {
-    html: data?.html || data?.rawHtml || "",
+    // Prefer rawHtml because some pages rely on attributes/scripts that are stripped in processed html
+    html: data?.rawHtml || data?.html || "",
     markdown: data?.markdown || "",
   };
 }
@@ -443,13 +444,18 @@ Deno.serve(async (req) => {
       let html = "";
       let markdown = "";
 
-      try {
+      const tryScrapeTraining = async (waitFor: number) => {
         const scraped = await scrapeWithFirecrawl({
           url: training_url,
           apiKey: firecrawlApiKey,
           cookies,
-          waitFor: 6000,
+          waitFor,
         });
+        return scraped;
+      };
+
+      try {
+        const scraped = await tryScrapeTraining(12000);
         html = scraped.html;
         markdown = scraped.markdown;
       } catch (e) {
@@ -484,6 +490,35 @@ Deno.serve(async (req) => {
         }
       }
 
+      const hasLessonLinks =
+        /\/teach\/control\/lesson\/view\/id\/\d+/i.test(html) ||
+        /\/lesson[^"']*\/id\/\d+/i.test(html);
+
+      console.log(
+        "Training page fetched:",
+        JSON.stringify({
+          html_len: html.length,
+          has_lesson_links: hasLessonLinks,
+        })
+      );
+
+      // If we still don't see lesson links, try a longer JS render (sometimes GetCourse loads content late)
+      if (!hasLessonLinks) {
+        try {
+          const scraped2 = await tryScrapeTraining(25000);
+          if (scraped2.html && scraped2.html.length > html.length) {
+            html = scraped2.html;
+            markdown = scraped2.markdown;
+            console.log(
+              "Training re-scraped with longer wait:",
+              JSON.stringify({ html_len: html.length })
+            );
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       const looksLikeLogin = /cms\/system\/login/i.test(html) && /name=["']email["']|name=["']password["']/i.test(html);
       const looksLikeAccessDenied = /доступ\s+запрещ|нет\s+доступа|access\s+denied|\b403\b/i.test(html);
 
@@ -497,9 +532,13 @@ Deno.serve(async (req) => {
         throw new Error("Нет доступа к этому тренингу для указанного аккаунта GetCourse.");
       }
 
-      // Extract training title
-      const titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/i) || 
-                         html.match(/class="training-title[^>]*>([^<]+)/i);
+      // Extract training title (try several sources)
+      const titleMatch =
+        html.match(/<h1[^>]*>([^<]+)<\/h1>/i) ||
+        html.match(/property=["']og:title["'][^>]*content=["']([^"']+)["']/i) ||
+        html.match(/<title[^>]*>([^<]+)<\/title>/i) ||
+        html.match(/class=["']training-title[^"']*["'][^>]*>([^<]+)/i);
+
       const trainingTitle = titleMatch ? titleMatch[1].trim() : "Untitled Training";
 
       // Extract training ID
