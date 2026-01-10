@@ -339,7 +339,7 @@ async function chargeSubscription(
   subscription: any,
   bepaidConfig: any
 ): Promise<ChargeResult> {
-  const { id, user_id, payment_token, tariffs, next_charge_at } = subscription;
+  const { id, user_id, payment_token, tariffs, next_charge_at, is_trial, order_id, tariff_id, meta: subMeta } = subscription;
   
   if (!payment_token) {
     return { subscription_id: id, success: false, error: 'No payment token saved' };
@@ -351,40 +351,91 @@ async function chargeSubscription(
     return { subscription_id: id, success: false, error: 'No tariff linked' };
   }
 
-  // Get current price for tariff
-  const { data: priceData } = await supabase
-    .from('tariff_prices')
-    .select('price, final_price, currency')
-    .eq('tariff_id', tariff.id)
-    .eq('is_active', true)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single();
-
-  if (!priceData) {
-    return { subscription_id: id, success: false, error: 'No active price for tariff' };
-  }
-
-  const amount = priceData.final_price || priceData.price;
-  const currency = priceData.currency || 'BYN';
-
-  console.log(`Charging subscription ${id}: ${amount} ${currency}`);
-
-  // Create payment record
-  const { data: order } = await supabase
+  // Get order info to find the original offer
+  const { data: orderData } = await supabase
     .from('orders_v2')
-    .select('id')
-    .eq('id', subscription.order_id)
+    .select('id, meta, customer_email')
+    .eq('id', order_id)
     .single();
 
-  if (!order) {
+  if (!orderData) {
     return { subscription_id: id, success: false, error: 'No order linked' };
   }
+
+  const orderMeta = (orderData.meta || {}) as Record<string, any>;
+  let amount: number;
+  let currency = 'BYN';
+  let fullPaymentOfferId: string | null = null;
+  let fullPaymentGcOfferId: string | null = null;
+  
+  // For trial subscriptions, get auto_charge_amount from offer and find the full payment offer
+  if (is_trial) {
+    // Priority: order meta > subscription meta > tariff offer > tariff prices
+    const autoChargeAmount = orderMeta.auto_charge_amount || subMeta?.auto_charge_amount;
+    
+    if (autoChargeAmount) {
+      amount = Number(autoChargeAmount);
+      console.log(`Trial subscription ${id}: using auto_charge_amount ${amount} from order/subscription meta`);
+    } else {
+      // Fallback: find the trial offer to get auto_charge_amount
+      const { data: trialOffer } = await supabase
+        .from('tariff_offers')
+        .select('auto_charge_amount')
+        .eq('tariff_id', tariff_id)
+        .eq('offer_type', 'trial')
+        .eq('is_active', true)
+        .limit(1)
+        .single();
+      
+      amount = trialOffer?.auto_charge_amount || tariff.original_price || 0;
+      console.log(`Trial subscription ${id}: using auto_charge_amount ${amount} from offer lookup`);
+    }
+
+    // Get the full payment offer for GetCourse sync
+    const { data: fullPayOffer } = await supabase
+      .from('tariff_offers')
+      .select('id, getcourse_offer_id, amount')
+      .eq('tariff_id', tariff_id)
+      .eq('offer_type', 'pay_now')
+      .eq('is_active', true)
+      .order('is_primary', { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (fullPayOffer) {
+      fullPaymentOfferId = fullPayOffer.id;
+      fullPaymentGcOfferId = fullPayOffer.getcourse_offer_id;
+      console.log(`Found full payment offer for trial conversion: ${fullPaymentOfferId}, GC offer: ${fullPaymentGcOfferId}`);
+    }
+  } else {
+    // Regular subscription - get current price from tariff_prices
+    const { data: priceData } = await supabase
+      .from('tariff_prices')
+      .select('price, final_price, currency')
+      .eq('tariff_id', tariff.id)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!priceData) {
+      return { subscription_id: id, success: false, error: 'No active price for tariff' };
+    }
+
+    amount = priceData.final_price || priceData.price;
+    currency = priceData.currency || 'BYN';
+  }
+
+  if (!amount || amount <= 0) {
+    return { subscription_id: id, success: false, error: 'Invalid charge amount' };
+  }
+
+  console.log(`Charging subscription ${id}: ${amount} ${currency} (is_trial: ${is_trial})`);
 
   const { data: payment, error: paymentError } = await supabase
     .from('payments_v2')
     .insert({
-      order_id: order.id,
+      order_id: orderData.id,
       user_id,
       amount,
       currency,
@@ -393,6 +444,11 @@ async function chargeSubscription(
       payment_token,
       is_recurring: true,
       installment_number: (subscription.charge_attempts || 0) + 1,
+      meta: {
+        is_trial_conversion: is_trial,
+        full_payment_offer_id: fullPaymentOfferId,
+        full_payment_gc_offer_id: fullPaymentGcOfferId,
+      },
     })
     .select()
     .single();
@@ -478,6 +534,63 @@ async function chargeSubscription(
           charge_attempts: 0,
         })
         .eq('id', id);
+
+      // Send to GetCourse if this was a trial conversion
+      if (is_trial && fullPaymentGcOfferId && orderData.customer_email) {
+        console.log(`Sending trial conversion to GetCourse: offer=${fullPaymentGcOfferId}`);
+        
+        // Get user profile for name
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('first_name, last_name, phone')
+          .eq('user_id', user_id)
+          .single();
+
+        const gcOfferId = typeof fullPaymentGcOfferId === 'string' 
+          ? parseInt(fullPaymentGcOfferId, 10) 
+          : fullPaymentGcOfferId;
+
+        const orderNumber = `CONV-${new Date().getFullYear().toString().slice(-2)}-${Date.now().toString(36).toUpperCase()}`;
+
+        try {
+          const apiKey = Deno.env.get('GETCOURSE_API_KEY');
+          if (apiKey && gcOfferId) {
+            const gcParams = {
+              user: {
+                email: orderData.customer_email,
+                phone: profile?.phone || undefined,
+                first_name: profile?.first_name || undefined,
+                last_name: profile?.last_name || undefined,
+              },
+              system: { refresh_if_exists: 1 },
+              deal: {
+                offer_code: gcOfferId.toString(),
+                deal_cost: amount,
+                deal_status: 'payed',
+                deal_is_paid: 1,
+                payment_type: 'CARD',
+                manager_email: 'info@ajoure.by',
+                deal_comment: `Конверсия триала в полную подписку. Order: ${orderNumber}`,
+              },
+            };
+
+            const formData = new URLSearchParams();
+            formData.append('action', 'add');
+            formData.append('key', apiKey);
+            formData.append('params', btoa(unescape(encodeURIComponent(JSON.stringify(gcParams)))));
+
+            const gcResponse = await fetch('https://gorbova.getcourse.ru/pl/api/deals', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: formData.toString(),
+            });
+            const gcResult = await gcResponse.text();
+            console.log('GetCourse trial conversion response:', gcResult);
+          }
+        } catch (gcErr) {
+          console.error('GetCourse sync error:', gcErr);
+        }
+      }
 
       // Grant Telegram access
       await supabase.functions.invoke('telegram-grant-access', {

@@ -47,8 +47,9 @@ type OrderRow = {
   created_at: string;
   is_trial: boolean;
   trial_end_at: string | null;
+  meta: { trial_days?: number; offer_id?: string } | null;
   products_v2: { name: string } | null;
-  tariffs: { name: string; access_days: number | null } | null;
+  tariffs: { name: string; access_days: number | null; trial_days: number | null } | null;
   payments_v2: Array<{ status: string | null }>;
 };
 
@@ -100,16 +101,30 @@ export function GlobalPaymentHandler() {
   };
 
   const buildOrderInfo = (data: OrderRow): OrderInfo => {
-    const createdAt = new Date(data.created_at);
+    const now = new Date();
     const isTrial = !!data.is_trial;
     const trialEndAtRaw = data.trial_end_at;
+    const metaTrialDays = data.meta?.trial_days;
 
     const tariffAccessDays = data.tariffs?.access_days || 30;
+    const tariffTrialDays = data.tariffs?.trial_days || 5;
 
-    const accessEndAt = isTrial && trialEndAtRaw ? new Date(trialEndAtRaw) : addDays(createdAt, tariffAccessDays);
-    const accessDays = isTrial && trialEndAtRaw
-      ? Math.max(1, differenceInCalendarDays(accessEndAt, createdAt))
-      : tariffAccessDays;
+    // For trial: priority - trial_end_at > meta.trial_days > tariff.trial_days
+    let accessEndAt: Date;
+    let accessDays: number;
+
+    if (isTrial) {
+      if (trialEndAtRaw) {
+        accessEndAt = new Date(trialEndAtRaw);
+        accessDays = Math.max(1, differenceInCalendarDays(accessEndAt, now));
+      } else {
+        accessDays = metaTrialDays || tariffTrialDays || 5;
+        accessEndAt = addDays(now, accessDays);
+      }
+    } else {
+      accessDays = tariffAccessDays;
+      accessEndAt = addDays(now, accessDays);
+    }
 
     return {
       order_id: data.id,
@@ -119,7 +134,7 @@ export function GlobalPaymentHandler() {
       product_name: data.products_v2?.name || "Продукт",
       tariff_name: data.tariffs?.name || (isTrial ? "Пробный период" : "Тариф"),
       access_days: accessDays,
-      access_start_at: createdAt.toISOString(),
+      access_start_at: now.toISOString(),
       access_end_at: accessEndAt.toISOString(),
       created_at: data.created_at,
       is_trial: isTrial,
@@ -143,8 +158,9 @@ export function GlobalPaymentHandler() {
         created_at,
         is_trial,
         trial_end_at,
+        meta,
         products_v2 (name),
-        tariffs (name, access_days),
+        tariffs (name, access_days, trial_days),
         payments_v2 (status)
       `
       )
