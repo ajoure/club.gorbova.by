@@ -12,7 +12,13 @@ interface RevokeAccessRequest {
   reason?: string;
   is_manual?: boolean;
   admin_id?: string;
+  /**
+   * When true: send DM + write logs only.
+   * No bans and no database state changes.
+   */
+  dry_run?: boolean;
 }
+
 
 async function telegramRequest(botToken: string, method: string, params: Record<string, unknown>) {
   const url = `https://api.telegram.org/bot${botToken}/${method}`;
