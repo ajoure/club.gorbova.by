@@ -13,6 +13,7 @@ interface EmailRequest {
   html: string;
   text?: string;
   account_id?: string; // Optional: specify which email account to use
+  product_id?: string; // Optional: use email account mapped to this product
 }
 
 interface EmailAccount {
@@ -45,7 +46,7 @@ function parseSmtpCode(response: string): number {
   return m ? Number(m[1]) : 0;
 }
 
-async function getEmailAccount(supabase: any, accountId?: string): Promise<EmailAccount | null> {
+async function getEmailAccount(supabase: any, accountId?: string, productId?: string): Promise<EmailAccount | null> {
   // Helper to find password from email_accounts by email
   async function findPasswordByEmail(email: string): Promise<string | null> {
     const { data } = await supabase
@@ -55,6 +56,21 @@ async function getEmailAccount(supabase: any, accountId?: string): Promise<Email
       .eq("is_active", true)
       .maybeSingle();
     return data?.smtp_password || null;
+  }
+
+  // If product_id is provided, check for product-email mapping first
+  if (productId && !accountId) {
+    const { data: mapping } = await supabase
+      .from("product_email_mappings")
+      .select("email_account_id")
+      .eq("product_id", productId)
+      .eq("is_active", true)
+      .maybeSingle();
+    
+    if (mapping?.email_account_id) {
+      console.log(`Using email account from product mapping: ${mapping.email_account_id}`);
+      accountId = mapping.email_account_id;
+    }
   }
 
   // First try integration_instances for email category
@@ -367,12 +383,12 @@ const handler = async (req: Request): Promise<Response> => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { to, subject, html, text, account_id }: EmailRequest = await req.json();
+    const { to, subject, html, text, account_id, product_id }: EmailRequest = await req.json();
 
-    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}`);
+    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}, product_id=${product_id || "none"}`);
 
-    // Get email account from database
-    const account = await getEmailAccount(supabase, account_id);
+    // Get email account from database (with product mapping support)
+    const account = await getEmailAccount(supabase, account_id, product_id);
     
     if (!account) {
       throw new Error("No active email account found. Please configure an email account first.");

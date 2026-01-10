@@ -2795,6 +2795,48 @@ export type Database = {
           },
         ]
       }
+      product_email_mappings: {
+        Row: {
+          created_at: string | null
+          email_account_id: string
+          id: string
+          is_active: boolean | null
+          product_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          email_account_id: string
+          id?: string
+          is_active?: boolean | null
+          product_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          email_account_id?: string
+          id?: string
+          is_active?: boolean | null
+          product_id?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_email_mappings_email_account_id_fkey"
+            columns: ["email_account_id"]
+            isOneToOne: false
+            referencedRelation: "email_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_email_mappings_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: true
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       product_versions: {
         Row: {
           changed_at: string

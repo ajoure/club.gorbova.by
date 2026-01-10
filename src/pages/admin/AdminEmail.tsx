@@ -59,7 +59,8 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { HelpIcon, HelpLabel } from "@/components/help/HelpComponents";
+import { HelpIcon } from "@/components/help/HelpComponents";
+import { ProductEmailMappings } from "@/components/admin/ProductEmailMappings";
 
 interface EmailAccount {
   id: string;
@@ -558,6 +559,9 @@ export default function AdminEmail() {
           </Table>
         )}
       </GlassCard>
+
+      {/* Product Email Mappings Section */}
+      <ProductEmailMappings accounts={accounts} />
 
       {/* Email Templates Section */}
       <GlassCard>
