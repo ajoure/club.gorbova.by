@@ -355,9 +355,11 @@ Deno.serve(async (req) => {
       results.getcourse_sync = gcResult.success;
       if (gcResult.error) results.getcourse_error = gcResult.error;
       if (gcResult.gcOrderId) results.getcourse_order_id = gcResult.gcOrderId;
-      results.gc_deal_number = gcDealNumber;
+      if (gcResult.gcDealNumber) results.gc_deal_number = gcResult.gcDealNumber;
+      // IMPORTANT: getcourse_order_id (deal_id from GC) is what we need for updates!
 
-      // Update order meta with GC sync result - CRITICAL: save gc_deal_number!
+      // Update order meta with GC sync result
+      // CRITICAL: getcourse_order_id is the real GetCourse deal_id for updates!
       await supabase
         .from('orders_v2')
         .update({
@@ -365,8 +367,8 @@ Deno.serve(async (req) => {
             ...(orderV2.meta || {}),
             gc_sync: gcResult.success,
             gc_sync_at: now.toISOString(),
-            getcourse_order_id: gcResult.gcOrderId || null,
-            gc_deal_number: gcDealNumber, // CRITICAL: save for cancellation!
+            getcourse_order_id: gcResult.gcOrderId || null, // Real GC deal_id for updates!
+            gc_deal_number: gcResult.gcDealNumber || gcDealNumber, // Our reference number
             gc_error: gcResult.error || null,
           },
         })

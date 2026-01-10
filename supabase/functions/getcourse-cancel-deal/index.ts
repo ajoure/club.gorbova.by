@@ -7,13 +7,15 @@ const corsHeaders = {
 
 
 // Cancel order in GetCourse by updating existing deal status to "false" (deal_status = ложный)
+// IMPORTANT: To update an existing deal in GetCourse, we need the deal_id (returned as result.deal_id)
+// NOT the deal_number which is just our reference number
 async function cancelInGetCourse(
   email: string,
   offerId: number | string,
   orderNumber: string,
   reason: string,
   amount: number = 0,
-  gcDealNumber?: number
+  gcDealId?: string | number // This is the real GetCourse deal_id (getcourse_order_id in our meta)
 ): Promise<{ success: boolean; error?: string }> {
   const apiKey = Deno.env.get('GETCOURSE_API_KEY');
   const gcEmailRaw = Deno.env.get('GETCOURSE_EMAIL') || 'gorbova';
@@ -34,21 +36,21 @@ async function cancelInGetCourse(
     return { success: false, error: 'No offer ID' };
   }
 
-  // CRITICAL: We need the actual GetCourse deal_number to update an existing deal
-  // If we don't have it, we cannot update - only create new
-  if (!gcDealNumber) {
-    console.log('[getcourse-cancel] No gc_deal_number found - cannot update existing deal');
-    return { success: false, error: 'No GetCourse deal number - cannot update existing deal' };
+  // CRITICAL: We need the GetCourse deal_id to update an existing deal
+  // This is returned as "deal_id" in the GetCourse API response when creating a deal
+  if (!gcDealId) {
+    console.log('[getcourse-cancel] No GetCourse deal_id found - cannot update existing deal');
+    return { success: false, error: 'No GetCourse deal_id - cannot update existing deal' };
   }
   
   try {
-    console.log(`[getcourse-cancel] Updating existing deal: email=${email}, offerId=${offerId}, gcDealNumber=${gcDealNumber}`);
+    console.log(`[getcourse-cancel] Updating deal: email=${email}, offerId=${offerId}, gcDealId=${gcDealId}`);
     
-    // To UPDATE an existing deal, we must use the exact deal_number from GetCourse
+    // To UPDATE an existing deal, we use deal_id (not deal_number!)
     // Setting deal_status to "ложный" (false) marks the payment as cancelled
     const dealParams: Record<string, any> = {
       offer_code: offerId.toString(),
-      deal_number: gcDealNumber, // MUST be the exact GetCourse deal number
+      deal_id: gcDealId, // Use deal_id for updating existing deal!
       deal_status: 'ложный', // Set status to "false" in GetCourse
       deal_is_paid: 0, // Also set payment flag to unpaid
       deal_comment: `Отмена: ${reason}. Order: ${orderNumber}`,
@@ -184,23 +186,24 @@ Deno.serve(async (req) => {
       );
     }
 
-    // CRITICAL: Get the ACTUAL GetCourse deal_number from meta
-    // This must be the real GC deal number, not a generated hash
-    const gcDealNumber = orderMeta.gc_deal_number;
+    // CRITICAL: Get the ACTUAL GetCourse deal_id from meta
+    // This is the deal_id returned by GetCourse API, stored as "getcourse_order_id"
+    const gcDealId = orderMeta.getcourse_order_id;
     
-    if (!gcDealNumber) {
-      console.log('[getcourse-cancel] No gc_deal_number in order meta - cannot update GetCourse');
+    if (!gcDealId) {
+      console.log('[getcourse-cancel] No getcourse_order_id in order meta - cannot update GetCourse');
       return new Response(
         JSON.stringify({ 
-          error: 'No GetCourse deal number stored in order', 
+          error: 'No GetCourse deal_id stored in order (getcourse_order_id)', 
           success: false,
           order_number: order.order_number,
+          meta_keys: Object.keys(orderMeta),
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
     
-    console.log(`[getcourse-cancel] Found gc_deal_number: ${gcDealNumber}`);
+    console.log(`[getcourse-cancel] Found getcourse_order_id (deal_id): ${gcDealId}`);
     
     const result = await cancelInGetCourse(
       email,
@@ -208,7 +211,7 @@ Deno.serve(async (req) => {
       order.order_number,
       reason || 'deal_deleted',
       order.final_price || 0,
-      gcDealNumber
+      gcDealId // Pass the real GetCourse deal_id
     );
 
     console.log('[getcourse-cancel] Result:', result);
