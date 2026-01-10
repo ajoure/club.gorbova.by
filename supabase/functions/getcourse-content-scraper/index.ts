@@ -29,6 +29,69 @@ interface ParsedTraining {
   modules: ParsedModule[];
 }
 
+function upsertCookies(cookieJar: Map<string, string>, setCookieValues: string[]) {
+  for (const setCookie of setCookieValues) {
+    const pair = setCookie.split(";")[0];
+    const eqIndex = pair.indexOf("=");
+    if (eqIndex === -1) continue;
+    const name = pair.slice(0, eqIndex).trim();
+    const value = pair.slice(eqIndex + 1).trim();
+    if (name) cookieJar.set(name, value);
+  }
+}
+
+function cookieHeaderFromJar(cookieJar: Map<string, string>) {
+  return Array.from(cookieJar.entries())
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+}
+
+function getSetCookieValues(res: Response): string[] {
+  // Deno supports getSetCookie(); keep a fallback for environments that don't.
+  const denoValues = (res.headers as any).getSetCookie?.();
+  if (Array.isArray(denoValues)) return denoValues;
+
+  const raw = res.headers.get("set-cookie");
+  if (!raw) return [];
+
+  // Best-effort split: commas that start a new cookie typically followed by "<name>=".
+  return raw.split(/,(?=[^;=]+=)/g).map(s => s.trim()).filter(Boolean);
+}
+
+async function scrapeWithFirecrawl(opts: {
+  url: string;
+  apiKey: string;
+  cookies: string;
+  waitFor?: number;
+}) {
+  const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${opts.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      url: opts.url,
+      formats: ["html", "markdown", "rawHtml"],
+      onlyMainContent: false,
+      waitFor: opts.waitFor ?? 4000,
+      headers: { Cookie: opts.cookies },
+    }),
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = json?.error || `Firecrawl request failed (${res.status})`;
+    throw new Error(msg);
+  }
+
+  const data = json?.data ?? json;
+  return {
+    html: data?.html || data?.rawHtml || "",
+    markdown: data?.markdown || "",
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -64,6 +127,9 @@ Deno.serve(async (req) => {
 
     // Step 1: Login to GetCourse
     console.log("Logging into GetCourse...");
+
+    const cookieJar = new Map<string, string>();
+
     const loginResponse = await fetch(`${baseUrl}/cms/system/login`, {
       method: "POST",
       headers: {
@@ -77,17 +143,25 @@ Deno.serve(async (req) => {
       redirect: "manual",
     });
 
-    // Extract cookies from response
-    const setCookieHeaders = loginResponse.headers.getSetCookie?.() || 
-      loginResponse.headers.get("set-cookie")?.split(",") || [];
-    
-    const cookies = setCookieHeaders
-      .map(c => c.split(";")[0])
-      .filter(Boolean)
-      .join("; ");
+    upsertCookies(cookieJar, getSetCookieValues(loginResponse));
 
-    if (!cookies.includes("PHPSESSID")) {
-      console.error("Login failed - no session cookie received");
+    // Follow redirects (some instances set extra cookies on redirect)
+    let redirectUrl = loginResponse.headers.get("location");
+    for (let i = 0; i < 3 && redirectUrl; i++) {
+      const resolved = redirectUrl.startsWith("http") ? redirectUrl : `${baseUrl}${redirectUrl}`;
+      const follow = await fetch(resolved, {
+        method: "GET",
+        headers: { Cookie: cookieHeaderFromJar(cookieJar) },
+        redirect: "manual",
+      });
+      upsertCookies(cookieJar, getSetCookieValues(follow));
+      redirectUrl = follow.headers.get("location");
+    }
+
+    const cookies = cookieHeaderFromJar(cookieJar);
+
+    if (!cookieJar.has("PHPSESSID")) {
+      console.error("Login failed - no PHPSESSID cookie received");
       return new Response(
         JSON.stringify({ success: false, error: "Login failed - check credentials" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -160,23 +234,32 @@ Deno.serve(async (req) => {
       console.log("Parsing training:", training_url);
 
       // Get training page with structure
-      const trainingResponse = await fetch("https://api.firecrawl.dev/v1/scrape", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${firecrawlApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: training_url,
-          formats: ["html", "markdown"],
-          headers: { Cookie: cookies },
-          waitFor: 2000,
-        }),
-      });
+      let html = "";
+      let markdown = "";
 
-      const trainingData = await trainingResponse.json();
-      const html = trainingData.data?.html || "";
-      const markdown = trainingData.data?.markdown || "";
+      try {
+        const scraped = await scrapeWithFirecrawl({
+          url: training_url,
+          apiKey: firecrawlApiKey,
+          cookies,
+          waitFor: 6000,
+        });
+        html = scraped.html;
+        markdown = scraped.markdown;
+      } catch (e) {
+        console.error("Firecrawl scrape failed, falling back to direct fetch:", e);
+      }
+
+      // Fallback: direct fetch (non-JS) if Firecrawl didn't return HTML
+      if (!html) {
+        const directRes = await fetch(training_url, { headers: { Cookie: cookies } });
+        html = await directRes.text();
+      }
+
+      // Detect if we got redirected to a login page / access denied
+      if (/cms\/system\/login|name=["']email["']|Войти|Sign in/i.test(html)) {
+        throw new Error("Не удалось получить доступ к тренингу (похоже, требуется доступ/логин). Проверьте, что аккаунт имеет доступ к этому тренингу.");
+      }
 
       // Extract training title
       const titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/i) || 
