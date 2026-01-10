@@ -121,6 +121,7 @@ export default function AdminProductDetailV2() {
     offer_type: "pay_now" as "pay_now" | "trial",
     button_label: "",
     amount: 0,
+    reentry_amount: null as number | null, // Price for re-entry (former club members)
     trial_days: 5,
     auto_charge_after_trial: true,
     auto_charge_offer_id: "" as string, // Reference to pay_now offer for auto-charge
@@ -226,6 +227,7 @@ export default function AdminProductDetailV2() {
         offer_type: offer.offer_type,
         button_label: offer.button_label,
         amount: offer.amount,
+        reentry_amount: offer.reentry_amount ?? null,
         trial_days: offer.trial_days || 5,
         auto_charge_after_trial: offer.auto_charge_after_trial ?? true,
         auto_charge_offer_id: offer.auto_charge_offer_id || "",
@@ -247,6 +249,7 @@ export default function AdminProductDetailV2() {
         offer_type: "pay_now",
         button_label: "Оплатить",
         amount: 0,
+        reentry_amount: null,
         trial_days: 5,
         auto_charge_after_trial: true,
         auto_charge_offer_id: "",
@@ -281,6 +284,7 @@ export default function AdminProductDetailV2() {
       offer_type: offerForm.offer_type,
       button_label: offerForm.button_label,
       amount: offerForm.amount,
+      reentry_amount: offerForm.reentry_amount || null, // Price for re-entry
       trial_days: offerForm.offer_type === "trial" ? offerForm.trial_days : null,
       auto_charge_after_trial: offerForm.offer_type === "trial" ? offerForm.auto_charge_after_trial : false,
       auto_charge_amount: null, // Deprecated, use auto_charge_offer_id instead
@@ -818,6 +822,28 @@ export default function AdminProductDetailV2() {
                   type="number"
                   value={offerForm.amount}
                   onChange={(e) => setOfferForm({ ...offerForm, amount: parseFloat(e.target.value) || 0 })}
+                />
+              </div>
+            </div>
+
+            {/* Reentry pricing - for former club members */}
+            <div className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg space-y-3">
+              <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
+                <span className="font-medium text-sm">💰 Цена для повторного вступления</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Для клиентов, которые ранее были участниками и вышли из клуба. Оставьте пустым, если повышение не требуется.
+              </p>
+              <div className="space-y-2">
+                <Label>Сумма при повторном вступлении (BYN)</Label>
+                <Input
+                  type="number"
+                  placeholder="Например: 150"
+                  value={offerForm.reentry_amount ?? ""}
+                  onChange={(e) => setOfferForm({ 
+                    ...offerForm, 
+                    reentry_amount: e.target.value ? parseFloat(e.target.value) : null 
+                  })}
                 />
               </div>
             </div>

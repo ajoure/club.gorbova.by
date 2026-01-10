@@ -12,6 +12,7 @@ interface OfferRowCompactProps {
     offer_type: "pay_now" | "trial";
     button_label: string;
     amount: number;
+    reentry_amount?: number | null;
     trial_days: number | null;
     auto_charge_after_trial: boolean;
     auto_charge_amount: number | null;
@@ -136,6 +137,11 @@ export function OfferRowCompact({
               <div className="font-medium truncate">{offer.button_label}</div>
               <div className="text-xs text-muted-foreground">
                 {offer.amount} BYN
+                {offer.reentry_amount && (
+                  <span className="text-amber-600 ml-1">
+                    • повторно: {offer.reentry_amount} BYN
+                  </span>
+                )}
                 {offer.offer_type === "trial" && (
                   <>
                     {" "}• {offer.trial_days} дней

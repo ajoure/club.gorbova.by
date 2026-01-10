@@ -177,6 +177,7 @@ Deno.serve(async (req) => {
           offer_type,
           button_label,
           amount,
+          reentry_amount,
           trial_days,
           auto_charge_after_trial,
           auto_charge_amount,
@@ -200,11 +201,24 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Map features and offers to tariffs
+    // Map features and offers to tariffs (apply reentry pricing to offers)
     const tariffsWithOffers = tariffs?.map((tariff) => ({
       ...tariff,
       features: tariffFeatures.filter((f) => f.tariff_id === tariff.id),
-      offers: offers.filter((o) => o.tariff_id === tariff.id),
+      offers: offers
+        .filter((o) => o.tariff_id === tariff.id)
+        .map((offer) => {
+          // Apply reentry pricing if applicable
+          if (isReentryPricing && offer.reentry_amount) {
+            return {
+              ...offer,
+              original_amount: offer.amount,
+              amount: offer.reentry_amount,
+              is_reentry_price: true,
+            };
+          }
+          return { ...offer, is_reentry_price: false };
+        }),
     })) || [];
 
     // Fetch current pricing stage
@@ -239,54 +253,20 @@ Deno.serve(async (req) => {
       tariffPrices = pricesData || [];
     }
 
-    // Fetch reentry price multipliers if user is former member
-    let reentryPrices: Record<string, number> = {};
-    if (isReentryPricing && tariffIds.length > 0) {
-      const { data: reentryData } = await supabase
-        .from("reentry_price_multipliers")
-        .select("tariff_id, multiplier, fixed_price")
-        .in("tariff_id", tariffIds)
-        .eq("is_active", true);
-      
-      if (reentryData) {
-        reentryData.forEach((r) => {
-          if (r.fixed_price) {
-            reentryPrices[r.tariff_id] = r.fixed_price;
-          } else if (r.multiplier) {
-            // Will be applied after we get base price
-            reentryPrices[r.tariff_id] = r.multiplier;
-          }
-        });
-      }
-      console.log(`[public-product] Loaded reentry prices for ${Object.keys(reentryPrices).length} tariffs`);
-    }
-
-    // Merge prices into tariffs (with reentry pricing if applicable)
+    // Merge prices into tariffs
     const tariffsWithPrices = tariffsWithOffers.map((tariff) => {
       const stagePrice = tariffPrices.find((p) => p.tariff_id === tariff.id);
-      let currentPrice = stagePrice?.final_price || stagePrice?.price || tariff.price_monthly;
-      let originalPrice = currentPrice;
+      const currentPrice = stagePrice?.final_price || stagePrice?.price || tariff.price_monthly;
       
-      // Apply reentry pricing
-      if (isReentryPricing && reentryPrices[tariff.id]) {
-        const reentryValue = reentryPrices[tariff.id];
-        // Check if it's a multiplier (<10) or fixed price (>=10)
-        if (reentryValue < 10) {
-          // It's a multiplier
-          currentPrice = Math.round(currentPrice * reentryValue);
-        } else {
-          // It's a fixed price
-          currentPrice = reentryValue;
-        }
-      }
+      // Check if any offer in this tariff has reentry pricing applied
+      const hasReentryOffer = tariff.offers.some((o: any) => o.is_reentry_price);
       
       return {
         ...tariff,
         current_price: currentPrice,
         base_price: stagePrice?.price || tariff.price_monthly,
-        original_price: isReentryPricing ? originalPrice : null,
         discount_percent: stagePrice?.discount_enabled ? stagePrice.discount_percent : null,
-        is_reentry_price: isReentryPricing && reentryPrices[tariff.id] ? true : false,
+        has_reentry_pricing: hasReentryOffer,
       };
     });
 

@@ -3092,54 +3092,6 @@ export type Database = {
           },
         ]
       }
-      reentry_price_multipliers: {
-        Row: {
-          created_at: string | null
-          fixed_price: number | null
-          id: string
-          is_active: boolean | null
-          multiplier: number | null
-          product_id: string | null
-          tariff_id: string | null
-          updated_at: string | null
-        }
-        Insert: {
-          created_at?: string | null
-          fixed_price?: number | null
-          id?: string
-          is_active?: boolean | null
-          multiplier?: number | null
-          product_id?: string | null
-          tariff_id?: string | null
-          updated_at?: string | null
-        }
-        Update: {
-          created_at?: string | null
-          fixed_price?: number | null
-          id?: string
-          is_active?: boolean | null
-          multiplier?: number | null
-          product_id?: string | null
-          tariff_id?: string | null
-          updated_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "reentry_price_multipliers_product_id_fkey"
-            columns: ["product_id"]
-            isOneToOne: false
-            referencedRelation: "products_v2"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reentry_price_multipliers_tariff_id_fkey"
-            columns: ["tariff_id"]
-            isOneToOne: false
-            referencedRelation: "tariffs"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       rejected_card_attempts: {
         Row: {
           card_brand: string | null
@@ -3511,6 +3463,7 @@ export type Database = {
           is_primary: boolean | null
           offer_type: string
           payment_method: string | null
+          reentry_amount: number | null
           reject_virtual_cards: boolean | null
           requires_card_tokenization: boolean | null
           sort_order: number | null
@@ -3538,6 +3491,7 @@ export type Database = {
           is_primary?: boolean | null
           offer_type: string
           payment_method?: string | null
+          reentry_amount?: number | null
           reject_virtual_cards?: boolean | null
           requires_card_tokenization?: boolean | null
           sort_order?: number | null
@@ -3565,6 +3519,7 @@ export type Database = {
           is_primary?: boolean | null
           offer_type?: string
           payment_method?: string | null
+          reentry_amount?: number | null
           reject_virtual_cards?: boolean | null
           requires_card_tokenization?: boolean | null
           sort_order?: number | null
