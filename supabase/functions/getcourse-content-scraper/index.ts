@@ -306,15 +306,28 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { action, training_url, two_factor_code, session_id } = body;
-    
-    const email = Deno.env.get("GETCOURSE_EMAIL");
-    const password = Deno.env.get("GETCOURSE_PASSWORD");
+    const { action, training_url, two_factor_code, session_id, getcourse_email, getcourse_password } = body;
+
+    // Credentials can be provided per-request (from UI) or fall back to configured secrets
+    const email = (typeof getcourse_email === "string" && getcourse_email.trim())
+      ? getcourse_email.trim()
+      : Deno.env.get("GETCOURSE_EMAIL");
+    const password = (typeof getcourse_password === "string" && getcourse_password)
+      ? getcourse_password
+      : Deno.env.get("GETCOURSE_PASSWORD");
+
     const firecrawlApiKey = Deno.env.get("FIRECRAWL_API_KEY");
+
+    if ((getcourse_email && !getcourse_password) || (!getcourse_email && getcourse_password)) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Укажите и логин, и пароль" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     if (!email || !password) {
       return new Response(
-        JSON.stringify({ success: false, error: "GetCourse credentials not configured" }),
+        JSON.stringify({ success: false, error: "Укажите логин и пароль GetCourse" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
