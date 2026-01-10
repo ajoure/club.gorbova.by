@@ -161,10 +161,11 @@ Deno.serve(async (req) => {
     // Get email from order or profile
     let email = order.customer_email;
     if (!email && order.user_id) {
+      // profiles.id IS the user_id
       const { data: profile } = await supabase
         .from('profiles')
         .select('email')
-        .eq('user_id', order.user_id)
+        .eq('id', order.user_id)
         .maybeSingle();
       email = profile?.email;
     }

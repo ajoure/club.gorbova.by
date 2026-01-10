@@ -101,11 +101,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get user profile
+    // Get user profile - profiles.id IS the user_id
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('*')
-      .eq('user_id', user_id)
+      .eq('id', user_id)
       .single();
 
     if (profileError || !profile) {

@@ -325,11 +325,11 @@ Deno.serve(async (req) => {
     // GetCourse sync
     const gcOfferId = offerGetcourseId || orderMeta.getcourse_offer_id || tariff?.getcourse_offer_id || null;
     
-    // Get user profile for GetCourse
+    // Get user profile for GetCourse - profiles.id IS the user_id
     const { data: userProfile } = await supabase
       .from('profiles')
       .select('email, full_name, first_name, last_name, phone')
-      .eq('user_id', orderV2.user_id)
+      .eq('id', orderV2.user_id)
       .maybeSingle();
 
     if (userProfile?.email) {
