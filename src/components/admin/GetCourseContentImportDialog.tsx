@@ -84,6 +84,8 @@ export function GetCourseContentImportDialog({
   
   const [step, setStep] = useState<"select" | "two_factor" | "preview" | "importing" | "complete">("select");
   const [trainingUrl, setTrainingUrl] = useState("");
+  const [getCourseEmail, setGetCourseEmail] = useState("");
+  const [getCoursePassword, setGetCoursePassword] = useState("");
   const [trainings, setTrainings] = useState<TrainingListItem[]>([]);
   const [loadingTrainings, setLoadingTrainings] = useState(false);
   const [parsedTraining, setParsedTraining] = useState<ParsedTraining | null>(null);
@@ -96,9 +98,14 @@ export function GetCourseContentImportDialog({
   const [twoFactorSessionId, setTwoFactorSessionId] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<{ action: string; url?: string } | null>(null);
 
+  const credsProvided = getCourseEmail.trim().length > 0 || getCoursePassword.length > 0;
+  const credsValid = !credsProvided || (getCourseEmail.trim().length > 0 && getCoursePassword.length > 0);
+
   const resetDialog = () => {
     setStep("select");
     setTrainingUrl("");
+    setGetCourseEmail("");
+    setGetCoursePassword("");
     setTrainings([]);
     setParsedTraining(null);
     setImportProgress(0);
@@ -124,6 +131,8 @@ export function GetCourseContentImportDialog({
           action: "list_trainings",
           session_id: sessionId,
           two_factor_code: code,
+          getcourse_email: getCourseEmail.trim() || undefined,
+          getcourse_password: getCoursePassword || undefined,
         },
       });
 
@@ -167,6 +176,8 @@ export function GetCourseContentImportDialog({
           training_url: url,
           session_id: sessionId,
           two_factor_code: code,
+          getcourse_email: getCourseEmail.trim() || undefined,
+          getcourse_password: getCoursePassword || undefined,
         },
       });
 
@@ -411,6 +422,42 @@ export function GetCourseContentImportDialog({
               )}
 
               <div className="space-y-2">
+                <Label>Учетные данные GetCourse</Label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="getcourseEmail" className="text-sm">Логин (email)</Label>
+                    <Input
+                      id="getcourseEmail"
+                      type="email"
+                      value={getCourseEmail}
+                      onChange={(e) => setGetCourseEmail(e.target.value)}
+                      placeholder="email@domain.com"
+                      autoComplete="username"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="getcoursePassword" className="text-sm">Пароль</Label>
+                    <Input
+                      id="getcoursePassword"
+                      type="password"
+                      value={getCoursePassword}
+                      onChange={(e) => setGetCoursePassword(e.target.value)}
+                      placeholder="••••••••"
+                      autoComplete="current-password"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Эти данные используются только для импорта и не сохраняются.
+                </p>
+                {!credsValid && (
+                  <p className="text-xs text-destructive">
+                    Заполните и логин, и пароль (или очистите оба поля).
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
                 <Label>URL тренинга GetCourse</Label>
                 <div className="flex gap-2">
                   <Input
@@ -421,7 +468,7 @@ export function GetCourseContentImportDialog({
                   />
                   <Button
                     onClick={() => parseTraining(trainingUrl)}
-                    disabled={!trainingUrl || parsingTraining}
+                    disabled={!trainingUrl || parsingTraining || !credsValid}
                   >
                     {parsingTraining ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -450,7 +497,7 @@ export function GetCourseContentImportDialog({
                     variant="outline"
                     size="sm"
                     onClick={() => loadTrainingsList()}
-                    disabled={loadingTrainings}
+                    disabled={loadingTrainings || !credsValid}
                   >
                     {loadingTrainings ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
