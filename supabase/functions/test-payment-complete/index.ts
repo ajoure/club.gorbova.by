@@ -231,21 +231,9 @@ Deno.serve(async (req) => {
         }
       }
       
-      // For trial orders without specific offer_id, look up the trial offer for this tariff
-      if (orderV2.is_trial && !offerGetcourseId && orderV2.tariff_id) {
-        const { data: trialOffer } = await supabase
-          .from('tariff_offers')
-          .select('getcourse_offer_id, trial_days')
-          .eq('tariff_id', orderV2.tariff_id)
-          .eq('offer_type', 'trial')
-          .eq('is_active', true)
-          .maybeSingle();
-        
-        if (trialOffer?.getcourse_offer_id) {
-          offerGetcourseId = trialOffer.getcourse_offer_id;
-          console.log(`[Test Payment] Found trial offer GC ID: ${offerGetcourseId}`);
-        }
-      }
+      // REMOVED: No longer look up offer from DB - use ONLY offer_id from meta
+      // If offer_id is passed in meta, it will be used. Otherwise, fallback to tariff's getcourse_offer_id
+      console.log(`[Test Payment] Using offer from meta: offerGetcourseId=${offerGetcourseId}, offer_id=${orderMeta.offer_id}`);
 
       // Calculate access days: priority - offer > order meta > tariff
       const accessDays = orderV2.is_trial
