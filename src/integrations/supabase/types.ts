@@ -3088,6 +3088,7 @@ export type Database = {
           merged_to_profile_id: string | null
           phone: string | null
           phones: Json | null
+          position: string | null
           primary_in_group: boolean | null
           reentry_penalty_waived: boolean
           reentry_penalty_waived_at: string | null
@@ -3125,6 +3126,7 @@ export type Database = {
           merged_to_profile_id?: string | null
           phone?: string | null
           phones?: Json | null
+          position?: string | null
           primary_in_group?: boolean | null
           reentry_penalty_waived?: boolean
           reentry_penalty_waived_at?: string | null
@@ -3162,6 +3164,7 @@ export type Database = {
           merged_to_profile_id?: string | null
           phone?: string | null
           phones?: Json | null
+          position?: string | null
           primary_in_group?: boolean | null
           reentry_penalty_waived?: boolean
           reentry_penalty_waived_at?: string | null
