@@ -184,6 +184,9 @@ Deno.serve(async (req) => {
       }
 
       // Create subscription
+      // For trials, set next_charge_at to trial end date for auto-charge
+      const nextChargeAt = orderV2.is_trial ? accessEndAt.toISOString() : null;
+      
       const { error: subError } = await supabase
         .from('subscriptions_v2')
         .insert({
@@ -193,12 +196,13 @@ Deno.serve(async (req) => {
           order_id: orderV2.id,
           status: orderV2.is_trial ? 'trial' : 'active',
           is_trial: !!orderV2.is_trial,
+          auto_renew: !!orderV2.is_trial, // Enable auto-renew for trial subscriptions
           access_start_at: accessStartAt,
           access_end_at: accessEndAt.toISOString(),
           trial_end_at: orderV2.is_trial ? accessEndAt.toISOString() : null,
           payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
           payment_token: null,
-          next_charge_at: null,
+          next_charge_at: nextChargeAt,
           updated_at: now.toISOString(),
         });
 

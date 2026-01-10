@@ -1551,6 +1551,7 @@ ${userName}, к сожалению, не удалось провести опл�
               order_id: orderV2?.id || null,
               status: meta.is_trial ? 'trial' : 'active',
               is_trial: meta.is_trial || false,
+              auto_renew: meta.is_trial ? true : false, // Enable auto-renew for trial subscriptions
               access_start_at: now.toISOString(),
               access_end_at: accessEndAt.toISOString(),
               trial_end_at: meta.is_trial ? accessEndAt.toISOString() : null,

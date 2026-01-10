@@ -533,6 +533,7 @@ Deno.serve(async (req) => {
           order_id: order.id,
           status: 'trial',
           is_trial: true,
+          auto_renew: !!autoChargeAfterTrial, // Enable auto-renew for trial subscriptions with auto-charge
           access_start_at: new Date().toISOString(),
           access_end_at: trialEndAt.toISOString(),
           trial_end_at: trialEndAt.toISOString(),

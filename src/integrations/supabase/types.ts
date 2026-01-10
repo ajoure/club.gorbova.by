@@ -3177,6 +3177,7 @@ export type Database = {
         Row: {
           access_end_at: string | null
           access_start_at: string
+          auto_renew: boolean
           cancel_at: string | null
           cancel_reason: string | null
           canceled_at: string | null
@@ -3203,6 +3204,7 @@ export type Database = {
         Insert: {
           access_end_at?: string | null
           access_start_at?: string
+          auto_renew?: boolean
           cancel_at?: string | null
           cancel_reason?: string | null
           canceled_at?: string | null
@@ -3229,6 +3231,7 @@ export type Database = {
         Update: {
           access_end_at?: string | null
           access_start_at?: string
+          auto_renew?: boolean
           cancel_at?: string | null
           cancel_reason?: string | null
           canceled_at?: string | null
