@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
+import { useUnreadEmailCount } from "@/hooks/useUnreadEmailCount";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Sidebar,
