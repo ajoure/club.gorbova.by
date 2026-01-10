@@ -1943,6 +1943,47 @@ export type Database = {
           },
         ]
       }
+      lesson_blocks: {
+        Row: {
+          block_type: string
+          content: Json
+          created_at: string | null
+          id: string
+          lesson_id: string
+          settings: Json | null
+          sort_order: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          block_type: string
+          content?: Json
+          created_at?: string | null
+          id?: string
+          lesson_id: string
+          settings?: Json | null
+          sort_order?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          block_type?: string
+          content?: Json
+          created_at?: string | null
+          id?: string
+          lesson_id?: string
+          settings?: Json | null
+          sort_order?: number | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lesson_blocks_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "training_lessons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lesson_progress: {
         Row: {
           completed_at: string
