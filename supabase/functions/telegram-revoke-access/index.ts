@@ -128,13 +128,26 @@ Deno.serve(async (req) => {
     let profileUserId: string | null = user_id || null;
 
     if (user_id && !telegramUserId) {
+      // Try finding by profiles.user_id first
       const { data: profile } = await supabase
         .from('profiles')
-        .select('telegram_user_id')
+        .select('telegram_user_id, id, user_id')
         .eq('user_id', user_id)
         .single();
       if (profile?.telegram_user_id) {
         telegramUserId = Number(profile.telegram_user_id);
+        profileUserId = profile.user_id || user_id;
+      } else {
+        // Fallback: try finding by profiles.id (some systems use profile id as user_id)
+        const { data: profileById } = await supabase
+          .from('profiles')
+          .select('telegram_user_id, id, user_id')
+          .eq('id', user_id)
+          .single();
+        if (profileById?.telegram_user_id) {
+          telegramUserId = Number(profileById.telegram_user_id);
+          profileUserId = profileById.user_id || user_id;
+        }
       }
     }
 
