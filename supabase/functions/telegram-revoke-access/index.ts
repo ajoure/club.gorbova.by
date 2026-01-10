@@ -213,6 +213,87 @@ Deno.serve(async (req) => {
       });
     }
 
+    // If user has no Telegram linked, we cannot ban/DM.
+    // Send email fallback (requested behavior) and still mark access as revoked in DB.
+    if (!telegramUserId && profileUserId) {
+      console.log('No telegram_user_id linked. Using email fallback only.');
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('email, full_name')
+        .eq('user_id', profileUserId)
+        .single();
+
+      let emailSent = false;
+      if (profile?.email) {
+        try {
+          await supabase.functions.invoke('send-email', {
+            body: {
+              to: profile.email,
+              subject: '❌ Доступ к клубу отозван',
+              html: `
+                <p>Здравствуйте${profile.full_name ? ', ' + profile.full_name : ''}!</p>
+                <p>Ваш доступ к клубу был закрыт.</p>
+                ${reason ? `<p>Причина: ${reason}</p>` : ''}
+                <p><a href="${getPricingUrl()}">Продлить подписку</a></p>
+              `,
+            },
+          });
+          emailSent = true;
+          console.log('Email fallback sent (no telegram linked) to:', profile.email);
+        } catch (emailErr) {
+          console.error('Email fallback failed (no telegram linked):', emailErr);
+        }
+      }
+
+      // Update telegram_access if present
+      await supabase.from('telegram_access').update({
+        state_chat: 'revoked',
+        state_channel: 'revoked',
+        last_sync_at: new Date().toISOString(),
+      }).eq('user_id', profileUserId).eq('club_id', club_id);
+
+      // Update access grants
+      await supabase.from('telegram_access_grants').update({
+        status: 'revoked',
+        revoked_at: new Date().toISOString(),
+        revoked_by: admin_id || null,
+        revoke_reason: reason || 'manual_revoke',
+      }).eq('user_id', profileUserId).eq('club_id', club_id).eq('status', 'active');
+
+      // Log audit + legacy
+      await logAudit(supabase, {
+        club_id,
+        user_id: profileUserId,
+        telegram_user_id: null,
+        event_type: 'REVOKE',
+        actor_type: is_manual ? 'admin' : 'system',
+        actor_id: admin_id,
+        reason,
+        meta: { dm_sent: false, dm_error: 'no_telegram_linked', email_sent: emailSent },
+      });
+
+      await supabase.from('telegram_logs').insert({
+        user_id: profileUserId,
+        club_id,
+        action: is_manual ? 'MANUAL_REVOKE' : 'AUTO_REVOKE',
+        target: 'both',
+        status: emailSent ? 'email_only' : 'error',
+        meta: { reason, email_sent: emailSent, note: 'no_telegram_linked' },
+      });
+
+      return new Response(JSON.stringify({
+        success: true,
+        chat_revoked: false,
+        channel_revoked: false,
+        dm_sent: false,
+        email_sent: emailSent,
+        note: 'no_telegram_linked',
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Get club with bot
     const { data: club, error: clubError } = await supabase
       .from('telegram_clubs')
