@@ -501,7 +501,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         mark_as_former: "Контакт отмечен как бывший участник клуба",
       };
       toast.success(messages[action]);
-      refetchReentry();
+      // Force refetch with invalidation
+      queryClient.invalidateQueries({ queryKey: ["contact-reentry-status", contact?.user_id] });
       queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
     },
     onError: (error) => {
