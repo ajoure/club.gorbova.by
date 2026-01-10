@@ -2,7 +2,20 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-export type BlockType = 'heading' | 'text' | 'video' | 'audio' | 'image' | 'file' | 'button' | 'embed' | 'divider';
+export type BlockType = 
+  // Текстовые
+  | 'heading' | 'text' | 'accordion' | 'tabs' | 'spoiler' | 'callout' | 'quote'
+  // Медиа  
+  | 'video' | 'audio' | 'image' | 'gallery' | 'file'
+  // Интерактивные
+  | 'button' | 'embed' | 'divider' | 'timeline' | 'steps'
+  // Тесты (Итерация 2)
+  | 'quiz_single' | 'quiz_multiple' | 'quiz_true_false' | 'quiz_fill_blank' 
+  | 'quiz_matching' | 'quiz_sequence' | 'quiz_hotspot'
+  // Ввод (Итерация 3)
+  | 'input_short' | 'input_long' | 'checklist' | 'table_input' | 'file_upload' | 'rating'
+  // Мета (Итерация 4)
+  | 'container' | 'columns' | 'condition';
 
 export interface HeadingContent {
   text: string;
@@ -45,6 +58,42 @@ export interface EmbedContent {
   height?: number;
 }
 
+// New content types for Iteration 1
+export interface AccordionContentData {
+  items: { id: string; title: string; content: string }[];
+  allowMultiple?: boolean;
+}
+
+export interface TabsContentData {
+  tabs: { id: string; title: string; content: string }[];
+}
+
+export interface SpoilerContentData {
+  buttonText: string;
+  content: string;
+}
+
+export interface CalloutContentData {
+  type: 'info' | 'success' | 'warning' | 'error' | 'tip' | 'quote' | 'summary';
+  content: string;
+  title?: string;
+}
+
+export interface QuoteContentData {
+  text: string;
+  author?: string;
+  source?: string;
+}
+
+export interface TimelineContentData {
+  items: { id: string; title: string; description: string; date?: string }[];
+}
+
+export interface StepsContentData {
+  steps: { id: string; title: string; description: string }[];
+  orientation?: 'vertical' | 'horizontal';
+}
+
 export interface BlockSettings {
   alignment?: 'left' | 'center' | 'right';
   padding?: string;
@@ -55,9 +104,11 @@ export interface LessonBlock {
   id: string;
   lesson_id: string;
   block_type: BlockType;
-  content: HeadingContent | TextContent | VideoContent | AudioContent | ImageContent | FileContent | ButtonContent | EmbedContent | Record<string, never>;
+  content: HeadingContent | TextContent | VideoContent | AudioContent | ImageContent | FileContent | ButtonContent | EmbedContent | AccordionContentData | TabsContentData | SpoilerContentData | CalloutContentData | QuoteContentData | TimelineContentData | StepsContentData | Record<string, never>;
   sort_order: number;
   settings: BlockSettings;
+  parent_id?: string | null;
+  visibility_rules?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }

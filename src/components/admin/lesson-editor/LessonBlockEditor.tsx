@@ -22,7 +22,11 @@ import {
   DropdownMenu, 
   DropdownMenuContent, 
   DropdownMenuItem, 
-  DropdownMenuTrigger 
+  DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { 
   AlertDialog,
@@ -48,7 +52,28 @@ import {
   Link, 
   Code, 
   Minus,
-  Loader2
+  Loader2,
+  ChevronRight,
+  List,
+  Layers,
+  Quote,
+  AlertCircle,
+  Eye,
+  Clock,
+  Footprints,
+  CheckSquare,
+  CircleDot,
+  ToggleLeft,
+  PenLine,
+  AlignLeft,
+  ListChecks,
+  Table,
+  Upload,
+  Star,
+  Box,
+  Columns,
+  GitBranch,
+  LayoutGrid,
 } from "lucide-react";
 import { LessonBlock, BlockType, useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { HeadingBlock } from "./blocks/HeadingBlock";
@@ -60,18 +85,84 @@ import { FileBlock } from "./blocks/FileBlock";
 import { ButtonBlock } from "./blocks/ButtonBlock";
 import { EmbedBlock } from "./blocks/EmbedBlock";
 import { DividerBlock } from "./blocks/DividerBlock";
+import { AccordionBlock } from "./blocks/AccordionBlock";
+import { TabsBlock } from "./blocks/TabsBlock";
+import { SpoilerBlock } from "./blocks/SpoilerBlock";
+import { CalloutBlock } from "./blocks/CalloutBlock";
+import { TimelineBlock } from "./blocks/TimelineBlock";
+import { StepsBlock } from "./blocks/StepsBlock";
+import { QuoteBlock } from "./blocks/QuoteBlock";
 
-const blockTypeConfig: Record<BlockType, { icon: React.ElementType; label: string; color: string }> = {
-  heading: { icon: Heading, label: "Заголовок", color: "bg-blue-500/10 text-blue-600" },
-  text: { icon: Type, label: "Текст", color: "bg-green-500/10 text-green-600" },
-  video: { icon: Video, label: "Видео", color: "bg-purple-500/10 text-purple-600" },
-  audio: { icon: Music, label: "Аудио", color: "bg-orange-500/10 text-orange-600" },
-  image: { icon: Image, label: "Изображение", color: "bg-pink-500/10 text-pink-600" },
-  file: { icon: FileText, label: "Файл", color: "bg-amber-500/10 text-amber-600" },
-  button: { icon: Link, label: "Кнопки", color: "bg-cyan-500/10 text-cyan-600" },
-  embed: { icon: Code, label: "Embed", color: "bg-indigo-500/10 text-indigo-600" },
-  divider: { icon: Minus, label: "Разделитель", color: "bg-gray-500/10 text-gray-600" },
+// Block configuration with categories
+interface BlockConfig {
+  icon: React.ElementType;
+  label: string;
+  color: string;
+  category: 'text' | 'media' | 'interactive' | 'quiz' | 'input' | 'meta';
+}
+
+const blockTypeConfig: Record<BlockType, BlockConfig> = {
+  // Text blocks
+  heading: { icon: Heading, label: "Заголовок", color: "bg-blue-500/10 text-blue-600", category: 'text' },
+  text: { icon: Type, label: "Текст", color: "bg-green-500/10 text-green-600", category: 'text' },
+  accordion: { icon: List, label: "Аккордеон", color: "bg-violet-500/10 text-violet-600", category: 'text' },
+  tabs: { icon: Layers, label: "Вкладки", color: "bg-teal-500/10 text-teal-600", category: 'text' },
+  spoiler: { icon: Eye, label: "Спойлер", color: "bg-slate-500/10 text-slate-600", category: 'text' },
+  callout: { icon: AlertCircle, label: "Callout", color: "bg-amber-500/10 text-amber-600", category: 'text' },
+  quote: { icon: Quote, label: "Цитата", color: "bg-rose-500/10 text-rose-600", category: 'text' },
+  
+  // Media blocks
+  video: { icon: Video, label: "Видео", color: "bg-purple-500/10 text-purple-600", category: 'media' },
+  audio: { icon: Music, label: "Аудио", color: "bg-orange-500/10 text-orange-600", category: 'media' },
+  image: { icon: Image, label: "Изображение", color: "bg-pink-500/10 text-pink-600", category: 'media' },
+  gallery: { icon: LayoutGrid, label: "Галерея", color: "bg-fuchsia-500/10 text-fuchsia-600", category: 'media' },
+  file: { icon: FileText, label: "Файл", color: "bg-amber-500/10 text-amber-600", category: 'media' },
+  
+  // Interactive blocks
+  button: { icon: Link, label: "Кнопки", color: "bg-cyan-500/10 text-cyan-600", category: 'interactive' },
+  embed: { icon: Code, label: "Embed", color: "bg-indigo-500/10 text-indigo-600", category: 'interactive' },
+  divider: { icon: Minus, label: "Разделитель", color: "bg-gray-500/10 text-gray-600", category: 'interactive' },
+  timeline: { icon: Clock, label: "Таймлайн", color: "bg-emerald-500/10 text-emerald-600", category: 'interactive' },
+  steps: { icon: Footprints, label: "Шаги", color: "bg-sky-500/10 text-sky-600", category: 'interactive' },
+  
+  // Quiz blocks (Iteration 2 - placeholders)
+  quiz_single: { icon: CircleDot, label: "Один ответ", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
+  quiz_multiple: { icon: CheckSquare, label: "Несколько ответов", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
+  quiz_true_false: { icon: ToggleLeft, label: "Да/Нет", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
+  quiz_fill_blank: { icon: PenLine, label: "Заполнить пропуск", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
+  quiz_matching: { icon: GitBranch, label: "Соответствие", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
+  quiz_sequence: { icon: List, label: "Последовательность", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
+  quiz_hotspot: { icon: Image, label: "Hotspot", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
+  
+  // Input blocks (Iteration 3 - placeholders)
+  input_short: { icon: AlignLeft, label: "Короткий ответ", color: "bg-green-500/10 text-green-600", category: 'input' },
+  input_long: { icon: AlignLeft, label: "Развёрнутый ответ", color: "bg-green-500/10 text-green-600", category: 'input' },
+  checklist: { icon: ListChecks, label: "Чек-лист", color: "bg-green-500/10 text-green-600", category: 'input' },
+  table_input: { icon: Table, label: "Таблица", color: "bg-green-500/10 text-green-600", category: 'input' },
+  file_upload: { icon: Upload, label: "Загрузка файла", color: "bg-green-500/10 text-green-600", category: 'input' },
+  rating: { icon: Star, label: "Оценка", color: "bg-green-500/10 text-green-600", category: 'input' },
+  
+  // Meta blocks (Iteration 4 - placeholders)
+  container: { icon: Box, label: "Контейнер", color: "bg-gray-500/10 text-gray-600", category: 'meta' },
+  columns: { icon: Columns, label: "Колонки", color: "bg-gray-500/10 text-gray-600", category: 'meta' },
+  condition: { icon: GitBranch, label: "Условие", color: "bg-gray-500/10 text-gray-600", category: 'meta' },
 };
+
+const categoryConfig = {
+  text: { icon: Type, label: "Текст", color: "text-green-600" },
+  media: { icon: Image, label: "Медиа", color: "text-purple-600" },
+  interactive: { icon: Layers, label: "Интерактив", color: "text-cyan-600" },
+  quiz: { icon: CheckSquare, label: "Тесты", color: "text-blue-600" },
+  input: { icon: PenLine, label: "Ввод", color: "text-emerald-600" },
+  meta: { icon: Box, label: "Структура", color: "text-gray-600" },
+};
+
+// Blocks available in Iteration 1
+const availableBlocks: BlockType[] = [
+  'heading', 'text', 'accordion', 'tabs', 'spoiler', 'callout', 'quote',
+  'video', 'audio', 'image', 'file',
+  'button', 'embed', 'divider', 'timeline', 'steps',
+];
 
 function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
   switch (blockType) {
@@ -91,6 +182,20 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
       return { buttons: [] };
     case 'embed':
       return { url: "", height: 400 };
+    case 'accordion':
+      return { items: [], allowMultiple: false };
+    case 'tabs':
+      return { tabs: [] };
+    case 'spoiler':
+      return { buttonText: "Показать ответ", content: "" };
+    case 'callout':
+      return { type: 'info', content: "", title: "" };
+    case 'quote':
+      return { text: "", author: "", source: "" };
+    case 'timeline':
+      return { items: [] };
+    case 'steps':
+      return { steps: [], orientation: 'vertical' };
     case 'divider':
     default:
       return {};
@@ -120,7 +225,7 @@ function SortableBlockItem({ block, onUpdate, onDelete }: SortableBlockItemProps
   };
 
   const config = blockTypeConfig[block.block_type];
-  const Icon = config.icon;
+  const Icon = config?.icon || Type;
 
   const renderBlockContent = () => {
     switch (block.block_type) {
@@ -142,13 +247,32 @@ function SortableBlockItem({ block, onUpdate, onDelete }: SortableBlockItemProps
         return <EmbedBlock content={block.content as any} onChange={onUpdate} />;
       case 'divider':
         return <DividerBlock />;
+      case 'accordion':
+        return <AccordionBlock content={block.content as any} onChange={onUpdate} />;
+      case 'tabs':
+        return <TabsBlock content={block.content as any} onChange={onUpdate} />;
+      case 'spoiler':
+        return <SpoilerBlock content={block.content as any} onChange={onUpdate} />;
+      case 'callout':
+        return <CalloutBlock content={block.content as any} onChange={onUpdate} />;
+      case 'quote':
+        return <QuoteBlock content={block.content as any} onChange={onUpdate} />;
+      case 'timeline':
+        return <TimelineBlock content={block.content as any} onChange={onUpdate} />;
+      case 'steps':
+        return <StepsBlock content={block.content as any} onChange={onUpdate} />;
       default:
-        return <div>Неизвестный тип блока</div>;
+        return (
+          <div className="text-center py-8 text-muted-foreground">
+            <Icon className="h-8 w-8 mx-auto mb-2 opacity-50" />
+            <p className="text-sm">Блок "{config?.label}" будет доступен в следующих обновлениях</p>
+          </div>
+        );
     }
   };
 
   return (
-    <Card ref={setNodeRef} style={style} className="p-0 overflow-hidden">
+    <Card ref={setNodeRef} style={style} className="p-0 overflow-hidden backdrop-blur-sm bg-card/80">
       <div className="flex items-start gap-2 p-3 border-b bg-muted/30">
         <button
           {...attributes}
@@ -157,9 +281,9 @@ function SortableBlockItem({ block, onUpdate, onDelete }: SortableBlockItemProps
         >
           <GripVertical className="h-4 w-4 text-muted-foreground" />
         </button>
-        <Badge variant="secondary" className={`${config.color} gap-1.5`}>
+        <Badge variant="secondary" className={`${config?.color || ''} gap-1.5`}>
           <Icon className="h-3 w-3" />
-          {config.label}
+          {config?.label || block.block_type}
         </Badge>
         <div className="flex-1" />
         <Button
@@ -222,6 +346,14 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
     }
   };
 
+  // Group blocks by category
+  const blocksByCategory = availableBlocks.reduce((acc, type) => {
+    const category = blockTypeConfig[type].category;
+    if (!acc[category]) acc[category] = [];
+    acc[category].push(type);
+    return acc;
+  }, {} as Record<string, BlockType[]>);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -234,28 +366,52 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
     <div className="space-y-4">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" className="w-full">
+          <Button variant="outline" className="w-full bg-card/50 backdrop-blur-sm border-dashed hover:bg-card/80">
             <Plus className="h-4 w-4 mr-2" />
             Добавить блок
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="center" className="w-48">
-          {(Object.keys(blockTypeConfig) as BlockType[]).map((type) => {
-            const config = blockTypeConfig[type];
-            const Icon = config.icon;
+        <DropdownMenuContent align="center" className="w-64 backdrop-blur-xl bg-background/95">
+          {Object.entries(blocksByCategory).map(([category, types], catIndex) => {
+            const catConfig = categoryConfig[category as keyof typeof categoryConfig];
+            const CatIcon = catConfig.icon;
+            
             return (
-              <DropdownMenuItem key={type} onClick={() => handleAddBlock(type)}>
-                <Icon className="h-4 w-4 mr-2" />
-                {config.label}
-              </DropdownMenuItem>
+              <DropdownMenuSub key={category}>
+                <DropdownMenuSubTrigger className="gap-2">
+                  <CatIcon className={`h-4 w-4 ${catConfig.color}`} />
+                  <span>{catConfig.label}</span>
+                  <Badge variant="secondary" className="ml-auto text-xs">
+                    {types.length}
+                  </Badge>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="backdrop-blur-xl bg-background/95">
+                  {types.map((type) => {
+                    const config = blockTypeConfig[type];
+                    const BlockIcon = config.icon;
+                    return (
+                      <DropdownMenuItem 
+                        key={type} 
+                        onClick={() => handleAddBlock(type)}
+                        className="gap-2"
+                      >
+                        <BlockIcon className={`h-4 w-4 ${config.color.split(' ')[1]}`} />
+                        {config.label}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
             );
           })}
         </DropdownMenuContent>
       </DropdownMenu>
 
       {blocks.length === 0 ? (
-        <div className="text-center py-12 border-2 border-dashed rounded-lg">
-          <p className="text-muted-foreground">Нет блоков. Добавьте первый блок.</p>
+        <div className="text-center py-12 border-2 border-dashed rounded-xl bg-card/30 backdrop-blur-sm">
+          <Layers className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
+          <p className="text-muted-foreground font-medium">Нет блоков</p>
+          <p className="text-sm text-muted-foreground/70 mt-1">Нажмите кнопку выше, чтобы добавить первый блок</p>
         </div>
       ) : (
         <DndContext
@@ -279,7 +435,7 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
       )}
 
       <AlertDialog open={!!deleteBlockId} onOpenChange={() => setDeleteBlockId(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent className="backdrop-blur-xl bg-background/95">
           <AlertDialogHeader>
             <AlertDialogTitle>Удалить блок?</AlertDialogTitle>
             <AlertDialogDescription>

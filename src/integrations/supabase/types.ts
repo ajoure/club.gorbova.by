@@ -1950,9 +1950,11 @@ export type Database = {
           created_at: string | null
           id: string
           lesson_id: string
+          parent_id: string | null
           settings: Json | null
           sort_order: number | null
           updated_at: string | null
+          visibility_rules: Json | null
         }
         Insert: {
           block_type: string
@@ -1960,9 +1962,11 @@ export type Database = {
           created_at?: string | null
           id?: string
           lesson_id: string
+          parent_id?: string | null
           settings?: Json | null
           sort_order?: number | null
           updated_at?: string | null
+          visibility_rules?: Json | null
         }
         Update: {
           block_type?: string
@@ -1970,9 +1974,11 @@ export type Database = {
           created_at?: string | null
           id?: string
           lesson_id?: string
+          parent_id?: string | null
           settings?: Json | null
           sort_order?: number | null
           updated_at?: string | null
+          visibility_rules?: Json | null
         }
         Relationships: [
           {
@@ -1980,6 +1986,13 @@ export type Database = {
             columns: ["lesson_id"]
             isOneToOne: false
             referencedRelation: "training_lessons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lesson_blocks_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "lesson_blocks"
             referencedColumns: ["id"]
           },
         ]
