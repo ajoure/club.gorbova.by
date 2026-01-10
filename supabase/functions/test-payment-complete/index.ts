@@ -5,6 +5,17 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Generate a consistent deal_number from orderNumber for GetCourse
+function generateDealNumber(orderNumber: string): number {
+  let hash = 0;
+  for (let i = 0; i < orderNumber.length; i++) {
+    const char = orderNumber.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash);
+}
+
 // GetCourse sync helper
 interface GetCourseUserData {
   email: string;
@@ -51,12 +62,13 @@ async function sendToGetCourse(
         refresh_if_exists: 1,
       },
       deal: {
-        deal_number: orderNumber,
+        deal_number: generateDealNumber(orderNumber),
         deal_cost: amount,
         deal_status: 'payed',
-        deal_is_paid: true,
-        product_title: productName,
-        deal_comment: `Тест-оплата. Заказ: ${orderNumber}. Тариф: ${tariffName}`,
+        deal_is_paid: 1,
+        payment_type: 'CARD',
+        manager_email: 'info@ajoure.by',
+        deal_comment: `Тест-оплата через админку. Заказ: ${orderNumber}. Тариф: ${tariffName}`,
       },
     };
 
@@ -66,27 +78,44 @@ async function sendToGetCourse(
     }
 
     console.log('[Test Payment] Sending to GetCourse:', JSON.stringify(dealData));
+    
+    // Use URLSearchParams with Base64-encoded params like bepaid-webhook does
+    const formData = new URLSearchParams();
+    formData.append('action', 'add');
+    formData.append('key', gcApiKey);
+    // CRITICAL: Use btoa(unescape(encodeURIComponent(...))) for proper encoding
+    formData.append('params', btoa(unescape(encodeURIComponent(JSON.stringify(dealData)))));
 
     const response = await fetch(gcUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: `action=add&key=${gcApiKey}&params=${encodeURIComponent(JSON.stringify(dealData))}`,
+      body: formData.toString(),
     });
 
-    const result = await response.json();
-    console.log('[Test Payment] GetCourse response:', JSON.stringify(result));
+    const responseText = await response.text();
+    console.log('[Test Payment] GetCourse response:', responseText);
+    
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch {
+      console.error('[Test Payment] Failed to parse GC response:', responseText);
+      return { success: false, error: `Invalid response: ${responseText.substring(0, 200)}` };
+    }
 
-    if (result.success) {
+    // Check result.success, not top-level success (which is just API call status)
+    if (result.result?.success === true) {
       return { 
         success: true, 
-        gcOrderId: result.info?.deal_id?.toString() || result.info?.id?.toString()
+        gcOrderId: result.result?.deal_id?.toString()
       };
     } else {
+      const errorMsg = result.result?.error_message || result.error_message || JSON.stringify(result);
       return { 
         success: false, 
-        error: result.error_message || JSON.stringify(result) 
+        error: errorMsg 
       };
     }
   } catch (error) {
@@ -167,7 +196,7 @@ Deno.serve(async (req) => {
     // -------------------------
     const { data: orderV2 } = await supabase
       .from('orders_v2')
-      .select('*, products_v2(id, name, code, telegram_club_id), tariffs(id, name, code, access_days)')
+      .select('*, products_v2(id, name, code, telegram_club_id), tariffs(id, name, code, access_days, getcourse_offer_id)')
       .eq('id', orderId)
       .maybeSingle();
 
