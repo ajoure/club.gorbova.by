@@ -89,29 +89,28 @@ export interface PublicProductData {
     name: string;
     stage_type: string;
   } | null;
+  is_reentry_pricing?: boolean;
+  reentry_message?: string;
 }
 
-export function usePublicProduct(domain: string | null) {
+export function usePublicProduct(domain: string | null, userId?: string | null) {
   return useQuery({
-    queryKey: ["public-product", domain],
+    queryKey: ["public-product", domain, userId],
     queryFn: async (): Promise<PublicProductData | null> => {
       if (!domain) return null;
 
-      const { data, error } = await supabase.functions.invoke("public-product", {
-        body: null,
-        headers: {},
-      });
+      // Build URL with optional user_id for reentry pricing
+      let fetchUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/public-product?domain=${encodeURIComponent(domain)}`;
+      if (userId) {
+        fetchUrl += `&user_id=${encodeURIComponent(userId)}`;
+      }
 
-      // If edge function doesn't work with query params, try with domain param
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/public-product?domain=${encodeURIComponent(domain)}`,
-        {
-          headers: {
-            "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-            "Content-Type": "application/json",
-          },
-        }
-      );
+      const response = await fetch(fetchUrl, {
+        headers: {
+          "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          "Content-Type": "application/json",
+        },
+      });
 
       if (!response.ok) {
         if (response.status === 404) {

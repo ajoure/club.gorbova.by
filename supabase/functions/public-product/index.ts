@@ -18,6 +18,7 @@ Deno.serve(async (req) => {
     // Get domain from query param or Host header
     const url = new URL(req.url);
     let domain = url.searchParams.get("domain");
+    const userId = url.searchParams.get("user_id");
     
     if (!domain) {
       const host = req.headers.get("host") || req.headers.get("x-forwarded-host");
@@ -26,13 +27,30 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[public-product] Looking up product for domain: ${domain}`);
+    console.log(`[public-product] Looking up product for domain: ${domain}, user_id: ${userId || 'none'}`);
 
     if (!domain) {
       return new Response(
         JSON.stringify({ error: "Domain not specified" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+    
+    // Check if user is a former club member who should see reentry pricing
+    let isReentryPricing = false;
+    let reentryMessage = "";
+    if (userId) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("was_club_member, reentry_penalty_waived")
+        .eq("user_id", userId)
+        .single();
+      
+      if (profile?.was_club_member && !profile?.reentry_penalty_waived) {
+        isReentryPricing = true;
+        reentryMessage = "Вы ранее были участником клуба. При повторном вступлении действуют новые условия.";
+        console.log(`[public-product] User ${userId} is former club member, applying reentry pricing`);
+      }
     }
 
     // Fetch product by primary_domain with landing_config
@@ -221,18 +239,58 @@ Deno.serve(async (req) => {
       tariffPrices = pricesData || [];
     }
 
-    // Merge prices into tariffs
+    // Fetch reentry price multipliers if user is former member
+    let reentryPrices: Record<string, number> = {};
+    if (isReentryPricing && tariffIds.length > 0) {
+      const { data: reentryData } = await supabase
+        .from("reentry_price_multipliers")
+        .select("tariff_id, multiplier, fixed_price")
+        .in("tariff_id", tariffIds)
+        .eq("is_active", true);
+      
+      if (reentryData) {
+        reentryData.forEach((r) => {
+          if (r.fixed_price) {
+            reentryPrices[r.tariff_id] = r.fixed_price;
+          } else if (r.multiplier) {
+            // Will be applied after we get base price
+            reentryPrices[r.tariff_id] = r.multiplier;
+          }
+        });
+      }
+      console.log(`[public-product] Loaded reentry prices for ${Object.keys(reentryPrices).length} tariffs`);
+    }
+
+    // Merge prices into tariffs (with reentry pricing if applicable)
     const tariffsWithPrices = tariffsWithOffers.map((tariff) => {
       const stagePrice = tariffPrices.find((p) => p.tariff_id === tariff.id);
+      let currentPrice = stagePrice?.final_price || stagePrice?.price || tariff.price_monthly;
+      let originalPrice = currentPrice;
+      
+      // Apply reentry pricing
+      if (isReentryPricing && reentryPrices[tariff.id]) {
+        const reentryValue = reentryPrices[tariff.id];
+        // Check if it's a multiplier (<10) or fixed price (>=10)
+        if (reentryValue < 10) {
+          // It's a multiplier
+          currentPrice = Math.round(currentPrice * reentryValue);
+        } else {
+          // It's a fixed price
+          currentPrice = reentryValue;
+        }
+      }
+      
       return {
         ...tariff,
-        current_price: stagePrice?.final_price || stagePrice?.price || tariff.price_monthly,
+        current_price: currentPrice,
         base_price: stagePrice?.price || tariff.price_monthly,
+        original_price: isReentryPricing ? originalPrice : null,
         discount_percent: stagePrice?.discount_enabled ? stagePrice.discount_percent : null,
+        is_reentry_price: isReentryPricing && reentryPrices[tariff.id] ? true : false,
       };
     });
 
-    console.log(`[public-product] Returning product ${product.name} with ${tariffsWithPrices.length} tariffs`);
+    console.log(`[public-product] Returning product ${product.name} with ${tariffsWithPrices.length} tariffs, reentry: ${isReentryPricing}`);
 
     return new Response(
       JSON.stringify({
@@ -254,6 +312,8 @@ Deno.serve(async (req) => {
         },
         tariffs: tariffsWithPrices,
         pricing_stage: currentStage || null,
+        is_reentry_pricing: isReentryPricing,
+        reentry_message: reentryMessage,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

@@ -3092,6 +3092,54 @@ export type Database = {
           },
         ]
       }
+      reentry_price_multipliers: {
+        Row: {
+          created_at: string | null
+          fixed_price: number | null
+          id: string
+          is_active: boolean | null
+          multiplier: number | null
+          product_id: string | null
+          tariff_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          fixed_price?: number | null
+          id?: string
+          is_active?: boolean | null
+          multiplier?: number | null
+          product_id?: string | null
+          tariff_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          fixed_price?: number | null
+          id?: string
+          is_active?: boolean | null
+          multiplier?: number | null
+          product_id?: string | null
+          tariff_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reentry_price_multipliers_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reentry_price_multipliers_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rejected_card_attempts: {
         Row: {
           card_brand: string | null

@@ -76,6 +76,8 @@ import {
   LogIn,
   Loader2,
   ArrowLeft,
+  UserX,
+  DollarSign,
 } from "lucide-react";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
@@ -412,6 +414,91 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       return data;
     },
     enabled: !!contact?.user_id,
+  });
+
+  // Fetch reentry (former club member) status
+  const { data: reentryStatus, refetch: refetchReentry } = useQuery({
+    queryKey: ["contact-reentry-status", contact?.user_id],
+    queryFn: async (): Promise<{
+      was_club_member: boolean | null;
+      club_exit_at: string | null;
+      club_exit_reason: string | null;
+      reentry_penalty_waived: boolean | null;
+      reentry_penalty_waived_by: string | null;
+      reentry_penalty_waived_at: string | null;
+    } | null> => {
+      if (!contact?.user_id) return null;
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("was_club_member, club_exit_at, club_exit_reason, reentry_penalty_waived, reentry_penalty_waived_by, reentry_penalty_waived_at")
+        .eq("user_id", contact.user_id)
+        .single();
+      if (error) return null;
+      return data as any;
+    },
+    enabled: !!contact?.user_id,
+  });
+
+  // Update reentry penalty status
+  const updateReentryMutation = useMutation({
+    mutationFn: async ({ action }: { action: 'waive' | 'restore' | 'reset' }) => {
+      if (!contact?.user_id) throw new Error("No user ID");
+      const currentUser = (await supabase.auth.getUser()).data.user;
+      
+      let updates: Record<string, any> = {};
+      
+      if (action === 'waive') {
+        updates = {
+          reentry_penalty_waived: true,
+          reentry_penalty_waived_by: currentUser?.id,
+          reentry_penalty_waived_at: new Date().toISOString(),
+        };
+      } else if (action === 'restore') {
+        updates = {
+          reentry_penalty_waived: false,
+          reentry_penalty_waived_by: null,
+          reentry_penalty_waived_at: null,
+        };
+      } else if (action === 'reset') {
+        updates = {
+          was_club_member: false,
+          club_exit_at: null,
+          club_exit_reason: null,
+          reentry_penalty_waived: false,
+          reentry_penalty_waived_by: null,
+          reentry_penalty_waived_at: null,
+        };
+      }
+      
+      const { error } = await supabase
+        .from("profiles")
+        .update(updates)
+        .eq("user_id", contact.user_id);
+      
+      if (error) throw error;
+      
+      // Log audit
+      await supabase.from("audit_logs").insert({
+        actor_user_id: currentUser?.id,
+        action: `reentry_penalty.${action}`,
+        target_user_id: contact.user_id,
+        meta: { action },
+      });
+      
+      return action;
+    },
+    onSuccess: (action) => {
+      const messages = {
+        waive: "Повышенные тарифы отменены",
+        restore: "Повышенные тарифы восстановлены",
+        reset: "Статус бывшего участника сброшен",
+      };
+      toast.success(messages[action]);
+      refetchReentry();
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + (error as Error).message);
+    },
   });
 
   // Handle impersonation
@@ -1123,6 +1210,92 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         <p className="text-sm">Нет привязанных карт</p>
                       </div>
                     )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Former Club Member Status Card */}
+              {contact.user_id && reentryStatus?.was_club_member && (
+                <Card className="border-amber-200 dark:border-amber-800">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm text-amber-600 dark:text-amber-400 flex items-center gap-2">
+                      <UserX className="w-4 h-4" />
+                      Бывший участник клуба
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 space-y-2">
+                      {reentryStatus.club_exit_at && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Дата выхода</span>
+                          <span>{format(new Date(reentryStatus.club_exit_at), "dd MMM yyyy HH:mm", { locale: ru })}</span>
+                        </div>
+                      )}
+                      {reentryStatus.club_exit_reason && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Причина</span>
+                          <span className="capitalize">{reentryStatus.club_exit_reason}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Повышенные тарифы</span>
+                        {reentryStatus.reentry_penalty_waived ? (
+                          <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                            <CheckCircle className="w-3 h-3 mr-1" />
+                            Отменены
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
+                            <DollarSign className="w-3 h-3 mr-1" />
+                            Активны
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-col gap-2">
+                      {!reentryStatus.reentry_penalty_waived ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full gap-2"
+                          onClick={() => updateReentryMutation.mutate({ action: 'waive' })}
+                          disabled={updateReentryMutation.isPending}
+                        >
+                          {updateReentryMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <CheckCircle className="w-4 h-4" />
+                          )}
+                          Отменить повышенные тарифы
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full gap-2"
+                          onClick={() => updateReentryMutation.mutate({ action: 'restore' })}
+                          disabled={updateReentryMutation.isPending}
+                        >
+                          {updateReentryMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <RotateCcw className="w-4 h-4" />
+                          )}
+                          Восстановить повышенные тарифы
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full gap-2 text-muted-foreground"
+                        onClick={() => updateReentryMutation.mutate({ action: 'reset' })}
+                        disabled={updateReentryMutation.isPending}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Сбросить статус бывшего участника
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               )}

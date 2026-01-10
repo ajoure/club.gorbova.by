@@ -225,6 +225,16 @@ Deno.serve(async (req) => {
       updated_at: new Date().toISOString(),
     }).eq('telegram_user_id', telegramUserId).eq('club_id', club_id);
 
+    // Mark user as former club member for reentry pricing
+    if (profileUserId) {
+      await supabase.from('profiles').update({
+        was_club_member: true,
+        club_exit_at: new Date().toISOString(),
+        club_exit_reason: reason || 'access_revoked',
+      }).eq('user_id', profileUserId);
+      console.log(`Marked user ${profileUserId} as former club member`);
+    }
+
     // Send notification
     let dmResult: any = null;
     const keyboard = {
