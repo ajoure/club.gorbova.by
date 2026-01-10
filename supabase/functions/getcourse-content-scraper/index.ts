@@ -95,6 +95,68 @@ async function scrapeWithFirecrawl(opts: {
 // In-memory session storage (temporary - resets on function cold start)
 const sessionStore = new Map<string, { cookies: string; expires: number }>();
 
+const DEFAULT_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
+
+function parseHiddenInputs(html: string): Record<string, string> {
+  const inputs: Record<string, string> = {};
+  const regex = /<input[^>]+type=["']hidden["'][^>]*>/gi;
+  const nameRegex = /name=["']([^"']+)["']/i;
+  const valueRegex = /value=["']([^"']*)["']/i;
+
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(html)) !== null) {
+    const tag = m[0];
+    const name = tag.match(nameRegex)?.[1];
+    if (!name) continue;
+    const value = tag.match(valueRegex)?.[1] ?? "";
+    inputs[name] = value;
+  }
+  return inputs;
+}
+
+function guessTwoFactorFieldName(html: string): string {
+  const inputs = html.match(/<input[^>]+name=["'][^"']+["'][^>]*>/gi) || [];
+  for (const tag of inputs) {
+    const name = tag.match(/name=["']([^"']+)["']/i)?.[1];
+    if (!name) continue;
+    if (/code|confirm|otp|token/i.test(name)) return name;
+  }
+  return "code";
+}
+
+function isLikelyLoginPage(html: string) {
+  return /cms\/system\/login|name=["']email["']|name=["']password["']|Войти|Sign in/i.test(html);
+}
+
+function isLikelyTwoFactorPage(html: string) {
+  return /введите\s*код|код\s*подтверждения|enter\s*code|confirmation\s*code|one[-\s]?time\s*password|otp/i.test(html);
+}
+
+async function fetchText(url: string, headers: Record<string, string>) {
+  const res = await fetch(url, { method: "GET", headers, redirect: "manual" });
+  const text = await res.text().catch(() => "");
+  return { res, text };
+}
+
+async function followRedirects(
+  baseUrl: string,
+  initialLocation: string | null,
+  cookieJar: Map<string, string>
+) {
+  let redirectUrl = initialLocation;
+  for (let i = 0; i < 5 && redirectUrl; i++) {
+    const resolved = redirectUrl.startsWith("http") ? redirectUrl : `${baseUrl}${redirectUrl}`;
+    const follow = await fetch(resolved, {
+      method: "GET",
+      headers: { Cookie: cookieHeaderFromJar(cookieJar), "User-Agent": DEFAULT_UA },
+      redirect: "manual",
+    });
+    upsertCookies(cookieJar, getSetCookieValues(follow));
+    redirectUrl = follow.headers.get("location");
+  }
+}
+
 async function performLogin(
   baseUrl: string,
   email: string,
@@ -102,60 +164,87 @@ async function performLogin(
   twoFactorCode?: string,
   sessionId?: string
 ): Promise<{ success: boolean; cookies?: string; needsTwoFactor?: boolean; sessionId?: string; error?: string }> {
+  // Cleanup expired sessions
+  const now = Date.now();
+  for (const [id, s] of sessionStore.entries()) {
+    if (s.expires <= now) sessionStore.delete(id);
+  }
+
   const cookieJar = new Map<string, string>();
 
   // If we have a session ID with pending 2FA, restore cookies
   if (sessionId && sessionStore.has(sessionId)) {
     const stored = sessionStore.get(sessionId)!;
     for (const pair of stored.cookies.split("; ")) {
-      const [k, v] = pair.split("=");
+      const eq = pair.indexOf("=");
+      if (eq === -1) continue;
+      const k = pair.slice(0, eq);
+      const v = pair.slice(eq + 1);
       if (k && v) cookieJar.set(k, v);
     }
   }
 
-  // If submitting 2FA code
+  const loginUrl = `${baseUrl}/cms/system/login`;
+
+  // Always load login page first (cookies + hidden fields / CSRF)
+  const loginPageRes = await fetch(loginUrl, {
+    method: "GET",
+    headers: { "User-Agent": DEFAULT_UA },
+    redirect: "manual",
+  });
+  const loginPageHtml = await loginPageRes.text().catch(() => "");
+  upsertCookies(cookieJar, getSetCookieValues(loginPageRes));
+  const hidden = parseHiddenInputs(loginPageHtml);
+
+  // 2FA submission path
   if (twoFactorCode && sessionId) {
     console.log("Submitting 2FA code...");
-    const twoFaResponse = await fetch(`${baseUrl}/cms/system/login`, {
+
+    // Try to fetch the current challenge page to detect field name + hidden inputs
+    const challenge = await fetchText(`${baseUrl}/teach/control/stream`, {
+      Cookie: cookieHeaderFromJar(cookieJar),
+      "User-Agent": DEFAULT_UA,
+      Referer: loginUrl,
+    });
+    const challengeHidden = parseHiddenInputs(challenge.text);
+    const codeField = guessTwoFactorFieldName(challenge.text);
+
+    const body = new URLSearchParams({
+      ...hidden,
+      ...challengeHidden,
+      [codeField]: twoFactorCode,
+    });
+
+    const twoFaResponse = await fetch(loginUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Cookie: cookieHeaderFromJar(cookieJar),
+        "User-Agent": DEFAULT_UA,
+        Referer: loginUrl,
+        Origin: baseUrl,
       },
-      body: new URLSearchParams({
-        code: twoFactorCode,
-        action: "processXd498",
-      }),
+      body,
       redirect: "manual",
     });
 
     upsertCookies(cookieJar, getSetCookieValues(twoFaResponse));
-
-    // Follow redirects
-    let redirectUrl = twoFaResponse.headers.get("location");
-    for (let i = 0; i < 3 && redirectUrl; i++) {
-      const resolved = redirectUrl.startsWith("http") ? redirectUrl : `${baseUrl}${redirectUrl}`;
-      const follow = await fetch(resolved, {
-        method: "GET",
-        headers: { Cookie: cookieHeaderFromJar(cookieJar) },
-        redirect: "manual",
-      });
-      upsertCookies(cookieJar, getSetCookieValues(follow));
-      redirectUrl = follow.headers.get("location");
-    }
+    await followRedirects(baseUrl, twoFaResponse.headers.get("location"), cookieJar);
 
     // Clean up session store
     sessionStore.delete(sessionId);
 
-    // Verify login success by checking a protected page
-    const testRes = await fetch(`${baseUrl}/teach/control/stream`, {
-      headers: { Cookie: cookieHeaderFromJar(cookieJar) },
-      redirect: "manual",
+    // Verify
+    const test = await fetchText(`${baseUrl}/teach/control/stream`, {
+      Cookie: cookieHeaderFromJar(cookieJar),
+      "User-Agent": DEFAULT_UA,
     });
-    const testHtml = await testRes.text();
 
-    if (/cms\/system\/login|Войти|Sign in/i.test(testHtml) && testHtml.length < 5000) {
+    if (isLikelyTwoFactorPage(test.text)) {
       return { success: false, error: "2FA code incorrect or expired" };
+    }
+    if (isLikelyLoginPage(test.text) && test.text.length < 20000) {
+      return { success: false, error: "Login failed after 2FA" };
     }
 
     return { success: true, cookies: cookieHeaderFromJar(cookieJar) };
@@ -163,60 +252,47 @@ async function performLogin(
 
   // Initial login
   console.log("Performing initial login...");
-  const loginResponse = await fetch(`${baseUrl}/cms/system/login`, {
+
+  const loginBody = new URLSearchParams({
+    ...hidden,
+    email,
+    password,
+  });
+
+  const loginResponse = await fetch(loginUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
+      Cookie: cookieHeaderFromJar(cookieJar),
+      "User-Agent": DEFAULT_UA,
+      Referer: loginUrl,
+      Origin: baseUrl,
     },
-    body: new URLSearchParams({
-      email,
-      password,
-      action: "processXd498",
-    }),
+    body: loginBody,
     redirect: "manual",
   });
 
   upsertCookies(cookieJar, getSetCookieValues(loginResponse));
+  await followRedirects(baseUrl, loginResponse.headers.get("location"), cookieJar);
 
-  // Follow redirects
-  let redirectUrl = loginResponse.headers.get("location");
-  for (let i = 0; i < 3 && redirectUrl; i++) {
-    const resolved = redirectUrl.startsWith("http") ? redirectUrl : `${baseUrl}${redirectUrl}`;
-    const follow = await fetch(resolved, {
-      method: "GET",
-      headers: { Cookie: cookieHeaderFromJar(cookieJar) },
-      redirect: "manual",
-    });
-    upsertCookies(cookieJar, getSetCookieValues(follow));
-    redirectUrl = follow.headers.get("location");
-  }
-
-  if (!cookieJar.has("PHPSESSID")) {
-    return { success: false, error: "Login failed - check credentials" };
-  }
-
-  // Check if 2FA is required by looking at the response page
-  const checkRes = await fetch(`${baseUrl}/teach/control/stream`, {
-    headers: { Cookie: cookieHeaderFromJar(cookieJar) },
-    redirect: "manual",
+  // Verify on a protected page
+  const check = await fetchText(`${baseUrl}/teach/control/stream`, {
+    Cookie: cookieHeaderFromJar(cookieJar),
+    "User-Agent": DEFAULT_UA,
+    Referer: loginUrl,
   });
-  const checkHtml = await checkRes.text();
 
-  // Detect 2FA prompt (GetCourse shows code input form)
-  if (/введите\s*код|enter.*code|code.*confirmation|подтверд/i.test(checkHtml) && checkHtml.length < 10000) {
-    // Store session for 2FA completion
+  if (isLikelyTwoFactorPage(check.text) && check.text.length < 50000) {
     const newSessionId = crypto.randomUUID();
     sessionStore.set(newSessionId, {
       cookies: cookieHeaderFromJar(cookieJar),
-      expires: Date.now() + 5 * 60 * 1000, // 5 minutes
+      expires: Date.now() + 5 * 60 * 1000,
     });
-
     console.log("2FA required, waiting for code...");
     return { success: false, needsTwoFactor: true, sessionId: newSessionId };
   }
 
-  // Check if we're still on login page (wrong credentials)
-  if (/cms\/system\/login|name=["']email["'].*name=["']password["']/i.test(checkHtml) && checkHtml.length < 5000) {
+  if (isLikelyLoginPage(check.text) && check.text.length < 50000) {
     return { success: false, error: "Login failed - check credentials" };
   }
 
