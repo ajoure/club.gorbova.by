@@ -62,8 +62,7 @@ async function cancelGetCourseOrder(
     const dealParams: Record<string, any> = {
       offer_code: offerId.toString(),
       deal_cost: amount, // Required field for GetCourse
-      deal_status: 'cancelled', // Set status to cancelled
-      deal_is_paid: 0,
+      deal_is_paid: 0, // Устанавливаем ложный статус оплаты вместо отмены статуса
       deal_comment: `Отменено администратором. ${reason}. Order: ${orderNumber}`,
     };
     
@@ -501,7 +500,7 @@ Deno.serve(async (req) => {
     // Get subscription with related product, tariff and order data (including meta for gc_order_id)
     const { data: subscription, error: subError } = await supabase
       .from('subscriptions_v2')
-      .select('*, products_v2(telegram_club_id, name), tariffs(getcourse_offer_id, getcourse_offer_code, name), orders_v2(order_number, customer_email, final_price, meta)')
+      .select('*, products_v2(telegram_club_id, name), tariffs(getcourse_offer_id, getcourse_offer_code, name), orders_v2(order_number, customer_email, final_price, meta, user_id), profiles!subscriptions_v2_user_id_fkey(email)')
       .eq('id', subscription_id)
       .single();
 
@@ -511,6 +510,11 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    // Get email from profiles if customer_email is not set in order
+    const orderData = subscription.orders_v2 as any;
+    const profileData = subscription.profiles as any;
+    const customerEmail = orderData?.customer_email || profileData?.email;
 
     let result: Record<string, any> = { success: true };
 
@@ -705,17 +709,34 @@ Deno.serve(async (req) => {
 
         // Cancel in GetCourse with gc_deal_number for update
         const tariffForRevoke = subscription.tariffs as any;
-        const gcOfferIdRevoke = tariffForRevoke?.getcourse_offer_id || tariffForRevoke?.getcourse_offer_code;
         const orderForRevoke = subscription.orders_v2 as any;
+        // Get offer_id from order meta first, then fallback to tariff
+        const orderMeta = orderForRevoke?.meta || {};
+        let gcOfferIdRevoke = tariffForRevoke?.getcourse_offer_id || tariffForRevoke?.getcourse_offer_code;
+        
+        // If offer_id in meta, get getcourse_offer_id from tariff_offers
+        if (orderMeta.offer_id) {
+          const { data: offerData } = await supabase
+            .from('tariff_offers')
+            .select('getcourse_offer_id')
+            .eq('id', orderMeta.offer_id)
+            .single();
+          if (offerData?.getcourse_offer_id) {
+            gcOfferIdRevoke = offerData.getcourse_offer_id;
+          }
+        }
+        
         // Use gc_deal_number (our generated number) for updates, fallback to gc_order_id
-        const gcDealNumberRevoke = orderForRevoke?.meta?.gc_deal_number || orderForRevoke?.meta?.gc_order_id;
-        if (gcOfferIdRevoke && orderForRevoke?.customer_email) {
+        const gcDealNumberRevoke = orderMeta.gc_deal_number || orderMeta.gc_order_id;
+        const emailForRevoke = orderForRevoke?.customer_email || customerEmail;
+        
+        if (gcOfferIdRevoke && emailForRevoke) {
           const gcResult = await cancelGetCourseOrder(
-            orderForRevoke.customer_email,
+            emailForRevoke,
             gcOfferIdRevoke,
-            orderForRevoke.order_number || subscription_id,
+            orderForRevoke?.order_number || subscription_id,
             'Доступ отозван администратором',
-            orderForRevoke.final_price || 0,
+            orderForRevoke?.final_price || 0,
             gcDealNumberRevoke // Pass deal_number to update existing deal
           );
           console.log('GetCourse cancel result:', gcResult);

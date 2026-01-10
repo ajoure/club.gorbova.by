@@ -44,8 +44,7 @@ async function cancelInGetCourse(
     const dealParams: Record<string, any> = {
       offer_code: offerId.toString(),
       deal_cost: amount,
-      deal_status: 'cancelled',
-      deal_is_paid: 0,
+      deal_is_paid: 0, // Устанавливаем ложный статус оплаты вместо отмены
       deal_comment: `Trial отменён пользователем. ${reason}. Order: ${orderNumber}`,
     };
     
