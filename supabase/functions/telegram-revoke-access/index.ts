@@ -69,7 +69,7 @@ async function sendMessage(botToken: string, chatId: number, text: string, reply
 }
 
 function getSiteUrl(): string {
-  return Deno.env.get('SITE_URL') || 'https://gorbova.club';
+  return Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
 }
 
 function getPricingUrl(): string {

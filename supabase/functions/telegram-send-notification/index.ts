@@ -143,7 +143,7 @@ Deno.serve(async (req) => {
     // Prepare message based on type
     let message = '';
     // Use SITE_URL env var or construct from product landing page with pricing anchor
-    const siteUrl = Deno.env.get('SITE_URL') || 'https://gorbova.club';
+    const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
     const pricingUrl = `${siteUrl}/club#pricing`;
     
     const messageTemplates: Record<string, string> = {

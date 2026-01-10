@@ -64,7 +64,7 @@ async function sendMessage(botToken: string, chatId: number, text: string, reply
 }
 
 function getSiteUrl(): string {
-  return Deno.env.get('SITE_URL') || 'https://fsby.lovable.app';
+  return Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
 }
 
 // Fetch and save Telegram profile photo
@@ -336,7 +336,7 @@ Deno.serve(async (req) => {
 
         // Send decline DM with subscription link
         const keyboard = {
-          inline_keyboard: [[{ text: '💳 Оформить подписку', url: `${getSiteUrl()}/pricing` }]],
+          inline_keyboard: [[{ text: '💳 Оформить подписку', url: `${getSiteUrl()}/club#pricing` }]],
         };
         await sendMessage(botToken, telegramUserId, MESSAGES.joinDeclined, keyboard);
       }
@@ -462,7 +462,7 @@ Deno.serve(async (req) => {
         const keyboard = {
           inline_keyboard: [
             [{ text: '🔗 Привязать Telegram', url: `${getSiteUrl()}/dashboard` }],
-            [{ text: '💳 Оформить подписку', url: `${getSiteUrl()}/pricing` }],
+            [{ text: '💳 Оформить подписку', url: `${getSiteUrl()}/club#pricing` }],
           ],
         };
         await sendMessage(botToken, chatId, MESSAGES.notLinked, keyboard);
@@ -478,7 +478,7 @@ Deno.serve(async (req) => {
           await sendMessage(botToken, chatId, MESSAGES.accessGranted);
         } else {
           const keyboard = {
-            inline_keyboard: [[{ text: '💳 Оформить подписку', url: `${getSiteUrl()}/pricing` }]],
+            inline_keyboard: [[{ text: '💳 Оформить подписку', url: `${getSiteUrl()}/club#pricing` }]],
           };
           await sendMessage(botToken, chatId, MESSAGES.noSubscription, keyboard);
         }

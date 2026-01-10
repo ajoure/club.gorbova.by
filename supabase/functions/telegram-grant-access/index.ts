@@ -72,7 +72,7 @@ async function sendMessage(botToken: string, chatId: number, text: string, reply
 }
 
 function getSiteUrl(): string {
-  return Deno.env.get('SITE_URL') || 'https://fsby.lovable.app';
+  return Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
 }
 
 // Log audit
