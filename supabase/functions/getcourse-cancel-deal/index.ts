@@ -5,18 +5,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Generate a consistent deal_number from orderNumber for GetCourse
-function generateDealNumber(orderNumber: string): number {
-  let hash = 0;
-  for (let i = 0; i < orderNumber.length; i++) {
-    const char = orderNumber.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return Math.abs(hash) % 1000000000;
-}
 
-// Cancel order in GetCourse (set deal_is_paid = 0)
+// Cancel order in GetCourse by updating existing deal status to "false" (deal_status = ложный)
 async function cancelInGetCourse(
   email: string,
   offerId: number | string,
@@ -43,21 +33,32 @@ async function cancelInGetCourse(
     console.log('[getcourse-cancel] No offerId, skipping');
     return { success: false, error: 'No offer ID' };
   }
+
+  // CRITICAL: We need the actual GetCourse deal_number to update an existing deal
+  // If we don't have it, we cannot update - only create new
+  if (!gcDealNumber) {
+    console.log('[getcourse-cancel] No gc_deal_number found - cannot update existing deal');
+    return { success: false, error: 'No GetCourse deal number - cannot update existing deal' };
+  }
   
   try {
-    console.log(`[getcourse-cancel] Canceling: email=${email}, offerId=${offerId}, dealNumber=${gcDealNumber || generateDealNumber(orderNumber)}`);
+    console.log(`[getcourse-cancel] Updating existing deal: email=${email}, offerId=${offerId}, gcDealNumber=${gcDealNumber}`);
     
+    // To UPDATE an existing deal, we must use the exact deal_number from GetCourse
+    // Setting deal_status to "ложный" (false) marks the payment as cancelled
     const dealParams: Record<string, any> = {
       offer_code: offerId.toString(),
-      deal_cost: amount,
-      deal_is_paid: 0, // Set to "false" payment status
-      deal_comment: `Отмена/удаление сделки. ${reason}. Order: ${orderNumber}`,
-      deal_number: gcDealNumber || generateDealNumber(orderNumber),
+      deal_number: gcDealNumber, // MUST be the exact GetCourse deal number
+      deal_status: 'ложный', // Set status to "false" in GetCourse
+      deal_is_paid: 0, // Also set payment flag to unpaid
+      deal_comment: `Отмена: ${reason}. Order: ${orderNumber}`,
     };
     
     const params = {
       user: { email },
-      system: { refresh_if_exists: 1 },
+      system: { 
+        refresh_if_exists: 1, // Update existing deal
+      },
       deal: dealParams,
     };
     
@@ -85,7 +86,7 @@ async function cancelInGetCourse(
     }
     
     if (result.result?.success === true || result.success === true) {
-      console.log('[getcourse-cancel] Success');
+      console.log('[getcourse-cancel] Success - deal updated to status "ложный"');
       return { success: true };
     }
     
@@ -182,8 +183,23 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get deal_number from meta or generate
-    const gcDealNumber = orderMeta.gc_deal_number || generateDealNumber(order.order_number);
+    // CRITICAL: Get the ACTUAL GetCourse deal_number from meta
+    // This must be the real GC deal number, not a generated hash
+    const gcDealNumber = orderMeta.gc_deal_number;
+    
+    if (!gcDealNumber) {
+      console.log('[getcourse-cancel] No gc_deal_number in order meta - cannot update GetCourse');
+      return new Response(
+        JSON.stringify({ 
+          error: 'No GetCourse deal number stored in order', 
+          success: false,
+          order_number: order.order_number,
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    console.log(`[getcourse-cancel] Found gc_deal_number: ${gcDealNumber}`);
     
     const result = await cancelInGetCourse(
       email,

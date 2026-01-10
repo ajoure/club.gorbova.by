@@ -31,8 +31,9 @@ async function sendToGetCourse(
   amount: number,
   productName: string,
   tariffName: string,
-  gcOfferId: number | null
-): Promise<{ success: boolean; error?: string; gcOrderId?: string }> {
+  gcOfferId: number | null,
+  dealNumber: number // Pass the deal_number we're using
+): Promise<{ success: boolean; error?: string; gcOrderId?: string; gcDealNumber?: number }> {
   const gcApiKey = Deno.env.get('GETCOURSE_API_KEY');
   const gcEmailRaw = Deno.env.get('GETCOURSE_EMAIL') || 'gorbova';
   
@@ -61,7 +62,7 @@ async function sendToGetCourse(
         refresh_if_exists: 1,
       },
       deal: {
-        deal_number: generateDealNumber(orderNumber),
+        deal_number: dealNumber, // Use the passed deal_number
         deal_cost: amount,
         deal_status: 'payed',
         deal_is_paid: 1,
@@ -70,6 +71,8 @@ async function sendToGetCourse(
         deal_comment: `Тест-оплата (direct). Заказ: ${orderNumber}. Тариф: ${tariffName}`,
       },
     };
+    
+    console.log(`[Test Payment Direct] Using deal_number: ${dealNumber}`);
 
     if (gcOfferId) {
       dealData.deal.offer_code = gcOfferId.toString();
@@ -104,7 +107,8 @@ async function sendToGetCourse(
     if (result.result?.success === true) {
       return { 
         success: true, 
-        gcOrderId: result.result?.deal_id?.toString()
+        gcOrderId: result.result?.deal_id?.toString(),
+        gcDealNumber: dealNumber, // Return the deal_number we used
       };
     } else {
       const errorMsg = result.result?.error_message || result.error_message || JSON.stringify(result);
@@ -158,10 +162,10 @@ Deno.serve(async (req) => {
       telegram_access_granted: 0,
     };
 
-    // Fetch order
+    // Fetch order with tariff and product info
     const { data: orderV2 } = await supabase
       .from('orders_v2')
-      .select('*, products_v2(id, name, code, telegram_club_id), tariffs(id, name, code, access_days, getcourse_offer_id)')
+      .select('*, tariffs(id, name, code, access_days, getcourse_offer_id, product_id, products_v2(id, name, code, telegram_club_id))')
       .eq('id', orderId)
       .maybeSingle();
 
@@ -172,15 +176,20 @@ Deno.serve(async (req) => {
       );
     }
 
-    if (!orderV2.user_id || !orderV2.product_id) {
+    const tariff = (orderV2 as any).tariffs;
+    const product = tariff?.products_v2;
+    
+    if (!orderV2.user_id) {
       return new Response(
-        JSON.stringify({ error: 'Order is missing user_id or product_id' }),
+        JSON.stringify({ error: 'Order is missing user_id' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const product = (orderV2 as any).products_v2;
-    const tariff = (orderV2 as any).tariffs;
+    // Use product from tariff if order doesn't have it directly
+    const productId = orderV2.product_id || tariff?.product_id;
+    const productCode = product?.code;
+
     const orderMeta = (orderV2.meta || {}) as Record<string, any>;
 
     // Get trial_days from offer if available
@@ -266,7 +275,7 @@ Deno.serve(async (req) => {
       .from('subscriptions_v2')
       .insert({
         user_id: orderV2.user_id,
-        product_id: orderV2.product_id,
+        product_id: productId,
         tariff_id: orderV2.tariff_id,
         order_id: orderV2.id,
         status: orderV2.is_trial ? 'trial' : 'active',
@@ -283,13 +292,13 @@ Deno.serve(async (req) => {
     else results.subscription_error = subError.message;
 
     // Entitlement
-    if (product?.code) {
+    if (productCode) {
       const { error: entError } = await supabase
         .from('entitlements')
         .upsert(
           {
             user_id: orderV2.user_id,
-            product_code: product.code,
+            product_code: productCode,
             status: 'active',
             expires_at: accessEndAt.toISOString(),
             meta: { source: 'admin_test_direct', order_id: orderV2.id },
@@ -324,6 +333,9 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (userProfile?.email) {
+      // Generate a unique deal_number for GetCourse based on order_number
+      const gcDealNumber = generateDealNumber(orderV2.order_number);
+      
       const gcResult = await sendToGetCourse(
         {
           email: userProfile.email,
@@ -336,14 +348,16 @@ Deno.serve(async (req) => {
         orderV2.final_price,
         product?.name || 'Unknown Product',
         tariff?.name || orderMeta.tariff_name || 'Unknown Tariff',
-        gcOfferId ? Number(gcOfferId) : null
+        gcOfferId ? Number(gcOfferId) : null,
+        gcDealNumber
       );
 
       results.getcourse_sync = gcResult.success;
       if (gcResult.error) results.getcourse_error = gcResult.error;
       if (gcResult.gcOrderId) results.getcourse_order_id = gcResult.gcOrderId;
+      results.gc_deal_number = gcDealNumber;
 
-      // Update order meta with GC sync result
+      // Update order meta with GC sync result - CRITICAL: save gc_deal_number!
       await supabase
         .from('orders_v2')
         .update({
@@ -352,6 +366,7 @@ Deno.serve(async (req) => {
             gc_sync: gcResult.success,
             gc_sync_at: now.toISOString(),
             getcourse_order_id: gcResult.gcOrderId || null,
+            gc_deal_number: gcDealNumber, // CRITICAL: save for cancellation!
             gc_error: gcResult.error || null,
           },
         })
