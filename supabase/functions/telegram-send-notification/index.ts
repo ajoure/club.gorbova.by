@@ -144,7 +144,7 @@ Deno.serve(async (req) => {
     let message = '';
     // Use SITE_URL env var or construct from product landing page with pricing anchor
     const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
-    const pricingUrl = `${siteUrl}/club#pricing`;
+    const pricingUrl = `${siteUrl}/#pricing`;
     
     const messageTemplates: Record<string, string> = {
       reminder_3_days: `⏰ Небольшое напоминание

@@ -73,7 +73,7 @@ function getSiteUrl(): string {
 }
 
 function getPricingUrl(): string {
-  return `${getSiteUrl()}/club#pricing`;
+  return `${getSiteUrl()}/#pricing`;
 }
 
 async function logAudit(supabase: any, event: any) {

@@ -165,7 +165,7 @@ Deno.serve(async (req) => {
       const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
       const keyboard = {
         inline_keyboard: [[
-          { text: '💳 Продлить подписку', url: `${siteUrl}/club#pricing` }
+          { text: '💳 Продлить подписку', url: `${siteUrl}/#pricing` }
         ]]
       };
 
