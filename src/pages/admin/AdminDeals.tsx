@@ -248,11 +248,21 @@ export default function AdminDeals() {
   // Bulk delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
-      // 0. Get order details for notifications
+      // 0. Get order details for notifications and GetCourse cancel
       const { data: ordersToDelete } = await supabase
         .from("orders_v2")
-        .select("id, user_id, order_number, products_v2(name, code, telegram_club_id)")
+        .select("id, user_id, order_number, status, products_v2(name, code, telegram_club_id)")
         .in("id", ids);
+
+      // 0.5 Cancel in GetCourse for paid orders BEFORE deleting
+      for (const order of ordersToDelete || []) {
+        if (order.status === "paid") {
+          console.log(`[AdminDeals] Canceling GetCourse for order ${order.order_number}`);
+          await supabase.functions.invoke("getcourse-cancel-deal", {
+            body: { order_id: order.id, reason: "deal_deleted_by_admin" },
+          }).catch(err => console.error("GetCourse cancel error:", err));
+        }
+      }
 
       // 1. Get subscription IDs linked to these orders
       const { data: subscriptions } = await supabase
