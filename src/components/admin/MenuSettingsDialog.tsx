@@ -70,6 +70,17 @@ interface MenuSettingsDialogProps {
   isSaving: boolean;
 }
 
+const ITEM_DND_PREFIX = "item|";
+const buildItemDndId = (groupId: string, itemId: string) =>
+  `${ITEM_DND_PREFIX}${groupId}|${itemId}`;
+
+const parseItemDndId = (id: string): { groupId: string; itemId: string } | null => {
+  if (!id.startsWith(ITEM_DND_PREFIX)) return null;
+  const parts = id.split("|");
+  if (parts.length < 3) return null;
+  return { groupId: parts[1], itemId: parts.slice(2).join("|") };
+};
+
 // Sortable menu item component
 function SortableMenuItem({
   item,
@@ -92,7 +103,7 @@ function SortableMenuItem({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: `${groupId}-${item.id}` });
+  } = useSortable({ id: buildItemDndId(groupId, item.id) });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -150,7 +161,7 @@ function SortableMenuItem({
       ) : (
         <>
           <span className="flex-1 text-sm">{item.label}</span>
-          <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-opacity">
+          <div className="hidden group-hover:flex items-center gap-1">
             <Button
               size="icon"
               variant="ghost"
@@ -237,7 +248,7 @@ function SortableMenuGroup({
       className="border border-border rounded-xl overflow-hidden bg-card"
     >
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-        <div className="flex items-center gap-2 px-3 py-2 bg-muted/50">
+        <div className="group flex items-center gap-2 px-3 py-2 bg-muted/50">
           <button
             {...attributes}
             {...listeners}
@@ -278,25 +289,25 @@ function SortableMenuGroup({
           ) : (
             <>
               <span className="flex-1 font-medium text-sm">{group.label}</span>
-              <span className="text-xs text-muted-foreground">
-                {group.items.length} пунктов
-              </span>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7"
-                onClick={() => setIsEditing(true)}
-              >
-                <Pencil className="h-3 w-3" />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7 text-destructive"
-                onClick={() => onDeleteGroup(group.id)}
-              >
-                <Trash2 className="h-3 w-3" />
-              </Button>
+              <span className="text-xs text-muted-foreground">{group.items.length} пунктов</span>
+              <div className="hidden group-hover:flex items-center gap-1">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7"
+                  onClick={() => setIsEditing(true)}
+                >
+                  <Pencil className="h-3 w-3" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 text-destructive"
+                  onClick={() => onDeleteGroup(group.id)}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
             </>
           )}
         </div>
@@ -304,7 +315,7 @@ function SortableMenuGroup({
         <CollapsibleContent>
           <div className="p-2 space-y-1">
             <SortableContext
-              items={group.items.map((item) => `${group.id}-${item.id}`)}
+              items={group.items.map((item) => buildItemDndId(group.id, item.id))}
               strategy={verticalListSortingStrategy}
             >
               {group.items
@@ -463,18 +474,20 @@ export function MenuSettingsDialog({
     const overIdStr = String(over.id);
 
     // Only handle item-to-item or item-to-group dragging
-    const isItemDrag = activeIdStr.includes("-");
-    if (!isItemDrag) return;
+    const activeParsed = parseItemDndId(activeIdStr);
+    if (!activeParsed) return;
 
-    const [activeGroupId, activeItemId] = activeIdStr.split("-");
-    
+    const { groupId: activeGroupId, itemId: activeItemId } = activeParsed;
+
     // Determine target group
     let overGroupId: string;
     let overItemId: string | null = null;
-    
-    if (overIdStr.includes("-")) {
+
+    const overParsed = parseItemDndId(overIdStr);
+    if (overParsed) {
       // Dragging over another item
-      [overGroupId, overItemId] = overIdStr.split("-");
+      overGroupId = overParsed.groupId;
+      overItemId = overParsed.itemId;
     } else {
       // Dragging over a group header
       overGroupId = overIdStr;
@@ -541,16 +554,17 @@ export function MenuSettingsDialog({
       });
     } else {
       // Reorder items within same group (cross-group already handled in dragOver)
-      const [activeGroupId, activeItemId] = activeIdStr.split("-");
-      const [overGroupId, overItemId] = overIdStr.split("-");
+      const activeParsed = parseItemDndId(activeIdStr);
+      const overParsed = parseItemDndId(overIdStr);
+      if (!activeParsed || !overParsed) return;
 
-      if (activeGroupId === overGroupId && overItemId) {
+      if (activeParsed.groupId === overParsed.groupId) {
         setLocalSettings((prev) =>
           prev.map((group) => {
-            if (group.id !== activeGroupId) return group;
+            if (group.id !== activeParsed.groupId) return group;
 
-            const oldIndex = group.items.findIndex((i) => i.id === activeItemId);
-            const newIndex = group.items.findIndex((i) => i.id === overItemId);
+            const oldIndex = group.items.findIndex((i) => i.id === activeParsed.itemId);
+            const newIndex = group.items.findIndex((i) => i.id === overParsed.itemId);
             if (oldIndex === -1 || newIndex === -1) return group;
 
             const newItems = arrayMove(group.items, oldIndex, newIndex);
@@ -664,7 +678,7 @@ export function MenuSettingsDialog({
               <SortableContext
                 items={[
                   ...localSettings.map((g) => g.id),
-                  ...localSettings.flatMap((g) => g.items.map((i) => `${g.id}-${i.id}`)),
+                  ...localSettings.flatMap((g) => g.items.map((i) => buildItemDndId(g.id, i.id))),
                 ]}
                 strategy={verticalListSortingStrategy}
               >
