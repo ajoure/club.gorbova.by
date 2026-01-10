@@ -355,6 +355,28 @@ Deno.serve(async (req) => {
         meta: { chat_invite_link: chatInviteLink, channel_invite_link: channelInviteLink, valid_until: activeUntil },
       });
 
+      // Notify admins about new access grant
+      try {
+        const validUntilFormatted = activeUntil
+          ? new Date(activeUntil).toLocaleDateString('ru-RU')
+          : 'Бессрочно';
+        
+        const grantSource = source || (is_manual ? 'Вручную' : 'Автоматически');
+        
+        await supabase.functions.invoke('telegram-notify-admins', {
+          body: {
+            message: `✅ <b>Доступ выдан</b>\n\n` +
+              `👤 ${profile.full_name || profile.email || user_id}\n` +
+              `📦 ${club.club_name || 'Клуб'}\n` +
+              `📅 До: ${validUntilFormatted}\n` +
+              `🔧 Источник: ${grantSource}` +
+              (comment ? `\n💬 Комментарий: ${comment}` : ''),
+          },
+        });
+      } catch (notifyError) {
+        console.error('Failed to notify admins about grant:', notifyError);
+      }
+
       results.push({
         club_id: club.id,
         chat_invite_link: chatInviteLink,

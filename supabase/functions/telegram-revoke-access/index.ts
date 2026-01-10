@@ -332,6 +332,36 @@ Deno.serve(async (req) => {
       meta: { telegram_user_id: telegramUserId, chat_revoked: chatRevoked, channel_revoked: channelRevoked, reason },
     });
 
+    // Notify admins about access revocation
+    try {
+      // Get user info for notification
+      let userDisplayName = `TG ID: ${telegramUserId}`;
+      if (profileUserId) {
+        const { data: userProfile } = await supabase
+          .from('profiles')
+          .select('full_name, email')
+          .eq('user_id', profileUserId)
+          .single();
+        
+        if (userProfile) {
+          userDisplayName = userProfile.full_name || userProfile.email || userDisplayName;
+        }
+      }
+
+      const revokeType = is_manual ? 'Ручной отзыв' : 'Автоматический';
+      
+      await supabase.functions.invoke('telegram-notify-admins', {
+        body: {
+          message: `❌ <b>Доступ отозван</b>\n\n` +
+            `👤 ${userDisplayName}\n` +
+            `📦 ${club.club_name || 'Клуб'}\n` +
+            `🔧 Тип: ${revokeType}` +
+            (reason ? `\n📝 Причина: ${reason}` : ''),
+        },
+      });
+    } catch (notifyError) {
+      console.error('Failed to notify admins about revoke:', notifyError);
+    }
 
     console.log('Revoke completed:', { telegramUserId, chatRevoked, channelRevoked, dm_sent: dmResult?.ok });
 
