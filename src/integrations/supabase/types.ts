@@ -3015,6 +3015,8 @@ export type Database = {
       profiles: {
         Row: {
           avatar_url: string | null
+          club_exit_at: string | null
+          club_exit_reason: string | null
           consent_given_at: string | null
           consent_version: string | null
           created_at: string
@@ -3043,9 +3045,12 @@ export type Database = {
           telegram_username: string | null
           updated_at: string
           user_id: string | null
+          was_club_member: boolean | null
         }
         Insert: {
           avatar_url?: string | null
+          club_exit_at?: string | null
+          club_exit_reason?: string | null
           consent_given_at?: string | null
           consent_version?: string | null
           created_at?: string
@@ -3074,9 +3079,12 @@ export type Database = {
           telegram_username?: string | null
           updated_at?: string
           user_id?: string | null
+          was_club_member?: boolean | null
         }
         Update: {
           avatar_url?: string | null
+          club_exit_at?: string | null
+          club_exit_reason?: string | null
           consent_given_at?: string | null
           consent_version?: string | null
           created_at?: string
@@ -3105,6 +3113,7 @@ export type Database = {
           telegram_username?: string | null
           updated_at?: string
           user_id?: string | null
+          was_club_member?: boolean | null
         }
         Relationships: [
           {
