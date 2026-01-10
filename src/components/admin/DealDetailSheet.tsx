@@ -182,28 +182,84 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const deleteMutation = useMutation({
     mutationFn: async () => {
       if (!deal?.id) throw new Error("No deal ID");
-      
+
+      // 0. Load order snapshot for notifications + telegram revoke + GetCourse cancel
+      const { data: order, error: orderError } = await supabase
+        .from("orders_v2")
+        .select("id, user_id, order_number, status, customer_email, products_v2(name, code, telegram_club_id)")
+        .eq("id", deal.id)
+        .single();
+
+      if (orderError || !order) throw orderError || new Error("Order not found");
+
+      // 0.5 Cancel in GetCourse for paid orders BEFORE deleting
+      if (order.status === "paid") {
+        await supabase.functions
+          .invoke("getcourse-cancel-deal", {
+            body: { order_id: order.id, reason: "deal_deleted_by_admin" },
+          })
+          .catch(console.error);
+      }
+
       // 1. Get subscription IDs linked to this order
       const { data: subscriptions } = await supabase
         .from("subscriptions_v2")
         .select("id")
-        .eq("order_id", deal.id);
-      
-      const subscriptionIds = subscriptions?.map(s => s.id) || [];
-      
+        .eq("order_id", order.id);
+
+      const subscriptionIds = subscriptions?.map((s) => s.id) || [];
+
       // 2. Delete installment payments for these subscriptions
       if (subscriptionIds.length > 0) {
-        await supabase.from("installment_payments").delete().in("subscription_id", subscriptionIds);
+        await supabase
+          .from("installment_payments")
+          .delete()
+          .in("subscription_id", subscriptionIds);
       }
-      
-      // 3. Delete subscriptions
-      await supabase.from("subscriptions_v2").delete().eq("order_id", deal.id);
-      
-      // 4. Delete payments
-      await supabase.from("payments_v2").delete().eq("order_id", deal.id);
 
-      // 5. Delete order
-      const { error } = await supabase.from("orders_v2").delete().eq("id", deal.id);
+      // 3. Delete subscriptions
+      await supabase.from("subscriptions_v2").delete().eq("order_id", order.id);
+
+      // 4. Delete entitlements for affected user & product
+      const productCode = (order.products_v2 as any)?.code;
+      if (order.user_id && productCode) {
+        await supabase
+          .from("entitlements")
+          .delete()
+          .eq("user_id", order.user_id)
+          .eq("product_code", productCode);
+      }
+
+      // 4.1 Revoke Telegram access if product has telegram_club_id (also sends client notification + email fallback)
+      const telegramClubId = (order.products_v2 as any)?.telegram_club_id;
+      if (order.user_id && telegramClubId) {
+        await supabase.functions
+          .invoke("telegram-revoke-access", {
+            body: { user_id: order.user_id, club_id: telegramClubId, reason: "deal_deleted" },
+          })
+          .catch(console.error);
+      }
+
+      // 4.2 Notify super_admins about deal deletion
+      const productName = (order.products_v2 as any)?.name || "Продукт";
+      await supabase.functions
+        .invoke("telegram-notify-admins", {
+          body: {
+            message:
+              `🗑 <b>Сделка удалена</b>\n\n` +
+              `📧 ${order.customer_email || "N/A"}\n` +
+              `📦 ${productName}\n` +
+              `🧾 ${order.order_number}`,
+            parse_mode: "HTML",
+          },
+        })
+        .catch(console.error);
+
+      // 5. Delete payments
+      await supabase.from("payments_v2").delete().eq("order_id", order.id);
+
+      // 6. Delete order
+      const { error } = await supabase.from("orders_v2").delete().eq("id", order.id);
       if (error) throw error;
     },
     onSuccess: () => {
