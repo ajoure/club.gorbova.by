@@ -96,6 +96,7 @@ export function GetCourseContentImportDialog({
   const [error, setError] = useState<string | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState("");
   const [twoFactorSessionId, setTwoFactorSessionId] = useState<string | null>(null);
+  const [twoFactorNotice, setTwoFactorNotice] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<{ action: string; url?: string } | null>(null);
 
   const credsProvided = getCourseEmail.trim().length > 0 || getCoursePassword.length > 0;
@@ -113,6 +114,7 @@ export function GetCourseContentImportDialog({
     setError(null);
     setTwoFactorCode("");
     setTwoFactorSessionId(null);
+    setTwoFactorNotice(null);
     setPendingAction(null);
   };
 
@@ -141,6 +143,8 @@ export function GetCourseContentImportDialog({
       // Handle 2FA requirement
       if (data.needs_two_factor) {
         setTwoFactorSessionId(data.session_id);
+        setTwoFactorNotice(data.message || "Введите код подтверждения из письма и попробуйте снова.");
+        setTwoFactorCode("");
         setPendingAction({ action: "list_trainings" });
         setStep("two_factor");
         return;
@@ -151,6 +155,7 @@ export function GetCourseContentImportDialog({
       setTrainings(data.trainings || []);
       setStep("select");
       setTwoFactorSessionId(null);
+      setTwoFactorNotice(null);
       setPendingAction(null);
       
       if (data.trainings?.length === 0) {
@@ -186,6 +191,8 @@ export function GetCourseContentImportDialog({
       // Handle 2FA requirement
       if (data.needs_two_factor) {
         setTwoFactorSessionId(data.session_id);
+        setTwoFactorNotice(data.message || "Введите код подтверждения из письма и попробуйте снова.");
+        setTwoFactorCode("");
         setPendingAction({ action: "parse_training", url });
         setStep("two_factor");
         return;
@@ -204,6 +211,7 @@ export function GetCourseContentImportDialog({
       setParsedTraining(training);
       setStep("preview");
       setTwoFactorSessionId(null);
+      setTwoFactorNotice(null);
       setPendingAction(null);
     } catch (err) {
       console.error("Error parsing training:", err);
@@ -558,8 +566,10 @@ export function GetCourseContentImportDialog({
                 <div>
                   <h3 className="font-semibold text-lg">Требуется подтверждение</h3>
                   <p className="text-sm text-muted-foreground mt-1">
-                    GetCourse отправил код подтверждения на вашу почту. 
-                    Введите его ниже для продолжения.
+                    {twoFactorNotice ?? "GetCourse запросил подтверждение. Проверьте почту и введите код ниже."}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Если письма нет 1–2 минуты: проверьте «Спам»/«Промоакции» и нажмите «Отправить код ещё раз».
                   </p>
                 </div>
               </div>
@@ -584,12 +594,33 @@ export function GetCourseContentImportDialog({
                   ) : null}
                   Подтвердить
                 </Button>
+
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    setError(null);
+                    setTwoFactorCode("");
+                    setTwoFactorSessionId(null);
+
+                    if (pendingAction?.action === "list_trainings") {
+                      await loadTrainingsList();
+                    } else if (pendingAction?.action === "parse_training" && pendingAction.url) {
+                      await parseTraining(pendingAction.url);
+                    }
+                  }}
+                  disabled={loadingTrainings || parsingTraining}
+                  className="w-full"
+                >
+                  Отправить код ещё раз
+                </Button>
+
                 <Button
                   variant="ghost"
                   onClick={() => {
                     setStep("select");
                     setTwoFactorCode("");
                     setTwoFactorSessionId(null);
+                    setTwoFactorNotice(null);
                     setPendingAction(null);
                   }}
                   className="w-full"
