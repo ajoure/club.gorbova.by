@@ -302,7 +302,7 @@ Deno.serve(async (req) => {
       console.log(`Marked user ${profileUserId} as former club member`);
     }
 
-    // Send notification
+    // Send notification via Telegram
     let dmResult: any = null;
     const keyboard = {
       inline_keyboard: [[{ text: '💳 Продлить подписку', url: getPricingUrl() }]],
@@ -313,6 +313,36 @@ Deno.serve(async (req) => {
       `❌ Доступ отозван\n\nДоступ к чату и каналу был закрыт.\n\nТы можешь вернуться, оформив подписку 👇`,
       keyboard
     );
+
+    // Email fallback if Telegram DM failed
+    if (!dmResult?.ok && profileUserId) {
+      console.log('Telegram DM failed, attempting email fallback...');
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('email, full_name')
+        .eq('user_id', profileUserId)
+        .single();
+      
+      if (profile?.email) {
+        try {
+          await supabase.functions.invoke('send-email', {
+            body: {
+              to: profile.email,
+              subject: '❌ Доступ к клубу отозван',
+              html: `
+                <p>Здравствуйте${profile.full_name ? ', ' + profile.full_name : ''}!</p>
+                <p>Ваш доступ к клубу был закрыт.</p>
+                ${reason ? `<p>Причина: ${reason}</p>` : ''}
+                <p><a href="${getPricingUrl()}">Продлить подписку</a></p>
+              `,
+            },
+          });
+          console.log('Email fallback sent to:', profile.email);
+        } catch (emailErr) {
+          console.error('Email fallback failed:', emailErr);
+        }
+      }
+    }
 
     // Log audit
     await logAudit(supabase, {

@@ -56,11 +56,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get super admin role IDs first
+    // Get only super_admin role ID (not regular admins)
     const { data: adminRoles } = await supabase
       .from('roles')
       .select('id')
-      .in('code', ['admin', 'super_admin']);
+      .eq('code', 'super_admin');
 
     if (!adminRoles || adminRoles.length === 0) {
       console.log('No admin roles defined in system');
@@ -152,9 +152,25 @@ Deno.serve(async (req) => {
 
         if (resp.ok && result?.ok) {
           sentCount++;
+          console.log(`✅ Sent to ${admin.full_name} (TG: ${admin.telegram_user_id})`);
         } else {
-          console.error('Telegram error for admin:', admin.full_name, result);
-          errors.push(`${admin.full_name}: ${result?.description || resp.status}`);
+          const errorDesc = result?.description || `HTTP ${resp.status}`;
+          console.error(`❌ Failed for ${admin.full_name} (TG: ${admin.telegram_user_id}):`, errorDesc);
+          errors.push(`${admin.full_name}: ${errorDesc}`);
+          
+          // Log to telegram_logs for audit
+          await supabase.from('telegram_logs').insert({
+            action: 'ADMIN_NOTIFY_FAILED',
+            status: 'error',
+            meta: { 
+              admin_name: admin.full_name,
+              telegram_user_id: admin.telegram_user_id,
+              error: errorDesc,
+              hint: errorDesc.includes("can't initiate") 
+                ? 'Админ должен отправить /start боту для получения уведомлений'
+                : null,
+            },
+          });
         }
       } catch (err) {
         console.error('Failed to notify admin:', admin.full_name, err);

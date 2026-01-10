@@ -251,7 +251,7 @@ export default function AdminDeals() {
       // 0. Get order details for notifications and GetCourse cancel
       const { data: ordersToDelete } = await supabase
         .from("orders_v2")
-        .select("id, user_id, order_number, status, products_v2(name, code, telegram_club_id)")
+        .select("id, user_id, order_number, status, customer_email, products_v2(name, code, telegram_club_id)")
         .in("id", ids);
 
       // 0.5 Cancel in GetCourse for paid orders BEFORE deleting
@@ -314,9 +314,25 @@ export default function AdminDeals() {
         const telegramClubId = (order.products_v2 as any)?.telegram_club_id;
         if (order.user_id && telegramClubId) {
           await supabase.functions.invoke("telegram-revoke-access", {
-            body: { user_id: order.user_id, club_id: telegramClubId },
+            body: { 
+              user_id: order.user_id, 
+              club_id: telegramClubId,
+              reason: 'deal_deleted',
+            },
           }).catch(console.error);
         }
+        
+        // Notify super_admins about deal deletion
+        const productName = (order.products_v2 as any)?.name || 'Продукт';
+        await supabase.functions.invoke("telegram-notify-admins", {
+          body: {
+            message: `🗑 <b>Сделка удалена</b>\n\n` +
+              `📧 ${order.customer_email || 'N/A'}\n` +
+              `📦 ${productName}\n` +
+              `🧾 ${order.order_number}`,
+            parse_mode: 'HTML',
+          },
+        }).catch(console.error);
       }
 
       // 5. Delete payments
