@@ -92,12 +92,14 @@ Deno.serve(async (req) => {
       .eq('is_active', true)
       .maybeSingle();
 
-    // Get telegram access
+    // Get telegram access - check ALL access records, not just active ones
+    // This is needed for access_revoked notifications when access is already revoked
     const { data: access } = await supabase
       .from('telegram_access')
       .select('*, telegram_clubs(club_name, bot_id, telegram_bots(bot_token_encrypted))')
       .eq('user_id', user_id)
-      .or('state_chat.eq.active,state_channel.eq.active')
+      .order('updated_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     // Find a bot token to use
@@ -126,7 +128,10 @@ Deno.serve(async (req) => {
       }
     }
 
+    console.log(`[telegram-send-notification] user_id=${user_id}, message_type=${message_type}, botToken=${botToken ? 'found' : 'null'}, clubName=${clubName}`);
+
     if (!botToken) {
+      console.log('[telegram-send-notification] No bot token found');
       return new Response(JSON.stringify({ 
         success: false, 
         error: 'No active Telegram bot configured' 
