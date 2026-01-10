@@ -594,6 +594,69 @@ Deno.serve(async (req) => {
         });
       }
 
+      // GetCourse sync for trial - prefer offer-level getcourse_offer_id, fallback to tariff-level
+      const trialGetcourseOfferId = offer?.getcourse_offer_id || tariff.getcourse_offer_id;
+      if (trialGetcourseOfferId) {
+        console.log(`Syncing trial to GetCourse: offer_id=${trialGetcourseOfferId}`);
+        
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('email, phone, first_name, last_name')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        
+        if (profile?.email) {
+          const gcResult = await sendToGetCourse(
+            {
+              email: profile.email,
+              phone: profile.phone || null,
+              firstName: profile.first_name || null,
+              lastName: profile.last_name || null,
+            },
+            parseInt(trialGetcourseOfferId, 10) || 0,
+            order.order_number,
+            0, // Trial amount is 0
+            tariff.code || tariff.name
+          );
+          console.log('GetCourse sync result (trial direct-charge):', gcResult);
+          
+          // Save GetCourse sync result to order meta
+          const existingMeta = (order as any).meta || {};
+          await supabase
+            .from('orders_v2')
+            .update({
+              meta: {
+                ...existingMeta,
+                gc_sync_status: gcResult.success ? 'success' : 'failed',
+                gc_sync_error: gcResult.error || null,
+                gc_order_id: gcResult.gcOrderId || null,
+                gc_deal_number: gcResult.gcDealNumber || null,
+                gc_sync_at: new Date().toISOString(),
+              },
+            })
+            .eq('id', order.id);
+        }
+      }
+
+      // Notify admins about new trial purchase
+      const { data: buyerProfile } = await supabase
+        .from('profiles')
+        .select('email, full_name')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      await supabase.functions.invoke('telegram-notify-admins', {
+        body: {
+          message: `🆕 Новый триал!\n\n` +
+            `👤 ${buyerProfile?.full_name || buyerProfile?.email || 'Неизвестно'}\n` +
+            `📧 ${buyerProfile?.email || 'N/A'}\n` +
+            `📦 ${product.name}\n` +
+            `🏷️ ${tariff.name}\n` +
+            `📅 Триал: ${effectiveTrialDays} дней\n` +
+            `🔢 Заказ: ${order.order_number}`,
+        },
+      }).catch(console.error);
+
       // Audit log
       await supabase.from('audit_logs').insert({
         actor_user_id: user.id,
@@ -1055,6 +1118,25 @@ Deno.serve(async (req) => {
           bepaid_uid: txUid,
         },
       });
+
+      // Notify admins about new purchase
+      const { data: buyerProfile } = await supabase
+        .from('profiles')
+        .select('email, full_name')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      await supabase.functions.invoke('telegram-notify-admins', {
+        body: {
+          message: `💰 Новая покупка!\n\n` +
+            `👤 ${buyerProfile?.full_name || buyerProfile?.email || 'Неизвестно'}\n` +
+            `📧 ${buyerProfile?.email || 'N/A'}\n` +
+            `📦 ${product.name}\n` +
+            `🏷️ ${tariff.name}\n` +
+            `💵 ${amount} ${product.currency}\n` +
+            `🔢 Заказ: ${order.order_number}`,
+        },
+      }).catch(console.error);
 
       console.log(`Payment successful: ${payment.id}, subscription: ${subscription?.id}`);
 

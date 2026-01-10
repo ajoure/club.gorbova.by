@@ -248,13 +248,23 @@ export default function AdminDeals() {
   // Bulk delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
+      // 0. Get order details for notifications
+      const { data: ordersToDelete } = await supabase
+        .from("orders_v2")
+        .select("id, user_id, order_number, products_v2(name, code, telegram_club_id)")
+        .in("id", ids);
+
       // 1. Get subscription IDs linked to these orders
       const { data: subscriptions } = await supabase
         .from("subscriptions_v2")
-        .select("id")
+        .select("id, user_id")
         .in("order_id", ids);
       
       const subscriptionIds = subscriptions?.map(s => s.id) || [];
+      
+      // Collect unique user IDs for notifications
+      const affectedUserIds = new Set<string>();
+      ordersToDelete?.forEach(o => o.user_id && affectedUserIds.add(o.user_id));
       
       // 2. Delete installment payments for these subscriptions
       if (subscriptionIds.length > 0) {
@@ -279,7 +289,27 @@ export default function AdminDeals() {
         throw subscriptionsError;
       }
       
-      // 4. Delete payments
+      // 4. Delete entitlements for affected users & products
+      for (const order of ordersToDelete || []) {
+        const productCode = (order.products_v2 as any)?.code;
+        if (order.user_id && productCode) {
+          await supabase
+            .from("entitlements")
+            .delete()
+            .eq("user_id", order.user_id)
+            .eq("product_code", productCode);
+        }
+        
+        // Revoke Telegram access if product has telegram_club_id
+        const telegramClubId = (order.products_v2 as any)?.telegram_club_id;
+        if (order.user_id && telegramClubId) {
+          await supabase.functions.invoke("telegram-revoke-access", {
+            body: { user_id: order.user_id, club_id: telegramClubId },
+          }).catch(console.error);
+        }
+      }
+
+      // 5. Delete payments
       const { error: paymentsError } = await supabase
         .from("payments_v2")
         .delete()
@@ -289,13 +319,21 @@ export default function AdminDeals() {
         console.error("Error deleting payments:", paymentsError);
       }
 
-      // 5. Delete orders
+      // 6. Delete orders
       const { error } = await supabase
         .from("orders_v2")
         .delete()
         .in("id", ids);
       
       if (error) throw error;
+      
+      // 7. Send revocation notifications to affected users
+      for (const userId of affectedUserIds) {
+        await supabase.functions.invoke("telegram-send-notification", {
+          body: { user_id: userId, message_type: "access_revoked" },
+        }).catch(console.error);
+      }
+
       return ids.length;
     },
     onSuccess: (count) => {
@@ -303,6 +341,7 @@ export default function AdminDeals() {
       clearSelection();
       queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
       queryClient.invalidateQueries({ queryKey: ["admin-subscriptions"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-entitlements"] });
     },
     onError: (error) => {
       toast.error("Ошибка удаления: " + (error as Error).message);
