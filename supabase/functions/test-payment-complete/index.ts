@@ -230,6 +230,22 @@ Deno.serve(async (req) => {
           offerGetcourseId = offerData.getcourse_offer_id;
         }
       }
+      
+      // For trial orders without specific offer_id, look up the trial offer for this tariff
+      if (orderV2.is_trial && !offerGetcourseId && orderV2.tariff_id) {
+        const { data: trialOffer } = await supabase
+          .from('tariff_offers')
+          .select('getcourse_offer_id, trial_days')
+          .eq('tariff_id', orderV2.tariff_id)
+          .eq('offer_type', 'trial')
+          .eq('is_active', true)
+          .maybeSingle();
+        
+        if (trialOffer?.getcourse_offer_id) {
+          offerGetcourseId = trialOffer.getcourse_offer_id;
+          console.log(`[Test Payment] Found trial offer GC ID: ${offerGetcourseId}`);
+        }
+      }
 
       // Calculate access days: priority - offer > order meta > tariff
       const accessDays = orderV2.is_trial
