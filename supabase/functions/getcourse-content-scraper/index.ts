@@ -105,6 +105,7 @@ type PendingSession = {
 const sessionStore = new Map<string, PendingSession>();
 
 const DEFAULT_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
 
 function parseHiddenInputs(html: string): Record<string, string> {
   const inputs: Record<string, string> = {};
