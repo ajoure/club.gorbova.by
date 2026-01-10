@@ -363,49 +363,74 @@ async function chargeSubscription(
   }
 
   const orderMeta = (orderData.meta || {}) as Record<string, any>;
-  let amount: number;
+  let amount: number = 0;
   let currency = 'BYN';
   let fullPaymentOfferId: string | null = null;
   let fullPaymentGcOfferId: string | null = null;
   
-  // For trial subscriptions, get auto_charge_amount from offer and find the full payment offer
+  // For trial subscriptions, get the linked auto_charge_offer_id and its amount
   if (is_trial) {
-    // Priority: order meta > subscription meta > tariff offer > tariff prices
-    const autoChargeAmount = orderMeta.auto_charge_amount || subMeta?.auto_charge_amount;
+    // First check if we have auto_charge_offer_id in order meta or fetch from trial offer
+    let autoChargeOfferId = orderMeta.auto_charge_offer_id || subMeta?.auto_charge_offer_id;
     
-    if (autoChargeAmount) {
-      amount = Number(autoChargeAmount);
-      console.log(`Trial subscription ${id}: using auto_charge_amount ${amount} from order/subscription meta`);
-    } else {
-      // Fallback: find the trial offer to get auto_charge_amount
+    if (!autoChargeOfferId) {
+      // Find the trial offer to get auto_charge_offer_id
       const { data: trialOffer } = await supabase
         .from('tariff_offers')
-        .select('auto_charge_amount')
+        .select('auto_charge_offer_id, auto_charge_amount')
         .eq('tariff_id', tariff_id)
         .eq('offer_type', 'trial')
         .eq('is_active', true)
         .limit(1)
         .single();
       
-      amount = trialOffer?.auto_charge_amount || tariff.original_price || 0;
-      console.log(`Trial subscription ${id}: using auto_charge_amount ${amount} from offer lookup`);
+      autoChargeOfferId = trialOffer?.auto_charge_offer_id;
+      
+      // Fallback to deprecated auto_charge_amount if no linked offer
+      if (!autoChargeOfferId && trialOffer?.auto_charge_amount) {
+        amount = Number(trialOffer.auto_charge_amount);
+        console.log(`Trial subscription ${id}: using legacy auto_charge_amount ${amount}`);
+      }
     }
-
-    // Get the full payment offer for GetCourse sync
-    const { data: fullPayOffer } = await supabase
-      .from('tariff_offers')
-      .select('id, getcourse_offer_id, amount')
-      .eq('tariff_id', tariff_id)
-      .eq('offer_type', 'pay_now')
-      .eq('is_active', true)
-      .order('is_primary', { ascending: false })
-      .limit(1)
-      .single();
     
-    if (fullPayOffer) {
-      fullPaymentOfferId = fullPayOffer.id;
-      fullPaymentGcOfferId = fullPayOffer.getcourse_offer_id;
-      console.log(`Found full payment offer for trial conversion: ${fullPaymentOfferId}, GC offer: ${fullPaymentGcOfferId}`);
+    // If we have auto_charge_offer_id, get the amount and GC offer from that offer
+    if (autoChargeOfferId) {
+      const { data: chargeOffer } = await supabase
+        .from('tariff_offers')
+        .select('id, amount, getcourse_offer_id, button_label')
+        .eq('id', autoChargeOfferId)
+        .single();
+      
+      if (chargeOffer) {
+        amount = Number(chargeOffer.amount);
+        fullPaymentOfferId = chargeOffer.id;
+        fullPaymentGcOfferId = chargeOffer.getcourse_offer_id;
+        console.log(`Trial subscription ${id}: using linked offer "${chargeOffer.button_label}" with amount ${amount}, GC offer: ${fullPaymentGcOfferId}`);
+      }
+    }
+    
+    // Final fallback: find primary pay_now offer for this tariff
+    if (!amount || amount <= 0) {
+      const { data: fallbackOffer } = await supabase
+        .from('tariff_offers')
+        .select('id, amount, getcourse_offer_id')
+        .eq('tariff_id', tariff_id)
+        .eq('offer_type', 'pay_now')
+        .eq('is_active', true)
+        .order('is_primary', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (fallbackOffer) {
+        amount = Number(fallbackOffer.amount);
+        fullPaymentOfferId = fallbackOffer.id;
+        fullPaymentGcOfferId = fallbackOffer.getcourse_offer_id;
+        console.log(`Trial subscription ${id}: using fallback primary offer with amount ${amount}`);
+      } else {
+        // Last resort: use tariff original_price
+        amount = tariff.original_price || 0;
+        console.log(`Trial subscription ${id}: using tariff original_price ${amount}`);
+      }
     }
   } else {
     // Regular subscription - get current price from tariff_prices

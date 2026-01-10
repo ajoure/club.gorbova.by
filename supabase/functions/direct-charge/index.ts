@@ -335,6 +335,7 @@ Deno.serve(async (req) => {
     
     const effectiveTrialDays = offer?.trial_days ?? trialDays ?? tariff.trial_days ?? 5;
     const autoChargeAmount = offer?.auto_charge_amount ?? tariff.original_price ?? 0;
+    const autoChargeOfferId = offer?.auto_charge_offer_id ?? null; // Reference to pay_now offer for auto-charge
     const autoChargeAfterTrial = offer?.auto_charge_after_trial ?? tariff.trial_auto_charge ?? true;
     const isRecurringSubscription = offer?.requires_card_tokenization ?? false;
     
@@ -489,6 +490,7 @@ Deno.serve(async (req) => {
           direct_charge: true,
           auto_charge_after_trial: autoChargeAfterTrial,
           auto_charge_amount: autoChargeAmount,
+          auto_charge_offer_id: autoChargeOfferId, // Reference to pay_now offer for auto-charge
           is_installment: isInternalInstallment,
           installment_count: isInternalInstallment ? installmentCount : null,
           first_payment_amount: isInternalInstallment ? amount : null,

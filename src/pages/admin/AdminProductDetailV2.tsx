@@ -123,7 +123,7 @@ export default function AdminProductDetailV2() {
     amount: 0,
     trial_days: 5,
     auto_charge_after_trial: true,
-    auto_charge_amount: 0,
+    auto_charge_offer_id: "" as string, // Reference to pay_now offer for auto-charge
     auto_charge_delay_days: 5,
     requires_card_tokenization: false,
     is_active: true,
@@ -228,7 +228,7 @@ export default function AdminProductDetailV2() {
         amount: offer.amount,
         trial_days: offer.trial_days || 5,
         auto_charge_after_trial: offer.auto_charge_after_trial ?? true,
-        auto_charge_amount: offer.auto_charge_amount || 0,
+        auto_charge_offer_id: offer.auto_charge_offer_id || "",
         auto_charge_delay_days: offer.auto_charge_delay_days || 5,
         requires_card_tokenization: offer.requires_card_tokenization ?? false,
         is_active: offer.is_active ?? true,
@@ -249,7 +249,7 @@ export default function AdminProductDetailV2() {
         amount: 0,
         trial_days: 5,
         auto_charge_after_trial: true,
-        auto_charge_amount: 0,
+        auto_charge_offer_id: "",
         auto_charge_delay_days: 5,
         requires_card_tokenization: false,
         is_active: true,
@@ -264,6 +264,11 @@ export default function AdminProductDetailV2() {
       setOfferDialog({ open: true, editing: null });
     }
   };
+  
+  // Get pay_now offers for the selected tariff (for trial auto-charge selection)
+  const payNowOffersForTariff = offers?.filter(
+    o => o.tariff_id === offerForm.tariff_id && o.offer_type === "pay_now" && o.is_active
+  ) || [];
 
   const handleSaveOffer = async () => {
     if (!offerForm.tariff_id || !offerForm.button_label) {
@@ -278,8 +283,9 @@ export default function AdminProductDetailV2() {
       amount: offerForm.amount,
       trial_days: offerForm.offer_type === "trial" ? offerForm.trial_days : null,
       auto_charge_after_trial: offerForm.offer_type === "trial" ? offerForm.auto_charge_after_trial : false,
-      auto_charge_amount: offerForm.offer_type === "trial" ? offerForm.auto_charge_amount : null,
+      auto_charge_amount: null, // Deprecated, use auto_charge_offer_id instead
       auto_charge_delay_days: offerForm.offer_type === "trial" ? offerForm.auto_charge_delay_days : null,
+      auto_charge_offer_id: offerForm.offer_type === "trial" && offerForm.auto_charge_after_trial ? (offerForm.auto_charge_offer_id || null) : null,
       requires_card_tokenization: offerForm.offer_type === "trial" ? true : (isInstallment || offerForm.requires_card_tokenization),
       is_active: offerForm.is_active,
       is_primary: offerForm.offer_type === "pay_now" ? offerForm.is_primary : false,
@@ -989,12 +995,32 @@ export default function AdminProductDetailV2() {
 
                 {offerForm.auto_charge_after_trial && (
                   <div className="space-y-2">
-                    <Label>Сумма автосписания (BYN)</Label>
-                    <Input
-                      type="number"
-                      value={offerForm.auto_charge_amount}
-                      onChange={(e) => setOfferForm({ ...offerForm, auto_charge_amount: parseFloat(e.target.value) || 0 })}
-                    />
+                    <Label>Кнопка для автосписания *</Label>
+                    <Select
+                      value={offerForm.auto_charge_offer_id}
+                      onValueChange={(v) => setOfferForm({ ...offerForm, auto_charge_offer_id: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите кнопку полной оплаты" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {payNowOffersForTariff.length === 0 ? (
+                          <div className="p-2 text-sm text-muted-foreground">
+                            Сначала создайте кнопку "Оплата" для этого тарифа
+                          </div>
+                        ) : (
+                          payNowOffersForTariff.map((offer: any) => (
+                            <SelectItem key={offer.id} value={offer.id}>
+                              {offer.button_label} — {offer.amount} BYN
+                              {offer.is_primary && " (основная)"}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      После окончания trial будет выполнено списание по выбранной кнопке (сумма и условия из неё)
+                    </p>
                   </div>
                 )}
               </>

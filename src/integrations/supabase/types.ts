@@ -3358,6 +3358,7 @@ export type Database = {
           auto_charge_after_trial: boolean | null
           auto_charge_amount: number | null
           auto_charge_delay_days: number | null
+          auto_charge_offer_id: string | null
           button_label: string
           created_at: string | null
           first_payment_delay_days: number | null
@@ -3384,6 +3385,7 @@ export type Database = {
           auto_charge_after_trial?: boolean | null
           auto_charge_amount?: number | null
           auto_charge_delay_days?: number | null
+          auto_charge_offer_id?: string | null
           button_label: string
           created_at?: string | null
           first_payment_delay_days?: number | null
@@ -3410,6 +3412,7 @@ export type Database = {
           auto_charge_after_trial?: boolean | null
           auto_charge_amount?: number | null
           auto_charge_delay_days?: number | null
+          auto_charge_offer_id?: string | null
           button_label?: string
           created_at?: string | null
           first_payment_delay_days?: number | null
@@ -3432,6 +3435,13 @@ export type Database = {
           visible_to?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "tariff_offers_auto_charge_offer_id_fkey"
+            columns: ["auto_charge_offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "tariff_offers_tariff_id_fkey"
             columns: ["tariff_id"]

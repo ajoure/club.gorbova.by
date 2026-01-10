@@ -14,6 +14,7 @@ export interface TariffOffer {
   auto_charge_after_trial: boolean;
   auto_charge_amount: number | null;
   auto_charge_delay_days: number | null;
+  auto_charge_offer_id: string | null; // Reference to pay_now offer for auto-charge
   requires_card_tokenization: boolean;
   is_active: boolean;
   is_primary: boolean;
@@ -31,12 +32,13 @@ export interface TariffOffer {
   updated_at: string;
 }
 
-export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated_at" | "getcourse_offer_id" | "payment_method" | "installment_count" | "installment_interval_days" | "first_payment_delay_days"> & { 
+export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated_at" | "getcourse_offer_id" | "payment_method" | "installment_count" | "installment_interval_days" | "first_payment_delay_days" | "auto_charge_offer_id"> & { 
   getcourse_offer_id?: string | null;
   payment_method?: PaymentMethod;
   installment_count?: number | null;
   installment_interval_days?: number | null;
   first_payment_delay_days?: number | null;
+  auto_charge_offer_id?: string | null;
 };
 export type TariffOfferUpdate = Partial<Omit<TariffOffer, "id" | "created_at" | "updated_at">> & { id: string };
 
