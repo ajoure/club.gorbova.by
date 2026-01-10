@@ -150,32 +150,99 @@ function isLikelyTwoFactorPage(html: string) {
   );
 }
 
-function extractTwoFactorResendUrl(baseUrl: string, html: string): string | null {
-  // Best-effort: different GetCourse setups use different endpoints.
-  // We look for explicit "send/resend code" links or JS-configured URLs.
-  const candidates: string[] = [];
+function isStaticAssetUrl(url: string) {
+  return (
+    /\/nassets\//i.test(url) ||
+    /\.(?:css|js|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot|map)(?:\?|$)/i.test(url)
+  );
+}
 
+function normalizeUrl(baseUrl: string, url: string): string {
+  if (url.startsWith("http")) return url;
+  if (url.startsWith("/")) return `${baseUrl}${url}`;
+  return `${baseUrl}/${url}`;
+}
+
+function extractTwoFactorResendUrl(baseUrl: string, html: string): string | null {
+  // We intentionally avoid grabbing any static assets (css/js/etc.) because they often contain "confirm" in the filename.
+  const candidates: { url: string; score: number; source: string }[] = [];
+
+  // 1) Links (only if it's clearly a resend/send action)
   const hrefRegex = /href=["']([^"']+)["']/gi;
   let m: RegExpExecArray | null;
   while ((m = hrefRegex.exec(html)) !== null) {
     const href = m[1];
     if (!href) continue;
-    if (/send|resend|repeat|again|otp|code|confirm/i.test(href) && /code|confirm|otp/i.test(href)) {
-      candidates.push(href);
+    if (isStaticAssetUrl(href)) continue;
+
+    // Require explicit resend-like word to reduce false positives
+    if (/(?:send|resend|repeat|again)/i.test(href) && /(?:code|otp|confirm)/i.test(href)) {
+      candidates.push({ url: normalizeUrl(baseUrl, href), score: 6, source: "href" });
     }
-    // Some pages have explicit endpoints
-    if (/cms\/system\/(?:send|resend)/i.test(href)) candidates.push(href);
+
+    // Explicit endpoints (rare)
+    if (/cms\/system\/(?:send|resend)/i.test(href)) {
+      candidates.push({ url: normalizeUrl(baseUrl, href), score: 8, source: "href-explicit" });
+    }
   }
 
-  const jsUrlRegex = /(?:send|resend)[^\n\r"']{0,40}(?:url|path)[^\n\r"']{0,10}["']([^"']+)["']/gi;
-  while ((m = jsUrlRegex.exec(html)) !== null) {
-    const url = m[1];
-    if (url) candidates.push(url);
+  // 2) Form actions (sometimes resend is a separate form)
+  const formRegex = /<form[^>]*action=["']([^"']+)["'][^>]*>/gi;
+  while ((m = formRegex.exec(html)) !== null) {
+    const action = m[1];
+    if (!action) continue;
+    if (isStaticAssetUrl(action)) continue;
+
+    if (/(?:send|resend|repeat|again)/i.test(action) && /(?:code|otp|confirm)/i.test(action)) {
+      candidates.push({ url: normalizeUrl(baseUrl, action), score: 7, source: "form" });
+    }
   }
 
-  const first = candidates.find(Boolean);
-  if (!first) return null;
-  return first.startsWith("http") ? first : `${baseUrl}${first.startsWith("/") ? first : `/${first}`}`;
+  // 3) data-* urls on buttons
+  const dataUrlRegex = /(?:data-url|data-href|data-action)=["']([^"']+)["']/gi;
+  while ((m = dataUrlRegex.exec(html)) !== null) {
+    const u = m[1];
+    if (!u) continue;
+    if (isStaticAssetUrl(u)) continue;
+
+    if (/(?:send|resend|repeat|again)/i.test(u) && /(?:code|otp|confirm)/i.test(u)) {
+      candidates.push({ url: normalizeUrl(baseUrl, u), score: 9, source: "data" });
+    }
+  }
+
+  // 4) Very common JS patterns
+  const jsRegex = /(?:fetch|axios\.(?:post|get)|\$\.(?:post|get))\(\s*["']([^"']+)["']/gi;
+  while ((m = jsRegex.exec(html)) !== null) {
+    const u = m[1];
+    if (!u) continue;
+    if (isStaticAssetUrl(u)) continue;
+
+    if (/(?:send|resend|repeat|again)/i.test(u) && /(?:code|otp|confirm)/i.test(u)) {
+      candidates.push({ url: normalizeUrl(baseUrl, u), score: 10, source: "js" });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  // Pick best-scoring candidate
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  console.log(
+    "2FA resend candidates:",
+    JSON.stringify({ count: candidates.length, best: { url: best.url, source: best.source, score: best.score } })
+  );
+  return best.url;
+}
+
+function extractTwoFactorHint(html: string): string | null {
+  // Heuristic: some GetCourse setups use phone/SMS confirmation (often includes phone_confirm assets).
+  if (/phone_confirm|\bphone\b|телефон|смс|sms/i.test(html)) {
+    return "Похоже, код подтверждения отправляется не на почту, а на телефон (SMS) или другой канал. Проверьте настройки подтверждения в GetCourse.";
+  }
+  if (/почт|e-?mail|email/i.test(html)) {
+    return "Код подтверждения должен прийти на почту. Проверьте «Спам»/«Промоакции» и подождите 1–2 минуты.";
+  }
+  return "GetCourse запросил код подтверждения. Проверьте почту/смс и введите код.";
 }
 
 async function tryTriggerTwoFactorEmail(opts: {
@@ -191,7 +258,7 @@ async function tryTriggerTwoFactorEmail(opts: {
   }
 
   try {
-    console.log("Attempting to trigger 2FA email via:", resendUrl);
+    console.log("Attempting to trigger 2FA resend via:", resendUrl);
     const res = await fetch(resendUrl, {
       method: "GET",
       headers: {
@@ -239,7 +306,7 @@ async function performLogin(
   twoFactorCode?: string,
   sessionId?: string,
   postLoginCheckUrl?: string
-): Promise<{ success: boolean; cookies?: string; needsTwoFactor?: boolean; sessionId?: string; error?: string }> {
+): Promise<{ success: boolean; cookies?: string; needsTwoFactor?: boolean; sessionId?: string; message?: string; error?: string }> {
   // Cleanup expired sessions
   const now = Date.now();
   for (const [id, s] of sessionStore.entries()) {
@@ -379,7 +446,12 @@ async function performLogin(
       expires: Date.now() + 5 * 60 * 1000,
     });
     console.log("2FA required (challenge returned on login), waiting for code...");
-    return { success: false, needsTwoFactor: true, sessionId: newSessionId };
+    return {
+      success: false,
+      needsTwoFactor: true,
+      sessionId: newSessionId,
+      message: extractTwoFactorHint(loginResponseHtml) ?? undefined,
+    };
   }
 
   // If we are still on a login-like page after submitting credentials, treat as failure
@@ -395,12 +467,7 @@ async function performLogin(
   });
 
   if (isLikelyTwoFactorPage(check.text)) {
-    await tryTriggerTwoFactorEmail({
-      baseUrl,
-      html: check.text,
-      cookieJar,
-      referer: checkUrl,
-    });
+    await tryTriggerTwoFactorEmail({ baseUrl, html: check.text, cookieJar, referer: checkUrl });
 
     const newSessionId = crypto.randomUUID();
     sessionStore.set(newSessionId, {
@@ -410,7 +477,12 @@ async function performLogin(
       expires: Date.now() + 5 * 60 * 1000,
     });
     console.log("2FA required, waiting for code...");
-    return { success: false, needsTwoFactor: true, sessionId: newSessionId };
+    return {
+      success: false,
+      needsTwoFactor: true,
+      sessionId: newSessionId,
+      message: extractTwoFactorHint(check.text) ?? undefined,
+    };
   }
 
   if (isLikelyLoginPage(check.text)) {
@@ -474,11 +546,13 @@ Deno.serve(async (req) => {
     if (!loginResult.success) {
       if (loginResult.needsTwoFactor) {
         return new Response(
-          JSON.stringify({ 
-            success: false, 
-            needs_two_factor: true, 
+          JSON.stringify({
+            success: false,
+            needs_two_factor: true,
             session_id: loginResult.sessionId,
-            message: "Введите код подтверждения, отправленный на вашу почту" 
+            message:
+              loginResult.message ||
+              "GetCourse запросил код подтверждения. Проверьте почту/смс и введите код.",
           }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
