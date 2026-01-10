@@ -91,16 +91,33 @@ Deno.serve(async (req) => {
 
       const product = (orderV2 as any).products_v2;
       const tariff = (orderV2 as any).tariffs;
+      const orderMeta = (orderV2.meta || {}) as Record<string, any>;
 
+      // Get trial_days from offer if available
+      let offerTrialDays: number | null = null;
+      let offerAutoChargeAmount: number | null = null;
+      let offerGetcourseId: string | null = null;
+      
+      if (orderMeta.offer_id) {
+        const { data: offerData } = await supabase
+          .from('tariff_offers')
+          .select('trial_days, auto_charge_amount, getcourse_offer_id')
+          .eq('id', orderMeta.offer_id)
+          .maybeSingle();
+        
+        if (offerData) {
+          offerTrialDays = offerData.trial_days;
+          offerAutoChargeAmount = offerData.auto_charge_amount;
+          offerGetcourseId = offerData.getcourse_offer_id;
+        }
+      }
+
+      // Calculate access days: priority - offer > order meta > tariff
       const accessDays = orderV2.is_trial
-        ? Math.max(
-            1,
-            Math.ceil(
-              ((orderV2.trial_end_at ? new Date(orderV2.trial_end_at) : now).getTime() - new Date(orderV2.created_at).getTime()) /
-                (24 * 60 * 60 * 1000)
-            )
-          )
+        ? (offerTrialDays || orderMeta.trial_days || tariff?.trial_days || 5)
         : (tariff?.access_days || 30);
+
+      console.log(`[Test Payment] Trial=${orderV2.is_trial}, accessDays=${accessDays}, offerTrialDays=${offerTrialDays}, metaTrialDays=${orderMeta.trial_days}`);
 
       const accessStartAt = now.toISOString();
       const accessEndAt = orderV2.is_trial && orderV2.trial_end_at
