@@ -998,113 +998,33 @@ Deno.serve(async (req) => {
               },
             });
 
-            // --- Notify super admins about new payment ---
+            // --- Notify super admins about new payment via central function ---
             try {
-              // Get super admin telegram IDs
-              const { data: superAdmins } = await supabase
-                .from('user_roles_v2')
-                .select(`
-                  user_id,
-                  roles!inner(code)
-                `)
-                .eq('roles.code', 'super_admin');
+              // Get customer info for notification
+              const { data: customerProfile } = await supabase
+                .from('profiles')
+                .select('full_name, email, phone, telegram_username')
+                .eq('user_id', orderV2.user_id)
+                .single();
 
-              if (superAdmins && superAdmins.length > 0) {
-                const superAdminUserIds = superAdmins.map((sa: any) => sa.user_id);
-                
-                const { data: adminProfiles } = await supabase
-                  .from('profiles')
-                  .select('telegram_user_id, telegram_link_bot_id, full_name')
-                  .in('user_id', superAdminUserIds)
-                  .not('telegram_user_id', 'is', null);
+              const amountFormatted = Number(paymentV2.amount).toFixed(2);
+              const paymentType = orderV2.is_trial ? '🔔 Пробный период' : '💰 Оплата';
 
-                if (adminProfiles && adminProfiles.length > 0) {
-                  // Get customer info
-                  const { data: customerProfile } = await supabase
-                    .from('profiles')
-                    .select('full_name, email, phone, telegram_username')
-                    .eq('user_id', orderV2.user_id)
-                    .single();
+              const notifyMessage = `${paymentType}\n\n` +
+                `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
+                `📧 Email: ${customerProfile?.email || orderV2.customer_email || 'Не указан'}\n` +
+                `📱 Телефон: ${customerProfile?.phone || orderV2.customer_phone || 'Не указан'}\n` +
+                (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
+                `\n📦 <b>Продукт:</b> ${productV2.name}\n` +
+                `📋 Тариф: ${tariff.name}\n` +
+                `💵 Сумма: ${amountFormatted} ${paymentV2.currency}\n` +
+                `🆔 Заказ: ${orderV2.order_number}`;
 
-                  // Get active bots once and pick the best token per admin:
-                  // - if admin linked via a specific bot -> use that bot
-                  // - else fallback to primary active bot
-                  const { data: bots } = await supabase
-                    .from('telegram_bots')
-                    .select('id, bot_token_encrypted, is_primary')
-                    .eq('status', 'active');
-
-                  const botsById = new Map<string, string>();
-                  let firstBotToken: string | null = null;
-                  for (const b of (bots || []) as any[]) {
-                    if (b?.id && b?.bot_token_encrypted) {
-                      botsById.set(b.id, b.bot_token_encrypted);
-                      if (!firstBotToken) firstBotToken = b.bot_token_encrypted;
-                    }
-                  }
-                  // Primary bot or any first available bot
-                  const primaryBotToken = ((bots || []) as any[])
-                    ?.find((b: any) => b?.is_primary)?.bot_token_encrypted || firstBotToken;
-
-                  if (primaryBotToken || botsById.size > 0) {
-                    const amountFormatted = Number(paymentV2.amount).toFixed(2);
-                    const paymentType = orderV2.is_trial ? '🔔 Пробный период' : '💰 Оплата';
-
-                    const message = `${paymentType}\n\n` +
-                      `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-                      `📧 Email: ${customerProfile?.email || orderV2.customer_email || 'Не указан'}\n` +
-                      `📱 Телефон: ${customerProfile?.phone || orderV2.customer_phone || 'Не указан'}\n` +
-                      (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
-                      `\n📦 <b>Продукт:</b> ${productV2.name}\n` +
-                      `📋 Тариф: ${tariff.name}\n` +
-                      `💵 Сумма: ${amountFormatted} ${paymentV2.currency}\n` +
-                      `🆔 Заказ: ${orderV2.order_number}`;
-
-                    // Send to all super admins with telegram
-                    console.log(`Sending payment notification to ${adminProfiles.length} admins, botsById size: ${botsById.size}, primaryBotToken: ${primaryBotToken ? 'yes' : 'no'}`);
-                    for (const admin of adminProfiles as any[]) {
-                      // Use admin's linked bot if available, otherwise use primary or first available
-                      const botTokenForAdmin = (admin?.telegram_link_bot_id && botsById.has(admin.telegram_link_bot_id))
-                        ? botsById.get(admin.telegram_link_bot_id)
-                        : (primaryBotToken || firstBotToken);
-
-                      if (!botTokenForAdmin) continue;
-
-                      try {
-                        const resp = await fetch(`https://api.telegram.org/bot${botTokenForAdmin}/sendMessage`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            chat_id: admin.telegram_user_id,
-                            text: message,
-                            parse_mode: 'HTML',
-                          }),
-                        });
-
-                        let payload: any = null;
-                        try {
-                          payload = await resp.json();
-                        } catch {
-                          // ignore
-                        }
-
-                        if (!resp.ok || payload?.ok === false) {
-                          console.error('Failed to notify admin (telegram error):', {
-                            admin: admin.full_name,
-                            status: resp.status,
-                            payload,
-                          });
-                        }
-                      } catch (err) {
-                        console.error('Failed to notify admin:', admin.full_name, err);
-                      }
-                    }
-                    console.log('Super admins notified about new payment');
-                  } else {
-                    console.warn('No active telegram bots found - cannot notify super admins');
-                  }
-                }
-              }
+              const notifyResult = await supabase.functions.invoke('telegram-notify-admins', {
+                body: { message: notifyMessage },
+              });
+              
+              console.log('Admin notification result:', notifyResult.data);
             } catch (notifyError) {
               console.error('Error notifying super admins:', notifyError);
               // Don't fail the webhook if notification fails

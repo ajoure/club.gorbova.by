@@ -261,6 +261,44 @@ Deno.serve(async (req) => {
       meta: { telegram_user_id: telegramUserId, chat_revoked: chatRevoked, channel_revoked: channelRevoked, reason },
     });
 
+    // --- Notify super admins about access revocation ---
+    try {
+      // Get user profile for notification
+      let userInfo = { full_name: 'Неизвестно', email: 'Не указан', phone: 'Не указан', telegram_username: null as string | null };
+      if (profileUserId) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name, email, phone, telegram_username')
+          .eq('user_id', profileUserId)
+          .single();
+        if (profile) {
+          userInfo = {
+            full_name: profile.full_name || 'Не указано',
+            email: profile.email || 'Не указан',
+            phone: profile.phone || 'Не указан',
+            telegram_username: profile.telegram_username,
+          };
+        }
+      }
+
+      const revokeMessage = `🚫 Доступ отозван\n\n` +
+        `👤 <b>Клиент:</b> ${userInfo.full_name}\n` +
+        `📧 Email: ${userInfo.email}\n` +
+        `📱 Телефон: ${userInfo.phone}\n` +
+        (userInfo.telegram_username ? `💬 Telegram: @${userInfo.telegram_username}\n` : '') +
+        `\n📍 <b>Клуб:</b> ${club.name || club_id}\n` +
+        `📝 Причина: ${reason || (is_manual ? 'Ручное отключение' : 'Истёк срок подписки')}\n` +
+        `⚙️ Тип: ${is_manual ? 'Ручное' : 'Автоматическое'}`;
+
+      await supabase.functions.invoke('telegram-notify-admins', {
+        body: { message: revokeMessage },
+      });
+      console.log('Super admins notified about access revocation');
+    } catch (notifyError) {
+      console.error('Error notifying super admins about revocation:', notifyError);
+      // Don't fail if notification fails
+    }
+
     console.log('Revoke completed:', { telegramUserId, chatRevoked, channelRevoked });
 
     return new Response(JSON.stringify({
