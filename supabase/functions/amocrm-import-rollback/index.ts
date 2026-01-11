@@ -106,32 +106,38 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Delete profiles created by this import
+    // Delete profiles created by this import (in batches to avoid issues)
     if (createdByImport.length > 0) {
-      const { error: deleteError, count } = await supabase
-        .from('profiles')
-        .delete()
-        .in('id', createdByImport);
+      for (const profileId of createdByImport) {
+        const { error: deleteError } = await supabase
+          .from('profiles')
+          .delete()
+          .eq('id', profileId);
 
-      if (deleteError) {
-        console.error('Error deleting profiles:', deleteError);
-        throw new Error('Error deleting profiles: ' + deleteError.message);
+        if (deleteError) {
+          console.error('Error deleting profile:', profileId, deleteError);
+          // Continue with other deletions
+        } else {
+          deletedCount++;
+        }
       }
-      deletedCount = count || createdByImport.length;
     }
 
-    // Clear import_batch_id for profiles that existed before
+    // Clear import_batch_id for profiles that existed before (in batches)
     if (updatedByImport.length > 0) {
-      const { error: updateError, count } = await supabase
-        .from('profiles')
-        .update({ import_batch_id: null })
-        .in('id', updatedByImport);
+      for (const profileId of updatedByImport) {
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update({ import_batch_id: null })
+          .eq('id', profileId);
 
-      if (updateError) {
-        console.error('Error clearing batch_id:', updateError);
-        throw new Error('Error clearing batch_id: ' + updateError.message);
+        if (updateError) {
+          console.error('Error clearing batch_id:', profileId, updateError);
+          // Continue with other updates
+        } else {
+          clearedCount++;
+        }
       }
-      clearedCount = count || updatedByImport.length;
     }
 
     // Update job status to indicate rollback
