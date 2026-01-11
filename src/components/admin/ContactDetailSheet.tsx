@@ -1089,7 +1089,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       <CalendarIcon className="w-4 h-4 text-muted-foreground" />
                       <span className="text-muted-foreground">Регистрация</span>
                     </div>
-                    <span className="text-sm">{format(new Date(contact.created_at), "dd MMM yyyy HH:mm", { locale: ru })}</span>
+                    <span className="text-sm">
+                      {contact.created_at 
+                        ? format(new Date(contact.created_at), "dd MMM yyyy HH:mm", { locale: ru })
+                        : "—"}
+                    </span>
                   </div>
                   <Separator />
                   <div className="flex items-center justify-between">
