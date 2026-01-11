@@ -741,6 +741,7 @@ export type Database = {
       duplicate_cases: {
         Row: {
           created_at: string | null
+          duplicate_type: string | null
           id: string
           master_profile_id: string | null
           notes: string | null
@@ -753,6 +754,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string | null
+          duplicate_type?: string | null
           id?: string
           master_profile_id?: string | null
           notes?: string | null
@@ -765,6 +767,7 @@ export type Database = {
         }
         Update: {
           created_at?: string | null
+          duplicate_type?: string | null
           id?: string
           master_profile_id?: string | null
           notes?: string | null
