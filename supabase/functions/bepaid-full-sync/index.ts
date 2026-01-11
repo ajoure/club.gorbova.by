@@ -130,22 +130,26 @@ interface BepaidTransaction {
   created_at: string;
   paid_at?: string;
   credit_card?: { last_4: string; brand: string; holder?: string; token?: string; };
-  customer?: { email?: string; first_name?: string; last_name?: string; };
+  customer?: { email?: string; first_name?: string; last_name?: string; phone?: string; };
 }
 
 interface SyncResult {
   bepaid_uid: string;
   email: string | null;
+  phone: string | null;
   card_holder: string | null;
   card_holder_cyrillic: string | null;
   card_mask: string | null;
   amount: number;
   currency: string;
   paid_at: string | null;
+  description: string | null;
+  product_name: string | null;
   matched_profile_id: string | null;
   matched_profile_name: string | null;
+  matched_profile_phone: string | null;
   match_type: 'email' | 'card_mask' | 'name_translit' | 'none';
-  action: 'created' | 'skipped_duplicate' | 'skipped_no_match' | 'error';
+  action: 'created' | 'skipped_duplicate' | 'skipped_no_match' | 'error' | 'pending';
   order_id: string | null;
   error?: string;
 }
@@ -226,7 +230,6 @@ Deno.serve(async (req) => {
           method: "GET",
           headers: {
             Authorization: `Basic ${auth}`,
-            "Content-Type": "application/json",
             Accept: "application/json",
           },
         }
@@ -273,7 +276,6 @@ Deno.serve(async (req) => {
           method: "GET",
           headers: {
             Authorization: `Basic ${auth}`,
-            "Content-Type": "application/json",
             Accept: "application/json",
           },
         }
@@ -314,14 +316,18 @@ Deno.serve(async (req) => {
         results.push({
           bepaid_uid: bepaidUid,
           email: sub.customer?.email || null,
+          phone: sub.customer?.phone || null,
           card_holder: sub.credit_card?.holder || null,
           card_holder_cyrillic: null,
           card_mask: sub.credit_card?.last_4 || null,
           amount: (sub.plan?.amount || 0) / 100,
           currency: sub.plan?.currency || 'BYN',
           paid_at: successfulTx.paid_at || null,
+          description: sub.tracking_id || null,
+          product_name: sub.plan?.title || 'Подписка bePaid',
           matched_profile_id: null,
           matched_profile_name: null,
+          matched_profile_phone: null,
           match_type: 'none',
           action: 'skipped_duplicate',
           order_id: null,
@@ -330,9 +336,12 @@ Deno.serve(async (req) => {
       }
 
       await processPayment(
-        supabase, profiles, sub.customer?.email, sub.credit_card?.holder,
-        sub.credit_card?.last_4, (sub.plan?.amount || 0) / 100,
-        sub.plan?.currency || 'BYN', bepaidUid, successfulTx.paid_at,
+        supabase, profiles, 
+        sub.customer?.email, sub.customer?.phone,
+        sub.credit_card?.holder, sub.credit_card?.last_4, 
+        (sub.plan?.amount || 0) / 100, sub.plan?.currency || 'BYN', 
+        bepaidUid, successfulTx.paid_at,
+        sub.tracking_id, sub.plan?.title || 'Подписка bePaid',
         sub, dryRun, existingUids, results, stats
       );
     }
@@ -346,14 +355,18 @@ Deno.serve(async (req) => {
         results.push({
           bepaid_uid: tx.uid,
           email: tx.customer?.email || null,
+          phone: tx.customer?.phone || null,
           card_holder: tx.credit_card?.holder || null,
           card_holder_cyrillic: null,
           card_mask: tx.credit_card?.last_4 || null,
           amount: tx.amount / 100,
           currency: tx.currency,
           paid_at: tx.paid_at || tx.created_at,
+          description: tx.description || tx.tracking_id || null,
+          product_name: tx.description || 'Платёж bePaid',
           matched_profile_id: null,
           matched_profile_name: null,
+          matched_profile_phone: null,
           match_type: 'none',
           action: 'skipped_duplicate',
           order_id: null,
@@ -362,10 +375,13 @@ Deno.serve(async (req) => {
       }
 
       await processPayment(
-        supabase, profiles, tx.customer?.email, tx.credit_card?.holder,
-        tx.credit_card?.last_4, tx.amount / 100, tx.currency,
-        tx.uid, tx.paid_at || tx.created_at, tx, dryRun,
-        existingUids, results, stats
+        supabase, profiles, 
+        tx.customer?.email, tx.customer?.phone,
+        tx.credit_card?.holder, tx.credit_card?.last_4, 
+        tx.amount / 100, tx.currency,
+        tx.uid, tx.paid_at || tx.created_at,
+        tx.description || tx.tracking_id, tx.description || 'Платёж bePaid',
+        tx, dryRun, existingUids, results, stats
       );
     }
 
@@ -403,12 +419,15 @@ async function processPayment(
   supabase: any,
   profiles: any[],
   email: string | undefined,
+  phone: string | undefined,
   cardHolder: string | undefined,
   cardMask: string | undefined,
   amount: number,
   currency: string,
   bepaidUid: string,
   paidAt: string | undefined,
+  description: string | undefined,
+  productName: string | undefined,
   rawPayload: any,
   dryRun: boolean,
   existingUids: Set<string>,
@@ -460,16 +479,20 @@ async function processPayment(
   const result: SyncResult = {
     bepaid_uid: bepaidUid,
     email: email || null,
+    phone: phone || null,
     card_holder: cardHolder || null,
     card_holder_cyrillic: cardHolderCyrillic,
     card_mask: cardMask || null,
     amount,
     currency,
     paid_at: paidAt || null,
+    description: description || null,
+    product_name: productName || null,
     matched_profile_id: matchedProfile?.id || null,
     matched_profile_name: matchedProfile?.full_name || null,
+    matched_profile_phone: matchedProfile?.phone || null,
     match_type: matchType,
-    action: 'skipped_no_match',
+    action: matchedProfile ? 'pending' : 'skipped_no_match',
     order_id: null,
   };
 
