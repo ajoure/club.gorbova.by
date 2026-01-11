@@ -20,7 +20,12 @@ interface ParsedContact {
 
 interface ImportOptions {
   updateExisting: boolean;
+  dryRun?: boolean; // Preview mode - no actual changes
 }
+
+// SAFETY: This function ONLY performs INSERT and UPDATE operations.
+// DELETE operations are strictly prohibited to prevent data loss.
+console.log('🔒 SAFETY: amocrm-mass-import function loaded. This function NEVER deletes data.');
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -64,24 +69,29 @@ serve(async (req) => {
       );
     }
 
+    const isDryRun = options.dryRun === true;
+    console.log(`📊 Import request: ${contacts.length} contacts, dryRun=${isDryRun}, updateExisting=${options.updateExisting}`);
+
     // Create or update job
     let job: { id: string };
     if (jobId) {
       job = { id: jobId };
-      await supabase
-        .from('import_jobs')
-        .update({
-          status: 'processing',
-          started_at: new Date().toISOString(),
-        })
-        .eq('id', jobId);
+      if (!isDryRun) {
+        await supabase
+          .from('import_jobs')
+          .update({
+            status: 'processing',
+            started_at: new Date().toISOString(),
+          })
+          .eq('id', jobId);
+      }
     } else {
       const { data, error } = await supabase
         .from('import_jobs')
         .insert({
           type: 'amocrm_contacts',
           total: contacts.length,
-          status: 'processing',
+          status: isDryRun ? 'dry_run' : 'processing',
           started_at: new Date().toISOString(),
           created_by: user.id,
         })
@@ -134,12 +144,13 @@ serve(async (req) => {
       }
     }
 
-    // Process in batches
+    // Process contacts and calculate what would happen
     const BATCH_SIZE = 50;
     let processed = 0;
     let createdCount = 0;
     let updatedCount = 0;
     let errorsCount = 0;
+    let skippedCount = 0;
     const errorLog: { contact: string; error: string }[] = [];
 
     for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
@@ -188,56 +199,68 @@ serve(async (req) => {
 
           if (matchedProfileId && options.updateExisting) {
             // Update existing profile
-            const updateData: Record<string, unknown> = {
-              external_id_amo: contact.amo_id,
-            };
-            
-            if (contact.email) updateData.email = contact.email;
-            if (contact.phone) updateData.phone = contact.phone;
-            if (contact.telegram_username) updateData.telegram_username = contact.telegram_username;
-            if (contact.emails.length > 0) updateData.emails = contact.emails;
-            if (contact.phones.length > 0) updateData.phones = contact.phones.map(p => '+' + p);
-            
-            const { error } = await supabase
-              .from('profiles')
-              .update(updateData)
-              .eq('id', matchedProfileId);
-            
-            if (error) {
-              errorLog.push({ contact: contact.full_name, error: error.message });
-              errorsCount++;
+            if (!isDryRun) {
+              const updateData: Record<string, unknown> = {
+                external_id_amo: contact.amo_id,
+                import_batch_id: job.id, // Track which import updated this profile
+              };
+              
+              if (contact.email) updateData.email = contact.email;
+              if (contact.phone) updateData.phone = contact.phone;
+              if (contact.telegram_username) updateData.telegram_username = contact.telegram_username;
+              if (contact.emails.length > 0) updateData.emails = contact.emails;
+              if (contact.phones.length > 0) updateData.phones = contact.phones.map(p => '+' + p);
+              
+              const { error } = await supabase
+                .from('profiles')
+                .update(updateData)
+                .eq('id', matchedProfileId);
+              
+              if (error) {
+                errorLog.push({ contact: contact.full_name, error: error.message });
+                errorsCount++;
+              } else {
+                updatedCount++;
+              }
             } else {
-              updatedCount++;
+              updatedCount++; // Dry run: just count
             }
           } else if (!matchedProfileId) {
             // Create new profile
-            const { error } = await supabase
-              .from('profiles')
-              .insert({
-                full_name: contact.full_name,
-                first_name: contact.first_name,
-                last_name: contact.last_name,
-                email: contact.email,
-                emails: contact.emails,
-                phone: contact.phone ? '+' + contact.phone : undefined,
-                phones: contact.phones.map(p => '+' + p),
-                telegram_username: contact.telegram_username,
-                external_id_amo: contact.amo_id,
-                status: 'ghost',
-                source: 'amocrm_import',
-              });
-            
-            if (error) {
-              errorLog.push({ contact: contact.full_name, error: error.message });
-              errorsCount++;
-            } else {
-              createdCount++;
-              // Add to indexes to avoid duplicates in same batch
-              if (contact.email) emailIndex.set(normalizeEmail(contact.email), { id: contact.amo_id, name: contact.full_name });
-              for (const phone of contact.phones) {
-                phoneIndex.set(normalizePhone(phone), { id: contact.amo_id, name: contact.full_name });
+            if (!isDryRun) {
+              const { error } = await supabase
+                .from('profiles')
+                .insert({
+                  full_name: contact.full_name,
+                  first_name: contact.first_name,
+                  last_name: contact.last_name,
+                  email: contact.email,
+                  emails: contact.emails,
+                  phone: contact.phone ? '+' + contact.phone : undefined,
+                  phones: contact.phones.map(p => '+' + p),
+                  telegram_username: contact.telegram_username,
+                  external_id_amo: contact.amo_id,
+                  status: 'ghost',
+                  source: 'amocrm_import',
+                  import_batch_id: job.id, // Track which import created this profile
+                });
+              
+              if (error) {
+                errorLog.push({ contact: contact.full_name, error: error.message });
+                errorsCount++;
+              } else {
+                createdCount++;
+                // Add to indexes to avoid duplicates in same batch
+                if (contact.email) emailIndex.set(normalizeEmail(contact.email), { id: contact.amo_id, name: contact.full_name });
+                for (const phone of contact.phones) {
+                  phoneIndex.set(normalizePhone(phone), { id: contact.amo_id, name: contact.full_name });
+                }
               }
+            } else {
+              createdCount++; // Dry run: just count
             }
+          } else {
+            skippedCount++; // Profile exists but updateExisting is false
           }
           
           processed++;
@@ -248,47 +271,60 @@ serve(async (req) => {
         }
       }
       
-      // Update job progress
+      // Update job progress (only for real imports)
+      if (!isDryRun) {
+        await supabase
+          .from('import_jobs')
+          .update({
+            processed,
+            created_count: createdCount,
+            updated_count: updatedCount,
+            errors_count: errorsCount,
+          })
+          .eq('id', job.id);
+      }
+    }
+
+    // Complete job (only for real imports)
+    if (!isDryRun) {
       await supabase
         .from('import_jobs')
         .update({
+          status: 'completed',
+          completed_at: new Date().toISOString(),
           processed,
           created_count: createdCount,
           updated_count: updatedCount,
           errors_count: errorsCount,
+          error_log: errorLog.length > 0 ? errorLog : null,
         })
         .eq('id', job.id);
     }
 
-    // Complete job
-    await supabase
-      .from('import_jobs')
-      .update({
-        status: 'completed',
-        completed_at: new Date().toISOString(),
-        processed,
-        created_count: createdCount,
-        updated_count: updatedCount,
-        errors_count: errorsCount,
-        error_log: errorLog.length > 0 ? errorLog : null,
-      })
-      .eq('id', job.id);
-
-    console.log(`Import completed: ${createdCount} created, ${updatedCount} updated, ${errorsCount} errors`);
+    const logMessage = isDryRun 
+      ? `🔍 Dry run completed: would create ${createdCount}, update ${updatedCount}, skip ${skippedCount}`
+      : `✅ Import completed: ${createdCount} created, ${updatedCount} updated, ${errorsCount} errors`;
+    console.log(logMessage);
 
     return new Response(
       JSON.stringify({
         success: true,
+        dryRun: isDryRun,
         jobId: job.id,
-        created: createdCount,
-        updated: updatedCount,
+        wouldCreate: isDryRun ? createdCount : undefined,
+        wouldUpdate: isDryRun ? updatedCount : undefined,
+        wouldSkip: isDryRun ? skippedCount : undefined,
+        created: isDryRun ? undefined : createdCount,
+        updated: isDryRun ? undefined : updatedCount,
+        skipped: skippedCount,
         errors: errorsCount,
+        errorLog: errorLog.length > 0 ? errorLog.slice(0, 10) : undefined, // Return first 10 errors for preview
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
-    console.error('Import error:', error);
+    console.error('❌ Import error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return new Response(
       JSON.stringify({ error: errorMessage }),
