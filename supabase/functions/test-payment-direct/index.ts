@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { findProfileByAnyId } from '../_shared/user-resolver.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -323,12 +324,26 @@ Deno.serve(async (req) => {
       else results.telegram_grant_error = grantRes.error.message;
     }
 
-    // Get user profile early for notifications and GetCourse (profiles.user_id = auth user id)
-    const { data: userProfile } = await supabase
+    // Get user profile early for notifications and GetCourse
+    // Handle profile.id vs user_id confusion
+    let userProfile: any = null;
+    
+    const { data: profileByUserId } = await supabase
       .from('profiles')
       .select('email, full_name, first_name, last_name, phone')
       .eq('user_id', orderV2.user_id)
       .maybeSingle();
+    
+    if (profileByUserId) {
+      userProfile = profileByUserId;
+    } else {
+      // Fallback: try by profile id
+      const { profile: profileById, resolvedFrom } = await findProfileByAnyId(supabase, orderV2.user_id);
+      if (profileById) {
+        userProfile = profileById;
+        console.log(`[Test Payment Direct] Found profile by ${resolvedFrom} fallback`);
+      }
+    }
 
     // Notify admins about new paid deal
     const adminMessage = `🎉 <b>Новая оплата!</b>

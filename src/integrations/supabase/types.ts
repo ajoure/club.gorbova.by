@@ -2400,6 +2400,7 @@ export type Database = {
           payment_plan_id: string | null
           pricing_stage_id: string | null
           product_id: string | null
+          profile_id: string | null
           purchase_snapshot: Json | null
           reconcile_source: string | null
           status: Database["public"]["Enums"]["order_status"]
@@ -2430,6 +2431,7 @@ export type Database = {
           payment_plan_id?: string | null
           pricing_stage_id?: string | null
           product_id?: string | null
+          profile_id?: string | null
           purchase_snapshot?: Json | null
           reconcile_source?: string | null
           status?: Database["public"]["Enums"]["order_status"]
@@ -2460,6 +2462,7 @@ export type Database = {
           payment_plan_id?: string | null
           pricing_stage_id?: string | null
           product_id?: string | null
+          profile_id?: string | null
           purchase_snapshot?: Json | null
           reconcile_source?: string | null
           status?: Database["public"]["Enums"]["order_status"]
@@ -2495,6 +2498,13 @@ export type Database = {
             columns: ["product_id"]
             isOneToOne: false
             referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_v2_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
           {
@@ -5348,6 +5358,14 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
+      }
+      resolve_user_id: {
+        Args: { input_id: string }
+        Returns: {
+          auth_user_id: string
+          profile_id: string
+          resolved_from: string
+        }[]
       }
     }
     Enums: {
