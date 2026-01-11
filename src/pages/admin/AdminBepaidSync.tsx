@@ -12,8 +12,9 @@ import { Label } from "@/components/ui/label";
 import { 
   RefreshCw, Download, CheckCircle2, User, CreditCard, Mail, 
   AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2, Calendar, Eye, Edit, FileText,
-  BarChart3, ArrowRightLeft, Upload, Play
+  BarChart3, ArrowRightLeft, Upload, Play, ArrowLeft
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -31,6 +32,7 @@ import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 
 export default function AdminBepaidSync() {
+  const navigate = useNavigate();
   const [activeMainTab, setActiveMainTab] = useState("payments");
   const [selectedQueueItems, setSelectedQueueItems] = useState<Set<string>>(new Set());
   
@@ -250,11 +252,16 @@ export default function AdminBepaidSync() {
       <div className="container mx-auto p-4 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-4">
-          <div>
-            <h1 className="text-2xl font-bold">Синхронизация bePaid</h1>
-            <p className="text-muted-foreground">
-              Платежи из bePaid и очередь на обработку
-            </p>
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div>
+              <h1 className="text-2xl font-bold">Синхронизация bePaid</h1>
+              <p className="text-muted-foreground">
+                Платежи из bePaid и очередь на обработку
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-4">
             {/* Date filter */}
