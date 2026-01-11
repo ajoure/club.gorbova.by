@@ -2594,6 +2594,7 @@ export type Database = {
           fraud_result: string | null
           id: string
           ip_address: string | null
+          is_fee: boolean | null
           last_error: string | null
           matched_order_id: string | null
           matched_product_id: string | null
@@ -2661,6 +2662,7 @@ export type Database = {
           fraud_result?: string | null
           id?: string
           ip_address?: string | null
+          is_fee?: boolean | null
           last_error?: string | null
           matched_order_id?: string | null
           matched_product_id?: string | null
@@ -2728,6 +2730,7 @@ export type Database = {
           fraud_result?: string | null
           id?: string
           ip_address?: string | null
+          is_fee?: boolean | null
           last_error?: string | null
           matched_order_id?: string | null
           matched_product_id?: string | null

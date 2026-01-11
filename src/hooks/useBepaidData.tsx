@@ -110,10 +110,15 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
       const fromDate = dateFilter?.from || "2026-01-01";
       
       // Fetch only successful transactions ready for processing
-      // Filter by status_normalized for file imports, or pending without errors for webhooks
+      // Filter out:
+      // - is_fee = true (acquiring commissions)
+      // - empty records without bepaid_uid
+      // Show only successful payments
       let query = supabase
         .from("payment_reconcile_queue")
         .select("*, matched_profile:matched_profile_id(id, full_name, phone, email)")
+        .eq("is_fee", false) // Exclude acquiring commissions
+        .not("bepaid_uid", "is", null) // Only records with actual payment data
         .gte("created_at", `${fromDate}T00:00:00Z`)
         .order("created_at", { ascending: false });
       
@@ -125,7 +130,7 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
       
       if (queueError) throw queueError;
 
-      // Filter to only show successful transactions:
+      // Further filter to only show successful transactions:
       // 1. status_normalized = 'successful' (from file import)
       // 2. OR status in ['processing', 'processed'] (already marked as ready)
       // 3. OR pending without errors and no status_normalized yet (legacy webhook data)
