@@ -26,18 +26,18 @@ export default function QueueRecordsDialog({
   productName,
   dateFilter
 }: QueueRecordsDialogProps) {
-  // Fetch queue records for this product name
+  // Fetch ALL queue records for this product name (no limit, filter in DB)
   const { data: records, isLoading, refetch } = useQuery({
     queryKey: ["queue-records-by-product", productName, dateFilter],
     queryFn: async () => {
       const fromDate = dateFilter?.from || "2026-01-01";
       
+      // Fetch all records in date range
       let query = supabase
         .from("payment_reconcile_queue")
         .select("*")
         .gte("created_at", `${fromDate}T00:00:00Z`)
-        .order("created_at", { ascending: false })
-        .limit(50);
+        .order("created_at", { ascending: false });
       
       if (dateFilter?.to) {
         query = query.lte("created_at", `${dateFilter.to}T23:59:59Z`);
@@ -46,15 +46,18 @@ export default function QueueRecordsDialog({
       const { data, error } = await query;
       if (error) throw error;
 
-      // Filter by product name in raw_payload
-      return (data || []).filter(record => {
+      // Filter by product name in raw_payload (product name is in JSONB, can't filter in DB easily)
+      const filtered = (data || []).filter(record => {
         const payload = record.raw_payload as Record<string, any> | null;
         if (!payload) return false;
         const plan = payload.plan || {};
         const additionalData = payload.additional_data || {};
         const name = plan.title || plan.name || additionalData.description;
         return name === productName;
-      }).map(record => {
+      });
+
+      // Map to display format
+      return filtered.map(record => {
         const payload = record.raw_payload as Record<string, any> | null;
         const card = payload?.card || {};
         const plan = payload?.plan || {};
