@@ -1635,6 +1635,57 @@ export type Database = {
         }
         Relationships: []
       }
+      import_jobs: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          created_by: string | null
+          created_count: number | null
+          error_log: Json | null
+          errors_count: number | null
+          id: string
+          meta: Json | null
+          processed: number | null
+          started_at: string | null
+          status: string | null
+          total: number | null
+          type: string
+          updated_count: number | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          created_count?: number | null
+          error_log?: Json | null
+          errors_count?: number | null
+          id?: string
+          meta?: Json | null
+          processed?: number | null
+          started_at?: string | null
+          status?: string | null
+          total?: number | null
+          type: string
+          updated_count?: number | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          created_count?: number | null
+          error_log?: Json | null
+          errors_count?: number | null
+          id?: string
+          meta?: Json | null
+          processed?: number | null
+          started_at?: string | null
+          status?: string | null
+          total?: number | null
+          type?: string
+          updated_count?: number | null
+        }
+        Relationships: []
+      }
       import_mapping_rules: {
         Row: {
           additional_conditions: Json | null
