@@ -21,13 +21,11 @@ import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { useBepaidQueue, useBepaidPayments, useBepaidStats, QueueItem, PaymentItem, DateFilter } from "@/hooks/useBepaidData";
 import BepaidMappingsTab from "@/components/admin/bepaid/BepaidMappingsTab";
-import BepaidRawDataTab from "@/components/admin/bepaid/BepaidRawDataTab";
 import BepaidAnalyticsTab from "@/components/admin/bepaid/BepaidAnalyticsTab";
 import BepaidReconciliationTab from "@/components/admin/bepaid/BepaidReconciliationTab";
 import BepaidImportDialog from "@/components/admin/bepaid/BepaidImportDialog";
 import { CreateOrderButton, LinkToProfileButton, BulkProcessButton } from "@/components/admin/bepaid/BepaidQueueActions";
 import ContactDealsDialog from "@/components/admin/bepaid/ContactDealsDialog";
-import SyncPeriodButton from "@/components/admin/bepaid/SyncPeriodButton";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 
@@ -105,36 +103,11 @@ export default function AdminBepaidSync() {
     }
   };
 
-  const [isRefreshing, setIsRefreshing] = useState(false);
-
-  const refreshAll = async () => {
-    setIsRefreshing(true);
-    try {
-      // Call backend to fetch latest data from bePaid
-      const { error } = await supabase.functions.invoke("bepaid-fetch-transactions", {
-        body: {
-          fromDate: dateFilter.from || "2026-01-01",
-          toDate: dateFilter.to,
-          limit: 200,
-        },
-      });
-      
-      if (error) {
-        console.error("Error fetching from bePaid:", error);
-        toast.error("Ошибка синхронизации: " + error.message);
-      } else {
-        toast.success("Данные обновлены из bePaid");
-      }
-    } catch (err) {
-      console.error("Refresh error:", err);
-      toast.error("Ошибка обновления");
-    } finally {
-      // Always refetch local data
-      refetchPayments();
-      refetchQueue();
-      queryClient.invalidateQueries({ queryKey: ["bepaid-stats"] });
-      setIsRefreshing(false);
-    }
+  // Simple refresh for local data only
+  const refreshLocalData = () => {
+    refetchPayments();
+    refetchQueue();
+    queryClient.invalidateQueries({ queryKey: ["bepaid-stats"] });
   };
 
   const getStatusBadge = (status: string) => {
@@ -289,11 +262,6 @@ export default function AdminBepaidSync() {
                 />
               </div>
             </div>
-            <SyncPeriodButton dateFilter={dateFilter} onSuccess={refreshAll} />
-            <Button onClick={refreshAll} variant="outline" disabled={isRefreshing}>
-              <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
-              {isRefreshing ? "Обновление..." : "Обновить"}
-            </Button>
           </div>
         </div>
 
@@ -371,10 +339,6 @@ export default function AdminBepaidSync() {
             <TabsTrigger value="reconciliation" className="gap-2">
               <ArrowRightLeft className="h-4 w-4" />
               Сверка
-            </TabsTrigger>
-            <TabsTrigger value="raw" className="gap-2">
-              <FileText className="h-4 w-4" />
-              bePaid API
             </TabsTrigger>
             <TabsTrigger value="mappings" className="gap-2">
               <Link2 className="h-4 w-4" />
@@ -717,10 +681,6 @@ export default function AdminBepaidSync() {
             <BepaidReconciliationTab dateFilter={dateFilter} />
           </TabsContent>
 
-          {/* Raw bePaid data tab */}
-          <TabsContent value="raw">
-            <BepaidRawDataTab dateFilter={dateFilter} />
-          </TabsContent>
 
           {/* Mappings tab */}
           <TabsContent value="mappings">
