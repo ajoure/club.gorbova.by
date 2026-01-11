@@ -2564,12 +2564,34 @@ export type Database = {
           amount: number | null
           attempts: number | null
           auth_code: string | null
+          avs_result: string | null
           bank_code: string | null
+          bepaid_order_id: string | null
           bepaid_uid: string | null
+          business_category: string | null
+          card_bank: string | null
+          card_bank_country: string | null
+          card_bin: string | null
+          card_brand: string | null
+          card_holder: string | null
+          card_last4: string | null
+          card_valid_until: string | null
           created_at: string | null
+          created_at_bepaid: string | null
           currency: string | null
+          customer_address: string | null
+          customer_city: string | null
+          customer_country: string | null
           customer_email: string | null
+          customer_name: string | null
+          customer_phone: string | null
+          customer_state: string | null
+          customer_surname: string | null
+          customer_zip: string | null
           description: string | null
+          fee_amount: number | null
+          fee_percent: number | null
+          fraud_result: string | null
           id: string
           ip_address: string | null
           last_error: string | null
@@ -2578,30 +2600,65 @@ export type Database = {
           matched_profile_id: string | null
           matched_tariff_id: string | null
           max_attempts: number | null
+          message: string | null
           next_retry_at: string | null
           paid_at: string | null
+          payment_method: string | null
           processed_at: string | null
           processed_order_id: string | null
+          product_code: string | null
           product_name: string | null
           raw_payload: Json | null
+          reason: string | null
           receipt_url: string | null
           rrn: string | null
+          shop_id: string | null
+          shop_name: string | null
           source: string | null
           status: string | null
+          status_normalized: string | null
           tariff_name: string | null
+          three_d_secure: boolean | null
+          total_fee: number | null
           tracking_id: string | null
+          transaction_type: string | null
+          transferred_amount: number | null
+          transferred_at: string | null
           updated_at: string | null
+          valid_until: string | null
         }
         Insert: {
           amount?: number | null
           attempts?: number | null
           auth_code?: string | null
+          avs_result?: string | null
           bank_code?: string | null
+          bepaid_order_id?: string | null
           bepaid_uid?: string | null
+          business_category?: string | null
+          card_bank?: string | null
+          card_bank_country?: string | null
+          card_bin?: string | null
+          card_brand?: string | null
+          card_holder?: string | null
+          card_last4?: string | null
+          card_valid_until?: string | null
           created_at?: string | null
+          created_at_bepaid?: string | null
           currency?: string | null
+          customer_address?: string | null
+          customer_city?: string | null
+          customer_country?: string | null
           customer_email?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          customer_state?: string | null
+          customer_surname?: string | null
+          customer_zip?: string | null
           description?: string | null
+          fee_amount?: number | null
+          fee_percent?: number | null
+          fraud_result?: string | null
           id?: string
           ip_address?: string | null
           last_error?: string | null
@@ -2610,30 +2667,65 @@ export type Database = {
           matched_profile_id?: string | null
           matched_tariff_id?: string | null
           max_attempts?: number | null
+          message?: string | null
           next_retry_at?: string | null
           paid_at?: string | null
+          payment_method?: string | null
           processed_at?: string | null
           processed_order_id?: string | null
+          product_code?: string | null
           product_name?: string | null
           raw_payload?: Json | null
+          reason?: string | null
           receipt_url?: string | null
           rrn?: string | null
+          shop_id?: string | null
+          shop_name?: string | null
           source?: string | null
           status?: string | null
+          status_normalized?: string | null
           tariff_name?: string | null
+          three_d_secure?: boolean | null
+          total_fee?: number | null
           tracking_id?: string | null
+          transaction_type?: string | null
+          transferred_amount?: number | null
+          transferred_at?: string | null
           updated_at?: string | null
+          valid_until?: string | null
         }
         Update: {
           amount?: number | null
           attempts?: number | null
           auth_code?: string | null
+          avs_result?: string | null
           bank_code?: string | null
+          bepaid_order_id?: string | null
           bepaid_uid?: string | null
+          business_category?: string | null
+          card_bank?: string | null
+          card_bank_country?: string | null
+          card_bin?: string | null
+          card_brand?: string | null
+          card_holder?: string | null
+          card_last4?: string | null
+          card_valid_until?: string | null
           created_at?: string | null
+          created_at_bepaid?: string | null
           currency?: string | null
+          customer_address?: string | null
+          customer_city?: string | null
+          customer_country?: string | null
           customer_email?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          customer_state?: string | null
+          customer_surname?: string | null
+          customer_zip?: string | null
           description?: string | null
+          fee_amount?: number | null
+          fee_percent?: number | null
+          fraud_result?: string | null
           id?: string
           ip_address?: string | null
           last_error?: string | null
@@ -2642,19 +2734,32 @@ export type Database = {
           matched_profile_id?: string | null
           matched_tariff_id?: string | null
           max_attempts?: number | null
+          message?: string | null
           next_retry_at?: string | null
           paid_at?: string | null
+          payment_method?: string | null
           processed_at?: string | null
           processed_order_id?: string | null
+          product_code?: string | null
           product_name?: string | null
           raw_payload?: Json | null
+          reason?: string | null
           receipt_url?: string | null
           rrn?: string | null
+          shop_id?: string | null
+          shop_name?: string | null
           source?: string | null
           status?: string | null
+          status_normalized?: string | null
           tariff_name?: string | null
+          three_d_secure?: boolean | null
+          total_fee?: number | null
           tracking_id?: string | null
+          transaction_type?: string | null
+          transferred_amount?: number | null
+          transferred_at?: string | null
           updated_at?: string | null
+          valid_until?: string | null
         }
         Relationships: [
           {

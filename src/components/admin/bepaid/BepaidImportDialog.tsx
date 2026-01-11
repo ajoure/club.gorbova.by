@@ -43,6 +43,37 @@ interface ParsedTransaction {
   card_holder?: string;
   card_brand?: string;
   payment_method?: string;
+  // Extended bePaid fields
+  fee_percent?: number;
+  fee_amount?: number;
+  total_fee?: number;
+  transferred_amount?: number;
+  transferred_at?: string;
+  valid_until?: string;
+  message?: string;
+  shop_id?: string;
+  shop_name?: string;
+  business_category?: string;
+  customer_name?: string;
+  customer_surname?: string;
+  customer_address?: string;
+  customer_country?: string;
+  customer_city?: string;
+  customer_zip?: string;
+  customer_state?: string;
+  customer_phone?: string;
+  ip_address?: string;
+  product_code?: string;
+  card_valid_until?: string;
+  card_bin?: string;
+  card_bank?: string;
+  card_bank_country?: string;
+  three_d_secure?: boolean;
+  avs_result?: string;
+  fraud_result?: string;
+  auth_code?: string;
+  rrn?: string;
+  reason?: string;
   // Matching results
   matched_profile_id?: string;
   matched_profile_name?: string;
@@ -91,7 +122,7 @@ function transliterateToCyrillic(name: string): string {
   ).join(' ');
 }
 
-// Parse bePaid CSV row
+// Parse bePaid CSV row with all fields from export
 function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
   const uid = row['UID'] || row['uid'] || row['ID транзакции'];
   if (!uid) return null;
@@ -105,10 +136,15 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
   else if (typeRaw.includes('Возврат') || typeRaw.toLowerCase().includes('refund')) status_normalized = 'refund';
   else if (typeRaw.includes('Отмен') || typeRaw.toLowerCase().includes('cancel')) status_normalized = 'cancel';
 
-  // Parse amount (handle comma as decimal separator, Excel may return number or string)
-  const amountRaw = row['Сумма'] || row['Amount'] || 0;
-  const amountStr = typeof amountRaw === 'number' ? String(amountRaw) : String(amountRaw || '0');
-  const amount = parseFloat(amountStr.replace(',', '.').replace(/[^\d.-]/g, '')) || 0;
+  // Parse numeric with comma as decimal separator
+  const parseNum = (val: any): number | undefined => {
+    if (val === undefined || val === null || val === '') return undefined;
+    const str = typeof val === 'number' ? String(val) : String(val);
+    const num = parseFloat(str.replace(',', '.').replace(/[^\d.-]/g, ''));
+    return isNaN(num) ? undefined : num;
+  };
+
+  const amount = parseNum(row['Сумма'] || row['Amount']) || 0;
 
   // Parse card mask to get last 4 digits (formats: "49169896 xxxx 9310" or "**** 1234")
   const cardMask = row['Карта'] || row['Card'] || '';
@@ -142,6 +178,15 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
     return dateStr;
   };
 
+  // Parse 3-D Secure field
+  const parse3DSecure = (val: string | undefined): boolean | undefined => {
+    if (!val) return undefined;
+    const lower = val.toLowerCase();
+    if (lower === 'да' || lower === 'yes' || lower === 'true' || lower === '1') return true;
+    if (lower === 'нет' || lower === 'no' || lower === 'false' || lower === '0') return false;
+    return undefined;
+  };
+
   return {
     uid,
     bepaid_order_id: row['ID заказа'] || row['Order ID'] || undefined,
@@ -159,6 +204,37 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
     card_holder: row['Владелец карты'] || row['Card holder'] || undefined,
     card_brand,
     payment_method: paymentMethod.toLowerCase() || undefined,
+    // Extended bePaid fields
+    fee_percent: parseNum(row['Комиссия,%'] || row['Fee %']),
+    fee_amount: parseNum(row['Комиссия за операцию'] || row['Fee amount']),
+    total_fee: parseNum(row['Сумма комиссий'] || row['Total fee']),
+    transferred_amount: parseNum(row['Перечисленная сумма'] || row['Transferred amount']),
+    transferred_at: parseDate(row['Дата перечисления'] || row['Transferred at']),
+    valid_until: parseDate(row['Действует до'] || row['Valid until']),
+    message: row['Сообщение'] || row['Message'] || undefined,
+    shop_id: row['ID магазина'] || row['Shop ID'] || undefined,
+    shop_name: row['Магазин'] || row['Shop'] || undefined,
+    business_category: row['Категория бизнеса'] || row['Business category'] || undefined,
+    customer_name: row['Имя'] || row['First name'] || undefined,
+    customer_surname: row['Фамилия'] || row['Last name'] || undefined,
+    customer_address: row['Адрес'] || row['Address'] || undefined,
+    customer_country: row['Страна'] || row['Country'] || undefined,
+    customer_city: row['Город'] || row['City'] || undefined,
+    customer_zip: row['Индекс'] || row['Zip'] || undefined,
+    customer_state: row['Область'] || row['State'] || undefined,
+    customer_phone: row['Телефон'] || row['Phone'] || undefined,
+    ip_address: row['IP'] || row['IP address'] || undefined,
+    product_code: row['Код продукта'] || row['Product code'] || undefined,
+    card_valid_until: row['Карта действует'] || row['Card valid until'] || undefined,
+    card_bin: row['BIN карты'] || row['Card BIN'] || undefined,
+    card_bank: row['Банк'] || row['Bank'] || undefined,
+    card_bank_country: row['Страна банка'] || row['Bank country'] || undefined,
+    three_d_secure: parse3DSecure(row['3-D Secure'] || row['3DS']),
+    avs_result: row['Результат AVS'] || row['AVS result'] || undefined,
+    fraud_result: row['Fraud'] || row['Fraud result'] || undefined,
+    auth_code: row['Код авторизации'] || row['Auth code'] || undefined,
+    rrn: row['RRN'] || undefined,
+    reason: row['Причина'] || row['Reason'] || undefined,
     matched_by: 'none',
   };
 }
@@ -417,10 +493,11 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
             }
           }
 
-          // Insert into queue - store extra fields in raw_payload
+          // Insert into queue - save all bePaid fields directly to columns
           // NOTE: Keep this insert loosely typed so it doesn't break when DB types lag behind migrations.
           const insertData: any = {
             bepaid_uid: tx.uid,
+            bepaid_order_id: tx.bepaid_order_id,
             tracking_id: tx.tracking_id,
             amount: tx.amount,
             currency: tx.currency,
@@ -428,17 +505,52 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
             description: tx.description,
             matched_profile_id: tx.matched_profile_id,
             paid_at: tx.paid_at,
+            created_at_bepaid: tx.created_at,
             source: 'file_import',
             status: 'pending',
-            raw_payload: {
-              ...tx,
-              bepaid_order_id: tx.bepaid_order_id,
-              card_last4: tx.card_last4,
-              card_holder: tx.card_holder,
-              card_brand: tx.card_brand,
-              transaction_type: tx.transaction_type,
-              payment_method: tx.payment_method,
-            },
+            status_normalized: tx.status_normalized,
+            transaction_type: tx.transaction_type,
+            // Card info
+            card_last4: tx.card_last4,
+            card_holder: tx.card_holder,
+            card_brand: tx.card_brand,
+            card_valid_until: tx.card_valid_until,
+            card_bin: tx.card_bin,
+            card_bank: tx.card_bank,
+            card_bank_country: tx.card_bank_country,
+            payment_method: tx.payment_method,
+            product_code: tx.product_code,
+            // Customer info
+            customer_name: tx.customer_name,
+            customer_surname: tx.customer_surname,
+            customer_address: tx.customer_address,
+            customer_country: tx.customer_country,
+            customer_city: tx.customer_city,
+            customer_zip: tx.customer_zip,
+            customer_state: tx.customer_state,
+            customer_phone: tx.customer_phone,
+            ip_address: tx.ip_address,
+            // Fees & amounts
+            fee_percent: tx.fee_percent,
+            fee_amount: tx.fee_amount,
+            total_fee: tx.total_fee,
+            transferred_amount: tx.transferred_amount,
+            transferred_at: tx.transferred_at,
+            valid_until: tx.valid_until,
+            // Shop info
+            shop_id: tx.shop_id,
+            shop_name: tx.shop_name,
+            business_category: tx.business_category,
+            message: tx.message,
+            // Security & auth
+            three_d_secure: tx.three_d_secure,
+            avs_result: tx.avs_result,
+            fraud_result: tx.fraud_result,
+            auth_code: tx.auth_code,
+            rrn: tx.rrn,
+            reason: tx.reason,
+            // Keep raw_payload for any additional data
+            raw_payload: tx,
           };
 
           const { data: insertedRecord, error } = await supabase

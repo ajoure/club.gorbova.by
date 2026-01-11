@@ -6,21 +6,46 @@ import { toast } from "sonner";
 export interface QueueItem {
   id: string;
   bepaid_uid: string | null;
+  bepaid_order_id: string | null;
   tracking_id: string | null;
   amount: number | null;
   currency: string;
   customer_email: string | null;
   status: string;
+  status_normalized: string | null;
   attempts: number;
   last_error: string | null;
   created_at: string;
-  // Extracted from raw_payload
+  paid_at: string | null;
+  // Card info from DB columns
   card_holder: string | null;
   card_last4: string | null;
   card_brand: string | null;
+  card_bin: string | null;
+  card_bank: string | null;
+  card_bank_country: string | null;
+  // Product info
+  description: string | null;
   product_name: string | null;
+  product_code: string | null;
   event_type: string | null;
   order_id: string | null;
+  // Customer info
+  customer_name: string | null;
+  customer_surname: string | null;
+  customer_phone: string | null;
+  customer_country: string | null;
+  customer_city: string | null;
+  ip_address: string | null;
+  // Transaction info
+  transaction_type: string | null;
+  fee_percent: number | null;
+  fee_amount: number | null;
+  transferred_amount: number | null;
+  auth_code: string | null;
+  rrn: string | null;
+  three_d_secure: boolean | null;
+  reason: string | null;
   // Matching
   matched_profile_id: string | null;
   matched_profile_name: string | null;
@@ -51,7 +76,7 @@ export interface PaymentItem {
   profile_phone: string | null;
 }
 
-// Extract card data from raw_payload
+// Extract card data from raw_payload (fallback for legacy data)
 function parseQueuePayload(rawPayload: any): Partial<QueueItem> {
   if (!rawPayload) return {};
   
@@ -60,10 +85,10 @@ function parseQueuePayload(rawPayload: any): Partial<QueueItem> {
   const additionalData = rawPayload.additional_data || {};
   
   return {
-    card_holder: card.holder || null,
-    card_last4: card.last_4 || null,
-    card_brand: card.brand || null,
-    product_name: plan.title || plan.name || additionalData.description || null,
+    card_holder: card.holder || rawPayload.card_holder || null,
+    card_last4: card.last_4 || rawPayload.card_last4 || null,
+    card_brand: card.brand || rawPayload.card_brand || null,
+    product_name: plan.title || plan.name || additionalData.description || rawPayload.description || null,
     event_type: rawPayload.event || null,
     order_id: additionalData.order_id || null,
   };
@@ -78,44 +103,39 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
   const queryClient = useQueryClient();
 
   // Fetch queue items with profile matching (now from DB matched_profile_id)
+  // Only show successful transactions (status_normalized = 'successful')
   const { data: queueItems, isLoading: queueLoading, error: queueError, refetch: refetchQueue } = useQuery({
     queryKey: ["bepaid-queue", dateFilter],
     queryFn: async () => {
-      // Build query - only show processing/processed statuses (successful payments ready for processing)
-      // Exclude "pending" with errors like invalid_signature which are not actual successful payments
+      const fromDate = dateFilter?.from || "2026-01-01";
+      
+      // Fetch only successful transactions ready for processing
+      // Filter by status_normalized for file imports, or pending without errors for webhooks
       let query = supabase
         .from("payment_reconcile_queue")
         .select("*, matched_profile:matched_profile_id(id, full_name, phone, email)")
-        .in("status", ["processing", "processed"])
+        .gte("created_at", `${fromDate}T00:00:00Z`)
         .order("created_at", { ascending: false });
-      
-      // Also include pending items that don't have errors (i.e., actual successful payments)
-      // We'll filter client-side to exclude failed webhook signatures
-      
-      // Apply date filter
-      const fromDate = dateFilter?.from || "2026-01-01";
-      query = query.gte("created_at", `${fromDate}T00:00:00Z`);
       
       if (dateFilter?.to) {
         query = query.lte("created_at", `${dateFilter.to}T23:59:59Z`);
       }
 
-      // Fetch both processed and pending items
-      const [processedResult, pendingResult] = await Promise.all([
-        query,
-        supabase
-          .from("payment_reconcile_queue")
-          .select("*, matched_profile:matched_profile_id(id, full_name, phone, email)")
-          .eq("status", "pending")
-          .is("last_error", null) // Only pending without errors
-          .gte("created_at", `${fromDate}T00:00:00Z`)
-          .order("created_at", { ascending: false }),
-      ]);
-      
-      const queue = [...(processedResult.data || []), ...(pendingResult.data || [])];
-      const queueError = processedResult.error || pendingResult.error;
+      const { data: allData, error: queueError } = await query;
       
       if (queueError) throw queueError;
+
+      // Filter to only show successful transactions:
+      // 1. status_normalized = 'successful' (from file import)
+      // 2. OR status in ['processing', 'processed'] (already marked as ready)
+      // 3. OR pending without errors and no status_normalized yet (legacy webhook data)
+      const queue = (allData || []).filter(q => {
+        const statusNorm = q.status_normalized as string | null;
+        if (statusNorm === 'successful') return true;
+        if (['processing', 'processed'].includes(q.status)) return true;
+        if (q.status === 'pending' && !q.last_error && !statusNorm) return true;
+        return false;
+      });
 
       // Fetch profiles for auto-matching (email/name)
       const { data: profiles } = await supabase
@@ -136,6 +156,12 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
       // Parse and match
       const items: QueueItem[] = (queue || []).map(q => {
         const parsed = parseQueuePayload(q.raw_payload);
+        
+        // Use DB columns first, fall back to parsed payload
+        const card_holder = (q as any).card_holder || parsed.card_holder || null;
+        const card_last4 = (q as any).card_last4 || parsed.card_last4 || null;
+        const card_brand = (q as any).card_brand || parsed.card_brand || null;
+        const product_name = (q as any).description || parsed.product_name || null;
         
         // Priority: DB matched_profile > email match > name match
         let matched_profile_id: string | null = null;
@@ -164,8 +190,8 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
         }
 
         // 3. Match by card holder name from DB
-        if (!matched_profile_id && parsed.card_holder) {
-          const holderNormalized = parsed.card_holder.toLowerCase().trim();
+        if (!matched_profile_id && card_holder) {
+          const holderNormalized = card_holder.toLowerCase().trim();
           const profile = profilesByName.get(holderNormalized);
           if (profile) {
             matched_profile_id = profile.id;
@@ -178,20 +204,47 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
         return {
           id: q.id,
           bepaid_uid: q.bepaid_uid,
+          bepaid_order_id: (q as any).bepaid_order_id || null,
           tracking_id: q.tracking_id,
           amount: q.amount,
           currency: q.currency,
           customer_email: q.customer_email,
           status: q.status,
+          status_normalized: (q as any).status_normalized || null,
           attempts: q.attempts,
           last_error: q.last_error,
-          card_holder: parsed.card_holder || null,
-          card_last4: parsed.card_last4 || null,
-          card_brand: parsed.card_brand || null,
-          product_name: parsed.product_name || null,
+          created_at: q.created_at,
+          paid_at: (q as any).paid_at || null,
+          // Card info
+          card_holder,
+          card_last4,
+          card_brand,
+          card_bin: (q as any).card_bin || null,
+          card_bank: (q as any).card_bank || null,
+          card_bank_country: (q as any).card_bank_country || null,
+          // Product info
+          description: (q as any).description || null,
+          product_name,
+          product_code: (q as any).product_code || null,
           event_type: parsed.event_type || null,
           order_id: parsed.order_id || null,
-          created_at: q.created_at,
+          // Customer info
+          customer_name: (q as any).customer_name || null,
+          customer_surname: (q as any).customer_surname || null,
+          customer_phone: (q as any).customer_phone || null,
+          customer_country: (q as any).customer_country || null,
+          customer_city: (q as any).customer_city || null,
+          ip_address: (q as any).ip_address || null,
+          // Transaction info
+          transaction_type: (q as any).transaction_type || null,
+          fee_percent: (q as any).fee_percent || null,
+          fee_amount: (q as any).fee_amount || null,
+          transferred_amount: (q as any).transferred_amount || null,
+          auth_code: (q as any).auth_code || null,
+          rrn: (q as any).rrn || null,
+          three_d_secure: (q as any).three_d_secure || null,
+          reason: (q as any).reason || null,
+          // Matching
           matched_profile_id,
           matched_profile_name,
           matched_profile_phone,
