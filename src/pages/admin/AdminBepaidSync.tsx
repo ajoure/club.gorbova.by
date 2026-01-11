@@ -255,7 +255,8 @@ export default function AdminBepaidSync() {
                   </div>
                 ) : (
                   <ScrollArea className="h-[500px]">
-                    <Table>
+                    <div className="overflow-x-auto">
+                    <Table className="min-w-[900px]">
                       <TableHeader>
                         <TableRow>
                           <TableHead>Дата</TableHead>
@@ -332,6 +333,7 @@ export default function AdminBepaidSync() {
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   </ScrollArea>
                 )}
               </CardContent>
@@ -368,7 +370,8 @@ export default function AdminBepaidSync() {
                   </div>
                 ) : (
                   <ScrollArea className="h-[500px]">
-                    <Table>
+                    <div className="overflow-x-auto">
+                    <Table className="min-w-[1000px]">
                       <TableHeader>
                         <TableRow>
                           <TableHead className="w-10">
@@ -481,6 +484,7 @@ export default function AdminBepaidSync() {
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   </ScrollArea>
                 )}
               </CardContent>
