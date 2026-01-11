@@ -21,6 +21,7 @@ interface ParsedContact {
 interface ImportOptions {
   updateExisting: boolean;
   dryRun?: boolean;
+  newContactStatus?: 'ghost' | 'archived'; // Status for new contacts
 }
 
 // Clean and validate Telegram username (server-side validation)
@@ -88,7 +89,8 @@ serve(async (req) => {
     }
 
     const isDryRun = options.dryRun === true;
-    console.log(`📊 Import request: ${contacts.length} contacts, dryRun=${isDryRun}, updateExisting=${options.updateExisting}`);
+    const newContactStatus = options.newContactStatus || 'archived'; // Default to archived for CRM imports
+    console.log(`📊 Import request: ${contacts.length} contacts, dryRun=${isDryRun}, updateExisting=${options.updateExisting}, newStatus=${newContactStatus}`);
 
     // Create or update job (skip for dry run - no DB changes needed)
     let job: { id: string } | null = null;
@@ -121,10 +123,49 @@ serve(async (req) => {
       }
     }
 
-    // Load all existing profiles for matching
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('id, full_name, email, emails, phone, phones, telegram_username, external_id_amo');
+    // ========== PAGINATED LOADING OF ALL PROFILES ==========
+    // This is critical to avoid the 1000-row limit issue
+    const PAGE_SIZE = 1000;
+    let offset = 0;
+    let allProfiles: Array<{
+      id: string;
+      full_name: string | null;
+      email: string | null;
+      emails: string[] | null;
+      phone: string | null;
+      phones: string[] | null;
+      telegram_username: string | null;
+      external_id_amo: string | null;
+    }> = [];
+
+    console.log('📥 Loading all existing profiles with pagination...');
+    
+    while (true) {
+      const { data: profilesBatch, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, emails, phone, phones, telegram_username, external_id_amo')
+        .range(offset, offset + PAGE_SIZE - 1);
+
+      if (profilesError) {
+        console.error('Error loading profiles page:', profilesError);
+        throw profilesError;
+      }
+
+      if (!profilesBatch || profilesBatch.length === 0) {
+        break;
+      }
+
+      allProfiles = allProfiles.concat(profilesBatch);
+      console.log(`📥 Loaded ${allProfiles.length} profiles so far...`);
+
+      if (profilesBatch.length < PAGE_SIZE) {
+        break; // Last page
+      }
+
+      offset += PAGE_SIZE;
+    }
+
+    console.log(`✅ Total profiles loaded: ${allProfiles.length}`);
 
     // Build lookup indexes
     const emailIndex = new Map<string, { id: string; name: string }>();
@@ -146,7 +187,7 @@ serve(async (req) => {
       return normalized;
     };
 
-    for (const p of profiles || []) {
+    for (const p of allProfiles) {
       if (p.email) emailIndex.set(normalizeEmail(p.email), { id: p.id, name: p.full_name || '' });
       if (p.phone) phoneIndex.set(normalizePhone(p.phone), { id: p.id, name: p.full_name || '' });
       if (p.telegram_username) telegramIndex.set(p.telegram_username.toLowerCase(), { id: p.id, name: p.full_name || '' });
@@ -276,7 +317,7 @@ serve(async (req) => {
                   phones: contact.phones.map(p => '+' + p),
                   telegram_username: cleanedTelegram, // Use cleaned telegram
                   external_id_amo: contact.amo_id,
-                  status: 'ghost',
+                  status: newContactStatus, // Use configurable status
                   source: 'amocrm_import',
                   import_batch_id: job.id,
                 });
@@ -337,8 +378,13 @@ serve(async (req) => {
         .eq('id', job.id);
     }
 
+    // Calculate match rate for diagnostics
+    const matchRate = contacts.length > 0 
+      ? ((updatedCount + skippedCount) / contacts.length * 100).toFixed(1)
+      : '0';
+
     const logMessage = isDryRun 
-      ? `🔍 Dry run completed: would create ${createdCount}, update ${updatedCount}, skip ${skippedCount} (${skippedNoContacts} no contacts, ${skippedInvalidTelegram} invalid telegram)`
+      ? `🔍 Dry run completed: would create ${createdCount}, update ${updatedCount}, skip ${skippedCount} (${skippedNoContacts} no contacts, ${skippedInvalidTelegram} invalid telegram). Profiles loaded: ${allProfiles.length}, Match rate: ${matchRate}%`
       : `✅ Import completed: ${createdCount} created, ${updatedCount} updated, ${errorsCount} errors`;
     console.log(logMessage);
 
@@ -347,11 +393,17 @@ serve(async (req) => {
         success: true,
         dryRun: isDryRun,
         jobId: job?.id || null,
+        // Dry run results
         wouldCreate: isDryRun ? createdCount : undefined,
         wouldUpdate: isDryRun ? updatedCount : undefined,
         wouldSkip: isDryRun ? skippedCount : undefined,
         skippedNoContacts: isDryRun ? skippedNoContacts : undefined,
         skippedInvalidTelegram: isDryRun ? skippedInvalidTelegram : undefined,
+        // Diagnostics
+        profilesTotalLoaded: allProfiles.length,
+        contactsTotal: contacts.length,
+        matchRate: parseFloat(matchRate),
+        // Real import results
         created: isDryRun ? undefined : createdCount,
         updated: isDryRun ? undefined : updatedCount,
         skipped: skippedCount,

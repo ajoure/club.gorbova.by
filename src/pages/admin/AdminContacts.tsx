@@ -43,6 +43,8 @@ import {
   Archive,
   Camera,
   FileSpreadsheet,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
@@ -107,6 +109,8 @@ const CONTACT_FILTER_FIELDS: FilterField[] = [
   { key: "created_at", label: "Дата создания", type: "date" },
 ];
 
+const PAGE_SIZE = 100;
+
 export default function AdminContacts() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -118,26 +122,52 @@ export default function AdminContacts() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showAmoCRMImport, setShowAmoCRMImport] = useState(false);
   
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(0);
+  
   // Check for contact query param to auto-open contact card
   const contactFromUrl = searchParams.get("contact");
 
-  // Fetch contacts with deals count
-  const { data: contacts, isLoading, refetch } = useQuery({
-    queryKey: ["admin-contacts"],
+  // Fetch total count of contacts
+  const { data: totalCount } = useQuery({
+    queryKey: ["admin-contacts-count"],
     queryFn: async () => {
-      // Get profiles
+      const { count, error } = await supabase
+        .from("profiles")
+        .select("*", { count: "exact", head: true });
+      
+      if (error) throw error;
+      return count || 0;
+    },
+  });
+
+  // Fetch contacts with pagination
+  const { data: contacts, isLoading, refetch } = useQuery({
+    queryKey: ["admin-contacts", currentPage],
+    queryFn: async () => {
+      const from = currentPage * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+      
+      // Get profiles with pagination
       const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
         .select("*")
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .range(from, to);
       
       if (profilesError) throw profilesError;
+
+      // Get user IDs for this page to fetch orders
+      const userIds = (profiles || []).map(p => p.id).concat(
+        (profiles || []).map(p => p.user_id).filter(Boolean)
+      );
 
       // Get only PAID orders count per user (unpaid orders are payment attempts, not deals)
       const { data: orders } = await supabase
         .from("orders_v2")
         .select("user_id, created_at, status")
         .eq("status", "paid")
+        .in("user_id", userIds)
         .order("created_at", { ascending: false });
 
       // Group paid orders by user_id (can be profile.id OR auth user_id)
@@ -263,7 +293,7 @@ export default function AdminContacts() {
     getFieldValue: getContactFieldValue,
   });
 
-  // Calculate counts for presets
+  // Calculate counts for presets (from current page only)
   const presetCounts = useMemo(() => {
     if (!contacts) return { active: 0, ghost: 0, withDeals: 0, duplicates: 0, archived: 0 };
     return {
@@ -373,6 +403,7 @@ export default function AdminContacts() {
       toast.success(`Удалено ${count} контактов`);
       clearSelection();
       queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts-count"] });
     },
     onError: (error) => {
       toast.error("Ошибка: " + (error as Error).message);
@@ -445,6 +476,13 @@ export default function AdminContacts() {
 
   const contactsWithoutPhoto = contacts?.filter(c => c.telegram_user_id && !c.avatar_url).length || 0;
 
+  // Pagination helpers
+  const totalPages = totalCount ? Math.ceil(totalCount / PAGE_SIZE) : 0;
+  const canGoPrev = currentPage > 0;
+  const canGoNext = currentPage < totalPages - 1;
+  const displayFrom = currentPage * PAGE_SIZE + 1;
+  const displayTo = Math.min((currentPage + 1) * PAGE_SIZE, totalCount || 0);
+
   return (
     <div className="space-y-6 pb-24">
       {/* Header */}
@@ -502,7 +540,10 @@ export default function AdminContacts() {
       <AmoCRMImportDialog
         open={showAmoCRMImport}
         onOpenChange={setShowAmoCRMImport}
-        onSuccess={() => refetch()}
+        onSuccess={() => {
+          refetch();
+          queryClient.invalidateQueries({ queryKey: ["admin-contacts-count"] });
+        }}
       />
 
       {/* Search and Filters */}
@@ -529,14 +570,43 @@ export default function AdminContacts() {
         />
       </div>
 
-      {/* Stats */}
-      <div className="flex items-center gap-4 text-sm text-muted-foreground">
-        <span>Найдено: <strong className="text-foreground">{filteredContacts.length}</strong></span>
-        {contacts && (
-          <>
-            <span>•</span>
-            <span>Всего: {contacts.length}</span>
-          </>
+      {/* Stats and Pagination */}
+      <div className="flex items-center justify-between text-sm text-muted-foreground">
+        <div className="flex items-center gap-4">
+          <span>
+            Показано: <strong className="text-foreground">{displayFrom}–{displayTo}</strong> из <strong className="text-foreground">{totalCount || 0}</strong>
+          </span>
+          {filteredContacts.length !== (contacts?.length || 0) && (
+            <>
+              <span>•</span>
+              <span>Отфильтровано: {filteredContacts.length}</span>
+            </>
+          )}
+        </div>
+        
+        {/* Pagination controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(p => p - 1)}
+              disabled={!canGoPrev}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm">
+              Стр. {currentPage + 1} из {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(p => p + 1)}
+              disabled={!canGoNext}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
         )}
       </div>
 
@@ -678,6 +748,33 @@ export default function AdminContacts() {
           </div>
         )}
       </GlassCard>
+
+      {/* Bottom Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCurrentPage(p => p - 1)}
+            disabled={!canGoPrev}
+          >
+            <ChevronLeft className="h-4 w-4 mr-1" />
+            Назад
+          </Button>
+          <span className="text-sm text-muted-foreground px-4">
+            Страница {currentPage + 1} из {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCurrentPage(p => p + 1)}
+            disabled={!canGoNext}
+          >
+            Далее
+            <ChevronRight className="h-4 w-4 ml-1" />
+          </Button>
+        </div>
+      )}
 
       {/* Contact Detail Sheet */}
       <ContactDetailSheet

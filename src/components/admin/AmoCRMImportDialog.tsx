@@ -10,9 +10,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Upload, FileSpreadsheet, AlertCircle, CheckCircle2, 
-  Loader2, X, User, Mail, Phone, AtSign, ArrowRight, Search, Cloud, Eye, Shield, RotateCcw, Play, FlaskConical, History
+  Loader2, X, User, Mail, Phone, AtSign, ArrowRight, Search, Cloud, Eye, Shield, RotateCcw, Play, FlaskConical, History, AlertTriangle
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -78,6 +79,10 @@ interface DryRunResult {
   skippedInvalidTelegram?: number;
   errors: number;
   errorLog?: { contact: string; error: string }[];
+  // New diagnostic fields
+  profilesTotalLoaded?: number;
+  contactsTotal?: number;
+  matchRate?: number;
 }
 
 // Normalize phone number for comparison
@@ -194,6 +199,7 @@ function parseContactRow(row: Record<string, unknown>): ParsedContact | null {
 }
 
 const TEST_BATCH_SIZE = 100; // Тестовый импорт - первые 100 контактов
+const PROFILE_PAGE_SIZE = 1000; // Page size for loading profiles
 
 export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: AmoCRMImportDialogProps) {
   const [file, setFile] = useState<File | null>(null);
@@ -219,6 +225,12 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
   
   // Rollback dialog
   const [showRollbackDialog, setShowRollbackDialog] = useState(false);
+  
+  // New: status for new contacts
+  const [newContactStatus, setNewContactStatus] = useState<'archived' | 'ghost'>('archived');
+  
+  // New: profiles count loaded
+  const [profilesLoaded, setProfilesLoaded] = useState(0);
   
   const queryClient = useQueryClient();
 
@@ -283,6 +295,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     setImportedCount(0);
     setSkippedNoContacts(0);
     setSkippedInvalidTelegram(0);
+    setProfilesLoaded(0);
 
     try {
       const buffer = await selectedFile.arrayBuffer();
@@ -344,11 +357,14 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
       setSkippedNoContacts(noContactsCount);
       setSkippedInvalidTelegram(invalidTelegramCount);
 
-      // Auto-match contacts if enabled
+      // Auto-match contacts if enabled (with paginated profile loading)
       if (autoMatch) {
         setParseProgress(50);
-        await matchContactsOptimized(parsed, (progress) => {
+        await matchContactsOptimized(parsed, (progress, loadedProfiles) => {
           setParseProgress(50 + progress * 0.5);
+          if (loadedProfiles !== undefined) {
+            setProfilesLoaded(loadedProfiles);
+          }
         });
       }
 
@@ -365,16 +381,54 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     }
   };
 
-  // Optimized matching: load all profiles once, build indexes on client
+  // Optimized matching: load all profiles with pagination, build indexes on client
   const matchContactsOptimized = async (
     contactsList: ParsedContact[], 
-    onProgress?: (progress: number) => void
+    onProgress?: (progress: number, loadedProfiles?: number) => void
   ) => {
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('id, full_name, email, emails, phone, phones, telegram_username, external_id_amo');
+    // ========== PAGINATED LOADING OF ALL PROFILES ==========
+    let offset = 0;
+    let allProfiles: Array<{
+      id: string;
+      full_name: string | null;
+      email: string | null;
+      emails: unknown;
+      phone: string | null;
+      phones: unknown;
+      telegram_username: string | null;
+      external_id_amo: string | null;
+    }> = [];
 
-    if (!profiles) return;
+    console.log('📥 Loading all existing profiles with pagination...');
+    
+    while (true) {
+      const { data: profilesBatch, error } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, emails, phone, phones, telegram_username, external_id_amo')
+        .range(offset, offset + PROFILE_PAGE_SIZE - 1);
+
+      if (error) {
+        console.error('Error loading profiles page:', error);
+        break;
+      }
+
+      if (!profilesBatch || profilesBatch.length === 0) {
+        break;
+      }
+
+      allProfiles = allProfiles.concat(profilesBatch);
+      onProgress?.(0.1, allProfiles.length); // Update progress with loaded count
+      console.log(`📥 Loaded ${allProfiles.length} profiles so far...`);
+
+      if (profilesBatch.length < PROFILE_PAGE_SIZE) {
+        break; // Last page
+      }
+
+      offset += PROFILE_PAGE_SIZE;
+    }
+
+    console.log(`✅ Total profiles loaded for matching: ${allProfiles.length}`);
+    onProgress?.(0.2, allProfiles.length);
 
     // Build lookup indexes on client side
     const emailIndex = new Map<string, { id: string; name: string }>();
@@ -383,7 +437,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     const nameIndex = new Map<string, { id: string; name: string }>();
     const amoIdIndex = new Map<string, { id: string; name: string }>();
 
-    for (const p of profiles) {
+    for (const p of allProfiles) {
       if (p.email) emailIndex.set(normalizeEmail(p.email), { id: p.id, name: p.full_name || '' });
       if (p.phone) phoneIndex.set(normalizePhone(p.phone), { id: p.id, name: p.full_name || '' });
       if (p.telegram_username) telegramIndex.set(p.telegram_username.toLowerCase(), { id: p.id, name: p.full_name || '' });
@@ -456,12 +510,12 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
       }
 
       if (i % 100 === 0) {
-        onProgress?.(i / contactsList.length);
+        onProgress?.(0.2 + (i / contactsList.length) * 0.8, allProfiles.length);
         await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
 
-    onProgress?.(1);
+    onProgress?.(1, allProfiles.length);
   };
 
   const calculateStats = (contactsList: ParsedContact[], noContactsCount: number = 0, invalidTelegramCount: number = 0) => {
@@ -509,7 +563,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
             phones: c.phones,
             telegram_username: c.telegram_username,
           })),
-          options: { updateExisting, dryRun: true },
+          options: { updateExisting, dryRun: true, newContactStatus },
         },
       });
 
@@ -547,7 +601,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
         total: toImport.length,
         status: 'pending',
         created_by: session.user.id,
-        meta: { testMode, offset: importedCount },
+        meta: { testMode, offset: importedCount, newContactStatus },
       })
       .select()
       .single();
@@ -574,7 +628,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
           phones: c.phones,
           telegram_username: c.telegram_username,
         })),
-        options: { updateExisting },
+        options: { updateExisting, newContactStatus },
         jobId: job.id,
       },
     });
@@ -611,6 +665,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     setTestMode(true);
     setSkippedNoContacts(0);
     setSkippedInvalidTelegram(0);
+    setProfilesLoaded(0);
   };
 
   const getMatchBadge = (matchedBy: ParsedContact['matched_by']) => {
@@ -646,6 +701,12 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
   const unmatchedContacts = contacts.filter(c => c.matched_by === 'none');
   const remainingCount = contacts.length - importedCount;
   const toImportCount = testMode ? Math.min(TEST_BATCH_SIZE, remainingCount) : remainingCount;
+
+  // Calculate if there's a high risk of duplicates (low match rate)
+  const isHighRiskDuplicates = dryRunResult && 
+    dryRunResult.wouldCreate > 0 && 
+    dryRunResult.contactsTotal && 
+    (dryRunResult.wouldCreate / dryRunResult.contactsTotal) > 0.8;
 
   return (
     <>
@@ -697,7 +758,10 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <p className="text-muted-foreground">Обработка файла...</p>
                 <Progress value={parseProgress} className="w-64 h-2" />
-                <p className="text-sm text-muted-foreground">{Math.round(parseProgress)}%</p>
+                <p className="text-sm text-muted-foreground">
+                  {Math.round(parseProgress)}%
+                  {profilesLoaded > 0 && ` • Загружено ${profilesLoaded} профилей`}
+                </p>
               </div>
             ) : backgroundJob ? (
               <div className="flex flex-col items-center justify-center py-12 gap-4">
@@ -766,6 +830,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                       <p className="text-sm text-muted-foreground">
                         {stats?.total} контактов • {stats?.matched} совпадений • {stats?.unmatched} новых
                         {importedCount > 0 && ` • ${importedCount} уже загружено`}
+                        {profilesLoaded > 0 && ` • ${profilesLoaded} профилей в базе`}
                       </p>
                     </div>
                   </div>
@@ -815,6 +880,23 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                     />
                     <Label htmlFor="auto-match" className="text-sm">Автосопоставление</Label>
                   </div>
+                </div>
+
+                {/* New contacts status selector */}
+                <div className="flex items-center gap-3">
+                  <Label htmlFor="new-contact-status" className="text-sm whitespace-nowrap">Статус новых:</Label>
+                  <Select value={newContactStatus} onValueChange={(v) => setNewContactStatus(v as 'archived' | 'ghost')}>
+                    <SelectTrigger id="new-contact-status" className="w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="archived">Архивный</SelectItem>
+                      <SelectItem value="ghost">Новый (ghost)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span className="text-xs text-muted-foreground">
+                    {newContactStatus === 'archived' ? 'Из CRM, без аккаунта' : 'Непривязанный контакт'}
+                  </span>
                 </div>
 
                 {/* Stats cards */}
@@ -983,20 +1065,43 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                 <p>Результаты анализа {testMode && `(первые ${toImportCount} контактов)`}:</p>
                 
                 {dryRunResult && (
-                  <div className="grid grid-cols-3 gap-3 my-4">
-                    <div className="p-3 bg-green-500/10 rounded-lg text-center">
-                      <p className="text-xl font-bold text-green-600">{dryRunResult.wouldCreate}</p>
-                      <p className="text-xs text-muted-foreground">Будет создано</p>
+                  <>
+                    <div className="grid grid-cols-3 gap-3 my-4">
+                      <div className="p-3 bg-green-500/10 rounded-lg text-center">
+                        <p className="text-xl font-bold text-green-600">{dryRunResult.wouldCreate}</p>
+                        <p className="text-xs text-muted-foreground">Будет создано</p>
+                      </div>
+                      <div className="p-3 bg-blue-500/10 rounded-lg text-center">
+                        <p className="text-xl font-bold text-blue-600">{dryRunResult.wouldUpdate}</p>
+                        <p className="text-xs text-muted-foreground">Будет обновлено</p>
+                      </div>
+                      <div className="p-3 bg-muted/50 rounded-lg text-center">
+                        <p className="text-xl font-bold text-muted-foreground">{dryRunResult.wouldSkip}</p>
+                        <p className="text-xs text-muted-foreground">Пропущено</p>
+                      </div>
                     </div>
-                    <div className="p-3 bg-blue-500/10 rounded-lg text-center">
-                      <p className="text-xl font-bold text-blue-600">{dryRunResult.wouldUpdate}</p>
-                      <p className="text-xs text-muted-foreground">Будет обновлено</p>
+
+                    {/* Diagnostics */}
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      {dryRunResult.profilesTotalLoaded !== undefined && (
+                        <p>Загружено профилей для сопоставления: <strong>{dryRunResult.profilesTotalLoaded}</strong></p>
+                      )}
+                      {dryRunResult.matchRate !== undefined && (
+                        <p>Уровень совпадений: <strong>{dryRunResult.matchRate}%</strong></p>
+                      )}
                     </div>
-                    <div className="p-3 bg-muted/50 rounded-lg text-center">
-                      <p className="text-xl font-bold text-muted-foreground">{dryRunResult.wouldSkip}</p>
-                      <p className="text-xs text-muted-foreground">Пропущено</p>
-                    </div>
-                  </div>
+                  </>
+                )}
+
+                {/* High risk warning */}
+                {isHighRiskDuplicates && (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>Внимание!</strong> Более 80% контактов будут созданы как новые. 
+                      Это может указывать на проблему с сопоставлением. Проверьте данные или используйте нечёткий поиск.
+                    </AlertDescription>
+                  </Alert>
                 )}
 
                 {testMode && remainingCount > TEST_BATCH_SIZE && (
@@ -1018,6 +1123,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                 )}
 
                 <p className="text-sm text-muted-foreground">
+                  Новые контакты получат статус: <strong>{newContactStatus === 'archived' ? 'Архивный' : 'Новый'}</strong>.
                   Импорт можно откатить в любой момент.
                 </p>
               </div>
