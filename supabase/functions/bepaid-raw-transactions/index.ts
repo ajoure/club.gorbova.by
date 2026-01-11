@@ -9,12 +9,17 @@ const corsHeaders = {
 /**
  * bepaid-raw-transactions
  * 
- * Fetches ALL transaction data from bePaid API using Paginated Reports API.
+ * Fetches ALL transaction data from bePaid API.
+ * 
+ * FIXED: Now uses gateway.bepaid.by/transactions (same as bepaid-fetch-transactions)
+ * instead of api.bepaid.by/reports/paginated which returns 404.
+ * 
  * Features:
- * - Uses POST /reports/paginated with X-Api-Version: 3
+ * - api_only mode: Never falls back to local DB, shows pure bePaid data
  * - Transliteration for cardholder name matching
  * - Card-to-profile linking
  * - Proper bePaid timestamps (not import time)
+ * - Debug info for troubleshooting
  */
 
 interface BepaidTransaction {
@@ -101,7 +106,7 @@ function translitToRussian(latin: string): string {
 }
 
 // Product/tariff mapping from description patterns
-const PRODUCT_TARIFF_MAPPINGS: Record<string, { productCode?: string; tariffCode?: string; productName: string; tariffName?: string }> = {
+const PRODUCT_TARIFF_MAPPINGS: Record<string, { productCode?: string; productName: string; tariffName?: string }> = {
   "Клуб: триал итоги": { productCode: "club", productName: "Gorbova Club", tariffName: "CHAT (триал)" },
   "Клуб: business": { productCode: "club", productName: "Gorbova Club", tariffName: "BUSINESS" },
   "Клуб: premium": { productCode: "club", productName: "Gorbova Club", tariffName: "PREMIUM" },
@@ -114,7 +119,6 @@ const PRODUCT_TARIFF_MAPPINGS: Record<string, { productCode?: string; tariffCode
 function parseProductFromDescription(description: string): { productName?: string; tariffName?: string } {
   if (!description) return {};
   
-  // Look for pattern like "(Клуб: business)"
   const match = description.match(/\(([^)]+)\)/);
   if (match) {
     const hint = match[1].trim();
@@ -159,13 +163,21 @@ serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
   );
 
+  // Debug info object
+  const debug: Record<string, any> = {
+    api_calls: [],
+    errors: [],
+    fallback_used: false,
+  };
+
   try {
     const body = await req.json().catch(() => ({}));
     const fromDate = body.fromDate || "2026-01-01";
     const toDate = body.toDate || new Date().toISOString().split("T")[0];
     const perPage = Math.min(body.perPage || 100, 1000);
+    const apiOnly = body.apiOnly !== false; // Default to true - only show API data
 
-    console.info(`Fetching bePaid transactions from ${fromDate} to ${toDate}`);
+    console.info(`Fetching bePaid transactions from ${fromDate} to ${toDate}, apiOnly=${apiOnly}`);
 
     // Get bePaid credentials
     const { data: bepaidInstance } = await supabase
@@ -177,8 +189,14 @@ serve(async (req) => {
 
     if (!bepaidInstance?.config) {
       console.error("No active bePaid integration found");
-      return new Response(JSON.stringify({ error: "No bePaid integration" }), {
-        status: 500,
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: "No bePaid integration",
+        debug,
+        transactions: [],
+        subscriptions: [],
+      }), {
+        status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -187,8 +205,14 @@ serve(async (req) => {
     const secretKey = bepaidInstance.config.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
 
     if (!shopId || !secretKey) {
-      return new Response(JSON.stringify({ error: "Missing credentials" }), {
-        status: 500,
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: "Missing credentials",
+        debug,
+        transactions: [],
+        subscriptions: [],
+      }), {
+        status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -198,37 +222,42 @@ serve(async (req) => {
     const allSubscriptions: any[] = [];
 
     // =====================================================
-    // PART 1: Fetch transactions via Paginated Reports API
+    // PART 1: Fetch transactions via gateway.bepaid.by/transactions
+    // This is the WORKING endpoint (used by bepaid-fetch-transactions)
     // =====================================================
+    let apiSuccess = false;
+    
     try {
-      const reportUrl = "https://api.bepaid.by/reports/paginated";
-      console.info(`Fetching transactions via Paginated Reports API: POST ${reportUrl}`);
+      // Build date params - bePaid expects ISO format
+      const fromDateISO = new Date(fromDate + "T00:00:00Z").toISOString();
+      const toDateISO = new Date(toDate + "T23:59:59Z").toISOString();
       
-      const reportResponse = await fetch(reportUrl, {
-        method: "POST",
+      const params = new URLSearchParams({
+        created_at_from: fromDateISO,
+        created_at_to: toDateISO,
+        per_page: String(perPage),
+      });
+      
+      const gatewayUrl = `https://gateway.bepaid.by/transactions?${params.toString()}`;
+      console.info(`Fetching transactions from gateway: ${gatewayUrl}`);
+      debug.api_calls.push({ url: gatewayUrl, method: "GET" });
+      
+      const gatewayResponse = await fetch(gatewayUrl, {
+        method: "GET",
         headers: {
           Authorization: `Basic ${auth}`,
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          "X-Api-Version": "3",
+          Accept: "application/json",
         },
-        body: JSON.stringify({
-          report_params: {
-            date_type: "created_at",
-            from: `${fromDate} 00:00:00`,
-            to: `${toDate} 23:59:59`,
-            status: "all",
-            time_zone: "UTC"
-          }
-        })
       });
 
-      console.info(`Paginated Reports API response status: ${reportResponse.status}`);
+      debug.api_calls[0].status = gatewayResponse.status;
+      console.info(`Gateway response status: ${gatewayResponse.status}`);
       
-      if (reportResponse.ok) {
-        const reportData = await reportResponse.json();
-        const transactions: BepaidTransaction[] = reportData.transactions || reportData.data || [];
-        console.info(`Paginated Reports: fetched ${transactions.length} transactions`);
+      if (gatewayResponse.ok) {
+        const gatewayData = await gatewayResponse.json();
+        const transactions: BepaidTransaction[] = gatewayData.transactions || [];
+        debug.api_calls[0].count = transactions.length;
+        console.info(`Gateway: fetched ${transactions.length} transactions`);
 
         for (const tx of transactions) {
           const { productName, tariffName } = parseProductFromDescription(tx.description || "");
@@ -240,9 +269,12 @@ serve(async (req) => {
             amount: (tx.amount || 0) / 100,
             currency: tx.currency,
             description: tx.description,
+            // CRITICAL: Use original bePaid timestamps
             paid_at: tx.paid_at,
             created_at: tx.created_at,
-            _bepaid_time: tx.paid_at || tx.created_at, // Original bePaid time
+            _bepaid_time: tx.paid_at || tx.created_at,
+            _bepaid_created_at: tx.created_at,
+            _bepaid_paid_at: tx.paid_at,
             receipt_url: tx.receipt_url,
             tracking_id: tx.tracking_id,
             message: tx.message || tx.additional_data?.message,
@@ -262,18 +294,21 @@ serve(async (req) => {
             _source: "bepaid_api",
           });
         }
+        
+        apiSuccess = transactions.length > 0;
       } else {
-        const errorText = await reportResponse.text();
-        console.warn(`Paginated Reports API failed: ${reportResponse.status} - ${errorText}`);
+        const errorText = await gatewayResponse.text();
+        console.warn(`Gateway API failed: ${gatewayResponse.status} - ${errorText}`);
+        debug.api_calls[0].error = errorText;
+        debug.errors.push(`Gateway: ${gatewayResponse.status} - ${errorText}`);
       }
-      
-      console.info(`Total transactions fetched from Paginated API: ${allTransactions.length}`);
     } catch (txErr) {
       console.error("Error fetching transactions from bePaid:", txErr);
+      debug.errors.push(`Gateway exception: ${String(txErr)}`);
     }
 
     // =====================================================
-    // PART 2: Fetch subscriptions
+    // PART 2: Fetch subscriptions from api.bepaid.by
     // =====================================================
     try {
       let page = 1;
@@ -282,6 +317,7 @@ serve(async (req) => {
       while (hasMore && page <= 10) {
         const subsUrl = `https://api.bepaid.by/subscriptions?per_page=${perPage}&page=${page}`;
         console.info(`Fetching subscriptions page ${page}: ${subsUrl}`);
+        debug.api_calls.push({ url: subsUrl, method: "GET", page });
         
         const subsResponse = await fetch(subsUrl, {
           method: "GET",
@@ -291,13 +327,20 @@ serve(async (req) => {
           },
         });
 
+        const lastCall = debug.api_calls[debug.api_calls.length - 1];
+        lastCall.status = subsResponse.status;
+
         if (!subsResponse.ok) {
+          const errText = await subsResponse.text();
           console.warn(`Subscriptions failed: ${subsResponse.status}`);
+          lastCall.error = errText;
+          debug.errors.push(`Subscriptions page ${page}: ${subsResponse.status}`);
           break;
         }
 
         const subsData = await subsResponse.json();
         const subscriptions = subsData.subscriptions || [];
+        lastCall.count = subscriptions.length;
         
         console.info(`Page ${page}: fetched ${subscriptions.length} subscriptions`);
 
@@ -337,14 +380,14 @@ serve(async (req) => {
               transactions: sub.transactions || [],
               product_name: productName,
               tariff_name: tariffName,
+              _source: "bepaid_api",
             });
             
-            // Extract transactions from subscription and add to allTransactions
+            // Extract transactions from subscription
             if (sub.transactions && Array.isArray(sub.transactions)) {
               for (const tx of sub.transactions) {
                 const txCreatedAt = new Date(tx.created_at || tx.paid_at);
                 if (txCreatedAt >= filterFrom && txCreatedAt <= filterTo) {
-                  // Check if already exists
                   if (allTransactions.some(t => t.uid === tx.uid)) continue;
                   
                   const { productName: txProductName, tariffName: txTariffName } = parseProductFromDescription(
@@ -362,6 +405,8 @@ serve(async (req) => {
                     paid_at: tx.paid_at,
                     created_at: tx.created_at,
                     _bepaid_time: tx.paid_at || tx.created_at,
+                    _bepaid_created_at: tx.created_at,
+                    _bepaid_paid_at: tx.paid_at,
                     receipt_url: tx.receipt_url,
                     tracking_id: tx.tracking_id || sub.tracking_id,
                     message: tx.message || tx.additional_data?.message,
@@ -392,15 +437,21 @@ serve(async (req) => {
           page++;
         }
       }
+      
+      if (allSubscriptions.length > 0) {
+        apiSuccess = true;
+      }
     } catch (subErr) {
       console.warn("Error fetching subscriptions:", subErr);
+      debug.errors.push(`Subscriptions exception: ${String(subErr)}`);
     }
 
     // =====================================================
-    // FALLBACK: Load from local database if API returns nothing
+    // FALLBACK: Only if NOT in api_only mode
     // =====================================================
-    if (allTransactions.length === 0) {
+    if (!apiSuccess && !apiOnly) {
       console.warn("bePaid API returned 0 transactions. Loading from local database.");
+      debug.fallback_used = true;
 
       const fromTs = new Date(fromDate + "T00:00:00Z").toISOString();
       const toTs = new Date(toDate + "T23:59:59Z").toISOString();
@@ -434,8 +485,10 @@ serve(async (req) => {
           description: description,
           paid_at: bepaidTime,
           created_at: bepaidTime || row.created_at,
-          _bepaid_time: bepaidTime, // Original bePaid time
-          _db_created_at: row.created_at, // When added to our DB
+          _bepaid_time: bepaidTime,
+          _bepaid_created_at: lastTx?.created_at || payload.created_at,
+          _bepaid_paid_at: lastTx?.paid_at || payload.paid_at,
+          _db_created_at: row.created_at,
           receipt_url: (row as any).receipt_url || payload.receipt_url,
           tracking_id: row.tracking_id || payload.tracking_id,
           message: lastTx?.message || row.last_error,
@@ -453,7 +506,7 @@ serve(async (req) => {
           product_name: (row as any).product_name || productName,
           tariff_name: (row as any).tariff_name || tariffName,
           plan_title: (row as any).plan_title || payload.plan?.title || (productName ? `${productName}${tariffName ? ": " + tariffName : ""}` : description),
-          _source: row.source || "queue",
+          _source: "local_db_queue",
           _queue_id: row.id,
           matched_profile_id: row.matched_profile_id,
           matched_product_id: (row as any).matched_product_id,
@@ -461,77 +514,10 @@ serve(async (req) => {
         });
       }
 
-      // Load from payments_v2 
-      const { data: paymentRows } = await supabase
-        .from("payments_v2")
-        .select(`
-          *,
-          orders_v2:order_id (
-            id, product_id, tariff_id, user_id, customer_email, customer_phone,
-            products_v2:product_id (name),
-            tariffs:tariff_id (name)
-          )
-        `)
-        .eq("provider", "bepaid")
-        .gte("created_at", fromTs)
-        .lte("created_at", toTs)
-        .order("created_at", { ascending: false })
-        .limit(500);
-
-      const userIds = [...new Set((paymentRows || []).map(p => p.user_id).filter(Boolean))];
-      let profilesMap: Record<string, any> = {};
-      if (userIds.length > 0) {
-        const { data: profiles } = await supabase
-          .from("profiles")
-          .select("id, user_id, full_name, email, phone")
-          .in("user_id", userIds);
-        for (const p of profiles || []) {
-          if (p.user_id) profilesMap[p.user_id] = p;
-        }
-      }
-
-      for (const pay of paymentRows || []) {
-        const order: any = pay.orders_v2;
-        const profile = profilesMap[pay.user_id || ""];
-        const meta: any = pay.meta || {};
-
-        // Skip if already in allTransactions
-        if (allTransactions.some(t => t.uid === pay.external_id)) continue;
-
-        const { productName, tariffName } = parseProductFromDescription(meta.description || "");
-
-        allTransactions.push({
-          uid: pay.external_id || pay.id,
-          type: "transaction",
-          status: pay.status,
-          amount: pay.amount,
-          currency: pay.currency || "BYN",
-          description: meta.description || "",
-          paid_at: meta.paid_at || pay.created_at,
-          created_at: pay.created_at,
-          _bepaid_time: meta.paid_at || pay.created_at,
-          receipt_url: meta.receipt_url,
-          tracking_id: pay.tracking_id,
-          message: pay.error_message || meta.message,
-          ip_address: meta.ip_address,
-          customer_email: order?.customer_email || profile?.email,
-          customer_name: profile?.full_name || meta.card?.holder,
-          customer_phone: order?.customer_phone || profile?.phone,
-          card_last_4: meta.card_last4 || meta.card?.last_4,
-          card_brand: meta.card?.brand,
-          card_holder: meta.card?.holder,
-          product_name: order?.products_v2?.name || productName,
-          tariff_name: order?.tariffs?.name || tariffName,
-          plan_title: order?.products_v2?.name,
-          _source: "payments_v2",
-          matched_profile_id: profile?.id,
-          matched_order_id: order?.id,
-          matched_product_id: order?.product_id,
-          matched_tariff_id: order?.tariff_id,
-        });
-      }
-
       console.info(`Local fallback: returned ${allTransactions.length} transactions.`);
+    } else if (!apiSuccess && apiOnly) {
+      // In API only mode, return empty with debug info
+      console.warn("API returned no data and api_only=true, returning empty result with debug info");
     }
 
     // =====================================================
@@ -583,7 +569,6 @@ serve(async (req) => {
 
     // Build transliterated name index for fuzzy matching
     if (cardHolders.length > 0) {
-      // Transliterate all card holders and search by similar Russian names
       const translitNames: string[] = [];
       for (const holder of cardHolders) {
         const translitName = translitToRussian(holder);
@@ -593,7 +578,6 @@ serve(async (req) => {
       }
       
       if (translitNames.length > 0) {
-        // Search profiles by transliterated names
         const { data: profilesT } = await supabase
           .from("profiles")
           .select("id, email, full_name, phone");
@@ -649,9 +633,8 @@ serve(async (req) => {
       // 4. Match by transliterated cardholder name
       if (tx.card_holder) {
         const translitName = translitToRussian(tx.card_holder);
-        tx._translit_name = translitName; // Store for UI display
+        tx._translit_name = translitName;
         
-        // Try exact match on transliterated name
         if (profilesByNameTranslit[translitName]) {
           tx.matched_profile_id = profilesByNameTranslit[translitName].id;
           tx.matched_profile_name = profilesByNameTranslit[translitName].full_name;
@@ -660,7 +643,7 @@ serve(async (req) => {
           continue;
         }
         
-        // Try fuzzy match: split into parts and find
+        // Fuzzy match
         const translitParts = translitName.split(" ").filter(p => p.length > 2);
         for (const [name, profile] of Object.entries(profilesByNameTranslit)) {
           const nameParts = name.split(" ");
@@ -696,7 +679,8 @@ serve(async (req) => {
     console.info(`Returning ${allTransactions.length} transactions, ${matchedCount} matched contacts`);
 
     return new Response(JSON.stringify({
-      success: true,
+      success: apiSuccess || allTransactions.length > 0,
+      api_success: apiSuccess,
       transactions: allTransactions,
       subscriptions: allSubscriptions,
       summary: {
@@ -707,6 +691,7 @@ serve(async (req) => {
         matched_contacts: matchedCount,
         unmatched_contacts: allTransactions.length - matchedCount,
       },
+      debug: apiOnly ? debug : undefined,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -714,13 +699,16 @@ serve(async (req) => {
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error("Error in bepaid-raw-transactions:", errMsg);
+    debug.errors.push(`Exception: ${errMsg}`);
+    
     return new Response(JSON.stringify({ 
       success: false, 
       error: errMsg,
       transactions: [],
       subscriptions: [],
+      debug,
     }), {
-      status: 500,
+      status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

@@ -35,6 +35,8 @@ interface RawTransaction {
   paid_at?: string;
   created_at?: string;
   _bepaid_time?: string;
+  _bepaid_created_at?: string;
+  _bepaid_paid_at?: string;
   receipt_url?: string;
   tracking_id?: string;
   message?: string;
@@ -58,6 +60,13 @@ interface RawTransaction {
   matched_tariff_id?: string;
   _source?: string;
   _translit_name?: string;
+  _queue_id?: string;
+}
+
+interface ApiDebugInfo {
+  api_calls: Array<{ url: string; method: string; status?: number; count?: number; error?: string }>;
+  errors: string[];
+  fallback_used: boolean;
 }
 
 interface RawSubscription {
@@ -112,6 +121,7 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
 
       return data as {
         success: boolean;
+        api_success?: boolean;
         transactions: RawTransaction[];
         subscriptions: RawSubscription[];
         summary: {
@@ -122,10 +132,14 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
           matched_contacts: number;
           unmatched_contacts: number;
         };
+        debug?: ApiDebugInfo;
       };
     },
     staleTime: 30000,
   });
+
+  const apiSuccess = rawData?.api_success;
+  const debugInfo = rawData?.debug;
 
   // Sync selected items to queue
   const syncMutation = useMutation({
@@ -355,6 +369,49 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* API Status Banner */}
+        {rawData && (
+          <div className={`flex items-center gap-2 p-3 rounded-lg ${apiSuccess ? "bg-green-100 dark:bg-green-950/30 text-green-800 dark:text-green-300" : "bg-amber-100 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300"}`}>
+            {apiSuccess ? (
+              <>
+                <CheckCircle2 className="h-4 w-4" />
+                <span className="text-sm font-medium">Данные загружены из bePaid API</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="h-4 w-4" />
+                <span className="text-sm font-medium">
+                  {debugInfo?.fallback_used ? "API недоступен, показаны данные из локальной БД" : "Нет данных из API за выбранный период"}
+                </span>
+              </>
+            )}
+            {debugInfo?.errors && debugInfo.errors.length > 0 && (
+              <span className="text-xs ml-2">({debugInfo.errors.length} ошибок)</span>
+            )}
+          </div>
+        )}
+
+        {/* Debug Info (collapsible) */}
+        {debugInfo && debugInfo.errors.length > 0 && (
+          <details className="bg-muted/30 rounded-lg p-3">
+            <summary className="text-sm font-medium cursor-pointer">🔧 Debug информация</summary>
+            <div className="mt-2 space-y-2 text-xs font-mono">
+              {debugInfo.api_calls.map((call, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <Badge variant={call.status === 200 ? "default" : "destructive"} className="text-xs">
+                    {call.status || "ERR"}
+                  </Badge>
+                  <span>{call.method} {call.url.replace(/https:\/\/[^/]+/, "")}</span>
+                  {call.count !== undefined && <span className="text-muted-foreground">({call.count} записей)</span>}
+                </div>
+              ))}
+              {debugInfo.errors.map((err, i) => (
+                <div key={i} className="text-destructive">❌ {err}</div>
+              ))}
+            </div>
+          </details>
+        )}
+
         {/* Summary */}
         {summary && (
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
