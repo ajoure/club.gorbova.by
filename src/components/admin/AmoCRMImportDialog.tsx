@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { 
   Upload, FileSpreadsheet, AlertCircle, CheckCircle2, 
-  Loader2, X, User, Mail, Phone, AtSign, ArrowRight, Search, Cloud, Eye, Shield, RotateCcw
+  Loader2, X, User, Mail, Phone, AtSign, ArrowRight, Search, Cloud, Eye, Shield, RotateCcw, Play, FlaskConical
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -41,7 +41,7 @@ interface ParsedContact {
   matched_profile_name?: string;
   matched_by?: 'email' | 'phone' | 'name' | 'telegram' | 'none';
   // Import status
-  import_status?: 'pending' | 'exists' | 'created' | 'updated' | 'error';
+  import_status?: 'pending' | 'exists' | 'created' | 'updated' | 'error' | 'skipped_invalid_telegram' | 'skipped_no_contacts';
   import_error?: string;
 }
 
@@ -52,6 +52,8 @@ interface ImportStats {
   created: number;
   updated: number;
   errors: number;
+  skippedNoContacts: number;
+  skippedInvalidTelegram: number;
 }
 
 interface ImportJob {
@@ -67,10 +69,12 @@ interface ImportJob {
 interface DryRunResult {
   success: boolean;
   dryRun: boolean;
-  jobId: string;
+  jobId: string | null;
   wouldCreate: number;
   wouldUpdate: number;
   wouldSkip: number;
+  skippedNoContacts?: number;
+  skippedInvalidTelegram?: number;
   errors: number;
   errorLog?: { contact: string; error: string }[];
 }
@@ -99,6 +103,25 @@ function normalizeName(name: string): string {
   return name?.toLowerCase().replace(/[^\p{L}\s]/gu, '').trim() || '';
 }
 
+// Clean and validate Telegram username
+function cleanTelegramUsername(raw: string): string | undefined {
+  if (!raw || raw === '-') return undefined;
+  
+  // Remove @ at the start
+  let clean = raw.replace(/^@/, '').trim();
+  
+  // If contains http/https - invalid (e.g. @http://tg_username)
+  if (/https?:\/\//i.test(clean)) return undefined;
+  
+  // Remove spaces and special chars except underscore
+  clean = clean.replace(/[^\w]/g, '');
+  
+  // Telegram username: 5-32 chars, alphanumeric + underscore
+  if (clean.length < 5 || clean.length > 32) return undefined;
+  
+  return clean.toLowerCase();
+}
+
 // Parse amoCRM contact row
 function parseContactRow(row: Record<string, unknown>): ParsedContact | null {
   const id = String(row['ID'] || '');
@@ -110,32 +133,48 @@ function parseContactRow(row: Record<string, unknown>): ParsedContact | null {
   
   if (!fullName || fullName === '-') return null;
   
-  // Collect all emails
+  // Collect all emails - split by separators if multiple in one cell
   const emails: string[] = [];
   const emailFields = ['Рабочий email', 'Личный email', 'Другой email', 'Work email', 'Personal email', 'Other email'];
   for (const field of emailFields) {
-    const email = String(row[field] || '').trim();
-    if (email && email !== '-' && email.includes('@')) {
-      emails.push(normalizeEmail(email));
-    }
-  }
-  
-  // Collect all phones
-  const phones: string[] = [];
-  const phoneFields = ['Рабочий телефон', 'Рабочий прямой телефон', 'Мобильный телефон', 'Домашний телефон', 'Другой телефон', 'Work phone', 'Mobile phone', 'Home phone', 'Other phone'];
-  for (const field of phoneFields) {
-    const phone = String(row[field] || '').trim().replace(/'/g, '');
-    if (phone && phone !== '-') {
-      const normalized = normalizePhone(phone);
-      if (normalized.length >= 9) {
-        phones.push(normalized);
+    const rawEmail = String(row[field] || '').trim();
+    if (rawEmail && rawEmail !== '-') {
+      // Split by comma, semicolon, or whitespace
+      const parts = rawEmail.split(/[,;\s]+/);
+      for (const part of parts) {
+        const cleaned = part.trim().toLowerCase();
+        if (cleaned.includes('@') && cleaned.length > 5 && !emails.includes(cleaned)) {
+          emails.push(cleaned);
+        }
       }
     }
   }
   
-  // Telegram username
+  // Collect all phones - split by separators if multiple in one cell
+  const phones: string[] = [];
+  const phoneFields = ['Рабочий телефон', 'Рабочий прямой телефон', 'Мобильный телефон', 'Домашний телефон', 'Другой телефон', 'Work phone', 'Mobile phone', 'Home phone', 'Other phone'];
+  for (const field of phoneFields) {
+    const rawPhone = String(row[field] || '').trim().replace(/'/g, '');
+    if (rawPhone && rawPhone !== '-') {
+      // Split by comma or semicolon
+      const parts = rawPhone.split(/[,;]+/);
+      for (const part of parts) {
+        const normalized = normalizePhone(part.trim());
+        if (normalized.length >= 9 && !phones.includes(normalized)) {
+          phones.push(normalized);
+        }
+      }
+    }
+  }
+  
+  // Skip contacts without email AND without phone
+  if (emails.length === 0 && phones.length === 0) {
+    return null;
+  }
+  
+  // Telegram username - clean and validate
   const telegramRaw = String(row['Телеграм (контакт)'] || row['Никнейм Телеграм (контакт)'] || row['Telegram'] || '').trim();
-  const telegram_username = telegramRaw && telegramRaw !== '-' ? telegramRaw.replace('@', '') : undefined;
+  const telegram_username = cleanTelegramUsername(telegramRaw);
   
   return {
     amo_id: id,
@@ -153,7 +192,7 @@ function parseContactRow(row: Record<string, unknown>): ParsedContact | null {
   };
 }
 
-const BACKGROUND_THRESHOLD = 500; // Use background import for files with 500+ contacts
+const TEST_BATCH_SIZE = 100; // Тестовый импорт - первые 100 контактов
 
 export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: AmoCRMImportDialogProps) {
   const [file, setFile] = useState<File | null>(null);
@@ -170,6 +209,12 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
   const [isDryRunning, setIsDryRunning] = useState(false);
   const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  
+  // Test mode and continue import
+  const [testMode, setTestMode] = useState(true); // Default to test mode
+  const [importedCount, setImportedCount] = useState(0); // How many contacts already imported
+  const [skippedNoContacts, setSkippedNoContacts] = useState(0);
+  const [skippedInvalidTelegram, setSkippedInvalidTelegram] = useState(0);
   
   const queryClient = useQueryClient();
 
@@ -194,6 +239,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
           if (job.status === 'completed') {
             toast.success(`Импорт завершён: ${job.created_count} создано, ${job.updated_count} обновлено, ${job.errors_count} ошибок`);
             queryClient.invalidateQueries({ queryKey: ['admin-contacts'] });
+            setImportedCount(prev => prev + job.processed);
             onSuccess?.();
           } else if (job.status === 'failed') {
             toast.error('Ошибка фонового импорта');
@@ -229,7 +275,10 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     setFile(selectedFile);
     setIsParsing(true);
     setParseProgress(0);
-    setDryRunResult(null); // Reset dry run result
+    setDryRunResult(null);
+    setImportedCount(0);
+    setSkippedNoContacts(0);
+    setSkippedInvalidTelegram(0);
 
     try {
       const buffer = await selectedFile.arrayBuffer();
@@ -241,17 +290,46 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
 
       console.log("amoCRM Excel parsed:", { sheetName, rowCount: rows.length, columns: rows[0] ? Object.keys(rows[0]) : [] });
 
-      // Parse contacts with progress
+      // Parse contacts with progress and track skipped
       const parsed: ParsedContact[] = [];
+      let noContactsCount = 0;
+      let invalidTelegramCount = 0;
       const BATCH_SIZE = 100;
       
       for (let i = 0; i < rows.length; i++) {
-        const contact = parseContactRow(rows[i]);
+        const row = rows[i];
+        
+        // Check if would be skipped due to no contacts
+        const id = String(row['ID'] || '');
+        const hasEmails = ['Рабочий email', 'Личный email', 'Другой email', 'Work email', 'Personal email', 'Other email']
+          .some(f => {
+            const v = String(row[f] || '').trim();
+            return v && v !== '-' && v.includes('@');
+          });
+        const hasPhones = ['Рабочий телефон', 'Рабочий прямой телефон', 'Мобильный телефон', 'Домашний телефон', 'Другой телефон', 'Work phone', 'Mobile phone', 'Home phone', 'Other phone']
+          .some(f => {
+            const v = String(row[f] || '').trim().replace(/'/g, '');
+            return v && v !== '-' && normalizePhone(v).length >= 9;
+          });
+        
+        if (id && id !== '-' && !hasEmails && !hasPhones) {
+          noContactsCount++;
+          continue;
+        }
+        
+        // Check if telegram is invalid
+        const telegramRaw = String(row['Телеграм (контакт)'] || row['Никнейм Телеграм (контакт)'] || row['Telegram'] || '').trim();
+        if (telegramRaw && telegramRaw !== '-' && !cleanTelegramUsername(telegramRaw)) {
+          invalidTelegramCount++;
+          // Still parse the contact, just without telegram
+        }
+        
+        const contact = parseContactRow(row);
         if (contact) parsed.push(contact);
         
         if (i % BATCH_SIZE === 0) {
-          setParseProgress((i / rows.length) * 50); // First 50% is parsing
-          await new Promise(resolve => setTimeout(resolve, 0)); // Yield to UI
+          setParseProgress((i / rows.length) * 50);
+          await new Promise(resolve => setTimeout(resolve, 0));
         }
       }
 
@@ -259,17 +337,20 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
         throw new Error("Не удалось распознать контакты. Проверьте формат файла.");
       }
 
+      setSkippedNoContacts(noContactsCount);
+      setSkippedInvalidTelegram(invalidTelegramCount);
+
       // Auto-match contacts if enabled
       if (autoMatch) {
         setParseProgress(50);
         await matchContactsOptimized(parsed, (progress) => {
-          setParseProgress(50 + progress * 0.5); // Second 50% is matching
+          setParseProgress(50 + progress * 0.5);
         });
       }
 
       setContacts(parsed);
-      calculateStats(parsed);
-      toast.success(`Загружено ${parsed.length} контактов`);
+      calculateStats(parsed, noContactsCount, invalidTelegramCount);
+      toast.success(`Загружено ${parsed.length} контактов (пропущено ${noContactsCount} без контактных данных)`);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       toast.error("Ошибка парсинга: " + errorMessage);
@@ -285,14 +366,13 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     contactsList: ParsedContact[], 
     onProgress?: (progress: number) => void
   ) => {
-    // Load ALL profiles once (they're typically just hundreds)
     const { data: profiles } = await supabase
       .from('profiles')
       .select('id, full_name, email, emails, phone, phones, telegram_username, external_id_amo');
 
     if (!profiles) return;
 
-    // Build lookup indexes on client side - O(profiles)
+    // Build lookup indexes on client side
     const emailIndex = new Map<string, { id: string; name: string }>();
     const phoneIndex = new Map<string, { id: string; name: string }>();
     const telegramIndex = new Map<string, { id: string; name: string }>();
@@ -300,40 +380,34 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     const amoIdIndex = new Map<string, { id: string; name: string }>();
 
     for (const p of profiles) {
-      // Primary fields
       if (p.email) emailIndex.set(normalizeEmail(p.email), { id: p.id, name: p.full_name || '' });
       if (p.phone) phoneIndex.set(normalizePhone(p.phone), { id: p.id, name: p.full_name || '' });
       if (p.telegram_username) telegramIndex.set(p.telegram_username.toLowerCase(), { id: p.id, name: p.full_name || '' });
       if (p.full_name) nameIndex.set(normalizeName(p.full_name), { id: p.id, name: p.full_name });
       if (p.external_id_amo) amoIdIndex.set(p.external_id_amo, { id: p.id, name: p.full_name || '' });
       
-      // Additional emails from JSON array
       const profileEmails = p.emails as string[] | null;
       if (profileEmails) {
         profileEmails.forEach(e => emailIndex.set(normalizeEmail(e), { id: p.id, name: p.full_name || '' }));
       }
       
-      // Additional phones from JSON array
       const profilePhones = p.phones as string[] | null;
       if (profilePhones) {
         profilePhones.forEach(ph => phoneIndex.set(normalizePhone(ph), { id: p.id, name: p.full_name || '' }));
       }
     }
 
-    // Match each contact - O(contacts) with O(1) lookups
     for (let i = 0; i < contactsList.length; i++) {
       const contact = contactsList[i];
       
-      // 1. Check amoCRM ID first (exact match)
       const amoMatch = amoIdIndex.get(contact.amo_id);
       if (amoMatch) {
         contact.matched_profile_id = amoMatch.id;
         contact.matched_profile_name = amoMatch.name;
-        contact.matched_by = 'email'; // Treat as strongest match
+        contact.matched_by = 'email';
         continue;
       }
 
-      // 2. Try email match (highest priority)
       let matched = false;
       for (const email of contact.emails) {
         const match = emailIndex.get(email);
@@ -347,7 +421,6 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
       }
       if (matched) continue;
 
-      // 3. Try phone match
       for (const phone of contact.phones) {
         const match = phoneIndex.get(phone);
         if (match) {
@@ -360,7 +433,6 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
       }
       if (matched) continue;
 
-      // 4. Try telegram match
       if (contact.telegram_username) {
         const match = telegramIndex.get(contact.telegram_username.toLowerCase());
         if (match) {
@@ -371,7 +443,6 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
         }
       }
 
-      // 5. Try exact normalized name match (no fuzzy - that's separate)
       const normalizedName = normalizeName(contact.full_name);
       const match = nameIndex.get(normalizedName);
       if (match) {
@@ -380,17 +451,16 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
         contact.matched_by = 'name';
       }
 
-      // Report progress every 100 contacts
       if (i % 100 === 0) {
         onProgress?.(i / contactsList.length);
-        await new Promise(resolve => setTimeout(resolve, 0)); // Yield to UI
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
 
     onProgress?.(1);
   };
 
-  const calculateStats = (contactsList: ParsedContact[]) => {
+  const calculateStats = (contactsList: ParsedContact[], noContactsCount: number = 0, invalidTelegramCount: number = 0) => {
     setStats({
       total: contactsList.length,
       matched: contactsList.filter(c => c.matched_by !== 'none').length,
@@ -398,16 +468,33 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
       created: 0,
       updated: 0,
       errors: 0,
+      skippedNoContacts: noContactsCount,
+      skippedInvalidTelegram: invalidTelegramCount,
     });
+  };
+
+  // Get contacts to import (considering test mode and already imported)
+  const getContactsToImport = () => {
+    const remaining = contacts.slice(importedCount);
+    if (testMode) {
+      return remaining.slice(0, TEST_BATCH_SIZE);
+    }
+    return remaining;
   };
 
   // Run dry run to preview changes
   const runDryRun = async () => {
+    const toImport = getContactsToImport();
+    if (toImport.length === 0) {
+      toast.info("Все контакты уже импортированы");
+      return;
+    }
+
     setIsDryRunning(true);
     try {
       const { data, error } = await supabase.functions.invoke('amocrm-mass-import', {
         body: {
-          contacts: contacts.map(c => ({
+          contacts: toImport.map(c => ({
             amo_id: c.amo_id,
             full_name: c.full_name,
             first_name: c.first_name,
@@ -434,8 +521,14 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     }
   };
 
-  // Start background import for large files
-  const startBackgroundImport = async () => {
+  // Start import (background for large, direct for small)
+  const startImport = async () => {
+    const toImport = getContactsToImport();
+    if (toImport.length === 0) {
+      toast.info("Все контакты уже импортированы");
+      return;
+    }
+
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
       toast.error("Требуется авторизация");
@@ -447,9 +540,10 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
       .from('import_jobs')
       .insert({
         type: 'amocrm_contacts',
-        total: contacts.length,
+        total: toImport.length,
         status: 'pending',
         created_by: session.user.id,
+        meta: { testMode, offset: importedCount },
       })
       .select()
       .single();
@@ -465,7 +559,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     // Invoke edge function
     const { error } = await supabase.functions.invoke('amocrm-mass-import', {
       body: {
-        contacts: contacts.map(c => ({
+        contacts: toImport.map(c => ({
           amo_id: c.amo_id,
           full_name: c.full_name,
           first_name: c.first_name,
@@ -485,101 +579,23 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
       toast.error("Ошибка запуска импорта: " + error.message);
       setBackgroundJob(null);
     } else {
-      toast.success(`Запущен фоновый импорт ${contacts.length} контактов`);
+      toast.success(`Запущен импорт ${toImport.length} контактов`);
     }
   };
 
-  // Direct import for small files
-  const importMutation = useMutation({
-    mutationFn: async () => {
-      let created = 0;
-      let updated = 0;
-      let errors = 0;
-      
-      const BATCH_SIZE = 50;
-      for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
-        const batch = contacts.slice(i, i + BATCH_SIZE);
-        
-        for (const contact of batch) {
-          try {
-            if (contact.matched_profile_id && updateExisting) {
-              // Update existing profile
-              const updateData: Record<string, unknown> = {
-                external_id_amo: contact.amo_id,
-              };
-              
-              if (contact.email) updateData.email = contact.email;
-              if (contact.phone) updateData.phone = contact.phone;
-              if (contact.telegram_username) updateData.telegram_username = contact.telegram_username;
-              if (contact.emails.length > 0) updateData.emails = contact.emails;
-              if (contact.phones.length > 0) updateData.phones = contact.phones.map(p => '+' + p);
-              
-              const { error } = await supabase
-                .from('profiles')
-                .update(updateData)
-                .eq('id', contact.matched_profile_id);
-              
-              if (error) {
-                contact.import_status = 'error';
-                contact.import_error = error.message;
-                errors++;
-              } else {
-                contact.import_status = 'updated';
-                updated++;
-              }
-            } else if (!contact.matched_profile_id) {
-              // Create new profile
-              const { error } = await supabase
-                .from('profiles')
-                .insert({
-                  full_name: contact.full_name,
-                  first_name: contact.first_name,
-                  last_name: contact.last_name,
-                  email: contact.email,
-                  emails: contact.emails,
-                  phone: contact.phone ? '+' + contact.phone : undefined,
-                  phones: contact.phones.map(p => '+' + p),
-                  telegram_username: contact.telegram_username,
-                  external_id_amo: contact.amo_id,
-                  status: 'ghost',
-                  source: 'amocrm_import',
-                });
-              
-              if (error) {
-                contact.import_status = 'error';
-                contact.import_error = error.message;
-                errors++;
-              } else {
-                contact.import_status = 'created';
-                created++;
-              }
-            } else {
-              contact.import_status = 'exists';
-            }
-          } catch (err: unknown) {
-            contact.import_status = 'error';
-            contact.import_error = err instanceof Error ? err.message : 'Unknown error';
-            errors++;
-          }
-        }
-        
-        // Update UI every batch
-        setContacts([...contacts]);
-      }
-      
-      return { created, updated, errors };
-    },
-    onSuccess: ({ created, updated, errors }) => {
-      setStats(prev => prev ? { ...prev, created, updated, errors } : null);
-      queryClient.invalidateQueries({ queryKey: ['admin-contacts'] });
-      toast.success(`Импорт завершён: ${created} создано, ${updated} обновлено, ${errors} ошибок`);
-      onSuccess?.();
-      setShowConfirmDialog(false);
-    },
-    onError: (error) => {
-      toast.error("Ошибка импорта: " + error.message);
-    },
-  });
+  // Continue import with remaining contacts
+  const continueImport = () => {
+    setBackgroundJob(null);
+    setDryRunResult(null);
+    // The importedCount is already updated, so next dry run will get remaining contacts
+  };
+
+  // Import all remaining without test limit
+  const importAllRemaining = () => {
+    setTestMode(false);
+    setBackgroundJob(null);
+    setDryRunResult(null);
+  };
 
   const handleReset = () => {
     setFile(null);
@@ -587,6 +603,10 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     setStats(null);
     setBackgroundJob(null);
     setDryRunResult(null);
+    setImportedCount(0);
+    setTestMode(true);
+    setSkippedNoContacts(0);
+    setSkippedInvalidTelegram(0);
   };
 
   const getMatchBadge = (matchedBy: ParsedContact['matched_by']) => {
@@ -620,7 +640,8 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
   };
 
   const unmatchedContacts = contacts.filter(c => c.matched_by === 'none');
-  const isLargeFile = contacts.length >= BACKGROUND_THRESHOLD;
+  const remainingCount = contacts.length - importedCount;
+  const toImportCount = testMode ? Math.min(TEST_BATCH_SIZE, remainingCount) : remainingCount;
 
   return (
     <>
@@ -647,7 +668,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                 <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
                 <p className="text-lg font-medium mb-2">Перетащите файл сюда</p>
                 <p className="text-sm text-muted-foreground mb-4">или нажмите для выбора</p>
-                <p className="text-xs text-muted-foreground">Поддерживаются файлы .xlsx, .xls</p>
+                <p className="text-xs text-muted-foreground">Поддерживаются файлы .xlsx, .xls (без ограничений)</p>
                 <input
                   id="amocrm-file-input"
                   type="file"
@@ -666,7 +687,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
             ) : backgroundJob ? (
               <div className="flex flex-col items-center justify-center py-12 gap-4">
                 <Cloud className="h-12 w-12 text-primary animate-pulse" />
-                <p className="text-lg font-medium">Фоновый импорт</p>
+                <p className="text-lg font-medium">Импорт</p>
                 <p className="text-muted-foreground">
                   {backgroundJob.status === 'processing' ? 'Обрабатываем контакты...' : 
                    backgroundJob.status === 'completed' ? 'Импорт завершён!' : 
@@ -678,12 +699,34 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                   {backgroundJob.created_count} создано • {backgroundJob.updated_count} обновлено
                 </p>
                 
-                {/* Rollback info */}
-                {backgroundJob.status === 'completed' && (
-                  <Alert className="max-w-md">
-                    <RotateCcw className="h-4 w-4" />
-                    <AlertDescription>
-                      Этот импорт можно откатить. ID задачи: <code className="text-xs">{backgroundJob.id}</code>
+                {/* Completed - show continue options */}
+                {backgroundJob.status === 'completed' && remainingCount > 0 && (
+                  <div className="flex flex-col items-center gap-3 mt-4">
+                    <Alert className="max-w-md">
+                      <RotateCcw className="h-4 w-4" />
+                      <AlertDescription>
+                        Импортировано {importedCount} из {contacts.length}. Осталось: {remainingCount}
+                      </AlertDescription>
+                    </Alert>
+                    <div className="flex gap-2">
+                      <Button onClick={continueImport} variant="outline">
+                        <Play className="h-4 w-4 mr-2" />
+                        Продолжить (ещё {Math.min(TEST_BATCH_SIZE, remainingCount)})
+                      </Button>
+                      {remainingCount > TEST_BATCH_SIZE && (
+                        <Button onClick={importAllRemaining}>
+                          Загрузить все {remainingCount}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                {backgroundJob.status === 'completed' && remainingCount === 0 && (
+                  <Alert className="max-w-md border-green-500/30 bg-green-500/10">
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    <AlertDescription className="text-green-700">
+                      Все контакты успешно импортированы! ID задачи: <code className="text-xs">{backgroundJob.id}</code>
                     </AlertDescription>
                   </Alert>
                 )}
@@ -707,6 +750,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                       <p className="font-medium">{file.name}</p>
                       <p className="text-sm text-muted-foreground">
                         {stats?.total} контактов • {stats?.matched} совпадений • {stats?.unmatched} новых
+                        {importedCount > 0 && ` • ${importedCount} уже загружено`}
                       </p>
                     </div>
                   </div>
@@ -715,8 +759,31 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                   </Button>
                 </div>
 
+                {/* Skipped contacts info */}
+                {(skippedNoContacts > 0 || skippedInvalidTelegram > 0) && (
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      Пропущено при парсинге:
+                      {skippedNoContacts > 0 && <span className="ml-2"><strong>{skippedNoContacts}</strong> без email/телефона</span>}
+                      {skippedInvalidTelegram > 0 && <span className="ml-2">• <strong>{skippedInvalidTelegram}</strong> с невалидным Telegram</span>}
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 {/* Options */}
-                <div className="flex items-center gap-6">
+                <div className="flex items-center gap-6 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="test-mode"
+                      checked={testMode}
+                      onCheckedChange={setTestMode}
+                    />
+                    <Label htmlFor="test-mode" className="text-sm flex items-center gap-1">
+                      <FlaskConical className="h-4 w-4" />
+                      Тестовый режим (первые {TEST_BATCH_SIZE})
+                    </Label>
+                  </div>
                   <div className="flex items-center gap-2">
                     <Switch
                       id="update-existing"
@@ -737,18 +804,22 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
 
                 {/* Stats cards */}
                 {stats && (
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-4 gap-3">
                     <div className="p-3 bg-muted/50 rounded-lg text-center">
                       <p className="text-2xl font-bold text-green-600">{stats.matched}</p>
-                      <p className="text-sm text-muted-foreground">Совпадений</p>
+                      <p className="text-xs text-muted-foreground">Совпадений</p>
                     </div>
                     <div className="p-3 bg-muted/50 rounded-lg text-center">
                       <p className="text-2xl font-bold text-blue-600">{stats.unmatched}</p>
-                      <p className="text-sm text-muted-foreground">Новых</p>
+                      <p className="text-xs text-muted-foreground">Новых</p>
                     </div>
                     <div className="p-3 bg-muted/50 rounded-lg text-center">
                       <p className="text-2xl font-bold">{stats.total}</p>
-                      <p className="text-sm text-muted-foreground">Всего</p>
+                      <p className="text-xs text-muted-foreground">Всего</p>
+                    </div>
+                    <div className="p-3 bg-primary/10 rounded-lg text-center">
+                      <p className="text-2xl font-bold text-primary">{toImportCount}</p>
+                      <p className="text-xs text-muted-foreground">К импорту</p>
                     </div>
                   </div>
                 )}
@@ -780,7 +851,16 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                     </TableHeader>
                     <TableBody>
                       {contacts.slice(0, 100).map((contact, idx) => (
-                        <TableRow key={idx} className={contact.import_status === 'error' ? 'bg-destructive/10' : ''}>
+                        <TableRow 
+                          key={idx} 
+                          className={
+                            idx < importedCount 
+                              ? 'bg-green-500/5' 
+                              : contact.import_status === 'error' 
+                                ? 'bg-destructive/10' 
+                                : ''
+                          }
+                        >
                           <TableCell className="font-mono text-xs">{contact.amo_id}</TableCell>
                           <TableCell>
                             <div className="flex flex-col">
@@ -790,8 +870,28 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="text-sm">{contact.email || '—'}</TableCell>
-                          <TableCell className="text-sm font-mono">{contact.phone || '—'}</TableCell>
+                          <TableCell className="text-sm">
+                            {contact.emails.length > 1 ? (
+                              <div className="flex flex-col gap-0.5">
+                                {contact.emails.map((e, i) => (
+                                  <span key={i} className={i === 0 ? '' : 'text-muted-foreground text-xs'}>{e}</span>
+                                ))}
+                              </div>
+                            ) : (
+                              contact.email || '—'
+                            )}
+                          </TableCell>
+                          <TableCell className="text-sm font-mono">
+                            {contact.phones.length > 1 ? (
+                              <div className="flex flex-col gap-0.5">
+                                {contact.phones.map((p, i) => (
+                                  <span key={i} className={i === 0 ? '' : 'text-muted-foreground text-xs'}>+{p}</span>
+                                ))}
+                              </div>
+                            ) : (
+                              contact.phone ? `+${contact.phone}` : '—'
+                            )}
+                          </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-1">
                               {getMatchBadge(contact.matched_by)}
@@ -804,7 +904,13 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                             </div>
                           </TableCell>
                           <TableCell>
-                            {getStatusBadge(contact.import_status)}
+                            {idx < importedCount ? (
+                              <Badge variant="default" className="bg-green-500/20 text-green-600 border-green-500/30">
+                                <CheckCircle2 className="w-3 h-3 mr-1" />Загружен
+                              </Badge>
+                            ) : (
+                              getStatusBadge(contact.import_status)
+                            )}
                             {contact.import_error && (
                               <p className="text-xs text-destructive mt-1">{contact.import_error}</p>
                             )}
@@ -827,7 +933,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Закрыть
             </Button>
-            {file && contacts.length > 0 && !backgroundJob && (
+            {file && contacts.length > 0 && !backgroundJob && remainingCount > 0 && (
               <Button 
                 onClick={runDryRun} 
                 disabled={isDryRunning}
@@ -840,7 +946,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                 ) : (
                   <>
                     <Eye className="h-4 w-4 mr-2" />
-                    Предпросмотр импорта
+                    {testMode ? `Тест (${toImportCount})` : `Импорт (${toImportCount})`}
                   </>
                 )}
               </Button>
@@ -855,11 +961,11 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
               <Shield className="h-5 w-5 text-green-600" />
-              Подтверждение импорта
+              {testMode ? 'Тестовый импорт' : 'Подтверждение импорта'}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-4">
-                <p>Результаты анализа:</p>
+                <p>Результаты анализа {testMode && `(первые ${toImportCount} контактов)`}:</p>
                 
                 {dryRunResult && (
                   <div className="grid grid-cols-3 gap-3 my-4">
@@ -871,75 +977,59 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                       <p className="text-xl font-bold text-blue-600">{dryRunResult.wouldUpdate}</p>
                       <p className="text-xs text-muted-foreground">Будет обновлено</p>
                     </div>
-                    <div className="p-3 bg-muted rounded-lg text-center">
-                      <p className="text-xl font-bold">{dryRunResult.wouldSkip}</p>
-                      <p className="text-xs text-muted-foreground">Без изменений</p>
+                    <div className="p-3 bg-muted/50 rounded-lg text-center">
+                      <p className="text-xl font-bold text-muted-foreground">{dryRunResult.wouldSkip}</p>
+                      <p className="text-xs text-muted-foreground">Пропущено</p>
                     </div>
                   </div>
                 )}
 
-                {dryRunResult?.errors ? (
+                {testMode && remainingCount > TEST_BATCH_SIZE && (
+                  <Alert>
+                    <FlaskConical className="h-4 w-4" />
+                    <AlertDescription>
+                      Это тестовый импорт. После завершения можно загрузить оставшиеся {remainingCount - TEST_BATCH_SIZE} контактов.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {dryRunResult?.errors && dryRunResult.errors > 0 && (
                   <Alert variant="destructive">
                     <AlertCircle className="h-4 w-4" />
                     <AlertDescription>
-                      Обнаружено {dryRunResult.errors} потенциальных ошибок
+                      Ожидается {dryRunResult.errors} ошибок при импорте
                     </AlertDescription>
                   </Alert>
-                ) : null}
+                )}
 
-                <Alert className="border-green-500/30 bg-green-500/10">
-                  <RotateCcw className="h-4 w-4 text-green-600" />
-                  <AlertDescription className="text-green-700">
-                    Этот импорт можно будет откатить после выполнения
-                  </AlertDescription>
-                </Alert>
+                <p className="text-sm text-muted-foreground">
+                  Импорт можно откатить в любой момент.
+                </p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (isLargeFile) {
-                  startBackgroundImport();
-                } else {
-                  importMutation.mutate();
-                }
-              }}
-              disabled={importMutation.isPending}
-            >
-              {importMutation.isPending ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Импорт...
-                </>
-              ) : isLargeFile ? (
-                <>
-                  <Cloud className="h-4 w-4 mr-2" />
-                  Запустить фоновый импорт
-                </>
-              ) : (
-                <>
-                  <Upload className="h-4 w-4 mr-2" />
-                  Импортировать
-                </>
-              )}
+            <AlertDialogAction onClick={startImport}>
+              <Play className="h-4 w-4 mr-2" />
+              {testMode ? 'Тестовый импорт' : 'Импортировать'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Fuzzy Match Dialog */}
       <FuzzyMatchDialog
         open={showFuzzyDialog}
         onOpenChange={setShowFuzzyDialog}
-        contacts={unmatchedContacts.map(c => ({
-          amo_id: c.amo_id,
-          full_name: c.full_name,
-          email: c.email,
-          phone: c.phone,
-        }))}
-        onSuccess={() => {
-          queryClient.invalidateQueries({ queryKey: ['admin-contacts'] });
+        contacts={unmatchedContacts}
+        onMatch={(contactId, profileId, profileName) => {
+          setContacts(prev => prev.map(c => 
+            c.amo_id === contactId 
+              ? { ...c, matched_profile_id: profileId, matched_profile_name: profileName, matched_by: 'name' as const }
+              : c
+          ));
+          calculateStats(contacts, skippedNoContacts, skippedInvalidTelegram);
         }}
       />
     </>

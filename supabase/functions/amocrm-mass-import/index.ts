@@ -20,7 +20,25 @@ interface ParsedContact {
 
 interface ImportOptions {
   updateExisting: boolean;
-  dryRun?: boolean; // Preview mode - no actual changes
+  dryRun?: boolean;
+}
+
+// Clean and validate Telegram username (server-side validation)
+function cleanTelegramUsername(raw: string | undefined): string | undefined {
+  if (!raw || raw === '-') return undefined;
+  
+  let clean = raw.replace(/^@/, '').trim();
+  
+  // If contains http/https - invalid
+  if (/https?:\/\//i.test(clean)) return undefined;
+  
+  // Remove spaces and special chars except underscore
+  clean = clean.replace(/[^\w]/g, '');
+  
+  // Telegram username: 5-32 chars
+  if (clean.length < 5 || clean.length > 32) return undefined;
+  
+  return clean.toLowerCase();
 }
 
 // SAFETY: This function ONLY performs INSERT and UPDATE operations.
@@ -152,6 +170,8 @@ serve(async (req) => {
     let updatedCount = 0;
     let errorsCount = 0;
     let skippedCount = 0;
+    let skippedNoContacts = 0;
+    let skippedInvalidTelegram = 0;
     const errorLog: { contact: string; error: string }[] = [];
 
     for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
@@ -159,6 +179,21 @@ serve(async (req) => {
       
       for (const contact of batch) {
         try {
+          // Validate: skip contacts without email AND without phone
+          if ((!contact.emails || contact.emails.length === 0) && (!contact.phones || contact.phones.length === 0)) {
+            skippedNoContacts++;
+            skippedCount++;
+            processed++;
+            continue;
+          }
+
+          // Clean telegram username (server-side validation)
+          const cleanedTelegram = cleanTelegramUsername(contact.telegram_username);
+          if (contact.telegram_username && !cleanedTelegram) {
+            skippedInvalidTelegram++;
+            // Don't skip the contact, just remove invalid telegram
+          }
+
           // Find match
           let matchedProfileId: string | null = null;
           
@@ -191,8 +226,8 @@ serve(async (req) => {
           }
           
           // Check telegram
-          if (!matchedProfileId && contact.telegram_username) {
-            const match = telegramIndex.get(contact.telegram_username.toLowerCase());
+          if (!matchedProfileId && cleanedTelegram) {
+            const match = telegramIndex.get(cleanedTelegram);
             if (match) {
               matchedProfileId = match.id;
             }
@@ -203,12 +238,12 @@ serve(async (req) => {
             if (!isDryRun && job) {
               const updateData: Record<string, unknown> = {
                 external_id_amo: contact.amo_id,
-                import_batch_id: job.id, // Track which import updated this profile
+                import_batch_id: job.id,
               };
               
               if (contact.email) updateData.email = contact.email;
               if (contact.phone) updateData.phone = contact.phone;
-              if (contact.telegram_username) updateData.telegram_username = contact.telegram_username;
+              if (cleanedTelegram) updateData.telegram_username = cleanedTelegram;
               if (contact.emails.length > 0) updateData.emails = contact.emails;
               if (contact.phones.length > 0) updateData.phones = contact.phones.map(p => '+' + p);
               
@@ -224,7 +259,7 @@ serve(async (req) => {
                 updatedCount++;
               }
             } else if (isDryRun) {
-              updatedCount++; // Dry run: just count
+              updatedCount++;
             }
           } else if (!matchedProfileId) {
             // Create new profile
@@ -239,11 +274,11 @@ serve(async (req) => {
                   emails: contact.emails,
                   phone: contact.phone ? '+' + contact.phone : undefined,
                   phones: contact.phones.map(p => '+' + p),
-                  telegram_username: contact.telegram_username,
+                  telegram_username: cleanedTelegram, // Use cleaned telegram
                   external_id_amo: contact.amo_id,
                   status: 'ghost',
                   source: 'amocrm_import',
-                  import_batch_id: job.id, // Track which import created this profile
+                  import_batch_id: job.id,
                 });
               
               if (error) {
@@ -258,7 +293,7 @@ serve(async (req) => {
                 }
               }
             } else if (isDryRun) {
-              createdCount++; // Dry run: just count
+              createdCount++;
             }
           } else {
             skippedCount++; // Profile exists but updateExisting is false
@@ -303,7 +338,7 @@ serve(async (req) => {
     }
 
     const logMessage = isDryRun 
-      ? `🔍 Dry run completed: would create ${createdCount}, update ${updatedCount}, skip ${skippedCount}`
+      ? `🔍 Dry run completed: would create ${createdCount}, update ${updatedCount}, skip ${skippedCount} (${skippedNoContacts} no contacts, ${skippedInvalidTelegram} invalid telegram)`
       : `✅ Import completed: ${createdCount} created, ${updatedCount} updated, ${errorsCount} errors`;
     console.log(logMessage);
 
@@ -315,11 +350,13 @@ serve(async (req) => {
         wouldCreate: isDryRun ? createdCount : undefined,
         wouldUpdate: isDryRun ? updatedCount : undefined,
         wouldSkip: isDryRun ? skippedCount : undefined,
+        skippedNoContacts: isDryRun ? skippedNoContacts : undefined,
+        skippedInvalidTelegram: isDryRun ? skippedInvalidTelegram : undefined,
         created: isDryRun ? undefined : createdCount,
         updated: isDryRun ? undefined : updatedCount,
         skipped: skippedCount,
         errors: errorsCount,
-        errorLog: errorLog.length > 0 ? errorLog.slice(0, 10) : undefined, // Return first 10 errors for preview
+        errorLog: errorLog.length > 0 ? errorLog.slice(0, 10) : undefined,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
