@@ -1,7 +1,6 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useState, useEffect } from "react";
 import {
   Form,
   FormControl,
@@ -15,10 +14,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ClientLegalDetails } from "@/hooks/useLegalDetails";
-import { DEMO_ENTREPRENEUR, isDemoData } from "@/constants/demoLegalDetails";
+import { DEMO_ENTREPRENEUR } from "@/constants/demoLegalDetails";
 import { Loader2, Save, Info } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
-import { toast } from "sonner";
 
 const schema = z.object({
   ent_name: z.string().min(5, "Введите полное наименование ИП"),
@@ -48,8 +46,7 @@ export function EntrepreneurDetailsForm({
   showDemoOnEmpty = true 
 }: EntrepreneurDetailsFormProps) {
   const hasRealData = !!initialData?.ent_name;
-  const [isDemo, setIsDemo] = useState(!hasRealData && showDemoOnEmpty);
-  const [hasUserEdited, setHasUserEdited] = useState(false);
+  const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
 
   const getDefaultValues = (): FormData => {
     if (hasRealData) {
@@ -66,10 +63,7 @@ export function EntrepreneurDetailsForm({
       };
     }
     
-    if (showDemoOnEmpty) {
-      return { ...DEMO_ENTREPRENEUR };
-    }
-    
+    // Пустая форма - демо-данные показываются как placeholder
     return {
       ent_name: "",
       ent_unp: "",
@@ -88,43 +82,27 @@ export function EntrepreneurDetailsForm({
     defaultValues: getDefaultValues(),
   });
 
-  useEffect(() => {
-    const subscription = form.watch(() => {
-      if (isDemo && !hasUserEdited) {
-        setHasUserEdited(true);
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, [form, isDemo, hasUserEdited]);
-
   const handleSubmit = async (data: FormData) => {
-    if (isDemoData(data)) {
-      toast.error("Пожалуйста, замените демонстрационные данные на ваши реальные данные");
-      return;
-    }
-    
-    if (isDemo && !hasUserEdited) {
-      toast.error("Введите ваши реальные данные для сохранения");
-      return;
-    }
-
     await onSubmit({
       ...data,
       client_type: "entrepreneur",
     });
-    
-    setIsDemo(false);
+  };
+
+  // Функция для получения placeholder - показываем демо если нет данных
+  const getPlaceholder = (field: keyof typeof DEMO_ENTREPRENEUR, fallback: string) => {
+    return showDemoPlaceholders ? (DEMO_ENTREPRENEUR[field] || fallback) : fallback;
   };
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
-        {isDemo && (
+        {showDemoPlaceholders && (
           <Alert className="border-primary/50 bg-primary/5">
             <Info className="h-4 w-4" />
             <AlertDescription>
-              Это <strong>демонстрационные данные</strong> для примера заполнения. 
-              Замените их на ваши реальные данные перед сохранением.
+              Поля содержат <strong>примеры заполнения</strong> (показаны серым). 
+              Просто начните вводить свои данные — примеры исчезнут автоматически.
             </AlertDescription>
           </Alert>
         )}
@@ -141,8 +119,7 @@ export function EntrepreneurDetailsForm({
                 <FormLabel>Наименование ИП</FormLabel>
                 <FormControl>
                   <Input 
-                    placeholder="ИП Федорчук Сергей Валерьевич" 
-                    className={isDemo ? "border-primary/30" : ""}
+                    placeholder={getPlaceholder("ent_name", "ИП Федорчук Сергей Валерьевич")} 
                     {...field} 
                   />
                 </FormControl>
@@ -160,9 +137,8 @@ export function EntrepreneurDetailsForm({
                 <FormLabel>УНП</FormLabel>
                 <FormControl>
                   <Input 
-                    placeholder="123456789" 
+                    placeholder={getPlaceholder("ent_unp", "123456789")} 
                     maxLength={9} 
-                    className={isDemo ? "border-primary/30" : ""}
                     {...field} 
                   />
                 </FormControl>
@@ -179,8 +155,7 @@ export function EntrepreneurDetailsForm({
                 <FormLabel>Юридический адрес</FormLabel>
                 <FormControl>
                   <Input 
-                    placeholder="220035, г. Минск, ул. Примерная, д. 1, оф. 10" 
-                    className={isDemo ? "border-primary/30" : ""}
+                    placeholder={getPlaceholder("ent_address", "220035, г. Минск, ул. Примерная, д. 1, оф. 10")} 
                     {...field} 
                   />
                 </FormControl>
@@ -196,7 +171,10 @@ export function EntrepreneurDetailsForm({
               <FormItem>
                 <FormLabel>Действует на основании</FormLabel>
                 <FormControl>
-                  <Input placeholder="свидетельства о государственной регистрации" {...field} />
+                  <Input 
+                    placeholder={getPlaceholder("ent_acts_on_basis", "свидетельства о государственной регистрации")} 
+                    {...field} 
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -218,7 +196,7 @@ export function EntrepreneurDetailsForm({
                 <FormLabel>Расчётный счёт (IBAN)</FormLabel>
                 <FormControl>
                   <Input 
-                    placeholder="BY58ALFA30143083440050270000" 
+                    placeholder="BY00XXXX00000000000000000000" 
                     maxLength={28}
                     {...field}
                     onChange={e => field.onChange(e.target.value.toUpperCase())}
@@ -277,7 +255,10 @@ export function EntrepreneurDetailsForm({
                 <FormItem>
                   <FormLabel>Телефон</FormLabel>
                   <FormControl>
-                    <Input placeholder="+375 44 7500084" {...field} />
+                    <Input 
+                      placeholder={getPlaceholder("phone", "+375 44 7500084")} 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -290,7 +271,11 @@ export function EntrepreneurDetailsForm({
                 <FormItem>
                   <FormLabel>Email</FormLabel>
                   <FormControl>
-                    <Input type="email" placeholder="email@example.com" {...field} />
+                    <Input 
+                      type="email" 
+                      placeholder={getPlaceholder("email", "email@example.com")} 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

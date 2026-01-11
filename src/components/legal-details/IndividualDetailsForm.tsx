@@ -1,7 +1,6 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useEffect, useState } from "react";
 import {
   Form,
   FormControl,
@@ -15,9 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ClientLegalDetails } from "@/hooks/useLegalDetails";
-import { DEMO_INDIVIDUAL, isDemoData } from "@/constants/demoLegalDetails";
+import { DEMO_INDIVIDUAL } from "@/constants/demoLegalDetails";
 import { Loader2, Save, Info } from "lucide-react";
-import { toast } from "sonner";
 
 const schema = z.object({
   // Required fields
@@ -50,7 +48,7 @@ interface IndividualDetailsFormProps {
   initialData?: ClientLegalDetails | null;
   onSubmit: (data: Partial<ClientLegalDetails>) => Promise<void>;
   isSubmitting: boolean;
-  showDemoOnEmpty?: boolean; // Показывать демо-данные, если нет сохранённых
+  showDemoOnEmpty?: boolean;
 }
 
 export function IndividualDetailsForm({ 
@@ -59,15 +57,11 @@ export function IndividualDetailsForm({
   isSubmitting,
   showDemoOnEmpty = true 
 }: IndividualDetailsFormProps) {
-  // Определяем, нужно ли показывать демо-данные
   const hasRealData = !!initialData?.ind_full_name;
-  const [isDemo, setIsDemo] = useState(!hasRealData && showDemoOnEmpty);
-  const [hasUserEdited, setHasUserEdited] = useState(false);
+  const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
   
-  // Выбираем источник данных: реальные или демо
   const getDefaultValues = (): FormData => {
     if (hasRealData) {
-      // Реальные данные пользователя
       return {
         ind_full_name: initialData?.ind_full_name || "",
         ind_birth_date: initialData?.ind_birth_date || "",
@@ -92,14 +86,7 @@ export function IndividualDetailsForm({
       };
     }
     
-    if (showDemoOnEmpty) {
-      // Демо-данные для пустой формы
-      return {
-        ...DEMO_INDIVIDUAL,
-      };
-    }
-    
-    // Пустая форма
+    // Пустая форма - демо-данные показываются как placeholder
     return {
       ind_full_name: "",
       ind_birth_date: "",
@@ -129,48 +116,27 @@ export function IndividualDetailsForm({
     defaultValues: getDefaultValues(),
   });
 
-  // Отслеживаем изменения формы
-  useEffect(() => {
-    const subscription = form.watch(() => {
-      if (isDemo && !hasUserEdited) {
-        setHasUserEdited(true);
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, [form, isDemo, hasUserEdited]);
-
   const handleSubmit = async (data: FormData) => {
-    // ЗАЩИТА: Не сохраняем демо-данные в БД
-    if (isDemoData(data)) {
-      toast.error("Пожалуйста, замените демонстрационные данные на ваши реальные данные");
-      return;
-    }
-    
-    // Проверяем, что пользователь изменил хотя бы обязательные поля
-    if (isDemo && !hasUserEdited) {
-      toast.error("Введите ваши реальные данные для сохранения");
-      return;
-    }
-
     await onSubmit({
       ...data,
       client_type: "individual",
     });
-    
-    // После успешного сохранения убираем флаг демо
-    setIsDemo(false);
+  };
+
+  // Функция для получения placeholder - показываем демо если нет данных
+  const getPlaceholder = (field: keyof typeof DEMO_INDIVIDUAL, fallback: string) => {
+    return showDemoPlaceholders ? (DEMO_INDIVIDUAL[field] || fallback) : fallback;
   };
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6" autoComplete="off">
-        {/* Предупреждение о демо-данных */}
-        {isDemo && (
+        {showDemoPlaceholders && (
           <Alert className="border-primary/50 bg-primary/5">
             <Info className="h-4 w-4" />
             <AlertDescription>
-              Это <strong>демонстрационные данные</strong> для примера заполнения. 
-              Замените их на ваши реальные данные перед сохранением.
+              Поля содержат <strong>примеры заполнения</strong> (показаны серым). 
+              Просто начните вводить свои данные — примеры исчезнут автоматически.
             </AlertDescription>
           </Alert>
         )}
@@ -192,9 +158,8 @@ export function IndividualDetailsForm({
                 <FormLabel>ФИО полностью *</FormLabel>
                 <FormControl>
                   <Input 
-                    placeholder="Иванов Иван Иванович" 
+                    placeholder={getPlaceholder("ind_full_name", "Иванов Иван Иванович")} 
                     autoComplete="off"
-                    className={isDemo ? "border-primary/30" : ""}
                     {...field} 
                   />
                 </FormControl>
@@ -214,7 +179,7 @@ export function IndividualDetailsForm({
                     <Input 
                       type="date" 
                       autoComplete="off" 
-                      className={isDemo ? "border-primary/30" : ""}
+                      placeholder={getPlaceholder("ind_birth_date", "")}
                       {...field} 
                     />
                   </FormControl>
@@ -231,10 +196,9 @@ export function IndividualDetailsForm({
                   <FormLabel>Личный номер *</FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder="3140583A009PB1" 
+                      placeholder={getPlaceholder("ind_personal_number", "3140583A009PB1")} 
                       maxLength={14}
                       autoComplete="off"
-                      className={isDemo ? "border-primary/30" : ""}
                       {...field}
                       onChange={e => field.onChange(e.target.value.toUpperCase())}
                     />
@@ -256,9 +220,8 @@ export function IndividualDetailsForm({
                   <FormControl>
                     <Input 
                       type="email" 
-                      placeholder="email@example.com" 
+                      placeholder={getPlaceholder("email", "email@example.com")} 
                       autoComplete="off"
-                      className={isDemo ? "border-primary/30" : ""}
                       {...field} 
                     />
                   </FormControl>
@@ -274,9 +237,8 @@ export function IndividualDetailsForm({
                   <FormLabel>Телефон *</FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder="+375 44 7500084" 
+                      placeholder={getPlaceholder("phone", "+375 44 7500084")} 
                       autoComplete="off"
-                      className={isDemo ? "border-primary/30" : ""}
                       {...field} 
                     />
                   </FormControl>
@@ -306,7 +268,7 @@ export function IndividualDetailsForm({
                   <FormLabel>Серия</FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder="MP" 
+                      placeholder={getPlaceholder("ind_passport_series", "MP")} 
                       maxLength={2}
                       autoComplete="off"
                       {...field} 
@@ -324,7 +286,12 @@ export function IndividualDetailsForm({
                 <FormItem>
                   <FormLabel>Номер</FormLabel>
                   <FormControl>
-                    <Input placeholder="1234567" maxLength={7} autoComplete="off" {...field} />
+                    <Input 
+                      placeholder={getPlaceholder("ind_passport_number", "1234567")} 
+                      maxLength={7} 
+                      autoComplete="off" 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -365,7 +332,11 @@ export function IndividualDetailsForm({
               <FormItem>
                 <FormLabel>Кем выдан</FormLabel>
                 <FormControl>
-                  <Input placeholder="Фрунзенским РУВД г. Минска" autoComplete="off" {...field} />
+                  <Input 
+                    placeholder={getPlaceholder("ind_passport_issued_by", "Фрунзенским РУВД г. Минска")} 
+                    autoComplete="off" 
+                    {...field} 
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -391,7 +362,11 @@ export function IndividualDetailsForm({
                 <FormItem>
                   <FormLabel>Индекс</FormLabel>
                   <FormControl>
-                    <Input placeholder="222840" autoComplete="off" {...field} />
+                    <Input 
+                      placeholder={getPlaceholder("ind_address_index", "222840")} 
+                      autoComplete="off" 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -404,7 +379,11 @@ export function IndividualDetailsForm({
                 <FormItem className="col-span-2">
                   <FormLabel>Область</FormLabel>
                   <FormControl>
-                    <Input placeholder="Минская область" autoComplete="off" {...field} />
+                    <Input 
+                      placeholder={getPlaceholder("ind_address_region", "Минская область")} 
+                      autoComplete="off" 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -420,7 +399,11 @@ export function IndividualDetailsForm({
                 <FormItem>
                   <FormLabel>Район (если есть)</FormLabel>
                   <FormControl>
-                    <Input placeholder="Пуховичский район" autoComplete="off" {...field} />
+                    <Input 
+                      placeholder={getPlaceholder("ind_address_district", "Пуховичский район")} 
+                      autoComplete="off" 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -433,7 +416,11 @@ export function IndividualDetailsForm({
                 <FormItem>
                   <FormLabel>Населённый пункт</FormLabel>
                   <FormControl>
-                    <Input placeholder="г. Минск / аг. Дукора" autoComplete="off" {...field} />
+                    <Input 
+                      placeholder={getPlaceholder("ind_address_city", "г. Минск")} 
+                      autoComplete="off" 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -449,7 +436,11 @@ export function IndividualDetailsForm({
                 <FormItem className="col-span-2">
                   <FormLabel>Улица</FormLabel>
                   <FormControl>
-                    <Input placeholder="ул. Блашко" autoComplete="off" {...field} />
+                    <Input 
+                      placeholder={getPlaceholder("ind_address_street", "ул. Блашко")} 
+                      autoComplete="off" 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -463,7 +454,11 @@ export function IndividualDetailsForm({
                   <FormItem>
                     <FormLabel>Дом</FormLabel>
                     <FormControl>
-                      <Input placeholder="25" autoComplete="off" {...field} />
+                      <Input 
+                        placeholder={getPlaceholder("ind_address_house", "25")} 
+                        autoComplete="off" 
+                        {...field} 
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -476,7 +471,11 @@ export function IndividualDetailsForm({
                   <FormItem>
                     <FormLabel>Кв.</FormLabel>
                     <FormControl>
-                      <Input placeholder="12" autoComplete="off" {...field} />
+                      <Input 
+                        placeholder={getPlaceholder("ind_address_apartment", "1")} 
+                        autoComplete="off" 
+                        {...field} 
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -486,7 +485,7 @@ export function IndividualDetailsForm({
           </div>
         </div>
 
-        {/* Bank Details (optional) */}
+        {/* Bank - Optional */}
         <div className="rounded-xl border bg-muted/30 p-5 sm:p-6 space-y-5">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="h-2 w-2 rounded-full bg-muted-foreground/40" />
@@ -495,7 +494,7 @@ export function IndividualDetailsForm({
             </h3>
             <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">опционально</span>
           </div>
-          
+
           <FormField
             control={form.control}
             name="bank_account"
@@ -504,19 +503,18 @@ export function IndividualDetailsForm({
                 <FormLabel>Расчётный счёт (IBAN)</FormLabel>
                 <FormControl>
                   <Input 
-                    placeholder="BY58ALFA30143083440050270000" 
+                    placeholder="BY00XXXX00000000000000000000"
                     maxLength={28}
                     autoComplete="off"
                     {...field}
                     onChange={e => field.onChange(e.target.value.toUpperCase())}
                   />
                 </FormControl>
-                <FormDescription>28 символов, начинается с BY</FormDescription>
                 <FormMessage />
               </FormItem>
             )}
           />
-
+          
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField
               control={form.control}
@@ -536,7 +534,7 @@ export function IndividualDetailsForm({
               name="bank_code"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>БИК/Код</FormLabel>
+                  <FormLabel>БИК</FormLabel>
                   <FormControl>
                     <Input 
                       placeholder="ALFABY2X" 
@@ -552,7 +550,7 @@ export function IndividualDetailsForm({
           </div>
         </div>
 
-        <Button type="submit" disabled={isSubmitting} className="w-full gap-2" size="lg">
+        <Button type="submit" disabled={isSubmitting} className="w-full gap-2">
           {isSubmitting ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (

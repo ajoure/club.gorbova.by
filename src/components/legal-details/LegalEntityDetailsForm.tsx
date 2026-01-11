@@ -1,7 +1,6 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useState, useEffect } from "react";
 import {
   Form,
   FormControl,
@@ -15,10 +14,9 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ClientLegalDetails } from "@/hooks/useLegalDetails";
-import { DEMO_LEGAL_ENTITY, isDemoData } from "@/constants/demoLegalDetails";
+import { DEMO_LEGAL_ENTITY } from "@/constants/demoLegalDetails";
 import { Loader2, Save, Info } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
-import { toast } from "sonner";
 
 const orgForms = ["ООО", "ЗАО", "ОАО", "ОДО", "УП", "КУП", "ЧУП", "Другое"];
 
@@ -53,8 +51,7 @@ export function LegalEntityDetailsForm({
   showDemoOnEmpty = true 
 }: LegalEntityDetailsFormProps) {
   const hasRealData = !!initialData?.leg_name;
-  const [isDemo, setIsDemo] = useState(!hasRealData && showDemoOnEmpty);
-  const [hasUserEdited, setHasUserEdited] = useState(false);
+  const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
 
   const getDefaultValues = (): FormData => {
     if (hasRealData) {
@@ -74,10 +71,7 @@ export function LegalEntityDetailsForm({
       };
     }
     
-    if (showDemoOnEmpty) {
-      return { ...DEMO_LEGAL_ENTITY };
-    }
-    
+    // Пустая форма - демо-данные показываются как placeholder
     return {
       leg_org_form: "",
       leg_name: "",
@@ -99,43 +93,27 @@ export function LegalEntityDetailsForm({
     defaultValues: getDefaultValues(),
   });
 
-  useEffect(() => {
-    const subscription = form.watch(() => {
-      if (isDemo && !hasUserEdited) {
-        setHasUserEdited(true);
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, [form, isDemo, hasUserEdited]);
-
   const handleSubmit = async (data: FormData) => {
-    if (isDemoData(data)) {
-      toast.error("Пожалуйста, замените демонстрационные данные на ваши реальные данные");
-      return;
-    }
-    
-    if (isDemo && !hasUserEdited) {
-      toast.error("Введите ваши реальные данные для сохранения");
-      return;
-    }
-
     await onSubmit({
       ...data,
       client_type: "legal_entity",
     });
-    
-    setIsDemo(false);
+  };
+
+  // Функция для получения placeholder - показываем демо если нет данных
+  const getPlaceholder = (field: keyof typeof DEMO_LEGAL_ENTITY, fallback: string) => {
+    return showDemoPlaceholders ? (DEMO_LEGAL_ENTITY[field] || fallback) : fallback;
   };
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
-        {isDemo && (
+        {showDemoPlaceholders && (
           <Alert className="border-primary/50 bg-primary/5">
             <Info className="h-4 w-4" />
             <AlertDescription>
-              Это <strong>демонстрационные данные</strong> для примера заполнения. 
-              Замените их на ваши реальные данные перед сохранением.
+              Поля содержат <strong>примеры заполнения</strong> (показаны серым). 
+              Просто начните вводить свои данные — примеры исчезнут автоматически.
             </AlertDescription>
           </Alert>
         )}
@@ -153,13 +131,13 @@ export function LegalEntityDetailsForm({
                   <FormLabel>Форма</FormLabel>
                   <Select onValueChange={field.onChange} defaultValue={field.value}>
                     <FormControl>
-                      <SelectTrigger className={isDemo ? "border-primary/30" : ""}>
-                        <SelectValue placeholder="ООО" />
+                      <SelectTrigger>
+                        <SelectValue placeholder={getPlaceholder("leg_org_form", "ООО")} />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {orgForms.map((form) => (
-                        <SelectItem key={form} value={form}>{form}</SelectItem>
+                      {orgForms.map((orgForm) => (
+                        <SelectItem key={orgForm} value={orgForm}>{orgForm}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -175,8 +153,7 @@ export function LegalEntityDetailsForm({
                   <FormLabel>Название</FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder='"АЖУР инкам"' 
-                      className={isDemo ? "border-primary/30" : ""}
+                      placeholder={getPlaceholder("leg_name", '"АЖУР инкам"')} 
                       {...field} 
                     />
                   </FormControl>
@@ -194,9 +171,8 @@ export function LegalEntityDetailsForm({
                 <FormLabel>УНП</FormLabel>
                 <FormControl>
                   <Input 
-                    placeholder="193405000" 
+                    placeholder={getPlaceholder("leg_unp", "193405000")} 
                     maxLength={9} 
-                    className={isDemo ? "border-primary/30" : ""}
                     {...field} 
                   />
                 </FormControl>
@@ -213,8 +189,7 @@ export function LegalEntityDetailsForm({
                 <FormLabel>Юридический адрес</FormLabel>
                 <FormControl>
                   <Input 
-                    placeholder="220035, г. Минск, ул. Панфилова, 2, офис 49Л" 
-                    className={isDemo ? "border-primary/30" : ""}
+                    placeholder={getPlaceholder("leg_address", "220035, г. Минск, ул. Панфилова, 2, офис 49Л")} 
                     {...field} 
                   />
                 </FormControl>
@@ -238,7 +213,10 @@ export function LegalEntityDetailsForm({
                 <FormItem>
                   <FormLabel>Должность</FormLabel>
                   <FormControl>
-                    <Input placeholder="Директор" {...field} />
+                    <Input 
+                      placeholder={getPlaceholder("leg_director_position", "Директор")} 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -252,8 +230,7 @@ export function LegalEntityDetailsForm({
                   <FormLabel>ФИО</FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder="Иванов Иван Иванович" 
-                      className={isDemo ? "border-primary/30" : ""}
+                      placeholder={getPlaceholder("leg_director_name", "Иванов Иван Иванович")} 
                       {...field} 
                     />
                   </FormControl>
@@ -270,7 +247,10 @@ export function LegalEntityDetailsForm({
               <FormItem>
                 <FormLabel>Действует на основании</FormLabel>
                 <FormControl>
-                  <Input placeholder="Устава" {...field} />
+                  <Input 
+                    placeholder={getPlaceholder("leg_acts_on_basis", "Устава")} 
+                    {...field} 
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -292,7 +272,7 @@ export function LegalEntityDetailsForm({
                 <FormLabel>Расчётный счёт (IBAN)</FormLabel>
                 <FormControl>
                   <Input 
-                    placeholder="BY47ALFA30122C35190010270000" 
+                    placeholder="BY00XXXX00000000000000000000" 
                     maxLength={28}
                     {...field}
                     onChange={e => field.onChange(e.target.value.toUpperCase())}
@@ -351,7 +331,10 @@ export function LegalEntityDetailsForm({
                 <FormItem>
                   <FormLabel>Телефон</FormLabel>
                   <FormControl>
-                    <Input placeholder="+375 17 3456789" {...field} />
+                    <Input 
+                      placeholder={getPlaceholder("phone", "+375 17 3456789")} 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -364,7 +347,11 @@ export function LegalEntityDetailsForm({
                 <FormItem>
                   <FormLabel>Email</FormLabel>
                   <FormControl>
-                    <Input type="email" placeholder="info@company.by" {...field} />
+                    <Input 
+                      type="email" 
+                      placeholder={getPlaceholder("email", "info@company.by")} 
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
