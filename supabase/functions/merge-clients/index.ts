@@ -41,10 +41,19 @@ serve(async (req) => {
     // Use service role for actual operations
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { caseId, masterId, mergedIds } = await req.json();
+    const { caseId, masterId, mergedIds: rawMergedIds } = await req.json();
 
-    if (!caseId || !masterId || !mergedIds?.length) {
+    if (!caseId || !masterId || !rawMergedIds?.length) {
       return new Response(JSON.stringify({ error: "Missing required fields" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // IMPORTANT: Ensure masterId is NOT in mergedIds
+    const mergedIds = rawMergedIds.filter((id: string) => id !== masterId);
+    if (mergedIds.length === 0) {
+      return new Response(JSON.stringify({ error: "No profiles to merge after excluding master" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -52,10 +61,10 @@ serve(async (req) => {
 
     console.log(`Merging clients: master=${masterId}, merged=${mergedIds.join(",")}`);
 
-    // Get master profile user_id
+    // Get master profile
     const { data: masterProfile } = await supabase
       .from("profiles")
-      .select("user_id")
+      .select("id, user_id")
       .eq("id", masterId)
       .single();
 
@@ -63,75 +72,106 @@ serve(async (req) => {
       throw new Error("Master profile not found");
     }
 
+    const masterProfileId = masterProfile.id;
     const masterUserId = masterProfile.user_id;
 
-    // Get merged profiles user_ids
+    // Get merged profiles
     const { data: mergedProfiles } = await supabase
       .from("profiles")
       .select("id, user_id")
       .in("id", mergedIds);
 
-    const mergedUserIds = mergedProfiles?.map(p => p.user_id) || [];
+    const mergedProfileIds = mergedProfiles?.map(p => p.id) || [];
+    const mergedUserIds = mergedProfiles?.map(p => p.user_id).filter(Boolean) || [];
 
-    // Transfer orders to master
-    for (const userId of mergedUserIds) {
-      await supabase
-        .from("orders")
-        .update({ user_id: masterUserId })
-        .eq("user_id", userId);
+    // Collect all IDs that we need to re-assign (profile ids + user_ids)
+    const allMergedIds = [...new Set([...mergedProfileIds, ...mergedUserIds])];
+
+    console.log(`Master: profileId=${masterProfileId}, userId=${masterUserId}`);
+    console.log(`Merged IDs (profile+user): ${allMergedIds.join(",")}`);
+
+    let transferredOrders = 0;
+    let transferredSubscriptions = 0;
+    let transferredEntitlements = 0;
+
+    // Transfer orders_v2 to master (user_id can be profile.id or auth.user_id)
+    if (allMergedIds.length > 0) {
+      const { data: ordersData } = await supabase
+        .from("orders_v2")
+        .update({ user_id: masterUserId || masterProfileId })
+        .in("user_id", allMergedIds)
+        .select("id");
+      transferredOrders = ordersData?.length || 0;
+      console.log(`Transferred ${transferredOrders} orders to master`);
+    }
+
+    // Transfer subscriptions_v2 to master
+    if (allMergedIds.length > 0) {
+      const { data: subsData } = await supabase
+        .from("subscriptions_v2")
+        .update({ user_id: masterUserId || masterProfileId })
+        .in("user_id", allMergedIds)
+        .select("id");
+      transferredSubscriptions = subsData?.length || 0;
+      console.log(`Transferred ${transferredSubscriptions} subscriptions to master`);
     }
 
     // Transfer entitlements to master
-    for (const userId of mergedUserIds) {
-      await supabase
+    if (allMergedIds.length > 0) {
+      const { data: entData } = await supabase
         .from("entitlements")
+        .update({ user_id: masterUserId || masterProfileId })
+        .in("user_id", allMergedIds)
+        .select("id");
+      transferredEntitlements = entData?.length || 0;
+      console.log(`Transferred ${transferredEntitlements} entitlements to master`);
+    }
+
+    // Update payment_reconcile_queue to point to master profile
+    if (mergedProfileIds.length > 0) {
+      await supabase
+        .from("payment_reconcile_queue")
+        .update({ matched_profile_id: masterProfileId })
+        .in("matched_profile_id", mergedProfileIds);
+    }
+
+    // Transfer consent_logs
+    if (mergedUserIds.length > 0) {
+      await supabase
+        .from("consent_logs")
         .update({ user_id: masterUserId })
-        .eq("user_id", userId);
+        .in("user_id", mergedUserIds);
     }
 
-    // Transfer subscriptions (keep only the best one)
-    for (const userId of mergedUserIds) {
-      const { data: subs } = await supabase
-        .from("subscriptions")
-        .select("*")
-        .eq("user_id", userId);
-      
-      if (subs?.length) {
-        // Archive old subscriptions by updating to master
-        await supabase
-          .from("subscriptions")
-          .update({ user_id: masterUserId })
-          .eq("user_id", userId);
-      }
-    }
-
-    // Archive merged profiles
-    for (const profileId of mergedIds) {
+    // Archive merged profiles (NOT the master!)
+    for (const profileId of mergedProfileIds) {
       await supabase
         .from("profiles")
         .update({
           is_archived: true,
-          merged_to_profile_id: masterId,
+          merged_to_profile_id: masterProfileId,
           duplicate_flag: "none",
         })
         .eq("id", profileId);
     }
 
-    // Update master profile
+    // IMPORTANT: Ensure master is ACTIVE (not archived)
     await supabase
       .from("profiles")
       .update({
+        is_archived: false,
+        merged_to_profile_id: null,
         duplicate_flag: "none",
         primary_in_group: true,
       })
-      .eq("id", masterId);
+      .eq("id", masterProfileId);
 
     // Update case status
     await supabase
       .from("duplicate_cases")
       .update({
         status: "merged",
-        master_profile_id: masterId,
+        master_profile_id: masterProfileId,
         resolved_at: new Date().toISOString(),
       })
       .eq("id", caseId);
@@ -141,18 +181,39 @@ serve(async (req) => {
       .from("client_duplicates")
       .update({ is_master: true })
       .eq("case_id", caseId)
-      .eq("profile_id", masterId);
+      .eq("profile_id", masterProfileId);
+
+    await supabase
+      .from("client_duplicates")
+      .update({ is_master: false })
+      .eq("case_id", caseId)
+      .in("profile_id", mergedProfileIds);
 
     // Log merge in history
     await supabase.from("merge_history").insert({
       case_id: caseId,
-      master_profile_id: masterId,
-      merged_data: { merged_profile_ids: mergedIds, merged_user_ids: mergedUserIds },
+      master_profile_id: masterProfileId,
+      merged_data: { 
+        merged_profile_ids: mergedProfileIds, 
+        merged_user_ids: mergedUserIds,
+        transferred: {
+          orders: transferredOrders,
+          subscriptions: transferredSubscriptions,
+          entitlements: transferredEntitlements,
+        }
+      },
     });
 
     console.log("Merge completed successfully");
 
-    return new Response(JSON.stringify({ success: true }), {
+    return new Response(JSON.stringify({ 
+      success: true,
+      transferred: {
+        orders: transferredOrders,
+        subscriptions: transferredSubscriptions,
+        entitlements: transferredEntitlements,
+      }
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error: unknown) {

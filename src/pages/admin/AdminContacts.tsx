@@ -113,7 +113,10 @@ export default function AdminContacts() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
+  // Initialize with "all" preset filter (hide archived by default)
+  const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([
+    { field: "status", operator: "not_equals", value: "archived" }
+  ]);
   const [activePreset, setActivePreset] = useState("all");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -383,6 +386,18 @@ export default function AdminContacts() {
       const profilesToDelete = contacts?.filter(c => ids.includes(c.id)) || [];
       const userIds = profilesToDelete.map(p => p.user_id).filter(Boolean);
 
+      // FIRST: Clear duplicate_cases references (FK now SET NULL, but explicit is safer)
+      await supabase
+        .from("duplicate_cases")
+        .update({ master_profile_id: null })
+        .in("master_profile_id", ids);
+
+      // Delete client_duplicates entries for these profiles (CASCADE should handle, but explicit)
+      await supabase
+        .from("client_duplicates")
+        .delete()
+        .in("profile_id", ids);
+
       // Delete related data in order
       if (userIds.length > 0) {
         // 1. Get order IDs
@@ -409,22 +424,22 @@ export default function AdminContacts() {
         // 6. Delete orders
         await supabase.from("orders_v2").delete().in("user_id", userIds);
 
-         // 7. Delete consent logs
-         await supabase.from("consent_logs").delete().in("user_id", userIds);
+        // 7. Delete consent logs
+        await supabase.from("consent_logs").delete().in("user_id", userIds);
 
-         // 8. Delete audit logs
-         await supabase.from("audit_logs").delete().in("target_user_id", userIds);
-       }
+        // 8. Delete audit logs
+        await supabase.from("audit_logs").delete().in("target_user_id", userIds);
+      }
 
-       // 8.5 Detach reconciliation queue links that reference profiles (FK blocks delete)
-       await supabase
-         .from("payment_reconcile_queue")
-         .update({ matched_profile_id: null })
-         .in("matched_profile_id", ids);
+      // 8.5 Detach reconciliation queue links that reference profiles (FK blocks delete)
+      await supabase
+        .from("payment_reconcile_queue")
+        .update({ matched_profile_id: null })
+        .in("matched_profile_id", ids);
 
-       // 9. Delete profiles
-       const { error } = await supabase.from("profiles").delete().in("id", ids);
-       if (error) throw error;
+      // 9. Delete profiles
+      const { error } = await supabase.from("profiles").delete().in("id", ids);
+      if (error) throw error;
       
       return ids.length;
     },
@@ -432,6 +447,7 @@ export default function AdminContacts() {
       toast.success(`Удалено ${count} контактов`);
       clearSelection();
       queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["duplicate-count"] });
     },
     onError: (error) => {
       toast.error("Ошибка: " + (error as Error).message);
