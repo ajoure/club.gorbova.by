@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { 
   RefreshCw, Download, CheckCircle2, User, CreditCard, Mail, 
-  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2, Calendar, Eye, Edit, FileText
+  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2, Calendar, Eye, Edit, FileText,
+  BarChart3, ArrowRightLeft, Upload, Play
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -20,6 +21,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useBepaidQueue, useBepaidPayments, useBepaidStats, QueueItem, PaymentItem, DateFilter } from "@/hooks/useBepaidData";
 import BepaidMappingsTab from "@/components/admin/bepaid/BepaidMappingsTab";
 import BepaidRawDataTab from "@/components/admin/bepaid/BepaidRawDataTab";
+import BepaidAnalyticsTab from "@/components/admin/bepaid/BepaidAnalyticsTab";
+import BepaidReconciliationTab from "@/components/admin/bepaid/BepaidReconciliationTab";
+import BepaidImportDialog from "@/components/admin/bepaid/BepaidImportDialog";
 import { CreateOrderButton, LinkToProfileButton, BulkProcessButton } from "@/components/admin/bepaid/BepaidQueueActions";
 import ContactDealsDialog from "@/components/admin/bepaid/ContactDealsDialog";
 import SyncPeriodButton from "@/components/admin/bepaid/SyncPeriodButton";
@@ -47,6 +51,12 @@ export default function AdminBepaidSync() {
   // Deal detail sheet state (for payments tab)
   const [dealSheetOpen, setDealSheetOpen] = useState(false);
   const [selectedDeal, setSelectedDeal] = useState<any>(null);
+  
+  // Import dialog state
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  
+  // Process queue state
+  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
   
   const queryClient = useQueryClient();
 
@@ -333,13 +343,21 @@ export default function AdminBepaidSync() {
               <Clock className="h-4 w-4" />
               Очередь ({queueItems.length})
             </TabsTrigger>
+            <TabsTrigger value="analytics" className="gap-2">
+              <BarChart3 className="h-4 w-4" />
+              Аналитика
+            </TabsTrigger>
+            <TabsTrigger value="reconciliation" className="gap-2">
+              <ArrowRightLeft className="h-4 w-4" />
+              Сверка
+            </TabsTrigger>
             <TabsTrigger value="raw" className="gap-2">
               <FileText className="h-4 w-4" />
               bePaid API
             </TabsTrigger>
             <TabsTrigger value="mappings" className="gap-2">
               <Link2 className="h-4 w-4" />
-              Маппинг продуктов
+              Маппинг
             </TabsTrigger>
           </TabsList>
 
@@ -664,6 +682,16 @@ export default function AdminBepaidSync() {
             </Card>
           </TabsContent>
 
+          {/* Analytics tab */}
+          <TabsContent value="analytics">
+            <BepaidAnalyticsTab dateFilter={dateFilter} />
+          </TabsContent>
+
+          {/* Reconciliation tab */}
+          <TabsContent value="reconciliation">
+            <BepaidReconciliationTab dateFilter={dateFilter} />
+          </TabsContent>
+
           {/* Raw bePaid data tab */}
           <TabsContent value="raw">
             <BepaidRawDataTab dateFilter={dateFilter} />
@@ -707,6 +735,16 @@ export default function AdminBepaidSync() {
           }}
           deal={selectedDeal}
           profile={selectedDeal ? { id: selectedDeal.user_id, full_name: null, phone: null } : null}
+        />
+        
+        {/* Import Dialog */}
+        <BepaidImportDialog 
+          open={importDialogOpen} 
+          onOpenChange={setImportDialogOpen}
+          onSuccess={() => {
+            refetchQueue();
+            refetchPayments();
+          }}
         />
       </div>
     </TooltipProvider>
