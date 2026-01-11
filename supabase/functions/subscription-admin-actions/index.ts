@@ -500,20 +500,27 @@ Deno.serve(async (req) => {
     // Get subscription with related product, tariff and order data (including meta for gc_order_id)
     const { data: subscription, error: subError } = await supabase
       .from('subscriptions_v2')
-      .select('*, products_v2(telegram_club_id, name), tariffs(getcourse_offer_id, getcourse_offer_code, name), orders_v2(order_number, customer_email, final_price, meta, user_id), profiles!subscriptions_v2_user_id_fkey(email)')
+      .select('*, products_v2(telegram_club_id, name), tariffs(getcourse_offer_id, getcourse_offer_code, name), orders_v2(order_number, customer_email, final_price, meta, user_id)')
       .eq('id', subscription_id)
       .single();
 
     if (subError || !subscription) {
+      console.log('Subscription lookup error:', subError?.message || 'not found', 'subscription_id:', subscription_id);
       return new Response(JSON.stringify({ success: false, error: 'Subscription not found' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Get email from profiles if customer_email is not set in order
+    // Get email from profiles - search by both profile.id and user_id since user_id might be profile.id
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('email')
+      .or(`id.eq.${subscription.user_id},user_id.eq.${subscription.user_id}`)
+      .maybeSingle();
+
+    // Get email from profiles or order
     const orderData = subscription.orders_v2 as any;
-    const profileData = subscription.profiles as any;
     const customerEmail = orderData?.customer_email || profileData?.email;
 
     let result: Record<string, any> = { success: true };
