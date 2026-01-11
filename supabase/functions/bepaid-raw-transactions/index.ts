@@ -9,7 +9,7 @@ const corsHeaders = {
 /**
  * bepaid-raw-transactions
  * 
- * Fetches ALL transaction data from bePaid API using the transactions/query endpoint.
+ * Fetches ALL transaction data from bePaid API using the transactions endpoint.
  * Includes: IP address, receipt URL, full description, product/tariff matching.
  * Auto-matches contacts and products from database.
  */
@@ -129,7 +129,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const fromDate = body.fromDate || "2026-01-01"; // Default to Jan 1, 2026
+    const fromDate = body.fromDate || "2026-01-01";
     const toDate = body.toDate || new Date().toISOString().split("T")[0];
     const perPage = Math.min(body.perPage || 100, 1000);
 
@@ -166,45 +166,41 @@ serve(async (req) => {
     const allSubscriptions: any[] = [];
 
     // =====================================================
-    // PART 1: Fetch transactions via /v2/transactions/query
+    // PART 1: Fetch transactions via /v1/transactions (GET with pagination)
     // =====================================================
     try {
-      const queryUrl = "https://gateway.bepaid.by/v2/transactions/query";
-      console.info(`Fetching transactions via POST ${queryUrl}`);
+      let page = 1;
+      let hasMore = true;
       
-      const queryBody = {
-        filter: {
-          created_at: {
-            gte: fromDate + "T00:00:00Z",
-            lte: toDate + "T23:59:59Z"
-          }
-        },
-        pagination: {
-          per_page: perPage,
-          page: 1
-        },
-        sort: {
-          created_at: "desc"
+      while (hasMore && page <= 20) {
+        const txUrl = `https://gateway.bepaid.by/v1/transactions?per_page=${perPage}&page=${page}&created_at_gteq=${fromDate}&created_at_lteq=${toDate}`;
+        console.info(`Fetching transactions page ${page}: GET ${txUrl}`);
+        
+        const txResponse = await fetch(txUrl, {
+          method: "GET",
+          headers: {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        });
+
+        console.info(`Transactions page ${page} response status: ${txResponse.status}`);
+        
+        if (!txResponse.ok) {
+          const errorText = await txResponse.text();
+          console.warn(`Transactions GET failed: ${txResponse.status} - ${errorText}`);
+          break;
         }
-      };
 
-      const txResponse = await fetch(queryUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${auth}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(queryBody),
-      });
-
-      const txResponseText = await txResponse.text();
-      console.info(`Transactions query response status: ${txResponse.status}`);
-      
-      if (txResponse.ok) {
-        const txData = JSON.parse(txResponseText);
+        const txData = await txResponse.json();
         const transactions: BepaidTransaction[] = txData.transactions || [];
-        console.info(`Fetched ${transactions.length} transactions from bePaid API`);
+        console.info(`Page ${page}: fetched ${transactions.length} transactions`);
+
+        if (transactions.length === 0) {
+          hasMore = false;
+          break;
+        }
 
         for (const tx of transactions) {
           const { productName, tariffName } = parseProductFromDescription(tx.description || "");
@@ -237,9 +233,15 @@ serve(async (req) => {
             _source: "bepaid_api",
           });
         }
-      } else {
-        console.warn(`Transactions query failed: ${txResponseText}`);
+
+        if (transactions.length < perPage) {
+          hasMore = false;
+        } else {
+          page++;
+        }
       }
+      
+      console.info(`Total transactions fetched from API: ${allTransactions.length}`);
     } catch (txErr) {
       console.error("Error fetching transactions from bePaid:", txErr);
     }
@@ -264,7 +266,10 @@ serve(async (req) => {
           },
         });
 
-        if (!subsResponse.ok) break;
+        if (!subsResponse.ok) {
+          console.warn(`Subscriptions failed: ${subsResponse.status}`);
+          break;
+        }
 
         const subsData = await subsResponse.json();
         const subscriptions = subsData.subscriptions || [];
@@ -378,6 +383,7 @@ serve(async (req) => {
         .select("*")
         .gte("created_at", fromTs)
         .lte("created_at", toTs)
+        .order("created_at", { ascending: false })
         .limit(1000);
 
       for (const row of queueRows || []) {
@@ -435,6 +441,7 @@ serve(async (req) => {
         .eq("provider", "bepaid")
         .gte("created_at", fromTs)
         .lte("created_at", toTs)
+        .order("created_at", { ascending: false })
         .limit(1000);
 
       const userIds = [...new Set((paymentRows || []).map(p => p.user_id).filter(Boolean))];
@@ -442,186 +449,151 @@ serve(async (req) => {
       if (userIds.length > 0) {
         const { data: profiles } = await supabase
           .from("profiles")
-          .select("id, email, full_name, phone")
-          .in("id", userIds);
-        for (const pr of profiles || []) {
-          profilesMap[pr.id] = pr;
+          .select("id, user_id, full_name, email, phone")
+          .in("user_id", userIds);
+        for (const p of profiles || []) {
+          if (p.user_id) profilesMap[p.user_id] = p;
         }
       }
 
-      for (const p of paymentRows || []) {
-        const order = (p as any).orders_v2;
-        const profile = profilesMap[p.user_id] || {};
-        const productName = order?.products_v2?.name;
-        const tariffName = order?.tariffs?.name;
-        const meta: any = p.meta || {};
+      for (const pay of paymentRows || []) {
+        const order: any = pay.orders_v2;
+        const profile = profilesMap[pay.user_id || ""];
+        const meta: any = pay.meta || {};
+
+        // Skip if already in allTransactions
+        if (allTransactions.some(t => t.uid === pay.external_id)) continue;
+
+        const { productName, tariffName } = parseProductFromDescription(meta.description || "");
 
         allTransactions.push({
-          uid: p.provider_payment_id || p.id,
+          uid: pay.external_id || pay.id,
           type: "transaction",
-          status: p.status,
-          amount: p.amount,
-          currency: p.currency,
+          status: pay.status,
+          amount: pay.amount,
+          currency: pay.currency || "BYN",
           description: meta.description || "",
-          paid_at: p.paid_at,
-          created_at: p.created_at,
+          paid_at: meta.paid_at,
+          created_at: pay.created_at,
           receipt_url: meta.receipt_url,
-          tracking_id: meta.tracking_id,
-          message: null,
+          tracking_id: pay.tracking_id,
+          message: pay.error_message || meta.message,
           ip_address: meta.ip_address,
-          customer_email: profile?.email || order?.customer_email || meta.customer_email,
-          customer_name: profile?.full_name || meta.customer_name,
-          customer_phone: profile?.phone || order?.customer_phone || meta.customer_phone,
-          card_last_4: p.card_last4,
-          card_brand: p.card_brand,
-          card_holder: meta.card_holder,
-          bank_code: meta.bank_code,
-          rrn: meta.rrn,
-          auth_code: meta.auth_code,
-          product_name: productName,
-          tariff_name: tariffName,
-          plan_title: productName ? (tariffName ? `${productName}: ${tariffName}` : productName) : meta.description,
+          customer_email: order?.customer_email || profile?.email,
+          customer_name: profile?.full_name,
+          customer_phone: order?.customer_phone || profile?.phone,
+          card_last_4: meta.card_last4 || meta.card?.last_4,
+          card_brand: meta.card?.brand,
+          card_holder: meta.card?.holder,
+          product_name: order?.products_v2?.name || productName,
+          tariff_name: order?.tariffs?.name || tariffName,
+          plan_title: order?.products_v2?.name,
           _source: "payments_v2",
-          order_id: p.order_id,
-          user_id: p.user_id,
-          matched_profile_id: p.user_id,
+          matched_profile_id: profile?.id,
+          matched_product_id: order?.product_id,
+          matched_tariff_id: order?.tariff_id,
         });
       }
-
-      // Deduplicate
-      const seen = new Set<string>();
-      const deduped = allTransactions.filter(t => {
-        const key = String(t.uid);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-      allTransactions.length = 0;
-      allTransactions.push(...deduped);
 
       console.info(`Local fallback: returned ${allTransactions.length} transactions.`);
     }
 
     // =====================================================
-    // PART 3: Auto-match contacts from database
+    // PART 3: Match contacts by email/phone
     // =====================================================
-    const emailsToMatch = [...new Set(allTransactions.filter(t => t.customer_email && !t.matched_profile_id).map(t => t.customer_email.toLowerCase()))];
-    const phonesToMatch = [...new Set(allTransactions.filter(t => t.customer_phone && !t.matched_profile_id).map(t => normalizePhone(t.customer_phone)).filter(Boolean))];
+    const emails = [...new Set(allTransactions.map(t => t.customer_email).filter(Boolean))];
+    const phones = [...new Set(allTransactions.map(t => normalizePhone(t.customer_phone)).filter(Boolean))];
 
-    let profilesByEmail: Record<string, { id: string; full_name: string }> = {};
-    let profilesByPhone: Record<string, { id: string; full_name: string }> = {};
+    let profilesByEmail: Record<string, any> = {};
+    let profilesByPhone: Record<string, any> = {};
 
-    if (emailsToMatch.length > 0) {
-      const { data: profiles } = await supabase
+    if (emails.length > 0) {
+      const { data: profilesE } = await supabase
         .from("profiles")
-        .select("id, email, full_name")
-        .in("email", emailsToMatch);
-      for (const p of profiles || []) {
-        if (p.email) profilesByEmail[p.email.toLowerCase()] = { id: p.id, full_name: p.full_name || "" };
+        .select("id, email, full_name, phone")
+        .in("email", emails);
+      for (const p of profilesE || []) {
+        if (p.email) profilesByEmail[p.email.toLowerCase()] = p;
       }
     }
 
-    if (phonesToMatch.length > 0) {
-      const { data: profiles } = await supabase
+    if (phones.length > 0) {
+      const { data: profilesP } = await supabase
         .from("profiles")
-        .select("id, phone, full_name")
-        .in("phone", phonesToMatch as string[]);
-      for (const p of profiles || []) {
-        if (p.phone) profilesByPhone[p.phone] = { id: p.id, full_name: p.full_name || "" };
+        .select("id, email, full_name, phone")
+        .in("phone", phones);
+      for (const p of profilesP || []) {
+        if (p.phone) profilesByPhone[p.phone] = p;
       }
     }
 
-    // Apply matching
+    let matchedCount = 0;
     for (const tx of allTransactions) {
-      if (tx.matched_profile_id) continue;
-      
-      // Match by email
-      if (tx.customer_email) {
-        const match = profilesByEmail[tx.customer_email.toLowerCase()];
-        if (match) {
-          tx.matched_profile_id = match.id;
-          tx.matched_profile_name = match.full_name;
-          continue;
-        }
+      if (tx.matched_profile_id) {
+        matchedCount++;
+        continue;
       }
-      
+
+      // Match by email first
+      const emailKey = tx.customer_email?.toLowerCase();
+      if (emailKey && profilesByEmail[emailKey]) {
+        tx.matched_profile_id = profilesByEmail[emailKey].id;
+        tx.matched_profile_name = profilesByEmail[emailKey].full_name;
+        matchedCount++;
+        continue;
+      }
+
       // Match by phone
-      if (tx.customer_phone) {
-        const normalized = normalizePhone(tx.customer_phone);
-        if (normalized) {
-          const match = profilesByPhone[normalized];
-          if (match) {
-            tx.matched_profile_id = match.id;
-            tx.matched_profile_name = match.full_name;
-          }
-        }
+      const phoneKey = normalizePhone(tx.customer_phone);
+      if (phoneKey && profilesByPhone[phoneKey]) {
+        tx.matched_profile_id = profilesByPhone[phoneKey].id;
+        tx.matched_profile_name = profilesByPhone[phoneKey].full_name;
+        matchedCount++;
       }
     }
 
-    // =====================================================
-    // PART 4: Auto-match products/tariffs from database
-    // =====================================================
-    const productNames = [...new Set(allTransactions.filter(t => t.product_name && !t.matched_product_id).map(t => t.product_name))];
-    
-    if (productNames.length > 0) {
-      const { data: products } = await supabase
-        .from("products_v2")
-        .select("id, name, code")
-        .in("name", productNames);
-      
-      const productMap: Record<string, string> = {};
-      for (const p of products || []) {
-        productMap[p.name.toLowerCase()] = p.id;
-      }
-
-      for (const tx of allTransactions) {
-        if (tx.product_name && !tx.matched_product_id) {
-          const productId = productMap[tx.product_name.toLowerCase()];
-          if (productId) tx.matched_product_id = productId;
-        }
-      }
-    }
-
-    // =====================================================
-    // PART 5: Sort and return
-    // =====================================================
+    // Sort by date descending
     allTransactions.sort((a, b) => {
-      const dateA = new Date(a.paid_at || a.created_at);
-      const dateB = new Date(b.paid_at || b.created_at);
+      const dateA = new Date(a.paid_at || a.created_at || 0);
+      const dateB = new Date(b.paid_at || b.created_at || 0);
       return dateB.getTime() - dateA.getTime();
     });
 
-    allSubscriptions.sort((a, b) => {
-      const dateA = new Date(a.created_at);
-      const dateB = new Date(b.created_at);
-      return dateB.getTime() - dateA.getTime();
-    });
+    const successfulTx = allTransactions.filter(t => 
+      ["successful", "succeeded", "completed", "paid"].includes(t.status?.toLowerCase())
+    ).length;
 
-    const result = {
+    const failedTx = allTransactions.filter(t => 
+      ["failed", "error", "declined"].includes(t.status?.toLowerCase())
+    ).length;
+
+    console.info(`Returning ${allTransactions.length} transactions, ${matchedCount} matched contacts`);
+
+    return new Response(JSON.stringify({
       success: true,
-      fromDate,
-      toDate,
       transactions: allTransactions,
       subscriptions: allSubscriptions,
       summary: {
         total_transactions: allTransactions.length,
         total_subscriptions: allSubscriptions.length,
-        successful_transactions: allTransactions.filter(t => ["successful", "succeeded", "completed", "paid"].includes(t.status?.toLowerCase())).length,
-        failed_transactions: allTransactions.filter(t => ["failed", "error", "declined"].includes(t.status?.toLowerCase())).length,
-        matched_contacts: allTransactions.filter(t => t.matched_profile_id).length,
-        unmatched_contacts: allTransactions.filter(t => !t.matched_profile_id).length,
+        successful_transactions: successfulTx,
+        failed_transactions: failedTx,
+        matched_contacts: matchedCount,
+        unmatched_contacts: allTransactions.length - matchedCount,
       },
-    };
-
-    console.info(`Returning ${result.summary.total_transactions} transactions, ${result.summary.matched_contacts} matched contacts`);
-
-    return new Response(JSON.stringify(result), {
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+
   } catch (error: unknown) {
-    console.error("Error in bepaid-raw-transactions:", error);
     const errMsg = error instanceof Error ? error.message : String(error);
-    return new Response(JSON.stringify({ error: errMsg }), {
+    console.error("Error in bepaid-raw-transactions:", errMsg);
+    return new Response(JSON.stringify({ 
+      success: false, 
+      error: errMsg,
+      transactions: [],
+      subscriptions: [],
+    }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

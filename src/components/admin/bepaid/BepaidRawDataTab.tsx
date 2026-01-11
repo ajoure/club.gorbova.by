@@ -10,13 +10,14 @@ import {
   RefreshCw, Download, CreditCard, Mail, Phone, User, 
   CheckCircle2, AlertCircle, FileText, ArrowRightLeft, Loader2,
   ExternalLink, Globe, Receipt, Package, UserCheck, Link2, 
-  ShoppingCart, Repeat
+  ShoppingCart, Repeat, UserPlus
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ClickableContactName } from "@/components/admin/ClickableContactName";
+import { LinkTransactionDialog } from "./LinkTransactionDialog";
 
 interface DateFilter {
   from: string;
@@ -86,6 +87,8 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
   const navigate = useNavigate();
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [activeView, setActiveView] = useState<"transactions" | "subscriptions">("transactions");
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [transactionToLink, setTransactionToLink] = useState<RawTransaction | null>(null);
   const queryClient = useQueryClient();
 
   // Fetch raw data from bePaid
@@ -550,10 +553,18 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                           className="text-sm"
                         />
                       ) : (
-                        <div className="flex items-center gap-1.5">
-                          <Link2 className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-xs text-muted-foreground">Не найден</span>
-                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-amber-600 hover:text-amber-700"
+                          onClick={() => {
+                            setTransactionToLink(tx);
+                            setLinkDialogOpen(true);
+                          }}
+                        >
+                          <UserPlus className="h-4 w-4 mr-1" />
+                          Связать
+                        </Button>
                       )}
                     </TableCell>
                       <TableCell>
@@ -686,6 +697,14 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
             </div>
           )
         )}
+
+        {/* Link dialog */}
+        <LinkTransactionDialog
+          open={linkDialogOpen}
+          onOpenChange={setLinkDialogOpen}
+          transaction={transactionToLink}
+          onLinked={() => refetch()}
+        />
       </CardContent>
     </Card>
   );
