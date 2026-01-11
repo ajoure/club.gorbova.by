@@ -146,3 +146,6 @@ verify_jwt = false
 
 [functions.getcourse-content-scraper]
 verify_jwt = false
+
+[functions.amocrm-mass-import]
+verify_jwt = false
