@@ -1,6 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useState, useEffect } from "react";
 import {
   Form,
   FormControl,
@@ -11,10 +12,13 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ClientLegalDetails } from "@/hooks/useLegalDetails";
-import { Loader2, Save } from "lucide-react";
+import { DEMO_LEGAL_ENTITY, isDemoData } from "@/constants/demoLegalDetails";
+import { Loader2, Save, Info } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { toast } from "sonner";
 
 const orgForms = ["ООО", "ЗАО", "ОАО", "ОДО", "УП", "КУП", "ЧУП", "Другое"];
 
@@ -26,9 +30,9 @@ const schema = z.object({
   leg_director_position: z.string().min(1, "Укажите должность"),
   leg_director_name: z.string().min(5, "Введите ФИО руководителя"),
   leg_acts_on_basis: z.string().optional(),
-  bank_account: z.string().min(28, "IBAN формат BY...").max(28),
-  bank_name: z.string().min(3, "Укажите банк"),
-  bank_code: z.string().min(6, "Укажите БИК"),
+  bank_account: z.string().min(28, "IBAN формат BY...").max(28).or(z.literal("")),
+  bank_name: z.string().min(3, "Укажите банк").or(z.literal("")),
+  bank_code: z.string().min(6, "Укажите БИК").or(z.literal("")),
   phone: z.string().optional(),
   email: z.string().email("Некорректный email").optional().or(z.literal("")),
 });
@@ -39,37 +43,103 @@ interface LegalEntityDetailsFormProps {
   initialData?: ClientLegalDetails | null;
   onSubmit: (data: Partial<ClientLegalDetails>) => Promise<void>;
   isSubmitting: boolean;
+  showDemoOnEmpty?: boolean;
 }
 
-export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: LegalEntityDetailsFormProps) {
+export function LegalEntityDetailsForm({ 
+  initialData, 
+  onSubmit, 
+  isSubmitting,
+  showDemoOnEmpty = true 
+}: LegalEntityDetailsFormProps) {
+  const hasRealData = !!initialData?.leg_name;
+  const [isDemo, setIsDemo] = useState(!hasRealData && showDemoOnEmpty);
+  const [hasUserEdited, setHasUserEdited] = useState(false);
+
+  const getDefaultValues = (): FormData => {
+    if (hasRealData) {
+      return {
+        leg_org_form: initialData?.leg_org_form || "",
+        leg_name: initialData?.leg_name || "",
+        leg_unp: initialData?.leg_unp || "",
+        leg_address: initialData?.leg_address || "",
+        leg_director_position: initialData?.leg_director_position || "Директор",
+        leg_director_name: initialData?.leg_director_name || "",
+        leg_acts_on_basis: initialData?.leg_acts_on_basis || "Устава",
+        bank_account: initialData?.bank_account || "",
+        bank_name: initialData?.bank_name || "",
+        bank_code: initialData?.bank_code || "",
+        phone: initialData?.phone || "",
+        email: initialData?.email || "",
+      };
+    }
+    
+    if (showDemoOnEmpty) {
+      return { ...DEMO_LEGAL_ENTITY };
+    }
+    
+    return {
+      leg_org_form: "",
+      leg_name: "",
+      leg_unp: "",
+      leg_address: "",
+      leg_director_position: "Директор",
+      leg_director_name: "",
+      leg_acts_on_basis: "Устава",
+      bank_account: "",
+      bank_name: "",
+      bank_code: "",
+      phone: "",
+      email: "",
+    };
+  };
+
   const form = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: {
-      leg_org_form: initialData?.leg_org_form || "",
-      leg_name: initialData?.leg_name || "",
-      leg_unp: initialData?.leg_unp || "",
-      leg_address: initialData?.leg_address || "",
-      leg_director_position: initialData?.leg_director_position || "Директор",
-      leg_director_name: initialData?.leg_director_name || "",
-      leg_acts_on_basis: initialData?.leg_acts_on_basis || "Устава",
-      bank_account: initialData?.bank_account || "",
-      bank_name: initialData?.bank_name || "",
-      bank_code: initialData?.bank_code || "",
-      phone: initialData?.phone || "",
-      email: initialData?.email || "",
-    },
+    defaultValues: getDefaultValues(),
   });
 
+  useEffect(() => {
+    const subscription = form.watch(() => {
+      if (isDemo && !hasUserEdited) {
+        setHasUserEdited(true);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [form, isDemo, hasUserEdited]);
+
   const handleSubmit = async (data: FormData) => {
+    if (isDemoData(data)) {
+      toast.error("Пожалуйста, замените демонстрационные данные на ваши реальные данные");
+      return;
+    }
+    
+    if (isDemo && !hasUserEdited) {
+      toast.error("Введите ваши реальные данные для сохранения");
+      return;
+    }
+
     await onSubmit({
       ...data,
       client_type: "legal_entity",
     });
+    
+    setIsDemo(false);
   };
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
+        {isDemo && (
+          <Alert className="border-primary/50 bg-primary/5">
+            <Info className="h-4 w-4" />
+            <AlertDescription>
+              Это <strong>демонстрационные данные</strong> для примера заполнения. 
+              Замените их на ваши реальные данные перед сохранением.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Organization Info */}
         <div className="space-y-4">
           <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Данные организации</h3>
@@ -83,7 +153,7 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
                   <FormLabel>Форма</FormLabel>
                   <Select onValueChange={field.onChange} defaultValue={field.value}>
                     <FormControl>
-                      <SelectTrigger>
+                      <SelectTrigger className={isDemo ? "border-primary/30" : ""}>
                         <SelectValue placeholder="ООО" />
                       </SelectTrigger>
                     </FormControl>
@@ -104,7 +174,11 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
                 <FormItem className="col-span-2">
                   <FormLabel>Название</FormLabel>
                   <FormControl>
-                    <Input placeholder='"АЖУР инкам"' {...field} />
+                    <Input 
+                      placeholder='"АЖУР инкам"' 
+                      className={isDemo ? "border-primary/30" : ""}
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -119,7 +193,12 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
               <FormItem>
                 <FormLabel>УНП</FormLabel>
                 <FormControl>
-                  <Input placeholder="193405000" maxLength={9} {...field} />
+                  <Input 
+                    placeholder="193405000" 
+                    maxLength={9} 
+                    className={isDemo ? "border-primary/30" : ""}
+                    {...field} 
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -133,7 +212,11 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
               <FormItem>
                 <FormLabel>Юридический адрес</FormLabel>
                 <FormControl>
-                  <Input placeholder="220035, г. Минск, ул. Панфилова, 2, офис 49Л" {...field} />
+                  <Input 
+                    placeholder="220035, г. Минск, ул. Панфилова, 2, офис 49Л" 
+                    className={isDemo ? "border-primary/30" : ""}
+                    {...field} 
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -168,7 +251,11 @@ export function LegalEntityDetailsForm({ initialData, onSubmit, isSubmitting }: 
                 <FormItem>
                   <FormLabel>ФИО</FormLabel>
                   <FormControl>
-                    <Input placeholder="Иванов Иван Иванович" {...field} />
+                    <Input 
+                      placeholder="Иванов Иван Иванович" 
+                      className={isDemo ? "border-primary/30" : ""}
+                      {...field} 
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

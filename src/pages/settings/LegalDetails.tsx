@@ -111,10 +111,14 @@ export default function LegalDetailsSettings() {
   };
 
   const renderForm = () => {
+    // Для редактирования: showDemoOnEmpty = false, так как редактируем реальные данные
+    // Для создания: showDemoOnEmpty = true, чтобы показать примеры заполнения
+    const isEditMode = mode === "edit";
     const props = {
       initialData: editingDetails,
-      onSubmit: mode === "edit" ? handleUpdate : handleCreate,
+      onSubmit: isEditMode ? handleUpdate : handleCreate,
       isSubmitting: isCreating || isUpdating,
+      showDemoOnEmpty: !isEditMode, // Демо только при создании новых
     };
 
     switch (selectedType) {
