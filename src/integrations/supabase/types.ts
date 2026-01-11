@@ -3069,6 +3069,8 @@ export type Database = {
       profiles: {
         Row: {
           avatar_url: string | null
+          card_holder_names: Json | null
+          card_masks: Json | null
           club_exit_at: string | null
           club_exit_reason: string | null
           consent_given_at: string | null
@@ -3107,6 +3109,8 @@ export type Database = {
         }
         Insert: {
           avatar_url?: string | null
+          card_holder_names?: Json | null
+          card_masks?: Json | null
           club_exit_at?: string | null
           club_exit_reason?: string | null
           consent_given_at?: string | null
@@ -3145,6 +3149,8 @@ export type Database = {
         }
         Update: {
           avatar_url?: string | null
+          card_holder_names?: Json | null
+          card_masks?: Json | null
           club_exit_at?: string | null
           club_exit_reason?: string | null
           consent_given_at?: string | null
