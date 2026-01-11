@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useState } from "react";
 
 // Parsed queue item with extracted card data
 export interface QueueItem {
@@ -25,7 +26,7 @@ export interface QueueItem {
   matched_profile_id: string | null;
   matched_profile_name: string | null;
   matched_profile_phone: string | null;
-  match_type: 'email' | 'name' | 'none';
+  match_type: 'email' | 'name' | 'manual' | 'none';
 }
 
 // Payment from payments_v2 table
@@ -69,18 +70,36 @@ function parseQueuePayload(rawPayload: any): Partial<QueueItem> {
   };
 }
 
-export function useBepaidQueue() {
+export interface DateFilter {
+  from: string;
+  to?: string;
+}
+
+export function useBepaidQueue(dateFilter?: DateFilter) {
   const queryClient = useQueryClient();
+  
+  // Store manual profile links in memory (not in DB since column doesn't exist)
+  const [manualLinks, setManualLinks] = useState<Map<string, { profileId: string; profileName: string; profilePhone: string | null }>>(new Map());
 
   // Fetch queue items with profile matching
   const { data: queueItems, isLoading: queueLoading, error: queueError, refetch: refetchQueue } = useQuery({
-    queryKey: ["bepaid-queue"],
+    queryKey: ["bepaid-queue", dateFilter],
     queryFn: async () => {
-      // Fetch queue items
-      const { data: queue, error: queueError } = await supabase
+      // Build query with date filter
+      let query = supabase
         .from("payment_reconcile_queue")
         .select("*")
         .order("created_at", { ascending: false });
+      
+      // Apply date filter - default to 2026-01-01
+      const fromDate = dateFilter?.from || "2026-01-01";
+      query = query.gte("created_at", `${fromDate}T00:00:00Z`);
+      
+      if (dateFilter?.to) {
+        query = query.lte("created_at", `${dateFilter.to}T23:59:59Z`);
+      }
+
+      const { data: queue, error: queueError } = await query;
       
       if (queueError) throw queueError;
 
@@ -104,7 +123,34 @@ export function useBepaidQueue() {
       const items: QueueItem[] = (queue || []).map(q => {
         const parsed = parseQueuePayload(q.raw_payload);
         
-        // Try to match profile
+        // Check for manual link first
+        const manualLink = manualLinks.get(q.id);
+        if (manualLink) {
+          return {
+            id: q.id,
+            bepaid_uid: q.bepaid_uid,
+            tracking_id: q.tracking_id,
+            amount: q.amount,
+            currency: q.currency,
+            customer_email: q.customer_email,
+            status: q.status,
+            attempts: q.attempts,
+            last_error: q.last_error,
+            card_holder: parsed.card_holder || null,
+            card_last4: parsed.card_last4 || null,
+            card_brand: parsed.card_brand || null,
+            product_name: parsed.product_name || null,
+            event_type: parsed.event_type || null,
+            order_id: parsed.order_id || null,
+            created_at: q.created_at,
+            matched_profile_id: manualLink.profileId,
+            matched_profile_name: manualLink.profileName,
+            matched_profile_phone: manualLink.profilePhone,
+            match_type: 'manual' as const,
+          };
+        }
+        
+        // Try to match profile automatically
         let matched_profile_id: string | null = null;
         let matched_profile_name: string | null = null;
         let matched_profile_phone: string | null = null;
@@ -161,21 +207,39 @@ export function useBepaidQueue() {
     },
   });
 
+  // Link profile manually (stores in local state, not DB)
+  const linkProfileManually = (queueItemId: string, profile: { id: string; full_name: string | null; phone: string | null }) => {
+    setManualLinks(prev => {
+      const newMap = new Map(prev);
+      newMap.set(queueItemId, {
+        profileId: profile.id,
+        profileName: profile.full_name || "Без имени",
+        profilePhone: profile.phone,
+      });
+      return newMap;
+    });
+    // Trigger refetch to update the UI
+    queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
+    toast.success("Связано с контактом");
+  };
+
   return {
     queueItems: queueItems || [],
     queueLoading,
     queueError,
     refetchQueue,
+    linkProfileManually,
+    manualLinks,
   };
 }
 
-export function useBepaidPayments() {
+export function useBepaidPayments(dateFilter?: DateFilter) {
   // Fetch processed payments from payments_v2
   const { data: payments, isLoading: paymentsLoading, error: paymentsError, refetch: refetchPayments } = useQuery({
-    queryKey: ["bepaid-payments"],
+    queryKey: ["bepaid-payments", dateFilter],
     queryFn: async () => {
-      // Fetch payments with joined data
-      const { data: paymentsData, error: paymentsErr } = await supabase
+      // Build query with date filter
+      let query = supabase
         .from("payments_v2")
         .select(`
           id,
@@ -195,6 +259,16 @@ export function useBepaidPayments() {
         `)
         .eq("provider", "bepaid")
         .order("created_at", { ascending: false });
+
+      // Apply date filter - default to 2026-01-01
+      const fromDate = dateFilter?.from || "2026-01-01";
+      query = query.gte("created_at", `${fromDate}T00:00:00Z`);
+      
+      if (dateFilter?.to) {
+        query = query.lte("created_at", `${dateFilter.to}T23:59:59Z`);
+      }
+
+      const { data: paymentsData, error: paymentsErr } = await query;
 
       if (paymentsErr) throw paymentsErr;
 
@@ -274,13 +348,31 @@ export function useBepaidPayments() {
   };
 }
 
-export function useBepaidStats() {
+export function useBepaidStats(dateFilter?: DateFilter) {
   const { data: stats } = useQuery({
-    queryKey: ["bepaid-stats"],
+    queryKey: ["bepaid-stats", dateFilter],
     queryFn: async () => {
+      const fromDate = dateFilter?.from || "2026-01-01";
+      
+      let paymentsQuery = supabase
+        .from("payments_v2")
+        .select("id", { count: "exact", head: true })
+        .eq("provider", "bepaid")
+        .gte("created_at", `${fromDate}T00:00:00Z`);
+      
+      let queueQuery = supabase
+        .from("payment_reconcile_queue")
+        .select("id, status")
+        .gte("created_at", `${fromDate}T00:00:00Z`);
+      
+      if (dateFilter?.to) {
+        paymentsQuery = paymentsQuery.lte("created_at", `${dateFilter.to}T23:59:59Z`);
+        queueQuery = queueQuery.lte("created_at", `${dateFilter.to}T23:59:59Z`);
+      }
+
       const [paymentsResult, queueResult] = await Promise.all([
-        supabase.from("payments_v2").select("id", { count: "exact", head: true }).eq("provider", "bepaid"),
-        supabase.from("payment_reconcile_queue").select("id, status", { count: "exact" }),
+        paymentsQuery,
+        queueQuery,
       ]);
 
       const queueData = queueResult.data || [];
@@ -305,4 +397,53 @@ export function useBepaidStats() {
     queueProcessing: 0,
     queueErrors: 0,
   };
+}
+
+// Get unique product names from queue for mapping reference
+export function useQueueProductNames(dateFilter?: DateFilter) {
+  return useQuery({
+    queryKey: ["bepaid-queue-product-names", dateFilter],
+    queryFn: async () => {
+      const fromDate = dateFilter?.from || "2026-01-01";
+      
+      let query = supabase
+        .from("payment_reconcile_queue")
+        .select("raw_payload")
+        .gte("created_at", `${fromDate}T00:00:00Z`);
+      
+      if (dateFilter?.to) {
+        query = query.lte("created_at", `${dateFilter.to}T23:59:59Z`);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      // Extract unique product names with counts and amounts
+      const productMap = new Map<string, { count: number; amounts: Set<number>; descriptions: Set<string> }>();
+
+      (data || []).forEach(q => {
+        const payload = q.raw_payload as Record<string, any> | null;
+        if (!payload) return;
+
+        const plan = payload.plan || {};
+        const additionalData = payload.additional_data || {};
+        const productName = plan.title || plan.name || additionalData.description;
+
+        if (productName) {
+          const existing = productMap.get(productName) || { count: 0, amounts: new Set(), descriptions: new Set() };
+          existing.count++;
+          if (plan.amount) existing.amounts.add(plan.amount / 100);
+          if (additionalData.description) existing.descriptions.add(additionalData.description);
+          productMap.set(productName, existing);
+        }
+      });
+
+      return Array.from(productMap.entries()).map(([name, data]) => ({
+        name,
+        count: data.count,
+        amounts: Array.from(data.amounts).sort((a, b) => a - b),
+        descriptions: Array.from(data.descriptions),
+      })).sort((a, b) => b.count - a.count);
+    },
+  });
 }

@@ -7,25 +7,34 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { 
   RefreshCw, Download, CheckCircle2, User, CreditCard, Mail, 
-  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2
+  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2, Calendar
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { useBepaidQueue, useBepaidPayments, useBepaidStats, QueueItem, PaymentItem } from "@/hooks/useBepaidData";
+import { useBepaidQueue, useBepaidPayments, useBepaidStats, QueueItem, PaymentItem, DateFilter } from "@/hooks/useBepaidData";
 import BepaidMappingsTab from "@/components/admin/bepaid/BepaidMappingsTab";
 import { CreateOrderButton, LinkToProfileButton, BulkProcessButton } from "@/components/admin/bepaid/BepaidQueueActions";
 
 export default function AdminBepaidSync() {
   const [activeMainTab, setActiveMainTab] = useState("payments");
   const [selectedQueueItems, setSelectedQueueItems] = useState<Set<string>>(new Set());
+  
+  // Date filter - default from 2026-01-01
+  const [dateFilter, setDateFilter] = useState<DateFilter>({
+    from: "2026-01-01",
+    to: undefined,
+  });
+  
   const queryClient = useQueryClient();
 
-  const { payments, paymentsLoading, refetchPayments } = useBepaidPayments();
-  const { queueItems, queueLoading, refetchQueue } = useBepaidQueue();
-  const stats = useBepaidStats();
+  const { payments, paymentsLoading, refetchPayments } = useBepaidPayments(dateFilter);
+  const { queueItems, queueLoading, refetchQueue, linkProfileManually } = useBepaidQueue(dateFilter);
+  const stats = useBepaidStats(dateFilter);
 
   const refreshAll = () => {
     refetchPayments();
@@ -51,6 +60,7 @@ export default function AdminBepaidSync() {
     const variants: Record<string, { variant: "default" | "secondary" | "outline" | "destructive"; label: string; icon: React.ReactNode }> = {
       email: { variant: "default", label: "Email", icon: <Mail className="h-3 w-3 mr-1" /> },
       name: { variant: "secondary", label: "Имя", icon: <User className="h-3 w-3 mr-1" /> },
+      manual: { variant: "default", label: "Вручную", icon: <User className="h-3 w-3 mr-1" /> },
       none: { variant: "outline", label: "Нет", icon: <AlertCircle className="h-3 w-3 mr-1" /> },
     };
     const config = variants[matchType] || variants.none;
@@ -139,6 +149,10 @@ export default function AdminBepaidSync() {
     setSelectedQueueItems(newSet);
   };
 
+  const handleLinkProfile = (queueItemId: string, profile: { id: string; full_name: string | null; phone: string | null }) => {
+    linkProfileManually(queueItemId, profile);
+  };
+
   return (
     <TooltipProvider>
       <div className="container mx-auto p-4 space-y-6">
@@ -150,10 +164,37 @@ export default function AdminBepaidSync() {
               Платежи из bePaid и очередь на обработку
             </p>
           </div>
-          <Button onClick={refreshAll} variant="outline">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Обновить
-          </Button>
+          <div className="flex items-center gap-4">
+            {/* Date filter */}
+            <div className="flex items-center gap-2 bg-muted/50 p-2 rounded-lg">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <div className="flex items-center gap-2">
+                <Label htmlFor="date-from" className="text-sm text-muted-foreground whitespace-nowrap">С:</Label>
+                <Input
+                  id="date-from"
+                  type="date"
+                  value={dateFilter.from}
+                  onChange={(e) => setDateFilter(prev => ({ ...prev, from: e.target.value }))}
+                  className="h-8 w-36"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="date-to" className="text-sm text-muted-foreground whitespace-nowrap">По:</Label>
+                <Input
+                  id="date-to"
+                  type="date"
+                  value={dateFilter.to || ""}
+                  onChange={(e) => setDateFilter(prev => ({ ...prev, to: e.target.value || undefined }))}
+                  className="h-8 w-36"
+                  placeholder="Сегодня"
+                />
+              </div>
+            </div>
+            <Button onClick={refreshAll} variant="outline">
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Обновить
+            </Button>
+          </div>
         </div>
 
         {/* Stats cards */}
@@ -477,7 +518,11 @@ export default function AdminBepaidSync() {
                                   )}
                                 </div>
                               ) : (
-                                <LinkToProfileButton item={item} onSuccess={refetchQueue} />
+                                <LinkToProfileButton 
+                                  item={item} 
+                                  onSuccess={refetchQueue}
+                                  onLinkProfile={(profile) => handleLinkProfile(item.id, profile)}
+                                />
                               )}
                             </TableCell>
                             <TableCell>
@@ -495,7 +540,7 @@ export default function AdminBepaidSync() {
 
           {/* Mappings tab */}
           <TabsContent value="mappings">
-            <BepaidMappingsTab />
+            <BepaidMappingsTab dateFilter={dateFilter} />
           </TabsContent>
         </Tabs>
       </div>
