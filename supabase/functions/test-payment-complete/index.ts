@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { findProfileByAnyId } from '../_shared/user-resolver.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -364,12 +365,26 @@ Deno.serve(async (req) => {
       // GetCourse sync
       const gcOfferId = offerGetcourseId || orderMeta.getcourse_offer_id || tariff?.getcourse_offer_id || null;
       
-      // Get user profile for GetCourse
-      const { data: userProfile } = await supabase
+      // Get user profile for GetCourse (handle profile.id vs user_id)
+      let userProfile: any = null;
+      
+      // First try by user_id
+      const { data: profileByUserId } = await supabase
         .from('profiles')
         .select('email, full_name, first_name, last_name, phone')
         .eq('user_id', orderV2.user_id)
         .maybeSingle();
+      
+      if (profileByUserId) {
+        userProfile = profileByUserId;
+      } else {
+        // Fallback: try by profile id (in case user_id was actually profile.id)
+        const { profile: profileById, resolvedFrom } = await findProfileByAnyId(supabase, orderV2.user_id);
+        if (profileById) {
+          userProfile = profileById;
+          console.log(`[Test Payment] Found profile by ${resolvedFrom} fallback`);
+        }
+      }
 
       if (userProfile?.email) {
         const gcResult = await sendToGetCourse(

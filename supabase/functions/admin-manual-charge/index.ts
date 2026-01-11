@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getOrderUserId } from '../_shared/user-resolver.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -162,13 +163,21 @@ Deno.serve(async (req) => {
 
     // ACTION: Manual charge
     if (action === 'manual_charge') {
-      const { user_id, payment_method_id, amount, description, product_id, tariff_id } = body;
+      const { user_id: inputUserId, payment_method_id, amount, description, product_id, tariff_id } = body;
 
-      if (!user_id || !payment_method_id || !amount || !product_id || !tariff_id) {
+      if (!inputUserId || !payment_method_id || !amount || !product_id || !tariff_id) {
         return new Response(JSON.stringify({ success: false, error: 'Missing required fields: user_id, payment_method_id, amount, product_id, tariff_id' }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
+      }
+
+      // Normalize user_id (handle profile.id vs user_id confusion)
+      const resolved = await getOrderUserId(supabase, inputUserId);
+      const user_id = resolved.userId;
+      
+      if (resolved.wasNormalized) {
+        console.log(`[admin-manual-charge] Normalized user_id: ${inputUserId} -> ${user_id} (was profile.id)`);
       }
 
       // Get payment method

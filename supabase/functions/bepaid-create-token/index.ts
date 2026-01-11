@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { resolveUserIds, getOrderUserId } from '../_shared/user-resolver.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -240,22 +241,38 @@ Deno.serve(async (req) => {
     }
 
     // Determine user ID for the order
-    let userId = authUserId || existingUserId || null;
+    // Normalize existingUserId if provided (could be profile.id instead of user_id)
+    let userId = authUserId || null;
+    let profileId: string | null = null;
     let newUserCreated = false;
     let newUserPassword: string | null = null;
+    let userIdWasNormalized = false;
+
+    // If existingUserId provided, normalize it (handle profile.id vs user_id confusion)
+    if (!userId && existingUserId) {
+      const resolved = await getOrderUserId(supabase, existingUserId);
+      userId = resolved.userId;
+      profileId = resolved.profileId;
+      userIdWasNormalized = resolved.wasNormalized;
+      
+      if (resolved.wasNormalized) {
+        console.log(`[bepaid-create-token] Normalized user ID: ${existingUserId} -> ${userId} (was profile.id)`);
+      }
+    }
 
     // If no user ID, check if user exists by email or create new one
     if (!userId) {
       // Check if profile exists with this email
       const { data: existingProfile } = await supabase
         .from('profiles')
-        .select('user_id')
+        .select('id, user_id')
         .eq('email', emailLower)
         .maybeSingle();
 
       if (existingProfile) {
         userId = existingProfile.user_id;
-        console.log('Found existing user by email:', userId);
+        profileId = existingProfile.id;
+        console.log('Found existing user by email:', userId, 'profile_id:', profileId);
 
         // Update profile with additional info if provided
         if (customerPhone || customerFirstName) {
