@@ -237,11 +237,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
-  // Fetch deals for this contact
+  // Fetch deals for this contact - check both profile.id and user_id
   const { data: deals, isLoading: dealsLoading } = useQuery({
-    queryKey: ["contact-deals", contact?.user_id],
+    queryKey: ["contact-deals", contact?.id, contact?.user_id],
     queryFn: async () => {
-      if (!contact?.user_id) return [];
+      if (!contact?.id) return [];
+      
+      // Build array of IDs to search (profile.id and optionally user_id)
+      const userIds = [contact.id];
+      if (contact.user_id && contact.user_id !== contact.id) {
+        userIds.push(contact.user_id);
+      }
+      
       const { data, error } = await supabase
         .from("orders_v2")
         .select(`
@@ -250,19 +257,26 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           tariffs(id, name, code),
           payments_v2(id, status, provider_response)
         `)
-        .eq("user_id", contact.user_id)
+        .in("user_id", userIds)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
     },
-    enabled: !!contact?.user_id,
+    enabled: !!contact?.id,
   });
 
-  // Fetch subscriptions for this contact
+  // Fetch subscriptions for this contact - check both profile.id and user_id
   const { data: subscriptions, isLoading: subsLoading, refetch: refetchSubs } = useQuery({
-    queryKey: ["contact-subscriptions", contact?.user_id],
+    queryKey: ["contact-subscriptions", contact?.id, contact?.user_id],
     queryFn: async () => {
-      if (!contact?.user_id) return [];
+      if (!contact?.id) return [];
+      
+      // Build array of IDs to search
+      const userIds = [contact.id];
+      if (contact.user_id && contact.user_id !== contact.id) {
+        userIds.push(contact.user_id);
+      }
+      
       const { data, error } = await supabase
         .from("subscriptions_v2")
         .select(`
@@ -270,12 +284,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           products_v2(id, name, code, telegram_club_id),
           tariffs(id, name, code, getcourse_offer_code, getcourse_offer_id)
         `)
-        .eq("user_id", contact.user_id)
+        .in("user_id", userIds)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
     },
-    enabled: !!contact?.user_id,
+    enabled: !!contact?.id,
   });
 
   // Fetch products for grant access
