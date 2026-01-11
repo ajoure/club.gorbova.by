@@ -449,6 +449,14 @@ Deno.serve(async (req) => {
               .single();
 
             if (!existingOrder) {
+              // Parse payment date for order and subscription
+              const paymentDateMatch = payment.paymentDate?.match(/(\d{4}-\d{2}-\d{2})/);
+              const paymentDate = paymentDateMatch ? new Date(paymentDateMatch[1]) : new Date();
+              
+              // Calculate subscription end date (payment date + 30 days)
+              const subscriptionEnd = new Date(paymentDate);
+              subscriptionEnd.setDate(subscriptionEnd.getDate() + 30);
+
               const { data: newOrder, error: orderError } = await supabase
                 .from('orders_v2')
                 .insert({
@@ -458,8 +466,10 @@ Deno.serve(async (req) => {
                   order_number: orderNumber,
                   status: 'paid',
                   final_price: payment.amount,
+                  paid_amount: payment.amount,
                   currency: payment.currency,
                   customer_email: payment.email || matchedProfile.email,
+                  created_at: paymentDate.toISOString(),
                   meta: {
                     source: 'bepaid_import',
                     bepaid_uid: payment.uid,
@@ -482,18 +492,38 @@ Deno.serve(async (req) => {
                 .from('payments_v2')
                 .insert({
                   order_id: newOrder.id,
+                  user_id: userId,
                   provider: 'bepaid',
-                  provider_payment_id: payment.uid,
+                  provider_ref: payment.uid,
                   amount: payment.amount,
                   currency: payment.currency,
-                  status: 'completed',
-                  card_last4: payment.cardMask?.slice(-4),
-                  card_brand: payment.cardMask?.startsWith('4') ? 'visa' : 'mastercard',
+                  status: 'success',
+                  method: 'card',
+                  paid_at: paymentDate.toISOString(),
+                  created_at: paymentDate.toISOString(),
                   meta: {
                     bepaid_order_id: payment.orderId,
                     card_holder: payment.cardHolder,
                     card_mask: payment.cardMask,
                     imported_at: new Date().toISOString()
+                  }
+                });
+
+              // Create subscription with proper dates
+              await supabase
+                .from('subscriptions_v2')
+                .insert({
+                  user_id: userId,
+                  order_id: newOrder.id,
+                  product_id: productId,
+                  tariff_id: tariffId,
+                  status: subscriptionEnd < new Date() ? 'expired' : 'active',
+                  current_period_start: paymentDate.toISOString(),
+                  current_period_end: subscriptionEnd.toISOString(),
+                  created_at: paymentDate.toISOString(),
+                  meta: {
+                    import_source: 'bepaid_report',
+                    bepaid_uid: payment.uid,
                   }
                 });
 
@@ -529,6 +559,14 @@ Deno.serve(async (req) => {
             const firstName = nameParts[0] || '';
             const lastName = nameParts.slice(1).join(' ') || '';
             
+            // Parse payment date
+            const paymentDateMatch = payment.paymentDate?.match(/(\d{4}-\d{2}-\d{2})/);
+            const paymentDate = paymentDateMatch ? new Date(paymentDateMatch[1]) : new Date();
+            
+            // Calculate subscription end date (payment date + 30 days)
+            const subscriptionEnd = new Date(paymentDate);
+            subscriptionEnd.setDate(subscriptionEnd.getDate() + 30);
+
             const { data: newProfile, error: profileError } = await supabase
               .from('profiles')
               .insert({
@@ -546,19 +584,55 @@ Deno.serve(async (req) => {
 
             if (profileError) throw profileError;
             
+            // Create auth user for this profile
+            let userId: string | null = null;
+            const email = payment.email || `card_${payment.cardMask?.slice(-4) || 'unknown'}@imported.local`;
+            
+            const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
+              email: email,
+              email_confirm: true,
+              user_metadata: { full_name: newProfile.full_name },
+            });
+
+            if (authError) {
+              // Try to find existing user
+              const { data: existingUsers } = await supabase.auth.admin.listUsers();
+              const found = existingUsers?.users?.find((u: { email?: string }) => u.email === email);
+              if (found) {
+                userId = found.id;
+              }
+            } else {
+              userId = authUser.user.id;
+            }
+
+            // Update profile with user_id
+            if (userId) {
+              await supabase
+                .from('profiles')
+                .update({ user_id: userId })
+                .eq('id', newProfile.id);
+            } else {
+              detail.action = 'skipped_no_user_id';
+              result.skipped++;
+              result.details.push(detail);
+              continue;
+            }
+
             // Create order for new profile
             const orderNumber = `IMP-${payment.orderId}`;
             const { data: newOrder, error: orderError } = await supabase
               .from('orders_v2')
               .insert({
-                user_id: newProfile.id,
+                user_id: userId,
                 product_id: productId,
                 tariff_id: tariffId,
                 order_number: orderNumber,
                 status: 'paid',
                 final_price: payment.amount,
+                paid_amount: payment.amount,
                 currency: payment.currency,
                 customer_email: payment.email,
+                created_at: paymentDate.toISOString(),
                 meta: {
                   source: 'bepaid_import',
                   bepaid_uid: payment.uid,
@@ -579,18 +653,38 @@ Deno.serve(async (req) => {
               .from('payments_v2')
               .insert({
                 order_id: newOrder.id,
+                user_id: userId,
                 provider: 'bepaid',
-                provider_payment_id: payment.uid,
+                provider_ref: payment.uid,
                 amount: payment.amount,
                 currency: payment.currency,
-                status: 'completed',
-                card_last4: payment.cardMask?.slice(-4),
-                card_brand: payment.cardMask?.startsWith('4') ? 'visa' : 'mastercard',
+                status: 'success',
+                method: 'card',
+                paid_at: paymentDate.toISOString(),
+                created_at: paymentDate.toISOString(),
                 meta: {
                   bepaid_order_id: payment.orderId,
                   card_holder: payment.cardHolder,
                   card_mask: payment.cardMask,
                   imported_at: new Date().toISOString()
+                }
+              });
+
+            // Create subscription with proper dates
+            await supabase
+              .from('subscriptions_v2')
+              .insert({
+                user_id: userId,
+                order_id: newOrder.id,
+                product_id: productId,
+                tariff_id: tariffId,
+                status: subscriptionEnd < new Date() ? 'expired' : 'active',
+                current_period_start: paymentDate.toISOString(),
+                current_period_end: subscriptionEnd.toISOString(),
+                created_at: paymentDate.toISOString(),
+                meta: {
+                  import_source: 'bepaid_report',
+                  bepaid_uid: payment.uid,
                 }
               });
 
