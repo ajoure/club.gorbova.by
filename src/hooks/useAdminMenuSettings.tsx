@@ -102,6 +102,44 @@ export const DEFAULT_MENU: MenuSettings = [
   },
 ];
 
+// Merge new DEFAULT_MENU items into saved settings
+function mergeMenuSettings(saved: MenuSettings): MenuSettings {
+  const merged: MenuSettings = [];
+  
+  for (const defaultGroup of DEFAULT_MENU) {
+    const savedGroup = saved.find(g => g.id === defaultGroup.id);
+    
+    if (!savedGroup) {
+      // New group - add it
+      merged.push(defaultGroup);
+    } else {
+      // Existing group - merge items
+      const savedItemIds = new Set(savedGroup.items.map(i => i.id));
+      const newItems = defaultGroup.items.filter(i => !savedItemIds.has(i.id));
+      
+      merged.push({
+        ...savedGroup,
+        items: [
+          ...savedGroup.items,
+          ...newItems.map((item, idx) => ({
+            ...item,
+            order: savedGroup.items.length + idx
+          }))
+        ]
+      });
+    }
+  }
+  
+  // Keep any custom groups that user added
+  for (const savedGroup of saved) {
+    if (!DEFAULT_MENU.find(g => g.id === savedGroup.id)) {
+      merged.push(savedGroup);
+    }
+  }
+  
+  return merged.sort((a, b) => a.order - b.order);
+}
+
 export function useAdminMenuSettings() {
   const queryClient = useQueryClient();
 
@@ -115,18 +153,17 @@ export function useAdminMenuSettings() {
         .single();
       
       if (error) {
-        // If no settings or RLS blocks, use default
         console.log("Using default menu:", error.message);
         return DEFAULT_MENU;
       }
       
-      // If items is empty array or invalid, use default
       const items = data?.items;
       if (!items || !Array.isArray(items) || items.length === 0) {
         return DEFAULT_MENU;
       }
       
-      return items as unknown as MenuSettings;
+      // Merge new items from DEFAULT_MENU
+      return mergeMenuSettings(items as unknown as MenuSettings);
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
