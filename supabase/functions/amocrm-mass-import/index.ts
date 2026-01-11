@@ -72,11 +72,12 @@ serve(async (req) => {
     const isDryRun = options.dryRun === true;
     console.log(`📊 Import request: ${contacts.length} contacts, dryRun=${isDryRun}, updateExisting=${options.updateExisting}`);
 
-    // Create or update job
-    let job: { id: string };
-    if (jobId) {
-      job = { id: jobId };
-      if (!isDryRun) {
+    // Create or update job (skip for dry run - no DB changes needed)
+    let job: { id: string } | null = null;
+    
+    if (!isDryRun) {
+      if (jobId) {
+        job = { id: jobId };
         await supabase
           .from('import_jobs')
           .update({
@@ -84,22 +85,22 @@ serve(async (req) => {
             started_at: new Date().toISOString(),
           })
           .eq('id', jobId);
+      } else {
+        const { data, error } = await supabase
+          .from('import_jobs')
+          .insert({
+            type: 'amocrm_contacts',
+            total: contacts.length,
+            status: 'processing',
+            started_at: new Date().toISOString(),
+            created_by: user.id,
+          })
+          .select()
+          .single();
+        
+        if (error) throw error;
+        job = data;
       }
-    } else {
-      const { data, error } = await supabase
-        .from('import_jobs')
-        .insert({
-          type: 'amocrm_contacts',
-          total: contacts.length,
-          status: isDryRun ? 'dry_run' : 'processing',
-          started_at: new Date().toISOString(),
-          created_by: user.id,
-        })
-        .select()
-        .single();
-      
-      if (error) throw error;
-      job = data;
     }
 
     // Load all existing profiles for matching
@@ -199,7 +200,7 @@ serve(async (req) => {
 
           if (matchedProfileId && options.updateExisting) {
             // Update existing profile
-            if (!isDryRun) {
+            if (!isDryRun && job) {
               const updateData: Record<string, unknown> = {
                 external_id_amo: contact.amo_id,
                 import_batch_id: job.id, // Track which import updated this profile
@@ -222,12 +223,12 @@ serve(async (req) => {
               } else {
                 updatedCount++;
               }
-            } else {
+            } else if (isDryRun) {
               updatedCount++; // Dry run: just count
             }
           } else if (!matchedProfileId) {
             // Create new profile
-            if (!isDryRun) {
+            if (!isDryRun && job) {
               const { error } = await supabase
                 .from('profiles')
                 .insert({
@@ -256,7 +257,7 @@ serve(async (req) => {
                   phoneIndex.set(normalizePhone(phone), { id: contact.amo_id, name: contact.full_name });
                 }
               }
-            } else {
+            } else if (isDryRun) {
               createdCount++; // Dry run: just count
             }
           } else {
@@ -272,7 +273,7 @@ serve(async (req) => {
       }
       
       // Update job progress (only for real imports)
-      if (!isDryRun) {
+      if (!isDryRun && job) {
         await supabase
           .from('import_jobs')
           .update({
@@ -286,7 +287,7 @@ serve(async (req) => {
     }
 
     // Complete job (only for real imports)
-    if (!isDryRun) {
+    if (!isDryRun && job) {
       await supabase
         .from('import_jobs')
         .update({
@@ -310,7 +311,7 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         dryRun: isDryRun,
-        jobId: job.id,
+        jobId: job?.id || null,
         wouldCreate: isDryRun ? createdCount : undefined,
         wouldUpdate: isDryRun ? updatedCount : undefined,
         wouldSkip: isDryRun ? skippedCount : undefined,
