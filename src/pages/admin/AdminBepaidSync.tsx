@@ -20,7 +20,8 @@ import { useBepaidQueue, useBepaidPayments, useBepaidStats, QueueItem, PaymentIt
 import BepaidMappingsTab from "@/components/admin/bepaid/BepaidMappingsTab";
 import { CreateOrderButton, LinkToProfileButton, BulkProcessButton } from "@/components/admin/bepaid/BepaidQueueActions";
 import ContactDealsDialog from "@/components/admin/bepaid/ContactDealsDialog";
-
+import SyncPeriodButton from "@/components/admin/bepaid/SyncPeriodButton";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 export default function AdminBepaidSync() {
   const [activeMainTab, setActiveMainTab] = useState("payments");
   const [selectedQueueItems, setSelectedQueueItems] = useState<Set<string>>(new Set());
@@ -35,6 +36,10 @@ export default function AdminBepaidSync() {
   const [dealsDialogOpen, setDealsDialogOpen] = useState(false);
   const [selectedContactForDeals, setSelectedContactForDeals] = useState<any>(null);
   
+  // Contact detail sheet state
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
+  const [selectedContact, setSelectedContact] = useState<any>(null);
+  
   const queryClient = useQueryClient();
 
   const { payments, paymentsLoading, refetchPayments } = useBepaidPayments(dateFilter);
@@ -47,8 +52,22 @@ export default function AdminBepaidSync() {
         id: item.matched_profile_id,
         full_name: item.matched_profile_name,
         phone: item.matched_profile_phone,
+        email: item.customer_email,
       });
       setDealsDialogOpen(true);
+    }
+  };
+  
+  const handleOpenContact = (item: QueueItem) => {
+    if (item.matched_profile_id) {
+      setSelectedContact({
+        id: item.matched_profile_id,
+        user_id: item.matched_profile_id,
+        full_name: item.matched_profile_name,
+        phone: item.matched_profile_phone,
+        email: item.customer_email,
+      });
+      setContactSheetOpen(true);
     }
   };
 
@@ -206,6 +225,7 @@ export default function AdminBepaidSync() {
                 />
               </div>
             </div>
+            <SyncPeriodButton dateFilter={dateFilter} onSuccess={refreshAll} />
             <Button onClick={refreshAll} variant="outline">
               <RefreshCw className="h-4 w-4 mr-2" />
               Обновить
@@ -525,13 +545,20 @@ export default function AdminBepaidSync() {
                             <TableCell>
                               {item.matched_profile_id ? (
                                 <div className="flex items-center gap-2">
-                                  <div className="flex flex-col gap-1">
-                                    <span className="font-medium text-green-600">{item.matched_profile_name}</span>
+                                  <div 
+                                    className="flex flex-col gap-1 cursor-pointer hover:bg-accent/50 p-1 rounded transition-colors"
+                                    onClick={() => handleOpenContact(item)}
+                                    title="Открыть карточку контакта"
+                                  >
+                                    <span className="font-medium text-green-600 hover:underline">{item.matched_profile_name}</span>
                                     {item.matched_profile_phone && (
                                       <div className="flex items-center gap-1 text-xs text-muted-foreground">
                                         <Phone className="h-3 w-3" />
                                         {item.matched_profile_phone}
                                       </div>
+                                    )}
+                                    {item.match_type === 'manual' && (
+                                      <Badge variant="outline" className="text-xs w-fit">Авто</Badge>
                                     )}
                                   </div>
                                   <Button
@@ -576,6 +603,18 @@ export default function AdminBepaidSync() {
           onOpenChange={setDealsDialogOpen}
           profile={selectedContactForDeals}
           onDealUpdated={refetchQueue}
+        />
+        
+        {/* Contact Detail Sheet */}
+        <ContactDetailSheet
+          open={contactSheetOpen}
+          onOpenChange={(open) => {
+            setContactSheetOpen(open);
+            if (!open) {
+              refetchQueue();
+            }
+          }}
+          contact={selectedContact}
         />
       </div>
     </TooltipProvider>

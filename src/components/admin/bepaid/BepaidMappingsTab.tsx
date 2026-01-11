@@ -13,6 +13,8 @@ import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Package, Link2, Check, Eye
 import { useBepaidMappings, BepaidMapping, UnmappedProduct } from "@/hooks/useBepaidMappings";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 import { useQueueProductNames, DateFilter } from "@/hooks/useBepaidData";
+import QueueRecordsDialog from "./QueueRecordsDialog";
+import UnmatchedPaymentsSection from "./UnmatchedPaymentsSection";
 
 interface BepaidMappingsTabProps {
   dateFilter?: DateFilter;
@@ -39,6 +41,10 @@ export default function BepaidMappingsTab({ dateFilter }: BepaidMappingsTabProps
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingMapping, setEditingMapping] = useState<BepaidMapping | null>(null);
   const [newMappingData, setNewMappingData] = useState<Partial<BepaidMapping>>({});
+  
+  // Queue records dialog state
+  const [queueRecordsOpen, setQueueRecordsOpen] = useState(false);
+  const [selectedProductName, setSelectedProductName] = useState("");
 
   const handleOpenEdit = (mapping: BepaidMapping | null, unmapped?: UnmappedProduct) => {
     if (mapping) {
@@ -94,6 +100,11 @@ export default function BepaidMappingsTab({ dateFilter }: BepaidMappingsTabProps
     refetchMappings();
     refetchUnmapped();
   };
+  
+  const handleViewQueueRecords = (productName: string) => {
+    setSelectedProductName(productName);
+    setQueueRecordsOpen(true);
+  };
 
   
 
@@ -143,25 +154,32 @@ export default function BepaidMappingsTab({ dateFilter }: BepaidMappingsTabProps
                     </div>
                     <div className="flex items-center gap-2">
                       {queueProduct && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge variant="outline" className="gap-1 cursor-help">
-                              <Eye className="h-3 w-3" />
-                              {queueProduct.count}
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-[300px]">
-                            <div className="space-y-1">
-                              <p className="font-medium">Название в очереди: {queueProduct.name}</p>
-                              {queueProduct.amounts.length > 0 && (
-                                <p>Суммы: {queueProduct.amounts.join(", ")} BYN</p>
-                              )}
-                              {queueProduct.descriptions.length > 0 && (
-                                <p>Описания: {queueProduct.descriptions.slice(0, 3).join("; ")}</p>
-                              )}
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleViewQueueRecords(unmapped.bepaid_plan_title)}
+                          title="Просмотреть записи из очереди"
+                        >
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="flex items-center gap-1">
+                                <Eye className="h-4 w-4" />
+                                <span className="text-xs">{queueProduct.count}</span>
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-[300px]">
+                              <div className="space-y-1">
+                                <p className="font-medium">Нажмите для просмотра записей</p>
+                                {queueProduct.amounts.length > 0 && (
+                                  <p>Суммы: {queueProduct.amounts.join(", ")} BYN</p>
+                                )}
+                                {queueProduct.descriptions.length > 0 && (
+                                  <p>Описания: {queueProduct.descriptions.slice(0, 3).join("; ")}</p>
+                                )}
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </Button>
                       )}
                       <Button
                         variant="outline"
@@ -414,6 +432,21 @@ export default function BepaidMappingsTab({ dateFilter }: BepaidMappingsTabProps
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Queue Records Dialog */}
+      <QueueRecordsDialog
+        open={queueRecordsOpen}
+        onOpenChange={setQueueRecordsOpen}
+        productName={selectedProductName}
+        dateFilter={dateFilter}
+      />
+
+      {/* Unmatched Payments Section */}
+      <UnmatchedPaymentsSection
+        dateFilter={dateFilter}
+        mappings={mappings}
+        onRefresh={refreshAll}
+      />
     </div>
   );
 }

@@ -194,7 +194,11 @@ export default function ContactDealsDialog({
                       const dealPayments = payments?.filter(p => p.order_id === deal.id) || [];
                       
                       return (
-                        <TableRow key={deal.id} className="cursor-pointer hover:bg-accent/50">
+                        <TableRow 
+                          key={deal.id} 
+                          className="cursor-pointer hover:bg-accent/50"
+                          onClick={() => handleViewDeal(deal)}
+                        >
                           <TableCell className="font-mono text-xs">
                             {deal.order_number}
                           </TableCell>
@@ -259,7 +263,10 @@ export default function ContactDealsDialog({
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleViewDeal(deal)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleViewDeal(deal);
+                              }}
                             >
                               <Eye className="h-4 w-4 mr-1" />
                               Открыть
