@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -45,12 +45,15 @@ export function MergeContactsDialog({
   const queryClient = useQueryClient();
   const [masterId, setMasterId] = useState<string>(contacts[0]?.id || "");
 
-  // Reset master when contacts change
-  useState(() => {
-    if (contacts.length > 0 && !contacts.find(c => c.id === masterId)) {
+  // Reset master when dialog opens / selection changes
+  useEffect(() => {
+    if (!open) return;
+    if (contacts.length === 0) return;
+
+    if (!contacts.some((c) => c.id === masterId)) {
       setMasterId(contacts[0].id);
     }
-  });
+  }, [open, contacts, masterId]);
 
   const mergeMutation = useMutation({
     mutationFn: async () => {

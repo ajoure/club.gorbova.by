@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -152,9 +152,11 @@ export default function AdminContacts() {
           ordersByUser.set(order.user_id, { count: 1, lastAt: order.created_at });
         }
       });
-
+      
       // Map to contacts - check both profile.id and profile.user_id for deals
       const contactsList: Contact[] = (profiles || []).map(profile => {
+        const isArchived = (profile as any).is_archived === true;
+
         // Orders can be linked via profile.id OR profile.user_id
         const dealsByProfileId = ordersByUser.get(profile.id);
         const dealsByUserId = profile.user_id ? ordersByUser.get(profile.user_id) : null;
@@ -183,7 +185,7 @@ export default function AdminContacts() {
           telegram_username: profile.telegram_username,
           telegram_user_id: profile.telegram_user_id,
           avatar_url: profile.avatar_url,
-          status: profile.status,
+          status: isArchived ? "archived" : profile.status,
           created_at: profile.created_at,
           last_seen_at: profile.last_seen_at,
           duplicate_flag: profile.duplicate_flag,
@@ -191,6 +193,7 @@ export default function AdminContacts() {
           last_deal_at: lastDealAt,
         };
       });
+
 
       return contactsList;
     },
@@ -215,7 +218,7 @@ export default function AdminContacts() {
     }
   }, [contactFromUrl, contacts, setSearchParams, fromPage]);
 
-  // Fetch duplicate count
+  // Fetch duplicate count (backend cases)
   const { data: duplicateCount } = useQuery({
     queryKey: ["duplicate-count"],
     queryFn: async () => {
@@ -227,16 +230,60 @@ export default function AdminContacts() {
     },
   });
 
+  // Lightweight client-side duplicate detection (email/phone) so the filter works immediately
+  const computedDuplicateIds = useMemo(() => {
+    if (!contacts) return new Set<string>();
+
+    const emailMap = new Map<string, string[]>();
+    const phoneMap = new Map<string, string[]>();
+
+    const normalizeEmail = (v: string) => v.trim().toLowerCase();
+    const normalizePhoneKey = (v: string) => v.replace(/[^\d]/g, "").slice(-9);
+
+    for (const c of contacts) {
+      // consider only non-archived contacts for duplicate work in the main list
+      if (c.status === "archived") continue;
+
+      if (c.email) {
+        const key = normalizeEmail(c.email);
+        if (key) emailMap.set(key, [...(emailMap.get(key) || []), c.id]);
+      }
+
+      if (c.phone) {
+        const key = normalizePhoneKey(c.phone);
+        if (key) phoneMap.set(key, [...(phoneMap.get(key) || []), c.id]);
+      }
+    }
+
+    const dupIds = new Set<string>();
+    for (const ids of [...emailMap.values(), ...phoneMap.values()]) {
+      if (ids.length > 1) ids.forEach((id) => dupIds.add(id));
+    }
+
+    return dupIds;
+  }, [contacts]);
+
+  const dupToastShownRef = useRef(false);
+  useEffect(() => {
+    if (computedDuplicateIds.size > 0 && !dupToastShownRef.current) {
+      dupToastShownRef.current = true;
+      toast(`Найдено дублей: ${computedDuplicateIds.size}. Откройте вкладку «Дубли».`);
+    }
+  }, [computedDuplicateIds.size]);
+
   const getContactFieldValue = useCallback((contact: Contact, fieldKey: string): any => {
     switch (fieldKey) {
       case "has_telegram":
         return !!contact.telegram_user_id;
       case "is_duplicate":
-        return contact.duplicate_flag && contact.duplicate_flag !== 'none';
+        return (
+          computedDuplicateIds.has(contact.id) ||
+          (contact.duplicate_flag && contact.duplicate_flag !== "none")
+        );
       default:
         return (contact as any)[fieldKey];
     }
-  }, []);
+  }, [computedDuplicateIds]);
 
   const filteredContacts = useMemo(() => {
     if (!contacts) return [];
@@ -268,14 +315,18 @@ export default function AdminContacts() {
   // Calculate counts for presets
   const presetCounts = useMemo(() => {
     if (!contacts) return { active: 0, ghost: 0, withDeals: 0, duplicates: 0, archived: 0 };
+
+    const isDup = (c: Contact) =>
+      computedDuplicateIds.has(c.id) || (c.duplicate_flag && c.duplicate_flag !== "none");
+
     return {
       active: contacts.filter(c => c.status === "active").length,
       ghost: contacts.filter(c => c.status === "ghost").length,
       withDeals: contacts.filter(c => c.deals_count > 0).length,
-      duplicates: contacts.filter(c => c.duplicate_flag && c.duplicate_flag !== 'none').length,
+      duplicates: contacts.filter(isDup).length,
       archived: contacts.filter(c => c.status === "archived").length,
     };
-  }, [contacts]);
+  }, [contacts, computedDuplicateIds]);
 
   const CONTACT_PRESETS: FilterPreset[] = useMemo(() => [
     { id: "all", label: "Все активные", filters: [{ field: "status", operator: "not_equals", value: "archived" }] },
@@ -358,16 +409,22 @@ export default function AdminContacts() {
         // 6. Delete orders
         await supabase.from("orders_v2").delete().in("user_id", userIds);
 
-        // 7. Delete consent logs
-        await supabase.from("consent_logs").delete().in("user_id", userIds);
+         // 7. Delete consent logs
+         await supabase.from("consent_logs").delete().in("user_id", userIds);
 
-        // 8. Delete audit logs
-        await supabase.from("audit_logs").delete().in("target_user_id", userIds);
-      }
+         // 8. Delete audit logs
+         await supabase.from("audit_logs").delete().in("target_user_id", userIds);
+       }
 
-      // 9. Delete profiles
-      const { error } = await supabase.from("profiles").delete().in("id", ids);
-      if (error) throw error;
+       // 8.5 Detach reconciliation queue links that reference profiles (FK blocks delete)
+       await supabase
+         .from("payment_reconcile_queue")
+         .update({ matched_profile_id: null })
+         .in("matched_profile_id", ids);
+
+       // 9. Delete profiles
+       const { error } = await supabase.from("profiles").delete().in("id", ids);
+       if (error) throw error;
       
       return ids.length;
     },
@@ -459,7 +516,7 @@ export default function AdminContacts() {
           <p className="text-muted-foreground">Управление клиентами и их данными</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-          {duplicateCount !== undefined && duplicateCount > 0 && (
+          {((duplicateCount ?? 0) > 0 || computedDuplicateIds.size > 0) && (
             <Button 
               variant="outline" 
               onClick={() => navigate("/admin/contacts/duplicates")}
@@ -468,7 +525,7 @@ export default function AdminContacts() {
               <Copy className="w-4 h-4 mr-2" />
               Дубли
               <Badge variant="destructive" className="ml-2 h-5 min-w-5 px-1.5 text-xs">
-                {duplicateCount}
+                {duplicateCount && duplicateCount > 0 ? duplicateCount : computedDuplicateIds.size}
               </Badge>
             </Button>
           )}
@@ -626,7 +683,7 @@ export default function AdminContacts() {
                       <div className="min-w-0">
                         <div className="font-medium flex items-center gap-2">
                           <span className="truncate">{contact.full_name || "—"}</span>
-                          {contact.duplicate_flag && contact.duplicate_flag !== 'none' && (
+                          {(computedDuplicateIds.has(contact.id) || (contact.duplicate_flag && contact.duplicate_flag !== 'none')) && (
                             <Badge variant="outline" className="text-xs text-amber-600 border-amber-500/30 shrink-0">
                               <Copy className="w-3 h-3 mr-1" />
                               Дубль
