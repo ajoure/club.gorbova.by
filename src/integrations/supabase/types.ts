@@ -3357,6 +3357,7 @@ export type Database = {
           duplicate_group_id: string | null
           email: string | null
           emails: Json | null
+          external_id_amo: string | null
           first_name: string | null
           full_name: string | null
           id: string
@@ -3372,6 +3373,7 @@ export type Database = {
           reentry_penalty_waived: boolean
           reentry_penalty_waived_at: string | null
           reentry_penalty_waived_by: string | null
+          source: string | null
           status: string
           telegram_last_check_at: string | null
           telegram_last_error: string | null
@@ -3397,6 +3399,7 @@ export type Database = {
           duplicate_group_id?: string | null
           email?: string | null
           emails?: Json | null
+          external_id_amo?: string | null
           first_name?: string | null
           full_name?: string | null
           id?: string
@@ -3412,6 +3415,7 @@ export type Database = {
           reentry_penalty_waived?: boolean
           reentry_penalty_waived_at?: string | null
           reentry_penalty_waived_by?: string | null
+          source?: string | null
           status?: string
           telegram_last_check_at?: string | null
           telegram_last_error?: string | null
@@ -3437,6 +3441,7 @@ export type Database = {
           duplicate_group_id?: string | null
           email?: string | null
           emails?: Json | null
+          external_id_amo?: string | null
           first_name?: string | null
           full_name?: string | null
           id?: string
@@ -3452,6 +3457,7 @@ export type Database = {
           reentry_penalty_waived?: boolean
           reentry_penalty_waived_at?: string | null
           reentry_penalty_waived_by?: string | null
+          source?: string | null
           status?: string
           telegram_last_check_at?: string | null
           telegram_last_error?: string | null
