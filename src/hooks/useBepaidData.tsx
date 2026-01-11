@@ -81,10 +81,11 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
   const { data: queueItems, isLoading: queueLoading, error: queueError, refetch: refetchQueue } = useQuery({
     queryKey: ["bepaid-queue", dateFilter],
     queryFn: async () => {
-      // Build query
+      // Build query - only show pending/processing/processed statuses (successful payments)
       let query = supabase
         .from("payment_reconcile_queue")
         .select("*, matched_profile:matched_profile_id(id, full_name, phone, email)")
+        .in("status", ["pending", "processing", "processed"])
         .order("created_at", { ascending: false });
       
       // Apply date filter

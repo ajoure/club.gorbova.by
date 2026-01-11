@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -9,10 +10,12 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Package, Link2, Check, Eye } from "lucide-react";
+import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Package, Link2, Check, Eye, Loader2 } from "lucide-react";
 import { useBepaidMappings, BepaidMapping, UnmappedProduct } from "@/hooks/useBepaidMappings";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 import { useQueueProductNames, DateFilter } from "@/hooks/useBepaidData";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 import QueueRecordsDialog from "./QueueRecordsDialog";
 import UnmatchedPaymentsSection from "./UnmatchedPaymentsSection";
 
@@ -38,6 +41,7 @@ export default function BepaidMappingsTab({ dateFilter }: BepaidMappingsTabProps
   const { data: products, isLoading: productsLoading } = useProductsV2();
   const { data: queueProductNames } = useQueueProductNames(dateFilter);
   const { data: allTariffs } = useTariffs();
+  const queryClient = useQueryClient();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingMapping, setEditingMapping] = useState<BepaidMapping | null>(null);
   const [newMappingData, setNewMappingData] = useState<Partial<BepaidMapping>>({});
@@ -45,6 +49,65 @@ export default function BepaidMappingsTab({ dateFilter }: BepaidMappingsTabProps
   // Queue records dialog state
   const [queueRecordsOpen, setQueueRecordsOpen] = useState(false);
   const [selectedProductName, setSelectedProductName] = useState("");
+  
+  // Create product dialog state
+  const [createProductDialogOpen, setCreateProductDialogOpen] = useState(false);
+  const [newProductData, setNewProductData] = useState({
+    name: "",
+    code: "",
+    type: "course" as "course" | "club" | "consultation",
+  });
+
+  // Create product mutation
+  const createProductMutation = useMutation({
+    mutationFn: async (data: { name: string; code: string; type: string }) => {
+      const { data: product, error } = await supabase
+        .from("products_v2")
+        .insert({
+          name: data.name,
+          code: data.code,
+          type: data.type,
+          status: "active",
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return product;
+    },
+    onSuccess: (product) => {
+      toast.success(`Продукт "${product.name}" создан`);
+      queryClient.invalidateQueries({ queryKey: ["products-v2"] });
+      // Auto-select the new product in mapping
+      setNewMappingData(prev => ({ ...prev, product_id: product.id }));
+      setCreateProductDialogOpen(false);
+      setNewProductData({ name: "", code: "", type: "course" });
+    },
+    onError: (error: any) => {
+      toast.error("Ошибка создания: " + error.message);
+    },
+  });
+
+  const handleOpenCreateProduct = () => {
+    // Pre-fill from bepaid_plan_title
+    const title = newMappingData.bepaid_plan_title || "";
+    const code = title.toLowerCase()
+      .replace(/\s+/g, "_")
+      .replace(/[^a-z0-9_]/g, "")
+      .substring(0, 50);
+    
+    setNewProductData({
+      name: title,
+      code: code || "new_product",
+      type: "course",
+    });
+    setCreateProductDialogOpen(true);
+  };
+
+  const handleCreateProduct = () => {
+    if (!newProductData.name || !newProductData.code) return;
+    createProductMutation.mutate(newProductData);
+  };
 
   const handleOpenEdit = (mapping: BepaidMapping | null, unmapped?: UnmappedProduct) => {
     if (mapping) {
@@ -348,22 +411,32 @@ export default function BepaidMappingsTab({ dateFilter }: BepaidMappingsTabProps
 
             <div className="space-y-2">
               <Label htmlFor="product_id">Продукт в системе</Label>
-              <Select
-                value={newMappingData.product_id || "__none__"}
-                onValueChange={(v) => setNewMappingData({ ...newMappingData, product_id: v === "__none__" ? null : v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Выберите продукт" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Не выбран</SelectItem>
-                  {products?.map((product) => (
-                    <SelectItem key={product.id} value={product.id}>
-                      {product.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex gap-2">
+                <Select
+                  value={newMappingData.product_id || "__none__"}
+                  onValueChange={(v) => setNewMappingData({ ...newMappingData, product_id: v === "__none__" ? null : v })}
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Выберите продукт" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Не выбран</SelectItem>
+                    {products?.map((product) => (
+                      <SelectItem key={product.id} value={product.id}>
+                        {product.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button 
+                  variant="outline" 
+                  size="icon"
+                  onClick={handleOpenCreateProduct}
+                  title="Создать новый продукт"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
 
             {newMappingData.product_id && allTariffs && allTariffs.filter(t => t.product_id === newMappingData.product_id).length > 0 && (
@@ -428,6 +501,66 @@ export default function BepaidMappingsTab({ dateFilter }: BepaidMappingsTabProps
                 <RefreshCw className="h-4 w-4 animate-spin mr-2" />
               ) : null}
               {editingMapping ? "Сохранить" : "Создать"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Product Dialog */}
+      <Dialog open={createProductDialogOpen} onOpenChange={setCreateProductDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Создать продукт</DialogTitle>
+            <DialogDescription>
+              Быстрое создание нового продукта для маппинга
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="product_name">Название *</Label>
+              <Input
+                id="product_name"
+                value={newProductData.name}
+                onChange={(e) => setNewProductData({ ...newProductData, name: e.target.value })}
+                placeholder="Название продукта"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="product_code">Код *</Label>
+              <Input
+                id="product_code"
+                value={newProductData.code}
+                onChange={(e) => setNewProductData({ ...newProductData, code: e.target.value })}
+                placeholder="product_code"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="product_type">Тип</Label>
+              <Select
+                value={newProductData.type}
+                onValueChange={(v) => setNewProductData({ ...newProductData, type: v as any })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="course">Курс</SelectItem>
+                  <SelectItem value="club">Клуб</SelectItem>
+                  <SelectItem value="consultation">Консультация</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateProductDialogOpen(false)}>
+              Отмена
+            </Button>
+            <Button
+              onClick={handleCreateProduct}
+              disabled={!newProductData.name || !newProductData.code || createProductMutation.isPending}
+            >
+              {createProductMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Создать
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -248,12 +248,15 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
       }
 
       // Auto-match contacts if enabled
+      // Filter to only successful payments
+      const successfulOnly = parsed.filter(tx => tx.status_normalized === 'successful');
+
       if (autoMatch) {
-        await matchContacts(parsed);
+        await matchContacts(successfulOnly);
       }
 
-      setTransactions(parsed);
-      calculateStats(parsed);
+      setTransactions(successfulOnly);
+      calculateStats(successfulOnly);
       toast.success(`Загружено ${parsed.length} транзакций`);
     } catch (err: any) {
       toast.error("Ошибка парсинга: " + err.message);
@@ -361,21 +364,45 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
 
   const importMutation = useMutation({
     mutationFn: async () => {
-      const results: { uid: string; status: 'imported' | 'exists' | 'error'; error?: string }[] = [];
+      const results: { uid: string; status: 'imported' | 'updated' | 'exists' | 'error'; error?: string }[] = [];
       
       for (const tx of transactions) {
         try {
           // Check if exists
-          if (skipExisting) {
-            const { data: existing } = await supabase
-              .from('payment_reconcile_queue')
-              .select('id')
-              .eq('bepaid_uid', tx.uid)
-              .maybeSingle();
-            
-            if (existing) {
-              results.push({ uid: tx.uid, status: 'exists' });
-              tx.import_status = 'exists';
+          const { data: existing } = await supabase
+            .from('payment_reconcile_queue')
+            .select('id, status, matched_profile_id, amount')
+            .eq('bepaid_uid', tx.uid)
+            .maybeSingle();
+          
+          if (existing) {
+            if (skipExisting) {
+              // Check if we need to update (e.g., new match found)
+              const needsUpdate = 
+                (!existing.matched_profile_id && tx.matched_profile_id) ||
+                (existing.amount !== tx.amount);
+              
+              if (needsUpdate) {
+                const { error: updateError } = await supabase
+                  .from('payment_reconcile_queue')
+                  .update({
+                    matched_profile_id: tx.matched_profile_id,
+                    amount: tx.amount,
+                  })
+                  .eq('id', existing.id);
+                
+                if (updateError) {
+                  results.push({ uid: tx.uid, status: 'error', error: updateError.message });
+                  tx.import_status = 'error';
+                  tx.import_error = updateError.message;
+                } else {
+                  results.push({ uid: tx.uid, status: 'updated' });
+                  tx.import_status = 'exists'; // Show as exists but was updated
+                }
+              } else {
+                results.push({ uid: tx.uid, status: 'exists' });
+                tx.import_status = 'exists';
+              }
               continue;
             }
           }
@@ -392,7 +419,7 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
             matched_profile_id: tx.matched_profile_id,
             paid_at: tx.paid_at,
             source: 'file_import',
-            status: tx.status_normalized === 'successful' ? 'pending' : 'skipped',
+            status: 'pending',
             raw_payload: {
               ...tx,
               bepaid_order_id: tx.bepaid_order_id,
@@ -427,11 +454,14 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
     },
     onSuccess: (results) => {
       const imported = results.filter(r => r.status === 'imported').length;
+      const updated = results.filter(r => r.status === 'updated').length;
       const exists = results.filter(r => r.status === 'exists').length;
       const errors = results.filter(r => r.status === 'error').length;
 
-      if (imported > 0) toast.success(`Импортировано: ${imported} транзакций`);
-      if (exists > 0) toast.info(`Уже в базе: ${exists}`);
+      if (imported > 0 || updated > 0) {
+        toast.success(`Импорт завершён: ${imported} новых${updated > 0 ? `, ${updated} обновлено` : ''}`);
+      }
+      if (exists > 0 && imported === 0 && updated === 0) toast.info(`Все ${exists} уже в базе`);
       if (errors > 0) toast.error(`Ошибок: ${errors}`);
 
       queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
@@ -440,6 +470,14 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
       
       // Update display
       setTransactions([...transactions]);
+      
+      // Close dialog after successful import
+      if (errors === 0) {
+        setTimeout(() => {
+          resetDialog();
+          onOpenChange(false);
+        }, 1500);
+      }
     },
     onError: (error: any) => {
       toast.error("Ошибка импорта: " + error.message);
