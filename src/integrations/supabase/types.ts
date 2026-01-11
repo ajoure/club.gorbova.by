@@ -3412,6 +3412,7 @@ export type Database = {
           first_name: string | null
           full_name: string | null
           id: string
+          import_batch_id: string | null
           is_archived: boolean | null
           last_name: string | null
           last_seen_at: string | null
@@ -3454,6 +3455,7 @@ export type Database = {
           first_name?: string | null
           full_name?: string | null
           id?: string
+          import_batch_id?: string | null
           is_archived?: boolean | null
           last_name?: string | null
           last_seen_at?: string | null
@@ -3496,6 +3498,7 @@ export type Database = {
           first_name?: string | null
           full_name?: string | null
           id?: string
+          import_batch_id?: string | null
           is_archived?: boolean | null
           last_name?: string | null
           last_seen_at?: string | null

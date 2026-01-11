@@ -149,3 +149,4 @@ verify_jwt = false
 
 [functions.amocrm-mass-import]
 verify_jwt = false
+timeout_ms = 300000

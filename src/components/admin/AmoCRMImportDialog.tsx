@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -8,9 +9,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { 
   Upload, FileSpreadsheet, AlertCircle, CheckCircle2, 
-  Loader2, X, User, Mail, Phone, AtSign, ArrowRight, Search, Cloud
+  Loader2, X, User, Mail, Phone, AtSign, ArrowRight, Search, Cloud, Eye, Shield, RotateCcw
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -60,6 +62,17 @@ interface ImportJob {
   created_count: number;
   updated_count: number;
   errors_count: number;
+}
+
+interface DryRunResult {
+  success: boolean;
+  dryRun: boolean;
+  jobId: string;
+  wouldCreate: number;
+  wouldUpdate: number;
+  wouldSkip: number;
+  errors: number;
+  errorLog?: { contact: string; error: string }[];
 }
 
 // Normalize phone number for comparison
@@ -152,6 +165,12 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
   const [autoMatch, setAutoMatch] = useState(true);
   const [showFuzzyDialog, setShowFuzzyDialog] = useState(false);
   const [backgroundJob, setBackgroundJob] = useState<ImportJob | null>(null);
+  
+  // Dry run and confirmation state
+  const [isDryRunning, setIsDryRunning] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  
   const queryClient = useQueryClient();
 
   // Subscribe to background job progress
@@ -210,6 +229,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     setFile(selectedFile);
     setIsParsing(true);
     setParseProgress(0);
+    setDryRunResult(null); // Reset dry run result
 
     try {
       const buffer = await selectedFile.arrayBuffer();
@@ -381,6 +401,39 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     });
   };
 
+  // Run dry run to preview changes
+  const runDryRun = async () => {
+    setIsDryRunning(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('amocrm-mass-import', {
+        body: {
+          contacts: contacts.map(c => ({
+            amo_id: c.amo_id,
+            full_name: c.full_name,
+            first_name: c.first_name,
+            last_name: c.last_name,
+            email: c.email,
+            emails: c.emails,
+            phone: c.phone,
+            phones: c.phones,
+            telegram_username: c.telegram_username,
+          })),
+          options: { updateExisting, dryRun: true },
+        },
+      });
+
+      if (error) throw error;
+
+      setDryRunResult(data as DryRunResult);
+      setShowConfirmDialog(true);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      toast.error("Ошибка предпросмотра: " + errorMessage);
+    } finally {
+      setIsDryRunning(false);
+    }
+  };
+
   // Start background import for large files
   const startBackgroundImport = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -407,6 +460,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     }
 
     setBackgroundJob(job as ImportJob);
+    setShowConfirmDialog(false);
 
     // Invoke edge function
     const { error } = await supabase.functions.invoke('amocrm-mass-import', {
@@ -520,6 +574,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
       queryClient.invalidateQueries({ queryKey: ['admin-contacts'] });
       toast.success(`Импорт завершён: ${created} создано, ${updated} обновлено, ${errors} ошибок`);
       onSuccess?.();
+      setShowConfirmDialog(false);
     },
     onError: (error) => {
       toast.error("Ошибка импорта: " + error.message);
@@ -531,6 +586,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     setContacts([]);
     setStats(null);
     setBackgroundJob(null);
+    setDryRunResult(null);
   };
 
   const getMatchBadge = (matchedBy: ParsedContact['matched_by']) => {
@@ -621,9 +677,28 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                   {backgroundJob.processed} / {backgroundJob.total} • 
                   {backgroundJob.created_count} создано • {backgroundJob.updated_count} обновлено
                 </p>
+                
+                {/* Rollback info */}
+                {backgroundJob.status === 'completed' && (
+                  <Alert className="max-w-md">
+                    <RotateCcw className="h-4 w-4" />
+                    <AlertDescription>
+                      Этот импорт можно откатить. ID задачи: <code className="text-xs">{backgroundJob.id}</code>
+                    </AlertDescription>
+                  </Alert>
+                )}
               </div>
             ) : (
               <>
+                {/* Safety notice */}
+                <Alert className="border-green-500/30 bg-green-500/10">
+                  <Shield className="h-4 w-4 text-green-600" />
+                  <AlertDescription className="text-green-700">
+                    Импорт безопасен: данные только добавляются или обновляются, удаление невозможно. 
+                    Каждый импорт можно откатить.
+                  </AlertDescription>
+                </Alert>
+
                 {/* File info and stats */}
                 <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
                   <div className="flex items-center gap-3">
@@ -753,33 +828,106 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
               Закрыть
             </Button>
             {file && contacts.length > 0 && !backgroundJob && (
-              isLargeFile ? (
-                <Button onClick={startBackgroundImport}>
-                  <Cloud className="h-4 w-4 mr-2" />
-                  Фоновый импорт ({contacts.length})
-                </Button>
-              ) : (
-                <Button 
-                  onClick={() => importMutation.mutate()} 
-                  disabled={importMutation.isPending}
-                >
-                  {importMutation.isPending ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Импорт...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="h-4 w-4 mr-2" />
-                      Импортировать {contacts.length} контактов
-                    </>
-                  )}
-                </Button>
-              )
+              <Button 
+                onClick={runDryRun} 
+                disabled={isDryRunning}
+              >
+                {isDryRunning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Анализ...
+                  </>
+                ) : (
+                  <>
+                    <Eye className="h-4 w-4 mr-2" />
+                    Предпросмотр импорта
+                  </>
+                )}
+              </Button>
             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Confirmation Dialog */}
+      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5 text-green-600" />
+              Подтверждение импорта
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-4">
+                <p>Результаты анализа:</p>
+                
+                {dryRunResult && (
+                  <div className="grid grid-cols-3 gap-3 my-4">
+                    <div className="p-3 bg-green-500/10 rounded-lg text-center">
+                      <p className="text-xl font-bold text-green-600">{dryRunResult.wouldCreate}</p>
+                      <p className="text-xs text-muted-foreground">Будет создано</p>
+                    </div>
+                    <div className="p-3 bg-blue-500/10 rounded-lg text-center">
+                      <p className="text-xl font-bold text-blue-600">{dryRunResult.wouldUpdate}</p>
+                      <p className="text-xs text-muted-foreground">Будет обновлено</p>
+                    </div>
+                    <div className="p-3 bg-muted rounded-lg text-center">
+                      <p className="text-xl font-bold">{dryRunResult.wouldSkip}</p>
+                      <p className="text-xs text-muted-foreground">Без изменений</p>
+                    </div>
+                  </div>
+                )}
+
+                {dryRunResult?.errors ? (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      Обнаружено {dryRunResult.errors} потенциальных ошибок
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+
+                <Alert className="border-green-500/30 bg-green-500/10">
+                  <RotateCcw className="h-4 w-4 text-green-600" />
+                  <AlertDescription className="text-green-700">
+                    Этот импорт можно будет откатить после выполнения
+                  </AlertDescription>
+                </Alert>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (isLargeFile) {
+                  startBackgroundImport();
+                } else {
+                  importMutation.mutate();
+                }
+              }}
+              disabled={importMutation.isPending}
+            >
+              {importMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Импорт...
+                </>
+              ) : isLargeFile ? (
+                <>
+                  <Cloud className="h-4 w-4 mr-2" />
+                  Запустить фоновый импорт
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Импортировать
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <FuzzyMatchDialog
         open={showFuzzyDialog}
