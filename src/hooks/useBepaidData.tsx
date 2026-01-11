@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { useState } from "react";
 
 // Parsed queue item with extracted card data
 export interface QueueItem {
@@ -77,35 +76,30 @@ export interface DateFilter {
 
 export function useBepaidQueue(dateFilter?: DateFilter) {
   const queryClient = useQueryClient();
-  
-  // Store manual profile links in memory - keyed by email/card_holder for auto-propagation
-  const [manualLinksByEmail, setManualLinksByEmail] = useState<Map<string, { profileId: string; profileName: string; profilePhone: string | null; profileEmail?: string | null }>>(new Map());
-  const [manualLinksByName, setManualLinksByName] = useState<Map<string, { profileId: string; profileName: string; profilePhone: string | null; profileEmail?: string | null }>>(new Map());
 
-  // Fetch queue items with profile matching
+  // Fetch queue items with profile matching (now from DB matched_profile_id)
   const { data: queueItems, isLoading: queueLoading, error: queueError, refetch: refetchQueue } = useQuery({
-    queryKey: ["bepaid-queue", dateFilter, Array.from(manualLinksByEmail.keys()).join(","), Array.from(manualLinksByName.keys()).join(",")],
+    queryKey: ["bepaid-queue", dateFilter],
     queryFn: async () => {
-      // Build query - fetch ALL data without date limit for better matching
+      // Build query
       let query = supabase
         .from("payment_reconcile_queue")
-        .select("*")
+        .select("*, matched_profile:matched_profile_id(id, full_name, phone, email)")
         .order("created_at", { ascending: false });
       
-      // Apply date filter - default to 2026-01-01
+      // Apply date filter
       const fromDate = dateFilter?.from || "2026-01-01";
-      query = query.gte("created_at", `${fromDate}T00:00:00`);
+      query = query.gte("created_at", `${fromDate}T00:00:00Z`);
       
       if (dateFilter?.to) {
-        // Add one day to include the entire "to" date
-        query = query.lte("created_at", `${dateFilter.to}T23:59:59`);
+        query = query.lte("created_at", `${dateFilter.to}T23:59:59Z`);
       }
 
       const { data: queue, error: queueError } = await query;
       
       if (queueError) throw queueError;
 
-      // Fetch profiles for matching
+      // Fetch profiles for auto-matching (email/name)
       const { data: profiles } = await supabase
         .from("profiles")
         .select("id, user_id, full_name, first_name, last_name, email, phone");
@@ -125,37 +119,22 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
       const items: QueueItem[] = (queue || []).map(q => {
         const parsed = parseQueuePayload(q.raw_payload);
         
-        // Try to match profile automatically or from manual links
+        // Priority: DB matched_profile > email match > name match
         let matched_profile_id: string | null = null;
         let matched_profile_name: string | null = null;
         let matched_profile_phone: string | null = null;
         let match_type: 'email' | 'name' | 'manual' | 'none' = 'none';
 
-        // 1. Check manual link by email first (auto-propagation)
-        if (q.customer_email) {
-          const emailLower = q.customer_email.toLowerCase();
-          const manualLink = manualLinksByEmail.get(emailLower);
-          if (manualLink) {
-            matched_profile_id = manualLink.profileId;
-            matched_profile_name = manualLink.profileName;
-            matched_profile_phone = manualLink.profilePhone;
-            match_type = 'manual';
-          }
+        // 1. Check if already linked in DB
+        const dbProfile = q.matched_profile as any;
+        if (q.matched_profile_id && dbProfile) {
+          matched_profile_id = dbProfile.id;
+          matched_profile_name = dbProfile.full_name;
+          matched_profile_phone = dbProfile.phone;
+          match_type = 'manual';
         }
 
-        // 2. Check manual link by card holder name (auto-propagation)
-        if (!matched_profile_id && parsed.card_holder) {
-          const nameLower = parsed.card_holder.toLowerCase().trim();
-          const manualLink = manualLinksByName.get(nameLower);
-          if (manualLink) {
-            matched_profile_id = manualLink.profileId;
-            matched_profile_name = manualLink.profileName;
-            matched_profile_phone = manualLink.profilePhone;
-            match_type = 'manual';
-          }
-        }
-
-        // 3. Match by email from DB
+        // 2. Match by email from DB
         if (!matched_profile_id && q.customer_email) {
           const profile = profilesByEmail.get(q.customer_email.toLowerCase());
           if (profile) {
@@ -166,7 +145,7 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
           }
         }
 
-        // 4. Match by card holder name from DB
+        // 3. Match by card holder name from DB
         if (!matched_profile_id && parsed.card_holder) {
           const holderNormalized = parsed.card_holder.toLowerCase().trim();
           const profile = profilesByName.get(holderNormalized);
@@ -206,40 +185,56 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
     },
   });
 
-  // Link profile manually - stores by email and name for auto-propagation to other records
+  // Link profile manually - save to DB + propagate to other records with same email/name
+  const linkProfileMutation = useMutation({
+    mutationFn: async ({ 
+      queueItemId, 
+      profileId,
+      propagateEmail,
+      propagateName,
+    }: { 
+      queueItemId: string; 
+      profileId: string;
+      propagateEmail?: string;
+      propagateName?: string;
+    }) => {
+      // Update the specific queue item
+      await supabase
+        .from("payment_reconcile_queue")
+        .update({ matched_profile_id: profileId })
+        .eq("id", queueItemId);
+
+      // Auto-propagate to other items with same email
+      if (propagateEmail) {
+        await supabase
+          .from("payment_reconcile_queue")
+          .update({ matched_profile_id: profileId })
+          .eq("customer_email", propagateEmail)
+          .is("matched_profile_id", null);
+      }
+
+      // Auto-propagate to other items with same card holder name (via raw_payload check is complex, skip for now)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
+      toast.success("Связано с контактом. Записи с тем же email автоматически связаны.");
+    },
+    onError: (error) => {
+      toast.error("Ошибка связывания: " + (error as Error).message);
+    },
+  });
+
   const linkProfileManually = (
     queueItemId: string, 
     profile: { id: string; full_name: string | null; phone: string | null; email?: string | null },
     queueItem?: QueueItem
   ) => {
-    const linkData = {
+    linkProfileMutation.mutate({
+      queueItemId,
       profileId: profile.id,
-      profileName: profile.full_name || "Без имени",
-      profilePhone: profile.phone,
-      profileEmail: profile.email,
-    };
-
-    // If we have the queue item, use its email/card_holder for auto-propagation
-    if (queueItem) {
-      if (queueItem.customer_email) {
-        setManualLinksByEmail(prev => {
-          const newMap = new Map(prev);
-          newMap.set(queueItem.customer_email!.toLowerCase(), linkData);
-          return newMap;
-        });
-      }
-      if (queueItem.card_holder) {
-        setManualLinksByName(prev => {
-          const newMap = new Map(prev);
-          newMap.set(queueItem.card_holder!.toLowerCase().trim(), linkData);
-          return newMap;
-        });
-      }
-    }
-
-    // Trigger refetch to update the UI
-    queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
-    toast.success("Связано с контактом. Все записи с тем же email/именем будут автоматически связаны.");
+      propagateEmail: queueItem?.customer_email || undefined,
+      propagateName: queueItem?.card_holder || undefined,
+    });
   };
 
   return {

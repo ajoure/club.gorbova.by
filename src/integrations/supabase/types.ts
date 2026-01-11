@@ -2531,6 +2531,8 @@ export type Database = {
           customer_email: string | null
           id: string
           last_error: string | null
+          matched_order_id: string | null
+          matched_profile_id: string | null
           max_attempts: number | null
           next_retry_at: string | null
           processed_at: string | null
@@ -2550,6 +2552,8 @@ export type Database = {
           customer_email?: string | null
           id?: string
           last_error?: string | null
+          matched_order_id?: string | null
+          matched_profile_id?: string | null
           max_attempts?: number | null
           next_retry_at?: string | null
           processed_at?: string | null
@@ -2569,6 +2573,8 @@ export type Database = {
           customer_email?: string | null
           id?: string
           last_error?: string | null
+          matched_order_id?: string | null
+          matched_profile_id?: string | null
           max_attempts?: number | null
           next_retry_at?: string | null
           processed_at?: string | null
@@ -2580,6 +2586,20 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "payment_reconcile_queue_matched_order_id_fkey"
+            columns: ["matched_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_reconcile_queue_matched_profile_id_fkey"
+            columns: ["matched_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "payment_reconcile_queue_processed_order_id_fkey"
             columns: ["processed_order_id"]

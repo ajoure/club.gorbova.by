@@ -11,17 +11,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { 
   RefreshCw, Download, CheckCircle2, User, CreditCard, Mail, 
-  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2, Calendar, Eye
+  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2, Calendar, Eye, Edit
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { supabase } from "@/integrations/supabase/client";
 import { useBepaidQueue, useBepaidPayments, useBepaidStats, QueueItem, PaymentItem, DateFilter } from "@/hooks/useBepaidData";
 import BepaidMappingsTab from "@/components/admin/bepaid/BepaidMappingsTab";
 import { CreateOrderButton, LinkToProfileButton, BulkProcessButton } from "@/components/admin/bepaid/BepaidQueueActions";
 import ContactDealsDialog from "@/components/admin/bepaid/ContactDealsDialog";
 import SyncPeriodButton from "@/components/admin/bepaid/SyncPeriodButton";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
+
 export default function AdminBepaidSync() {
   const [activeMainTab, setActiveMainTab] = useState("payments");
   const [selectedQueueItems, setSelectedQueueItems] = useState<Set<string>>(new Set());
@@ -39,6 +42,10 @@ export default function AdminBepaidSync() {
   // Contact detail sheet state
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<any>(null);
+  
+  // Deal detail sheet state (for payments tab)
+  const [dealSheetOpen, setDealSheetOpen] = useState(false);
+  const [selectedDeal, setSelectedDeal] = useState<any>(null);
   
   const queryClient = useQueryClient();
 
@@ -71,11 +78,36 @@ export default function AdminBepaidSync() {
     }
   };
 
-  const refreshAll = () => {
-    refetchPayments();
-    refetchQueue();
-    queryClient.invalidateQueries({ queryKey: ["bepaid-stats"] });
-    toast.success("Данные обновлены");
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const refreshAll = async () => {
+    setIsRefreshing(true);
+    try {
+      // Call backend to fetch latest data from bePaid
+      const { error } = await supabase.functions.invoke("bepaid-fetch-transactions", {
+        body: {
+          fromDate: dateFilter.from || "2026-01-01",
+          toDate: dateFilter.to,
+          limit: 200,
+        },
+      });
+      
+      if (error) {
+        console.error("Error fetching from bePaid:", error);
+        toast.error("Ошибка синхронизации: " + error.message);
+      } else {
+        toast.success("Данные обновлены из bePaid");
+      }
+    } catch (err) {
+      console.error("Refresh error:", err);
+      toast.error("Ошибка обновления");
+    } finally {
+      // Always refetch local data
+      refetchPayments();
+      refetchQueue();
+      queryClient.invalidateQueries({ queryKey: ["bepaid-stats"] });
+      setIsRefreshing(false);
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -226,9 +258,9 @@ export default function AdminBepaidSync() {
               </div>
             </div>
             <SyncPeriodButton dateFilter={dateFilter} onSuccess={refreshAll} />
-            <Button onClick={refreshAll} variant="outline">
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Обновить
+            <Button onClick={refreshAll} variant="outline" disabled={isRefreshing}>
+              <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
+              {isRefreshing ? "Обновление..." : "Обновить"}
             </Button>
           </div>
         </div>
@@ -375,21 +407,57 @@ export default function AdminBepaidSync() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <div className="flex items-center gap-1 max-w-[150px]">
+                              {payment.order_id ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-auto p-1 flex flex-col items-start gap-0.5"
+                                  onClick={async () => {
+                                    const { data: order } = await supabase
+                                      .from("orders_v2")
+                                      .select("*")
+                                      .eq("id", payment.order_id)
+                                      .single();
+                                    if (order) {
+                                      setSelectedDeal(order);
+                                      setDealSheetOpen(true);
+                                    }
+                                  }}
+                                >
+                                  <div className="flex items-center gap-1">
                                     <Package className="h-3 w-3 flex-shrink-0" />
-                                    <span className="truncate">{payment.product_name || "—"}</span>
+                                    <span className="truncate max-w-[120px]">{payment.product_name || "—"}</span>
                                   </div>
-                                </TooltipTrigger>
-                                <TooltipContent>{payment.product_name || "Не указан"}</TooltipContent>
-                              </Tooltip>
-                              {payment.order_number && (
-                                <div className="text-xs text-muted-foreground">{payment.order_number}</div>
+                                  {payment.order_number && (
+                                    <span className="text-xs text-muted-foreground">{payment.order_number}</span>
+                                  )}
+                                </Button>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
                               )}
                             </TableCell>
                             <TableCell>
-                              <span className="font-medium">{payment.profile_name || "—"}</span>
+                              {payment.user_id ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-auto p-1 font-medium text-primary hover:underline"
+                                  onClick={() => {
+                                    setSelectedContact({
+                                      id: payment.user_id,
+                                      user_id: payment.user_id,
+                                      full_name: payment.profile_name,
+                                      phone: payment.profile_phone,
+                                      email: payment.profile_email,
+                                    });
+                                    setContactSheetOpen(true);
+                                  }}
+                                >
+                                  {payment.profile_name || "—"}
+                                </Button>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
                             </TableCell>
                             <TableCell>
                               <div className="flex flex-col gap-1 text-sm">
@@ -612,9 +680,23 @@ export default function AdminBepaidSync() {
             setContactSheetOpen(open);
             if (!open) {
               refetchQueue();
+              refetchPayments();
             }
           }}
           contact={selectedContact}
+        />
+        
+        {/* Deal Detail Sheet for payments */}
+        <DealDetailSheet
+          open={dealSheetOpen}
+          onOpenChange={(open) => {
+            setDealSheetOpen(open);
+            if (!open) {
+              refetchPayments();
+            }
+          }}
+          deal={selectedDeal}
+          profile={selectedDeal ? { id: selectedDeal.user_id, full_name: null, phone: null } : null}
         />
       </div>
     </TooltipProvider>
