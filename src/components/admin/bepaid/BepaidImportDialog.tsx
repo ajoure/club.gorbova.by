@@ -353,7 +353,8 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
           }
 
           // Insert into queue - use raw_payload for extra fields
-          const { error } = await supabase.from('payment_reconcile_queue').insert({
+          // Cast to bypass type checking until types are regenerated
+          const insertData = {
             bepaid_uid: tx.uid,
             tracking_id: tx.tracking_id,
             amount: tx.amount,
@@ -372,8 +373,12 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
               card_brand: tx.card_brand,
               transaction_type: tx.transaction_type,
               payment_method: tx.payment_method,
-            } as unknown as Record<string, unknown>,
-          });
+            },
+          } as Record<string, unknown>;
+          
+          const { error } = await supabase
+            .from('payment_reconcile_queue')
+            .insert(insertData as never);
 
           if (error) {
             results.push({ uid: tx.uid, status: 'error', error: error.message });
