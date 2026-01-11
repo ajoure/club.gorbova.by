@@ -107,15 +107,22 @@ export default function AdminDeals() {
     },
   });
 
-  // Fetch profiles for contact info
+  // Fetch profiles for contact info - map by both id and user_id
   const { data: profilesMap } = useQuery({
     queryKey: ["profiles-map"],
     queryFn: async () => {
       const { data } = await supabase
         .from("profiles")
-        .select("user_id, email, full_name, phone, avatar_url");
+        .select("id, user_id, email, full_name, phone, avatar_url");
       const map = new Map<string, any>();
-      data?.forEach(p => map.set(p.user_id, p));
+      data?.forEach(p => {
+        // Map by profile.id (for orders that store profile_id in user_id field)
+        map.set(p.id, p);
+        // Also map by user_id if it exists (for orders linked to auth users)
+        if (p.user_id) {
+          map.set(p.user_id, p);
+        }
+      });
       return map;
     },
   });
