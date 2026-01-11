@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { 
   RefreshCw, Download, CheckCircle2, User, CreditCard, Mail, 
-  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2, Calendar, Eye, Edit
+  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2, Calendar, Eye, Edit, FileText
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -19,6 +19,7 @@ import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { useBepaidQueue, useBepaidPayments, useBepaidStats, QueueItem, PaymentItem, DateFilter } from "@/hooks/useBepaidData";
 import BepaidMappingsTab from "@/components/admin/bepaid/BepaidMappingsTab";
+import BepaidRawDataTab from "@/components/admin/bepaid/BepaidRawDataTab";
 import { CreateOrderButton, LinkToProfileButton, BulkProcessButton } from "@/components/admin/bepaid/BepaidQueueActions";
 import ContactDealsDialog from "@/components/admin/bepaid/ContactDealsDialog";
 import SyncPeriodButton from "@/components/admin/bepaid/SyncPeriodButton";
@@ -331,6 +332,10 @@ export default function AdminBepaidSync() {
             <TabsTrigger value="queue" className="gap-2">
               <Clock className="h-4 w-4" />
               Очередь ({queueItems.length})
+            </TabsTrigger>
+            <TabsTrigger value="raw" className="gap-2">
+              <FileText className="h-4 w-4" />
+              bePaid API
             </TabsTrigger>
             <TabsTrigger value="mappings" className="gap-2">
               <Link2 className="h-4 w-4" />
@@ -657,6 +662,11 @@ export default function AdminBepaidSync() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Raw bePaid data tab */}
+          <TabsContent value="raw">
+            <BepaidRawDataTab dateFilter={dateFilter} />
           </TabsContent>
 
           {/* Mappings tab */}
