@@ -85,12 +85,55 @@ serve(async (req) => {
 
       let targetUserId = targetProfile.user_id;
 
-      // If archived profile doesn't have user_id, create auth user
+      const demoUserId = order.user_id;
+
+      // Fetch demo profile ONCE (do not lookup by user_id after updates, it may be transferred)
+      let demoProfile: { id: string; email: string | null; user_id: string | null } | null = null;
+      if (demoUserId) {
+        const { data: dp } = await supabase
+          .from("profiles")
+          .select("id, email, user_id")
+          .eq("user_id", demoUserId)
+          .single();
+        if (dp) demoProfile = dp;
+      }
+
+      // Prefer transferring the existing demo auth user to the real profile.
+      // This keeps all existing orders/payments linked, and fixes the UI contact immediately.
+      if (!targetUserId && demoUserId && demoProfile) {
+        targetUserId = demoUserId;
+
+        if (!dryRun) {
+          await supabase
+            .from("profiles")
+            .update({
+              user_id: targetUserId,
+              status: "active",
+              is_archived: false,
+              was_club_member: true,
+            })
+            .eq("id", mapping.profileId);
+
+          await supabase
+            .from("profiles")
+            .update({
+              user_id: null,
+              status: "archived",
+              is_archived: true,
+              merged_to_profile_id: mapping.profileId,
+            })
+            .eq("id", demoProfile.id);
+
+          results.profilesUpdated.push(targetProfile.full_name);
+          results.demoProfilesArchived.push(demoProfile.email ?? demoProfile.id);
+        }
+      }
+
+      // If still no user_id, create a new auth user
       if (!targetUserId) {
         console.log(`Creating auth user for ${targetProfile.email}`);
 
         if (!dryRun) {
-          // Create auth user with random password
           const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
             email: targetProfile.email,
             email_confirm: true,
@@ -98,10 +141,11 @@ serve(async (req) => {
           });
 
           if (authError) {
-            // User might already exist - try to get them
-            console.log(`Auth user creation failed: ${authError.message}, trying to find existing user`);
+            console.log(
+              `Auth user creation failed: ${authError.message}, trying to find existing user`,
+            );
             const { data: existingUser } = await supabase.auth.admin.listUsers();
-            const found = existingUser?.users?.find(u => u.email === targetProfile.email);
+            const found = existingUser?.users?.find((u) => u.email === targetProfile.email);
             if (found) {
               targetUserId = found.id;
             } else {
@@ -112,13 +156,13 @@ serve(async (req) => {
             targetUserId = authUser.user.id;
           }
 
-          // Update archived profile with user_id
           await supabase
             .from("profiles")
-            .update({ 
+            .update({
               user_id: targetUserId,
               status: "active",
-              was_club_member: true 
+              is_archived: false,
+              was_club_member: true,
             })
             .eq("id", mapping.profileId);
 
@@ -130,8 +174,6 @@ serve(async (req) => {
         console.log(`No user_id for profile ${mapping.profileId}`);
         continue;
       }
-
-      const demoUserId = order.user_id;
 
       if (!dryRun && targetUserId) {
         // Reassign order
@@ -146,12 +188,10 @@ serve(async (req) => {
         }
 
         // Reassign related payments
-        const { data: payments } = await supabase
+        await supabase
           .from("payments_v2")
           .update({ user_id: targetUserId })
           .eq("order_id", order.id);
-        
-        results.paymentsReassigned++;
 
         // Reassign subscriptions
         const { data: subs } = await supabase
@@ -167,28 +207,21 @@ serve(async (req) => {
           .update({ user_id: targetUserId })
           .eq("order_id", order.id);
 
-        // Archive demo profile (if exists)
-        const demoUserId = order.user_id;
-        if (demoUserId) {
-          const { data: demoProfile } = await supabase
+        // Archive demo profile by ID captured before any updates
+        if (demoProfile) {
+          await supabase
             .from("profiles")
-            .select("id, email")
-            .eq("user_id", demoUserId)
-            .single();
+            .update({
+              status: "archived",
+              is_archived: true,
+              merged_to_profile_id: mapping.profileId,
+            })
+            .eq("id", demoProfile.id);
 
-          if (demoProfile) {
-            await supabase
-              .from("profiles")
-              .update({ 
-                status: "archived",
-                is_archived: true,
-                merged_to_profile_id: mapping.profileId 
-              })
-              .eq("id", demoProfile.id);
-            
-            results.demoProfilesArchived.push(demoProfile.email);
-          }
+          results.demoProfilesArchived.push(demoProfile.email ?? demoProfile.id);
         }
+
+        results.paymentsReassigned++;
       }
 
       results.ordersReassigned.push({
