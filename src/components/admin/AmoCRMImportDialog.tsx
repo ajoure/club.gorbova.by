@@ -12,12 +12,13 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { 
   Upload, FileSpreadsheet, AlertCircle, CheckCircle2, 
-  Loader2, X, User, Mail, Phone, AtSign, ArrowRight, Search, Cloud, Eye, Shield, RotateCcw, Play, FlaskConical
+  Loader2, X, User, Mail, Phone, AtSign, ArrowRight, Search, Cloud, Eye, Shield, RotateCcw, Play, FlaskConical, History
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import FuzzyMatchDialog from "./FuzzyMatchDialog";
+import ImportRollbackDialog from "./ImportRollbackDialog";
 
 interface AmoCRMImportDialogProps {
   open: boolean;
@@ -215,6 +216,9 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
   const [importedCount, setImportedCount] = useState(0); // How many contacts already imported
   const [skippedNoContacts, setSkippedNoContacts] = useState(0);
   const [skippedInvalidTelegram, setSkippedInvalidTelegram] = useState(0);
+  
+  // Rollback dialog
+  const [showRollbackDialog, setShowRollbackDialog] = useState(false);
   
   const queryClient = useQueryClient();
 
@@ -648,10 +652,21 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileSpreadsheet className="h-5 w-5" />
-              Импорт контактов из amoCRM
-            </DialogTitle>
+            <div className="flex items-center justify-between">
+              <DialogTitle className="flex items-center gap-2">
+                <FileSpreadsheet className="h-5 w-5" />
+                Импорт контактов из amoCRM
+              </DialogTitle>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => setShowRollbackDialog(true)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <History className="h-4 w-4 mr-2" />
+                Откат импорта
+              </Button>
+            </div>
             <DialogDescription>
               Загрузите XLSX экспорт из amoCRM для добавления/обновления контактов
             </DialogDescription>
@@ -1023,13 +1038,19 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
         open={showFuzzyDialog}
         onOpenChange={setShowFuzzyDialog}
         contacts={unmatchedContacts}
-        onMatch={(contactId, profileId, profileName) => {
-          setContacts(prev => prev.map(c => 
-            c.amo_id === contactId 
-              ? { ...c, matched_profile_id: profileId, matched_profile_name: profileName, matched_by: 'name' as const }
-              : c
-          ));
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ['admin-contacts'] });
           calculateStats(contacts, skippedNoContacts, skippedInvalidTelegram);
+        }}
+      />
+
+      {/* Rollback Dialog */}
+      <ImportRollbackDialog
+        open={showRollbackDialog}
+        onOpenChange={setShowRollbackDialog}
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ['admin-contacts'] });
+          onSuccess?.();
         }}
       />
     </>
