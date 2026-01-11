@@ -9,9 +9,12 @@ const corsHeaders = {
 /**
  * bepaid-raw-transactions
  * 
- * Fetches ALL transaction data from bePaid API using the transactions endpoint.
- * Includes: IP address, receipt URL, full description, product/tariff matching.
- * Auto-matches contacts and products from database.
+ * Fetches ALL transaction data from bePaid API using Paginated Reports API.
+ * Features:
+ * - Uses POST /reports/paginated with X-Api-Version: 3
+ * - Transliteration for cardholder name matching
+ * - Card-to-profile linking
+ * - Proper bePaid timestamps (not import time)
  */
 
 interface BepaidTransaction {
@@ -62,8 +65,39 @@ interface BepaidTransaction {
     message?: string;
     auth_code?: string;
   };
-  avs_cvc_verification?: any;
-  three_d_secure_verification?: any;
+}
+
+// Transliteration map: Latin to Cyrillic
+const TRANSLIT_MAP: Record<string, string> = {
+  // Two-letter combinations first (order matters)
+  'sh': 'ш', 'ch': 'ч', 'zh': 'ж', 'ts': 'ц', 'ya': 'я', 
+  'yu': 'ю', 'yo': 'ё', 'iu': 'ю', 'ia': 'я', 'yi': 'ый',
+  'kh': 'х', 'th': 'т', 'ks': 'кс', 'dz': 'дз',
+  // Single letters
+  'a': 'а', 'b': 'б', 'c': 'ц', 'd': 'д', 'e': 'е', 'f': 'ф',
+  'g': 'г', 'h': 'х', 'i': 'и', 'j': 'й', 'k': 'к', 'l': 'л',
+  'm': 'м', 'n': 'н', 'o': 'о', 'p': 'п', 'q': 'к', 'r': 'р',
+  's': 'с', 't': 'т', 'u': 'у', 'v': 'в', 'w': 'в', 'x': 'кс',
+  'y': 'ы', 'z': 'з',
+};
+
+function translitToRussian(latin: string): string {
+  if (!latin) return "";
+  let result = latin.toLowerCase();
+  
+  // First handle two-letter combinations
+  const twoLetterCombos = Object.entries(TRANSLIT_MAP).filter(([k]) => k.length > 1);
+  for (const [lat, cyr] of twoLetterCombos) {
+    result = result.replace(new RegExp(lat, 'gi'), cyr);
+  }
+  
+  // Then single letters
+  const singleLetters = Object.entries(TRANSLIT_MAP).filter(([k]) => k.length === 1);
+  for (const [lat, cyr] of singleLetters) {
+    result = result.replace(new RegExp(lat, 'gi'), cyr);
+  }
+  
+  return result;
 }
 
 // Product/tariff mapping from description patterns
@@ -88,7 +122,6 @@ function parseProductFromDescription(description: string): { productName?: strin
     if (mapping) {
       return { productName: mapping.productName, tariffName: mapping.tariffName };
     }
-    // Try partial match
     for (const [key, value] of Object.entries(PRODUCT_TARIFF_MAPPINGS)) {
       if (hint.toLowerCase().includes(key.toLowerCase())) {
         return { productName: value.productName, tariffName: value.tariffName };
@@ -96,7 +129,6 @@ function parseProductFromDescription(description: string): { productName?: strin
     }
   }
   
-  // Check for any mention of known products
   for (const [key, value] of Object.entries(PRODUCT_TARIFF_MAPPINGS)) {
     if (description.toLowerCase().includes(key.toLowerCase())) {
       return { productName: value.productName, tariffName: value.tariffName };
@@ -166,41 +198,37 @@ serve(async (req) => {
     const allSubscriptions: any[] = [];
 
     // =====================================================
-    // PART 1: Fetch transactions via /v1/transactions (GET with pagination)
+    // PART 1: Fetch transactions via Paginated Reports API
     // =====================================================
     try {
-      let page = 1;
-      let hasMore = true;
+      const reportUrl = "https://api.bepaid.by/reports/paginated";
+      console.info(`Fetching transactions via Paginated Reports API: POST ${reportUrl}`);
       
-      while (hasMore && page <= 20) {
-        const txUrl = `https://gateway.bepaid.by/v1/transactions?per_page=${perPage}&page=${page}&created_at_gteq=${fromDate}&created_at_lteq=${toDate}`;
-        console.info(`Fetching transactions page ${page}: GET ${txUrl}`);
-        
-        const txResponse = await fetch(txUrl, {
-          method: "GET",
-          headers: {
-            Authorization: `Basic ${auth}`,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-        });
+      const reportResponse = await fetch(reportUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${auth}`,
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "X-Api-Version": "3",
+        },
+        body: JSON.stringify({
+          report_params: {
+            date_type: "created_at",
+            from: `${fromDate} 00:00:00`,
+            to: `${toDate} 23:59:59`,
+            status: "all",
+            time_zone: "UTC"
+          }
+        })
+      });
 
-        console.info(`Transactions page ${page} response status: ${txResponse.status}`);
-        
-        if (!txResponse.ok) {
-          const errorText = await txResponse.text();
-          console.warn(`Transactions GET failed: ${txResponse.status} - ${errorText}`);
-          break;
-        }
-
-        const txData = await txResponse.json();
-        const transactions: BepaidTransaction[] = txData.transactions || [];
-        console.info(`Page ${page}: fetched ${transactions.length} transactions`);
-
-        if (transactions.length === 0) {
-          hasMore = false;
-          break;
-        }
+      console.info(`Paginated Reports API response status: ${reportResponse.status}`);
+      
+      if (reportResponse.ok) {
+        const reportData = await reportResponse.json();
+        const transactions: BepaidTransaction[] = reportData.transactions || reportData.data || [];
+        console.info(`Paginated Reports: fetched ${transactions.length} transactions`);
 
         for (const tx of transactions) {
           const { productName, tariffName } = parseProductFromDescription(tx.description || "");
@@ -209,11 +237,12 @@ serve(async (req) => {
             uid: tx.uid,
             type: "transaction",
             status: tx.status,
-            amount: tx.amount / 100,
+            amount: (tx.amount || 0) / 100,
             currency: tx.currency,
             description: tx.description,
             paid_at: tx.paid_at,
             created_at: tx.created_at,
+            _bepaid_time: tx.paid_at || tx.created_at, // Original bePaid time
             receipt_url: tx.receipt_url,
             tracking_id: tx.tracking_id,
             message: tx.message || tx.additional_data?.message,
@@ -233,15 +262,12 @@ serve(async (req) => {
             _source: "bepaid_api",
           });
         }
-
-        if (transactions.length < perPage) {
-          hasMore = false;
-        } else {
-          page++;
-        }
+      } else {
+        const errorText = await reportResponse.text();
+        console.warn(`Paginated Reports API failed: ${reportResponse.status} - ${errorText}`);
       }
       
-      console.info(`Total transactions fetched from API: ${allTransactions.length}`);
+      console.info(`Total transactions fetched from Paginated API: ${allTransactions.length}`);
     } catch (txErr) {
       console.error("Error fetching transactions from bePaid:", txErr);
     }
@@ -261,7 +287,6 @@ serve(async (req) => {
           method: "GET",
           headers: {
             Authorization: `Basic ${auth}`,
-            "Content-Type": "application/json",
             Accept: "application/json",
           },
         });
@@ -318,8 +343,10 @@ serve(async (req) => {
             if (sub.transactions && Array.isArray(sub.transactions)) {
               for (const tx of sub.transactions) {
                 const txCreatedAt = new Date(tx.created_at || tx.paid_at);
-                // Only include transactions within filter range
                 if (txCreatedAt >= filterFrom && txCreatedAt <= filterTo) {
+                  // Check if already exists
+                  if (allTransactions.some(t => t.uid === tx.uid)) continue;
+                  
                   const { productName: txProductName, tariffName: txTariffName } = parseProductFromDescription(
                     tx.description || sub.plan?.title || ""
                   );
@@ -334,6 +361,7 @@ serve(async (req) => {
                     description: tx.description || sub.plan?.title,
                     paid_at: tx.paid_at,
                     created_at: tx.created_at,
+                    _bepaid_time: tx.paid_at || tx.created_at,
                     receipt_url: tx.receipt_url,
                     tracking_id: tx.tracking_id || sub.tracking_id,
                     message: tx.message || tx.additional_data?.message,
@@ -394,6 +422,9 @@ serve(async (req) => {
         const description = (row as any).description || payload.description || payload.additional_data?.description || payload.order?.description || "";
         const { productName, tariffName } = parseProductFromDescription(description);
 
+        // Use original bePaid time from raw_payload, NOT database created_at
+        const bepaidTime = lastTx?.paid_at || lastTx?.created_at || payload.paid_at || payload.created_at;
+
         allTransactions.push({
           uid,
           type: "transaction",
@@ -401,18 +432,21 @@ serve(async (req) => {
           amount: row.amount ?? (payload.plan?.amount ? payload.plan.amount / 100 : null),
           currency: row.currency || payload.plan?.currency || payload.currency || "BYN",
           description: description,
-          paid_at: (row as any).paid_at || lastTx?.paid_at || lastTx?.created_at || payload.paid_at,
-          created_at: payload.created_at || row.created_at,
+          paid_at: bepaidTime,
+          created_at: bepaidTime || row.created_at,
+          _bepaid_time: bepaidTime, // Original bePaid time
+          _db_created_at: row.created_at, // When added to our DB
           receipt_url: (row as any).receipt_url || payload.receipt_url,
           tracking_id: row.tracking_id || payload.tracking_id,
           message: lastTx?.message || row.last_error,
           ip_address: (row as any).ip_address || payload.customer?.ip,
           customer_email: row.customer_email || payload.customer?.email,
-          customer_name: payload.customer?.first_name ? `${payload.customer.first_name} ${payload.customer.last_name || ""}`.trim() : null,
+          customer_name: payload.customer?.first_name ? `${payload.customer.first_name} ${payload.customer.last_name || ""}`.trim() : 
+            (payload.credit_card?.holder || lastTx?.credit_card?.holder),
           customer_phone: payload.customer?.phone,
-          card_last_4: (row as any).card_last4 || payload.credit_card?.last_4 || payload.card?.last_4,
-          card_brand: payload.credit_card?.brand || payload.card?.brand,
-          card_holder: (row as any).card_holder || payload.credit_card?.holder || payload.card?.holder,
+          card_last_4: (row as any).card_last4 || payload.credit_card?.last_4 || payload.card?.last_4 || lastTx?.credit_card?.last_4,
+          card_brand: payload.credit_card?.brand || payload.card?.brand || lastTx?.credit_card?.brand,
+          card_holder: (row as any).card_holder || payload.credit_card?.holder || payload.card?.holder || lastTx?.credit_card?.holder,
           bank_code: (row as any).bank_code || payload.additional_data?.bank_code,
           rrn: (row as any).rrn || payload.additional_data?.rrn,
           auth_code: (row as any).auth_code || payload.additional_data?.auth_code,
@@ -427,7 +461,7 @@ serve(async (req) => {
         });
       }
 
-      // Load from payments_v2
+      // Load from payments_v2 
       const { data: paymentRows } = await supabase
         .from("payments_v2")
         .select(`
@@ -442,7 +476,7 @@ serve(async (req) => {
         .gte("created_at", fromTs)
         .lte("created_at", toTs)
         .order("created_at", { ascending: false })
-        .limit(1000);
+        .limit(500);
 
       const userIds = [...new Set((paymentRows || []).map(p => p.user_id).filter(Boolean))];
       let profilesMap: Record<string, any> = {};
@@ -473,14 +507,15 @@ serve(async (req) => {
           amount: pay.amount,
           currency: pay.currency || "BYN",
           description: meta.description || "",
-          paid_at: meta.paid_at,
+          paid_at: meta.paid_at || pay.created_at,
           created_at: pay.created_at,
+          _bepaid_time: meta.paid_at || pay.created_at,
           receipt_url: meta.receipt_url,
           tracking_id: pay.tracking_id,
           message: pay.error_message || meta.message,
           ip_address: meta.ip_address,
           customer_email: order?.customer_email || profile?.email,
-          customer_name: profile?.full_name,
+          customer_name: profile?.full_name || meta.card?.holder,
           customer_phone: order?.customer_phone || profile?.phone,
           card_last_4: meta.card_last4 || meta.card?.last_4,
           card_brand: meta.card?.brand,
@@ -490,6 +525,7 @@ serve(async (req) => {
           plan_title: order?.products_v2?.name,
           _source: "payments_v2",
           matched_profile_id: profile?.id,
+          matched_order_id: order?.id,
           matched_product_id: order?.product_id,
           matched_tariff_id: order?.tariff_id,
         });
@@ -499,14 +535,19 @@ serve(async (req) => {
     }
 
     // =====================================================
-    // PART 3: Match contacts by email/phone
+    // PART 3: Match contacts by email/phone/transliteration/card
     // =====================================================
     const emails = [...new Set(allTransactions.map(t => t.customer_email).filter(Boolean))];
     const phones = [...new Set(allTransactions.map(t => normalizePhone(t.customer_phone)).filter(Boolean))];
+    const cardHolders = [...new Set(allTransactions.map(t => t.card_holder).filter(Boolean))];
+    const cardLast4s = [...new Set(allTransactions.map(t => t.card_last_4).filter(Boolean))];
 
     let profilesByEmail: Record<string, any> = {};
     let profilesByPhone: Record<string, any> = {};
+    let profilesByNameTranslit: Record<string, any> = {};
+    let profilesByCard: Record<string, any> = {};
 
+    // Match by email
     if (emails.length > 0) {
       const { data: profilesE } = await supabase
         .from("profiles")
@@ -517,6 +558,7 @@ serve(async (req) => {
       }
     }
 
+    // Match by phone
     if (phones.length > 0) {
       const { data: profilesP } = await supabase
         .from("profiles")
@@ -527,6 +569,44 @@ serve(async (req) => {
       }
     }
 
+    // Match by card links
+    if (cardLast4s.length > 0) {
+      const { data: cardLinks } = await supabase
+        .from("card_profile_links")
+        .select("card_last4, card_holder, profile_id, profiles:profile_id(id, full_name, email)")
+        .in("card_last4", cardLast4s);
+      for (const link of cardLinks || []) {
+        const key = `${link.card_last4}|${(link.card_holder || "").toLowerCase()}`;
+        profilesByCard[key] = link.profiles;
+      }
+    }
+
+    // Build transliterated name index for fuzzy matching
+    if (cardHolders.length > 0) {
+      // Transliterate all card holders and search by similar Russian names
+      const translitNames: string[] = [];
+      for (const holder of cardHolders) {
+        const translitName = translitToRussian(holder);
+        if (translitName && translitName !== holder.toLowerCase()) {
+          translitNames.push(translitName);
+        }
+      }
+      
+      if (translitNames.length > 0) {
+        // Search profiles by transliterated names
+        const { data: profilesT } = await supabase
+          .from("profiles")
+          .select("id, email, full_name, phone");
+          
+        for (const p of profilesT || []) {
+          if (p.full_name) {
+            const nameLower = p.full_name.toLowerCase();
+            profilesByNameTranslit[nameLower] = p;
+          }
+        }
+      }
+    }
+
     let matchedCount = 0;
     for (const tx of allTransactions) {
       if (tx.matched_profile_id) {
@@ -534,28 +614,74 @@ serve(async (req) => {
         continue;
       }
 
-      // Match by email first
+      // 1. Match by email first
       const emailKey = tx.customer_email?.toLowerCase();
       if (emailKey && profilesByEmail[emailKey]) {
         tx.matched_profile_id = profilesByEmail[emailKey].id;
         tx.matched_profile_name = profilesByEmail[emailKey].full_name;
+        tx.matched_by = "email";
         matchedCount++;
         continue;
       }
 
-      // Match by phone
+      // 2. Match by phone
       const phoneKey = normalizePhone(tx.customer_phone);
       if (phoneKey && profilesByPhone[phoneKey]) {
         tx.matched_profile_id = profilesByPhone[phoneKey].id;
         tx.matched_profile_name = profilesByPhone[phoneKey].full_name;
+        tx.matched_by = "phone";
         matchedCount++;
+        continue;
+      }
+
+      // 3. Match by card (previously linked)
+      if (tx.card_last_4 && tx.card_holder) {
+        const cardKey = `${tx.card_last_4}|${tx.card_holder.toLowerCase()}`;
+        if (profilesByCard[cardKey]) {
+          tx.matched_profile_id = profilesByCard[cardKey].id;
+          tx.matched_profile_name = profilesByCard[cardKey].full_name;
+          tx.matched_by = "card";
+          matchedCount++;
+          continue;
+        }
+      }
+
+      // 4. Match by transliterated cardholder name
+      if (tx.card_holder) {
+        const translitName = translitToRussian(tx.card_holder);
+        tx._translit_name = translitName; // Store for UI display
+        
+        // Try exact match on transliterated name
+        if (profilesByNameTranslit[translitName]) {
+          tx.matched_profile_id = profilesByNameTranslit[translitName].id;
+          tx.matched_profile_name = profilesByNameTranslit[translitName].full_name;
+          tx.matched_by = "transliteration";
+          matchedCount++;
+          continue;
+        }
+        
+        // Try fuzzy match: split into parts and find
+        const translitParts = translitName.split(" ").filter(p => p.length > 2);
+        for (const [name, profile] of Object.entries(profilesByNameTranslit)) {
+          const nameParts = name.split(" ");
+          const matchingParts = translitParts.filter(tp => 
+            nameParts.some(np => np.includes(tp) || tp.includes(np))
+          );
+          if (matchingParts.length >= Math.min(2, translitParts.length)) {
+            tx.matched_profile_id = (profile as any).id;
+            tx.matched_profile_name = (profile as any).full_name;
+            tx.matched_by = "transliteration_fuzzy";
+            matchedCount++;
+            break;
+          }
+        }
       }
     }
 
-    // Sort by date descending
+    // Sort by original bePaid date descending
     allTransactions.sort((a, b) => {
-      const dateA = new Date(a.paid_at || a.created_at || 0);
-      const dateB = new Date(b.paid_at || b.created_at || 0);
+      const dateA = new Date(a._bepaid_time || a.paid_at || a.created_at || 0);
+      const dateB = new Date(b._bepaid_time || b.paid_at || b.created_at || 0);
       return dateB.getTime() - dateA.getTime();
     });
 

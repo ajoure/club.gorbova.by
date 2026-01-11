@@ -34,6 +34,7 @@ interface RawTransaction {
   description?: string;
   paid_at?: string;
   created_at?: string;
+  _bepaid_time?: string;
   receipt_url?: string;
   tracking_id?: string;
   message?: string;
@@ -52,9 +53,11 @@ interface RawTransaction {
   auth_code?: string;
   matched_profile_id?: string;
   matched_profile_name?: string;
+  matched_by?: string;
   matched_product_id?: string;
   matched_tariff_id?: string;
   _source?: string;
+  _translit_name?: string;
 }
 
 interface RawSubscription {
@@ -475,15 +478,15 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                         />
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
-                        {(tx.paid_at || tx.created_at) && (
+                        {(tx._bepaid_time || tx.paid_at || tx.created_at) && (
                           <div>
-                            <div>{format(new Date(tx.paid_at || tx.created_at!), "dd.MM.yyyy", { locale: ru })}</div>
+                            <div>{format(new Date(tx._bepaid_time || tx.paid_at || tx.created_at!), "dd.MM.yyyy", { locale: ru })}</div>
                             <div className="text-xs text-muted-foreground">
-                              {format(new Date(tx.paid_at || tx.created_at!), "HH:mm:ss")}
+                              {format(new Date(tx._bepaid_time || tx.paid_at || tx.created_at!), "HH:mm:ss")}
                             </div>
-                        </div>
-                      )}
-                    </TableCell>
+                          </div>
+                        )}
+                      </TableCell>
                     <TableCell>
                       {getTypeBadge(tx.type)}
                     </TableCell>

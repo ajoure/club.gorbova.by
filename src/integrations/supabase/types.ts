@@ -159,6 +159,44 @@ export type Database = {
           },
         ]
       }
+      card_profile_links: {
+        Row: {
+          card_brand: string | null
+          card_holder: string | null
+          card_last4: string
+          created_at: string | null
+          id: string
+          profile_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          card_brand?: string | null
+          card_holder?: string | null
+          card_last4: string
+          created_at?: string | null
+          id?: string
+          profile_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          card_brand?: string | null
+          card_holder?: string | null
+          card_last4?: string
+          created_at?: string | null
+          id?: string
+          profile_id?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "card_profile_links_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_preferences: {
         Row: {
           admin_user_id: string

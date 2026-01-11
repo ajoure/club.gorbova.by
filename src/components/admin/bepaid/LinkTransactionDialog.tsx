@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, User, Mail, Phone, Check, Loader2, Link2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Search, User, Mail, Phone, Check, Loader2, Link2, CreditCard, Languages } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -18,9 +19,13 @@ interface LinkTransactionDialogProps {
     customer_email?: string;
     customer_name?: string;
     customer_phone?: string;
+    card_holder?: string;
+    card_last_4?: string;
+    card_brand?: string;
     amount?: number;
     currency?: string;
     _queue_id?: string;
+    _translit_name?: string;
   } | null;
   onLinked?: (profileId: string) => void;
 }
@@ -38,6 +43,7 @@ export function LinkTransactionDialog({ open, onOpenChange, transaction, onLinke
   const [isSearching, setIsSearching] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState<ProfileResult | null>(null);
   const [applyToAll, setApplyToAll] = useState(true);
+  const [saveCard, setSaveCard] = useState(true);
   const queryClient = useQueryClient();
 
   const handleSearch = async () => {
@@ -90,10 +96,35 @@ export function LinkTransactionDialog({ open, onOpenChange, transaction, onLinke
         if (updateError) console.warn("Error updating all by email:", updateError);
       }
 
+      // Save card-profile link for future matching
+      if (saveCard && transaction?.card_last_4) {
+        const { error: cardError } = await supabase
+          .from("card_profile_links")
+          .upsert({
+            card_last4: transaction.card_last_4,
+            card_brand: transaction.card_brand || null,
+            card_holder: transaction.card_holder || null,
+            profile_id: profileId,
+            updated_at: new Date().toISOString(),
+          }, {
+            onConflict: "card_last4,card_holder"
+          });
+        
+        if (cardError) {
+          console.warn("Error saving card link:", cardError);
+        } else {
+          console.log("Card link saved:", transaction.card_last_4, "->", profileId);
+        }
+      }
+
       return { profileId };
     },
     onSuccess: ({ profileId }) => {
-      toast.success(applyToAll ? "Контакт связан со всеми платежами" : "Контакт связан");
+      const messages: string[] = ["Контакт связан"];
+      if (applyToAll && transaction?.customer_email) messages.push("применено ко всем платежам");
+      if (saveCard && transaction?.card_last_4) messages.push("карта сохранена");
+      toast.success(messages.join(", "));
+      
       queryClient.invalidateQueries({ queryKey: ["bepaid-raw-data"] });
       queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
       onLinked?.(profileId);
@@ -116,6 +147,13 @@ export function LinkTransactionDialog({ open, onOpenChange, transaction, onLinke
       profileId: selectedProfile.id, 
       email: transaction?.customer_email 
     });
+  };
+
+  // Auto-fill search with transliterated name
+  const handleUseTranslit = () => {
+    if (transaction?._translit_name) {
+      setSearchQuery(transaction._translit_name);
+    }
   };
 
   return (
@@ -141,10 +179,23 @@ export function LinkTransactionDialog({ open, onOpenChange, transaction, onLinke
                 {transaction.customer_email}
               </div>
             )}
-            {transaction.customer_name && (
+            {transaction.card_holder && (
               <div className="flex items-center gap-1 text-muted-foreground">
                 <User className="h-3 w-3" />
-                {transaction.customer_name}
+                {transaction.card_holder}
+                {transaction._translit_name && transaction._translit_name !== transaction.card_holder.toLowerCase() && (
+                  <Badge variant="outline" className="ml-1 text-xs">
+                    <Languages className="h-3 w-3 mr-1" />
+                    {transaction._translit_name}
+                  </Badge>
+                )}
+              </div>
+            )}
+            {transaction.card_last_4 && (
+              <div className="flex items-center gap-1 text-muted-foreground">
+                <CreditCard className="h-3 w-3" />
+                **** {transaction.card_last_4}
+                {transaction.card_brand && <span className="text-xs">({transaction.card_brand})</span>}
               </div>
             )}
             {transaction.customer_phone && (
@@ -178,6 +229,17 @@ export function LinkTransactionDialog({ open, onOpenChange, transaction, onLinke
               )}
             </Button>
           </div>
+          {transaction?._translit_name && transaction._translit_name !== transaction.card_holder?.toLowerCase() && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={handleUseTranslit}
+              className="text-xs"
+            >
+              <Languages className="h-3 w-3 mr-1" />
+              Искать по транслитерации: {transaction._translit_name}
+            </Button>
+          )}
         </div>
 
         {/* Results */}
@@ -226,21 +288,33 @@ export function LinkTransactionDialog({ open, onOpenChange, transaction, onLinke
           </div>
         )}
 
-        {/* Apply to all option */}
-        {transaction?.customer_email && (
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="applyToAll"
-              checked={applyToAll}
-              onChange={(e) => setApplyToAll(e.target.checked)}
-              className="rounded border-input"
-            />
-            <label htmlFor="applyToAll" className="text-sm text-muted-foreground">
-              Применить ко всем платежам с email {transaction.customer_email}
-            </label>
-          </div>
-        )}
+        {/* Options */}
+        <div className="space-y-2">
+          {transaction?.customer_email && (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="applyToAll"
+                checked={applyToAll}
+                onCheckedChange={(checked) => setApplyToAll(!!checked)}
+              />
+              <label htmlFor="applyToAll" className="text-sm text-muted-foreground cursor-pointer">
+                Применить ко всем платежам с {transaction.customer_email}
+              </label>
+            </div>
+          )}
+          {transaction?.card_last_4 && (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="saveCard"
+                checked={saveCard}
+                onCheckedChange={(checked) => setSaveCard(!!checked)}
+              />
+              <label htmlFor="saveCard" className="text-sm text-muted-foreground cursor-pointer">
+                Запомнить карту *{transaction.card_last_4} для этого контакта
+              </label>
+            </div>
+          )}
+        </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
