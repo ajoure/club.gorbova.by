@@ -95,6 +95,70 @@ export type Database = {
         }
         Relationships: []
       }
+      bepaid_product_mappings: {
+        Row: {
+          auto_create_order: boolean | null
+          bepaid_description: string | null
+          bepaid_plan_title: string
+          created_at: string
+          id: string
+          is_subscription: boolean | null
+          notes: string | null
+          offer_id: string | null
+          product_id: string | null
+          tariff_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          auto_create_order?: boolean | null
+          bepaid_description?: string | null
+          bepaid_plan_title: string
+          created_at?: string
+          id?: string
+          is_subscription?: boolean | null
+          notes?: string | null
+          offer_id?: string | null
+          product_id?: string | null
+          tariff_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          auto_create_order?: boolean | null
+          bepaid_description?: string | null
+          bepaid_plan_title?: string
+          created_at?: string
+          id?: string
+          is_subscription?: boolean | null
+          notes?: string | null
+          offer_id?: string | null
+          product_id?: string | null
+          tariff_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bepaid_product_mappings_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bepaid_product_mappings_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bepaid_product_mappings_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_preferences: {
         Row: {
           admin_user_id: string
