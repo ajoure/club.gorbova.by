@@ -103,7 +103,7 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
   const amountStr = row['Сумма'] || row['Amount'] || '0';
   const amount = parseFloat(amountStr.replace(',', '.').replace(/[^\d.-]/g, '')) || 0;
 
-  // Parse card mask to get last 4 digits
+  // Parse card mask to get last 4 digits (formats: "49169896 xxxx 9310" or "**** 1234")
   const cardMask = row['Карта'] || row['Card'] || '';
   const cardLast4Match = cardMask.match(/(\d{4})\s*$/);
   const card_last4 = cardLast4Match ? cardLast4Match[1] : undefined;
@@ -114,15 +114,24 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
   if (cardMask.startsWith('4')) card_brand = 'visa';
   else if (cardMask.startsWith('5')) card_brand = 'mastercard';
 
-  // Parse dates
+  // Parse dates (multiple formats supported)
   const parseDate = (dateStr: string | undefined): string | undefined => {
     if (!dateStr) return undefined;
-    // Try parsing DD.MM.YYYY HH:mm:ss format
-    const match = dateStr.match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):?(\d{2})?/);
+    
+    // Try DD.MM.YYYY HH:mm:ss format
+    let match = dateStr.match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):?(\d{2})?/);
     if (match) {
       const [, day, month, year, hour, min, sec = '00'] = match;
       return `${year}-${month}-${day}T${hour}:${min}:${sec}`;
     }
+    
+    // Try YYYY-MM-DD HH:mm:ss +0300 format (bePaid Excel export)
+    match = dateStr.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\s*([+-]\d{4})?/);
+    if (match) {
+      const [, year, month, day, hour, min, sec] = match;
+      return `${year}-${month}-${day}T${hour}:${min}:${sec}`;
+    }
+    
     return dateStr;
   };
 
@@ -200,12 +209,30 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
             return row;
           });
       } else {
-        // Parse Excel
+        // Parse Excel - bePaid exports have 2 sheets: summary (first) and details (second)
         const buffer = await selectedFile.arrayBuffer();
         const workbook = XLSX.read(buffer, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
-        const sheet = workbook.Sheets[sheetName];
-        rows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '' });
+        
+        // Try second sheet first (detailed transactions), fall back to first sheet
+        let sheetName = workbook.SheetNames[1] || workbook.SheetNames[0];
+        let sheet = workbook.Sheets[sheetName];
+        let tempRows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '' });
+        
+        // If second sheet doesn't have UID column, try first sheet
+        if (tempRows.length > 0 && !('UID' in tempRows[0]) && workbook.SheetNames.length > 1) {
+          // Second sheet didn't have UID, maybe structure is different - try with raw option
+          tempRows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '', raw: false });
+        }
+        
+        // Still no UID? Try first sheet
+        if (tempRows.length > 0 && !('UID' in tempRows[0]) && workbook.SheetNames[0] !== sheetName) {
+          sheetName = workbook.SheetNames[0];
+          sheet = workbook.Sheets[sheetName];
+          tempRows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '' });
+        }
+        
+        rows = tempRows;
+        console.log("Excel parsed:", { sheetName, rowCount: rows.length, columns: rows[0] ? Object.keys(rows[0]) : [] });
       }
 
       // Parse transactions
