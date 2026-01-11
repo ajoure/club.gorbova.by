@@ -108,7 +108,7 @@ serve(async (req) => {
 
     while (hasMore && page <= 10) { // Max 10 pages (1000 subscriptions)
       try {
-        const subsUrl = `https://api.bepaid.by/subscriptions?shop_id=${shopId}&per_page=${perPage}&page=${page}`;
+        const subsUrl = `https://api.bepaid.by/subscriptions?per_page=${perPage}&page=${page}`;
         console.info(`Fetching subscriptions page ${page}: ${subsUrl}`);
         
         const subsResponse = await fetch(subsUrl, {
@@ -220,7 +220,7 @@ serve(async (req) => {
     // =====================================================
     let customers: any[] = [];
     try {
-      const customersResponse = await fetch(`https://api.bepaid.by/customers?shop_id=${shopId}&per_page=100`, {
+      const customersResponse = await fetch(`https://api.bepaid.by/customers?per_page=100&page=1`, {
         method: "GET",
         headers: {
           Authorization: `Basic ${auth}`,
@@ -236,6 +236,156 @@ serve(async (req) => {
       }
     } catch (custErr) {
       console.warn("Could not fetch customers:", custErr);
+    }
+
+    // =====================================================
+    // FALLBACK (SIMULATION): if bePaid API returns nothing,
+    // return data already present in our system (webhooks/imports).
+    // =====================================================
+    if (allTransactions.length === 0 && allSubscriptions.length === 0) {
+      console.warn("bePaid API returned 0 items. Falling back to system data (simulation mode).");
+
+      const fromTs = new Date(fromDate + "T00:00:00Z").toISOString();
+      const toTs = new Date(toDate + "T23:59:59Z").toISOString();
+
+      // Queue items (webhooks/imports)
+      const { data: queueRows, error: queueErr } = await supabase
+        .from("payment_reconcile_queue")
+        .select(
+          "id, created_at, updated_at, status, tracking_id, amount, currency, customer_email, card_last4, card_holder, raw_payload, source, matched_profile_id, matched_order_id, bepaid_uid, last_error"
+        )
+        .gte("created_at", fromTs)
+        .lte("created_at", toTs)
+        .limit(1000);
+
+      if (queueErr) {
+        console.error("Simulation fallback: queue query error", queueErr);
+      }
+
+      for (const row of queueRows || []) {
+        const payload: any = row.raw_payload || {};
+        const lastTx = payload.last_transaction || payload.lastTransaction || null;
+
+        const uid = row.bepaid_uid || lastTx?.uid || payload.uid || payload.id || row.id;
+        const status = (lastTx?.status || payload.status || row.status || "pending").toString();
+        const amount = row.amount ?? (payload.plan?.amount ? payload.plan.amount / 100 : null);
+        const currency = row.currency || payload.plan?.currency || payload.currency || "BYN";
+        const paidAt = lastTx?.created_at || lastTx?.paid_at || payload.paid_at || payload.paidAt || null;
+        const createdAt = payload.created_at || row.created_at;
+        const planTitle = payload.plan?.title || payload.plan?.name || payload.plan?.plan?.title || payload.additional_data?.description || null;
+
+        allTransactions.push({
+          uid,
+          type: "transaction",
+          subscription_id: payload.id || null,
+          status,
+          amount,
+          currency,
+          paid_at: paidAt,
+          created_at: createdAt,
+          plan_title: planTitle,
+          customer_email: row.customer_email || payload.customer?.email || null,
+          customer_name: payload.customer_name || null,
+          customer_phone: payload.customer?.phone || null,
+          card_last_4: row.card_last4 || payload.card?.last_4 || payload.credit_card?.last_4 || null,
+          card_brand: payload.card?.brand || payload.credit_card?.brand || null,
+          card_holder: row.card_holder || payload.card?.holder || payload.credit_card?.holder || null,
+          tracking_id: row.tracking_id || payload.tracking_id || null,
+          message: lastTx?.message || row.last_error || null,
+          _source: row.source || "system",
+          _queue_id: row.id,
+          matched_profile_id: row.matched_profile_id,
+          matched_order_id: row.matched_order_id,
+        });
+
+        // Also add subscription as a separate record if it looks like one
+        if (payload.id && typeof payload.id === "string" && payload.id.startsWith("sbs_")) {
+          allSubscriptions.push({
+            id: payload.id,
+            type: "subscription",
+            state: payload.state || "unknown",
+            tracking_id: payload.tracking_id || row.tracking_id,
+            created_at: payload.created_at || row.created_at,
+            updated_at: payload.updated_at || row.updated_at,
+            amount: payload.plan?.amount ? payload.plan.amount / 100 : row.amount,
+            currency: payload.plan?.currency || row.currency || "BYN",
+            plan_title: payload.plan?.title || payload.plan?.name || null,
+            interval: payload.plan?.plan?.interval_unit || null,
+            interval_count: payload.plan?.plan?.interval || null,
+            customer_email: row.customer_email || null,
+            customer_name: null,
+            customer_phone: null,
+            card_last_4: payload.card?.last_4 || null,
+            card_brand: payload.card?.brand || null,
+            card_holder: payload.card?.holder || null,
+            transactions_count: payload.last_transaction ? 1 : 0,
+            transactions: payload.last_transaction
+              ? [{
+                  uid: payload.last_transaction.uid,
+                  status: payload.last_transaction.status,
+                  amount: payload.plan?.amount ? payload.plan.amount / 100 : null,
+                  currency: payload.plan?.currency || row.currency || "BYN",
+                  paid_at: payload.last_transaction.created_at,
+                  created_at: payload.last_transaction.created_at,
+                  message: payload.last_transaction.message,
+                }]
+              : [],
+          });
+        }
+      }
+
+      // Existing processed payments
+      const { data: paymentRows, error: payErr } = await supabase
+        .from("payments_v2")
+        .select(
+          "id, created_at, paid_at, amount, currency, status, provider, provider_payment_id, card_last4, card_brand, user_id, order_id, meta"
+        )
+        .eq("provider", "bepaid")
+        .gte("created_at", fromTs)
+        .lte("created_at", toTs)
+        .limit(1000);
+
+      if (payErr) {
+        console.error("Simulation fallback: payments query error", payErr);
+      }
+
+      for (const p of paymentRows || []) {
+        allTransactions.push({
+          uid: p.provider_payment_id || p.id,
+          type: "transaction",
+          status: p.status,
+          amount: p.amount,
+          currency: p.currency,
+          paid_at: p.paid_at,
+          created_at: p.created_at,
+          plan_title: p.meta?.product_name || p.meta?.description || null,
+          customer_email: p.meta?.customer_email || null,
+          customer_name: p.meta?.customer_name || null,
+          customer_phone: p.meta?.customer_phone || null,
+          card_last_4: p.card_last4 || null,
+          card_brand: p.card_brand || null,
+          card_holder: p.meta?.card_holder || null,
+          tracking_id: p.meta?.tracking_id || null,
+          message: null,
+          _source: "payments_v2",
+          order_id: p.order_id,
+          user_id: p.user_id,
+        });
+      }
+
+      // Deduplicate by uid
+      const seen = new Set<string>();
+      const deduped = [] as any[];
+      for (const t of allTransactions) {
+        const key = String(t.uid);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(t);
+      }
+      allTransactions.length = 0;
+      allTransactions.push(...deduped);
+
+      console.info(`Simulation mode: returned ${allTransactions.length} transactions and ${allSubscriptions.length} subscriptions from system data.`);
     }
 
     // =====================================================
