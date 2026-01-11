@@ -377,14 +377,18 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
                 <CheckCircle2 className="h-4 w-4" />
                 <span className="text-sm font-medium">Данные загружены из bePaid API</span>
               </>
-            ) : (
-              <>
-                <AlertCircle className="h-4 w-4" />
-                <span className="text-sm font-medium">
-                  {debugInfo?.fallback_used ? "API недоступен, показаны данные из локальной БД" : "Нет данных из API за выбранный период"}
-                </span>
-              </>
-            )}
+             ) : (
+               <>
+                 <AlertCircle className="h-4 w-4" />
+                 <span className="text-sm font-medium">
+                   {debugInfo?.fallback_used
+                     ? "API недоступен, показаны данные из локальной БД"
+                     : apiSuccess
+                       ? "API доступен, но транзакций нет за выбранный период"
+                       : "Нет данных из API за выбранный период"}
+                 </span>
+               </>
+             )}
             {debugInfo?.errors && debugInfo.errors.length > 0 && (
               <span className="text-xs ml-2">({debugInfo.errors.length} ошибок)</span>
             )}

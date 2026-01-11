@@ -222,90 +222,128 @@ serve(async (req) => {
     const allSubscriptions: any[] = [];
 
     // =====================================================
-    // PART 1: Fetch transactions via gateway.bepaid.by/transactions
-    // This is the WORKING endpoint (used by bepaid-fetch-transactions)
+    // PART 1: Fetch transactions (API)
+    // NOTE: Different bePaid accounts/environments may expose different base paths.
+    // We probe a small list of candidate endpoints and pick the first working one.
     // =====================================================
     let apiSuccess = false;
-    
+
     try {
       // Build date params - bePaid expects ISO format
       const fromDateISO = new Date(fromDate + "T00:00:00Z").toISOString();
       const toDateISO = new Date(toDate + "T23:59:59Z").toISOString();
-      
-      const params = new URLSearchParams({
-        created_at_from: fromDateISO,
-        created_at_to: toDateISO,
-        per_page: String(perPage),
-      });
-      
-      const gatewayUrl = `https://gateway.bepaid.by/transactions?${params.toString()}`;
-      console.info(`Fetching transactions from gateway: ${gatewayUrl}`);
-      debug.api_calls.push({ url: gatewayUrl, method: "GET" });
-      
-      const gatewayResponse = await fetch(gatewayUrl, {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${auth}`,
-          Accept: "application/json",
-        },
-      });
 
-      debug.api_calls[0].status = gatewayResponse.status;
-      console.info(`Gateway response status: ${gatewayResponse.status}`);
-      
-      if (gatewayResponse.ok) {
-        const gatewayData = await gatewayResponse.json();
-        const transactions: BepaidTransaction[] = gatewayData.transactions || [];
-        debug.api_calls[0].count = transactions.length;
-        console.info(`Gateway: fetched ${transactions.length} transactions`);
+      const buildUrl = (base: string, includeShopId: boolean) => {
+        const params = new URLSearchParams({
+          created_at_from: fromDateISO,
+          created_at_to: toDateISO,
+          per_page: String(perPage),
+          ...(includeShopId ? { shop_id: String(shopId) } : {}),
+        });
+        return `${base}?${params.toString()}`;
+      };
 
-        for (const tx of transactions) {
-          const { productName, tariffName } = parseProductFromDescription(tx.description || "");
-          
-          allTransactions.push({
-            uid: tx.uid,
-            type: "transaction",
-            status: tx.status,
-            amount: (tx.amount || 0) / 100,
-            currency: tx.currency,
-            description: tx.description,
-            // CRITICAL: Use original bePaid timestamps
-            paid_at: tx.paid_at,
-            created_at: tx.created_at,
-            _bepaid_time: tx.paid_at || tx.created_at,
-            _bepaid_created_at: tx.created_at,
-            _bepaid_paid_at: tx.paid_at,
-            receipt_url: tx.receipt_url,
-            tracking_id: tx.tracking_id,
-            message: tx.message || tx.additional_data?.message,
-            ip_address: tx.customer?.ip,
-            customer_email: tx.customer?.email || tx.billing_address?.email,
-            customer_name: [tx.customer?.first_name || tx.billing_address?.first_name, tx.customer?.last_name || tx.billing_address?.last_name].filter(Boolean).join(" ") || null,
-            customer_phone: tx.customer?.phone || tx.billing_address?.phone,
-            card_last_4: tx.credit_card?.last_4,
-            card_brand: tx.credit_card?.brand,
-            card_holder: tx.credit_card?.holder,
-            bank_code: tx.additional_data?.bank_code,
-            rrn: tx.additional_data?.rrn,
-            auth_code: tx.additional_data?.auth_code,
-            product_name: productName,
-            tariff_name: tariffName,
-            plan_title: productName ? (tariffName ? `${productName}: ${tariffName}` : productName) : tx.description,
-            _source: "bepaid_api",
-          });
+      const candidates: Array<{ name: string; url: string }> = [
+        { name: "gateway:/transactions", url: buildUrl("https://gateway.bepaid.by/transactions", false) },
+        { name: "gateway:/transactions?shop_id", url: buildUrl("https://gateway.bepaid.by/transactions", true) },
+        { name: "gateway:/api/v1/transactions", url: buildUrl("https://gateway.bepaid.by/api/v1/transactions", false) },
+        { name: "gateway:/api/v1/transactions?shop_id", url: buildUrl("https://gateway.bepaid.by/api/v1/transactions", true) },
+        { name: "api:/transactions", url: buildUrl("https://api.bepaid.by/transactions", false) },
+        { name: "api:/transactions?shop_id", url: buildUrl("https://api.bepaid.by/transactions", true) },
+        { name: "api:/api/v1/transactions", url: buildUrl("https://api.bepaid.by/api/v1/transactions", false) },
+      ];
+
+      const headers: Record<string, string> = {
+        Authorization: `Basic ${auth}`,
+        Accept: "application/json",
+        // Some deployments require API v3 header even for GET routes
+        "X-Api-Version": "3",
+      };
+
+      let transactions: BepaidTransaction[] = [];
+      let apiAvailable = false;
+
+      for (const candidate of candidates) {
+        console.info(`Fetching transactions (${candidate.name}): ${candidate.url}`);
+        debug.api_calls.push({ url: candidate.url, method: "GET", name: candidate.name });
+        const callIdx = debug.api_calls.length - 1;
+
+        const resp = await fetch(candidate.url, { method: "GET", headers });
+        debug.api_calls[callIdx].status = resp.status;
+
+        if (!resp.ok) {
+          const errorText = await resp.text();
+          debug.api_calls[callIdx].error = errorText;
+          // Collect one compact error (avoid flooding)
+          debug.errors.push(
+            `${candidate.name}: ${resp.status} - ${String(errorText).slice(0, 200)}`
+          );
+          continue;
         }
-        
-        apiSuccess = transactions.length > 0;
-      } else {
-        const errorText = await gatewayResponse.text();
-        console.warn(`Gateway API failed: ${gatewayResponse.status} - ${errorText}`);
-        debug.api_calls[0].error = errorText;
-        debug.errors.push(`Gateway: ${gatewayResponse.status} - ${errorText}`);
+
+        apiAvailable = true;
+        debug.api_calls[callIdx].selected = true;
+
+        const json = await resp.json().catch(() => null);
+        const rawList = (json?.transactions ?? json?.data?.transactions ?? []) as any[];
+        transactions = rawList
+          .map((t) => (t?.transaction ? t.transaction : t))
+          .filter(Boolean);
+
+        debug.api_calls[callIdx].count = transactions.length;
+        break;
+      }
+
+      // Mark API as working even if it returns 0 transactions
+      apiSuccess = apiAvailable;
+
+      if (!apiAvailable) {
+        console.warn("No working bePaid transactions endpoint found (all candidates failed)");
+      }
+
+      for (const tx of transactions) {
+        const { productName, tariffName } = parseProductFromDescription(tx.description || "");
+
+        allTransactions.push({
+          uid: tx.uid,
+          type: "transaction",
+          status: tx.status,
+          amount: (tx.amount || 0) / 100,
+          currency: tx.currency,
+          description: tx.description,
+          // CRITICAL: Use original bePaid timestamps
+          paid_at: tx.paid_at,
+          created_at: tx.created_at,
+          _bepaid_time: tx.paid_at || tx.created_at,
+          _bepaid_created_at: tx.created_at,
+          _bepaid_paid_at: tx.paid_at,
+          receipt_url: tx.receipt_url,
+          tracking_id: tx.tracking_id,
+          message: tx.message || tx.additional_data?.message,
+          ip_address: tx.customer?.ip,
+          customer_email: tx.customer?.email || tx.billing_address?.email,
+          customer_name:
+            [tx.customer?.first_name || tx.billing_address?.first_name, tx.customer?.last_name || tx.billing_address?.last_name]
+              .filter(Boolean)
+              .join(" ") || null,
+          customer_phone: tx.customer?.phone || tx.billing_address?.phone,
+          card_last_4: tx.credit_card?.last_4,
+          card_brand: tx.credit_card?.brand,
+          card_holder: tx.credit_card?.holder,
+          bank_code: tx.additional_data?.bank_code,
+          rrn: tx.additional_data?.rrn,
+          auth_code: tx.additional_data?.auth_code,
+          product_name: productName,
+          tariff_name: tariffName,
+          plan_title: productName ? (tariffName ? `${productName}: ${tariffName}` : productName) : tx.description,
+          _source: "bepaid_api",
+        });
       }
     } catch (txErr) {
       console.error("Error fetching transactions from bePaid:", txErr);
-      debug.errors.push(`Gateway exception: ${String(txErr)}`);
+      debug.errors.push(`Transactions exception: ${String(txErr)}`);
     }
+
 
     // =====================================================
     // PART 2: Fetch subscriptions from api.bepaid.by
