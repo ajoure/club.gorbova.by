@@ -99,8 +99,9 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
   else if (typeRaw.includes('Возврат') || typeRaw.toLowerCase().includes('refund')) status_normalized = 'refund';
   else if (typeRaw.includes('Отмен') || typeRaw.toLowerCase().includes('cancel')) status_normalized = 'cancel';
 
-  // Parse amount (handle comma as decimal separator)
-  const amountStr = row['Сумма'] || row['Amount'] || '0';
+  // Parse amount (handle comma as decimal separator, Excel may return number or string)
+  const amountRaw = row['Сумма'] || row['Amount'] || 0;
+  const amountStr = typeof amountRaw === 'number' ? String(amountRaw) : String(amountRaw || '0');
   const amount = parseFloat(amountStr.replace(',', '.').replace(/[^\d.-]/g, '')) || 0;
 
   // Parse card mask to get last 4 digits (formats: "49169896 xxxx 9310" or "**** 1234")
