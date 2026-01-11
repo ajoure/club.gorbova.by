@@ -9,11 +9,16 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Package, Link2, Check } from "lucide-react";
+import { Plus, Edit2, Trash2, RefreshCw, AlertCircle, Package, Link2, Check, Eye } from "lucide-react";
 import { useBepaidMappings, BepaidMapping, UnmappedProduct } from "@/hooks/useBepaidMappings";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
+import { useQueueProductNames, DateFilter } from "@/hooks/useBepaidData";
 
-export default function BepaidMappingsTab() {
+interface BepaidMappingsTabProps {
+  dateFilter?: DateFilter;
+}
+
+export default function BepaidMappingsTab({ dateFilter }: BepaidMappingsTabProps) {
   const {
     mappings,
     mappingsLoading,
@@ -29,6 +34,7 @@ export default function BepaidMappingsTab() {
     isDeleting,
   } = useBepaidMappings();
   const { data: products, isLoading: productsLoading } = useProductsV2();
+  const { data: queueProductNames } = useQueueProductNames(dateFilter);
   const { data: allTariffs } = useTariffs();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingMapping, setEditingMapping] = useState<BepaidMapping | null>(null);
@@ -112,36 +118,63 @@ export default function BepaidMappingsTab() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {unmappedProducts.map((unmapped) => (
-                <div
-                  key={unmapped.bepaid_plan_title}
-                  className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <Package className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <p className="font-medium">{unmapped.bepaid_plan_title}</p>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        {unmapped.sample_description && (
-                          <span className="truncate max-w-[200px]">{unmapped.sample_description}</span>
-                        )}
-                        {unmapped.sample_amount && (
-                          <Badge variant="outline">{unmapped.sample_amount} BYN</Badge>
-                        )}
-                        <Badge variant="secondary">{unmapped.count} записей</Badge>
+              {unmappedProducts.map((unmapped) => {
+                // Find matching queue product for additional info
+                const queueProduct = queueProductNames?.find(p => p.name === unmapped.bepaid_plan_title);
+                return (
+                  <div
+                    key={unmapped.bepaid_plan_title}
+                    className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Package className="h-4 w-4 text-muted-foreground" />
+                      <div>
+                        <p className="font-medium">{unmapped.bepaid_plan_title}</p>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
+                          {unmapped.sample_description && (
+                            <span className="truncate max-w-[200px]">{unmapped.sample_description}</span>
+                          )}
+                          {queueProduct && queueProduct.amounts.length > 0 && (
+                            <Badge variant="outline">{queueProduct.amounts.join(", ")} BYN</Badge>
+                          )}
+                          <Badge variant="secondary">{unmapped.count} записей</Badge>
+                        </div>
                       </div>
                     </div>
+                    <div className="flex items-center gap-2">
+                      {queueProduct && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline" className="gap-1 cursor-help">
+                              <Eye className="h-3 w-3" />
+                              {queueProduct.count}
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[300px]">
+                            <div className="space-y-1">
+                              <p className="font-medium">Название в очереди: {queueProduct.name}</p>
+                              {queueProduct.amounts.length > 0 && (
+                                <p>Суммы: {queueProduct.amounts.join(", ")} BYN</p>
+                              )}
+                              {queueProduct.descriptions.length > 0 && (
+                                <p>Описания: {queueProduct.descriptions.slice(0, 3).join("; ")}</p>
+                              )}
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleOpenEdit(null, unmapped)}
+                      >
+                        <Link2 className="h-4 w-4 mr-2" />
+                        Связать
+                      </Button>
+                    </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleOpenEdit(null, unmapped)}
-                  >
-                    <Link2 className="h-4 w-4 mr-2" />
-                    Связать
-                  </Button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>

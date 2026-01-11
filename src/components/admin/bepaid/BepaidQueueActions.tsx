@@ -18,6 +18,7 @@ import { toast } from "sonner";
 interface BepaidQueueActionsProps {
   item: QueueItem;
   onSuccess?: () => void;
+  onLinkProfile?: (profile: { id: string; full_name: string | null; phone: string | null }) => void;
 }
 
 export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) {
@@ -62,8 +63,6 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
       },
     });
   };
-
-  
 
   if (!item.matched_profile_id) {
     return (
@@ -120,7 +119,7 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
                       <SelectValue placeholder="Выберите продукт" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Без продукта</SelectItem>
+                      <SelectItem value="__none__">Без продукта</SelectItem>
                       {products?.map((product) => (
                         <SelectItem key={product.id} value={product.id}>
                           {product.name}
@@ -130,7 +129,7 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
                   </Select>
                 </div>
 
-                {selectedProductId && allTariffs && allTariffs.filter(t => t.product_id === selectedProductId).length > 0 && (
+                {selectedProductId && selectedProductId !== "__none__" && allTariffs && allTariffs.filter(t => t.product_id === selectedProductId).length > 0 && (
                   <div className="space-y-2">
                     <Label>Тариф</Label>
                     <Select value={selectedTariffId} onValueChange={setSelectedTariffId}>
@@ -138,7 +137,7 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
                         <SelectValue placeholder="Выберите тариф" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">Без тарифа</SelectItem>
+                        <SelectItem value="__none__">Без тарифа</SelectItem>
                         {allTariffs.filter(t => t.product_id === selectedProductId).map((tariff) => (
                           <SelectItem key={tariff.id} value={tariff.id}>
                             {tariff.name}
@@ -166,10 +165,10 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
   );
 }
 
-export function LinkToProfileButton({ item, onSuccess }: BepaidQueueActionsProps) {
+export function LinkToProfileButton({ item, onSuccess, onLinkProfile }: BepaidQueueActionsProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const { linkToProfile, isLinking } = useBepaidQueueActions();
+  const [isLinking, setIsLinking] = useState(false);
 
   // Search profiles
   const { data: searchResults, isLoading: searching } = useQuery({
@@ -189,13 +188,14 @@ export function LinkToProfileButton({ item, onSuccess }: BepaidQueueActionsProps
     enabled: search.length >= 2,
   });
 
-  const handleLink = (profileId: string) => {
-    linkToProfile({ queueItemId: item.id, profileId }, {
-      onSuccess: () => {
-        setDialogOpen(false);
-        onSuccess?.();
-      },
-    });
+  const handleLink = (profile: { id: string; full_name: string | null; phone: string | null }) => {
+    setIsLinking(true);
+    if (onLinkProfile) {
+      onLinkProfile(profile);
+    }
+    setDialogOpen(false);
+    setIsLinking(false);
+    onSuccess?.();
   };
 
   if (item.matched_profile_id) {
@@ -256,7 +256,7 @@ export function LinkToProfileButton({ item, onSuccess }: BepaidQueueActionsProps
                     <div
                       key={profile.id}
                       className="flex items-center justify-between p-2 rounded-lg border hover:bg-accent/50 cursor-pointer"
-                      onClick={() => handleLink(profile.id)}
+                      onClick={() => handleLink(profile)}
                     >
                       <div>
                         <p className="font-medium">{profile.full_name || "Без имени"}</p>

@@ -358,31 +358,6 @@ export function useBepaidQueueActions() {
     },
   });
 
-  // Link queue item to existing profile
-  const linkToProfileMutation = useMutation({
-    mutationFn: async ({ queueItemId, profileId }: { queueItemId: string; profileId: string }) => {
-      const { data, error } = await supabase
-        .from("payment_reconcile_queue")
-        .update({ 
-          matched_profile_id: profileId,
-          status: "matched",
-        })
-        .eq("id", queueItemId)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
-      toast.success("Связано с контактом");
-    },
-    onError: (error: Error) => {
-      toast.error(`Ошибка: ${error.message}`);
-    },
-  });
-
   // Bulk process queue items
   const bulkProcessMutation = useMutation({
     mutationFn: async (items: Array<{ queueItemId: string; profileId: string; productId?: string; tariffId?: string; offerId?: string }>) => {
@@ -406,10 +381,8 @@ export function useBepaidQueueActions() {
   return {
     createOrderFromQueue: createOrderFromQueueMutation.mutate,
     createOrderFromQueueAsync: createOrderFromQueueMutation.mutateAsync,
-    linkToProfile: linkToProfileMutation.mutate,
     bulkProcess: bulkProcessMutation.mutate,
     isCreatingOrder: createOrderFromQueueMutation.isPending,
-    isLinking: linkToProfileMutation.isPending,
     isBulkProcessing: bulkProcessMutation.isPending,
   };
 }
