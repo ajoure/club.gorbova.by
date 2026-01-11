@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { 
   RefreshCw, Download, CheckCircle2, User, CreditCard, Mail, 
-  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2, Calendar
+  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2, Calendar, Eye
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -19,6 +19,7 @@ import { ru } from "date-fns/locale";
 import { useBepaidQueue, useBepaidPayments, useBepaidStats, QueueItem, PaymentItem, DateFilter } from "@/hooks/useBepaidData";
 import BepaidMappingsTab from "@/components/admin/bepaid/BepaidMappingsTab";
 import { CreateOrderButton, LinkToProfileButton, BulkProcessButton } from "@/components/admin/bepaid/BepaidQueueActions";
+import ContactDealsDialog from "@/components/admin/bepaid/ContactDealsDialog";
 
 export default function AdminBepaidSync() {
   const [activeMainTab, setActiveMainTab] = useState("payments");
@@ -30,11 +31,26 @@ export default function AdminBepaidSync() {
     to: undefined,
   });
   
+  // Contact deals dialog state
+  const [dealsDialogOpen, setDealsDialogOpen] = useState(false);
+  const [selectedContactForDeals, setSelectedContactForDeals] = useState<any>(null);
+  
   const queryClient = useQueryClient();
 
   const { payments, paymentsLoading, refetchPayments } = useBepaidPayments(dateFilter);
   const { queueItems, queueLoading, refetchQueue, linkProfileManually } = useBepaidQueue(dateFilter);
   const stats = useBepaidStats(dateFilter);
+  
+  const handleOpenContactDeals = (item: QueueItem) => {
+    if (item.matched_profile_id) {
+      setSelectedContactForDeals({
+        id: item.matched_profile_id,
+        full_name: item.matched_profile_name,
+        phone: item.matched_profile_phone,
+      });
+      setDealsDialogOpen(true);
+    }
+  };
 
   const refreshAll = () => {
     refetchPayments();
@@ -149,8 +165,8 @@ export default function AdminBepaidSync() {
     setSelectedQueueItems(newSet);
   };
 
-  const handleLinkProfile = (queueItemId: string, profile: { id: string; full_name: string | null; phone: string | null }) => {
-    linkProfileManually(queueItemId, profile);
+  const handleLinkProfile = (item: QueueItem, profile: { id: string; full_name: string | null; phone: string | null; email?: string | null }) => {
+    linkProfileManually(item.id, profile, item);
   };
 
   return (
@@ -508,20 +524,30 @@ export default function AdminBepaidSync() {
                             </TableCell>
                             <TableCell>
                               {item.matched_profile_id ? (
-                                <div className="flex flex-col gap-1">
-                                  <span className="font-medium text-green-600">{item.matched_profile_name}</span>
-                                  {item.matched_profile_phone && (
-                                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                      <Phone className="h-3 w-3" />
-                                      {item.matched_profile_phone}
-                                    </div>
-                                  )}
+                                <div className="flex items-center gap-2">
+                                  <div className="flex flex-col gap-1">
+                                    <span className="font-medium text-green-600">{item.matched_profile_name}</span>
+                                    {item.matched_profile_phone && (
+                                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                        <Phone className="h-3 w-3" />
+                                        {item.matched_profile_phone}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleOpenContactDeals(item)}
+                                    title="Открыть сделки"
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </Button>
                                 </div>
                               ) : (
                                 <LinkToProfileButton 
                                   item={item} 
                                   onSuccess={refetchQueue}
-                                  onLinkProfile={(profile) => handleLinkProfile(item.id, profile)}
+                                  onLinkProfile={(profile) => handleLinkProfile(item, profile)}
                                 />
                               )}
                             </TableCell>
@@ -543,6 +569,14 @@ export default function AdminBepaidSync() {
             <BepaidMappingsTab dateFilter={dateFilter} />
           </TabsContent>
         </Tabs>
+        
+        {/* Contact Deals Dialog */}
+        <ContactDealsDialog
+          open={dealsDialogOpen}
+          onOpenChange={setDealsDialogOpen}
+          profile={selectedContactForDeals}
+          onDealUpdated={refetchQueue}
+        />
       </div>
     </TooltipProvider>
   );
