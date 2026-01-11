@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { X, Trash2, Mail, MessageCircle, CheckSquare } from "lucide-react";
+import { X, Trash2, Mail, MessageCircle, CheckSquare, Combine } from "lucide-react";
 
 interface BulkActionsBarProps {
   selectedCount: number;
@@ -7,6 +7,7 @@ interface BulkActionsBarProps {
   onBulkDelete?: () => void;
   onBulkEmail?: () => void;
   onBulkMessage?: () => void;
+  onBulkMerge?: () => void;
   onSelectAll?: () => void;
   totalCount?: number;
   entityName?: string;
@@ -18,6 +19,7 @@ export function BulkActionsBar({
   onBulkDelete,
   onBulkEmail,
   onBulkMessage,
+  onBulkMerge,
   onSelectAll,
   totalCount,
   entityName = "элементов",
@@ -50,6 +52,18 @@ export function BulkActionsBar({
           >
             <CheckSquare className="h-4 w-4" />
             Выбрать все
+          </Button>
+        )}
+
+        {onBulkMerge && selectedCount >= 2 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBulkMerge}
+            className="gap-2 text-blue-600 hover:text-blue-700"
+          >
+            <Combine className="h-4 w-4" />
+            Объединить
           </Button>
         )}
 

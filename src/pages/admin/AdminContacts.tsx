@@ -50,6 +50,7 @@ import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } f
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { MergeContactsDialog } from "@/components/admin/MergeContactsDialog";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import AmoCRMImportDialog from "@/components/admin/AmoCRMImportDialog";
@@ -116,6 +117,7 @@ export default function AdminContacts() {
   const [activePreset, setActivePreset] = useState("all");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showMergeDialog, setShowMergeDialog] = useState(false);
   const [showAmoCRMImport, setShowAmoCRMImport] = useState(false);
   
   // Check for contact query param to auto-open contact card
@@ -710,9 +712,18 @@ export default function AdminContacts() {
         selectedCount={selectedCount}
         onClearSelection={clearSelection}
         onBulkDelete={() => setShowDeleteDialog(true)}
+        onBulkMerge={selectedCount >= 2 ? () => setShowMergeDialog(true) : undefined}
         totalCount={sortedContacts.length}
         entityName="контактов"
         onSelectAll={selectAll}
+      />
+
+      {/* Merge Contacts Dialog */}
+      <MergeContactsDialog
+        contacts={sortedContacts.filter(c => selectedContactIds.has(c.id))}
+        open={showMergeDialog}
+        onOpenChange={setShowMergeDialog}
+        onSuccess={clearSelection}
       />
 
       {/* Delete Confirmation Dialog */}
