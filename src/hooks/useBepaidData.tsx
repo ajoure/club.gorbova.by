@@ -213,7 +213,30 @@ export function useBepaidQueue(dateFilter?: DateFilter) {
           .is("matched_profile_id", null);
       }
 
-      // Auto-propagate to other items with same card holder name (via raw_payload check is complex, skip for now)
+      // Auto-propagate to other items with same card holder name
+      if (propagateName) {
+        // Fetch all unlinked items
+        const { data: unlinked } = await supabase
+          .from("payment_reconcile_queue")
+          .select("id, raw_payload")
+          .is("matched_profile_id", null);
+        
+        // Filter by matching card_holder in raw_payload
+        const nameNormalized = propagateName.toLowerCase().trim();
+        const itemsToUpdate = (unlinked || []).filter(item => {
+          const payload = item.raw_payload as Record<string, any> | null;
+          const holder = payload?.card?.holder;
+          return holder && holder.toLowerCase().trim() === nameNormalized;
+        });
+        
+        // Update all matching items
+        if (itemsToUpdate.length > 0) {
+          await supabase
+            .from("payment_reconcile_queue")
+            .update({ matched_profile_id: profileId })
+            .in("id", itemsToUpdate.map(i => i.id));
+        }
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });

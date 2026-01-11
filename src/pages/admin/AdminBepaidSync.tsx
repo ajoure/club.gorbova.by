@@ -76,16 +76,25 @@ export default function AdminBepaidSync() {
     }
   };
   
-  const handleOpenContact = (item: QueueItem) => {
+  const handleOpenContact = async (item: QueueItem) => {
     if (item.matched_profile_id) {
-      setSelectedContact({
-        id: item.matched_profile_id,
-        user_id: item.matched_profile_id,
-        full_name: item.matched_profile_name,
-        phone: item.matched_profile_phone,
-        email: item.customer_email,
-      });
-      setContactSheetOpen(true);
+      // Fetch full profile data from DB to get correct email
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("id, full_name, phone, email")
+        .eq("id", item.matched_profile_id)
+        .single();
+      
+      if (profile) {
+        setSelectedContact({
+          id: profile.id,
+          user_id: profile.id,
+          full_name: profile.full_name,
+          phone: profile.phone,
+          email: profile.email, // Use profile email, not bePaid customer_email
+        });
+        setContactSheetOpen(true);
+      }
     }
   };
 
@@ -520,6 +529,10 @@ export default function AdminBepaidSync() {
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
+                      <Upload className="h-4 w-4 mr-2" />
+                      Импорт CSV/Excel
+                    </Button>
                     <Button variant="outline" onClick={exportQueue} disabled={queueItems.length === 0}>
                       <Download className="h-4 w-4 mr-2" />
                       Экспорт CSV

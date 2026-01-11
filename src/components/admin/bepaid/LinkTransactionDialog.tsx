@@ -96,6 +96,37 @@ export function LinkTransactionDialog({ open, onOpenChange, transaction, onLinke
         if (updateError) console.warn("Error updating all by email:", updateError);
       }
 
+      // Also link by card_holder if applyToAll (works even when email is null)
+      if (applyToAll && transaction?.card_holder) {
+        // Fetch all unlinked queue items
+        const { data: unlinked } = await supabase
+          .from("payment_reconcile_queue")
+          .select("id, raw_payload")
+          .is("matched_profile_id", null);
+        
+        // Filter by matching card_holder in raw_payload
+        const cardHolderNormalized = transaction.card_holder.toLowerCase().trim();
+        const itemsToUpdate = (unlinked || []).filter(item => {
+          const payload = item.raw_payload as Record<string, any> | null;
+          const holder = payload?.card?.holder;
+          return holder && holder.toLowerCase().trim() === cardHolderNormalized;
+        });
+        
+        // Update all matching items
+        if (itemsToUpdate.length > 0) {
+          const { error: cardHolderError } = await supabase
+            .from("payment_reconcile_queue")
+            .update({ matched_profile_id: profileId })
+            .in("id", itemsToUpdate.map(i => i.id));
+          
+          if (cardHolderError) {
+            console.warn("Error updating by card_holder:", cardHolderError);
+          } else {
+            console.log(`Linked ${itemsToUpdate.length} items by card_holder: ${transaction.card_holder}`);
+          }
+        }
+      }
+
       // Save card-profile link for future matching
       if (saveCard && transaction?.card_last_4) {
         const { error: cardError } = await supabase
@@ -290,18 +321,16 @@ export function LinkTransactionDialog({ open, onOpenChange, transaction, onLinke
 
         {/* Options */}
         <div className="space-y-2">
-          {transaction?.customer_email && (
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="applyToAll"
-                checked={applyToAll}
-                onCheckedChange={(checked) => setApplyToAll(!!checked)}
-              />
-              <label htmlFor="applyToAll" className="text-sm text-muted-foreground cursor-pointer">
-                Применить ко всем платежам с {transaction.customer_email}
-              </label>
-            </div>
-          )}
+        <div className="flex items-center gap-2">
+            <Checkbox
+              id="applyToAll"
+              checked={applyToAll}
+              onCheckedChange={(checked) => setApplyToAll(!!checked)}
+            />
+            <label htmlFor="applyToAll" className="text-sm text-muted-foreground cursor-pointer">
+              Применить ко всем платежам с {transaction?.customer_email || transaction?.card_holder || "такими данными"}
+            </label>
+          </div>
           {transaction?.card_last_4 && (
             <div className="flex items-center gap-2">
               <Checkbox
