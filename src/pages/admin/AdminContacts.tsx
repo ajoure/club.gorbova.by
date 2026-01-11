@@ -40,6 +40,7 @@ import {
   Handshake,
   RefreshCw,
   Ghost,
+  Archive,
   Camera,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -80,6 +81,7 @@ const CONTACT_FILTER_FIELDS: FilterField[] = [
     options: [
       { value: "ghost", label: "Новый" },
       { value: "active", label: "Активен" },
+      { value: "archived", label: "Архивный" },
       { value: "blocked", label: "Заблокирован" },
       { value: "deleted", label: "Удален" },
     ]
@@ -238,21 +240,23 @@ export default function AdminContacts() {
 
   // Calculate counts for presets
   const presetCounts = useMemo(() => {
-    if (!contacts) return { active: 0, ghost: 0, withDeals: 0, duplicates: 0 };
+    if (!contacts) return { active: 0, ghost: 0, withDeals: 0, duplicates: 0, archived: 0 };
     return {
       active: contacts.filter(c => c.status === "active").length,
       ghost: contacts.filter(c => c.status === "ghost").length,
       withDeals: contacts.filter(c => c.deals_count > 0).length,
       duplicates: contacts.filter(c => c.duplicate_flag && c.duplicate_flag !== 'none').length,
+      archived: contacts.filter(c => c.status === "archived").length,
     };
   }, [contacts]);
 
   const CONTACT_PRESETS: FilterPreset[] = useMemo(() => [
-    { id: "all", label: "Все", filters: [] },
+    { id: "all", label: "Все активные", filters: [{ field: "status", operator: "not_equals", value: "archived" }] },
     { id: "active", label: "Активные", filters: [{ field: "status", operator: "equals", value: "active" }], count: presetCounts.active },
     { id: "ghost", label: "Новые", filters: [{ field: "status", operator: "equals", value: "ghost" }], count: presetCounts.ghost },
     { id: "withDeals", label: "С покупками", filters: [{ field: "deals_count", operator: "gt", value: "0" }], count: presetCounts.withDeals },
     { id: "duplicates", label: "Дубли", filters: [{ field: "is_duplicate", operator: "equals", value: "true" }], count: presetCounts.duplicates },
+    { id: "archived", label: "Архивные", filters: [{ field: "status", operator: "equals", value: "archived" }], count: presetCounts.archived },
   ], [presetCounts]);
 
   const getStatusBadge = (status: string) => {
@@ -261,6 +265,8 @@ export default function AdminContacts() {
         return <Badge variant="default" className="bg-green-500/20 text-green-600 border-green-500/30"><CheckCircle className="w-3 h-3 mr-1" />Активен</Badge>;
       case "ghost":
         return <Badge variant="outline" className="text-muted-foreground"><Ghost className="w-3 h-3 mr-1" />Новый</Badge>;
+      case "archived":
+        return <Badge variant="secondary" className="bg-amber-500/20 text-amber-600 border-amber-500/30"><Archive className="w-3 h-3 mr-1" />Архивный</Badge>;
       case "blocked":
         return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" />Заблокирован</Badge>;
       case "deleted":
