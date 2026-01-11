@@ -137,7 +137,7 @@ export default function AdminContacts() {
         .eq("status", "paid")
         .order("created_at", { ascending: false });
 
-      // Group paid orders by user
+      // Group paid orders by user_id (can be profile.id OR auth user_id)
       const ordersByUser = new Map<string, { count: number; lastAt: string | null }>();
       orders?.forEach(order => {
         const existing = ordersByUser.get(order.user_id);
@@ -148,23 +148,44 @@ export default function AdminContacts() {
         }
       });
 
-      // Map to contacts
-      const contactsList: Contact[] = (profiles || []).map(profile => ({
-        id: profile.id,
-        user_id: profile.user_id,
-        email: profile.email,
-        full_name: profile.full_name,
-        phone: profile.phone,
-        telegram_username: profile.telegram_username,
-        telegram_user_id: profile.telegram_user_id,
-        avatar_url: profile.avatar_url,
-        status: profile.status,
-        created_at: profile.created_at,
-        last_seen_at: profile.last_seen_at,
-        duplicate_flag: profile.duplicate_flag,
-        deals_count: ordersByUser.get(profile.user_id)?.count || 0,
-        last_deal_at: ordersByUser.get(profile.user_id)?.lastAt || null,
-      }));
+      // Map to contacts - check both profile.id and profile.user_id for deals
+      const contactsList: Contact[] = (profiles || []).map(profile => {
+        // Orders can be linked via profile.id OR profile.user_id
+        const dealsByProfileId = ordersByUser.get(profile.id);
+        const dealsByUserId = profile.user_id ? ordersByUser.get(profile.user_id) : null;
+        
+        // Combine counts (avoid double counting if same id)
+        let dealsCount = 0;
+        let lastDealAt: string | null = null;
+        
+        if (dealsByProfileId) {
+          dealsCount += dealsByProfileId.count;
+          lastDealAt = dealsByProfileId.lastAt;
+        }
+        if (dealsByUserId && profile.user_id !== profile.id) {
+          dealsCount += dealsByUserId.count;
+          if (!lastDealAt || (dealsByUserId.lastAt && dealsByUserId.lastAt > lastDealAt)) {
+            lastDealAt = dealsByUserId.lastAt;
+          }
+        }
+        
+        return {
+          id: profile.id,
+          user_id: profile.user_id,
+          email: profile.email,
+          full_name: profile.full_name,
+          phone: profile.phone,
+          telegram_username: profile.telegram_username,
+          telegram_user_id: profile.telegram_user_id,
+          avatar_url: profile.avatar_url,
+          status: profile.status,
+          created_at: profile.created_at,
+          last_seen_at: profile.last_seen_at,
+          duplicate_flag: profile.duplicate_flag,
+          deals_count: dealsCount,
+          last_deal_at: lastDealAt,
+        };
+      });
 
       return contactsList;
     },
