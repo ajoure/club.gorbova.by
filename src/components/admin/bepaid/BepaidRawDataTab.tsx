@@ -207,11 +207,19 @@ export default function BepaidRawDataTab({ dateFilter }: BepaidRawDataTabProps) 
   };
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
+    const s = status?.toLowerCase();
+    switch (s) {
       case "successful":
-        return <Badge variant="default" className="bg-green-600">Успешно</Badge>;
+      case "succeeded":
+      case "completed":
+      case "paid":
+        return <Badge variant="default" className="bg-green-600">succeeded</Badge>;
       case "failed":
+      case "error":
+      case "declined":
         return <Badge variant="destructive">Ошибка</Badge>;
+      case "pending":
+        return <Badge variant="secondary">Ожидание</Badge>;
       case "active":
         return <Badge variant="default">Активна</Badge>;
       case "trial":

@@ -252,7 +252,7 @@ serve(async (req) => {
       const { data: queueRows, error: queueErr } = await supabase
         .from("payment_reconcile_queue")
         .select(
-          "id, created_at, updated_at, status, tracking_id, amount, currency, customer_email, card_last4, card_holder, raw_payload, source, matched_profile_id, matched_order_id, bepaid_uid, last_error"
+          "id, created_at, updated_at, status, tracking_id, amount, currency, customer_email, raw_payload, source, matched_profile_id, matched_order_id, bepaid_uid, last_error"
         )
         .gte("created_at", fromTs)
         .lte("created_at", toTs)
@@ -272,7 +272,19 @@ serve(async (req) => {
         const currency = row.currency || payload.plan?.currency || payload.currency || "BYN";
         const paidAt = lastTx?.created_at || lastTx?.paid_at || payload.paid_at || payload.paidAt || null;
         const createdAt = payload.created_at || row.created_at;
-        const planTitle = payload.plan?.title || payload.plan?.name || payload.plan?.plan?.title || payload.additional_data?.description || null;
+        
+        // Extended plan_title extraction from various payload structures
+        const planTitle = 
+          (row as any).plan_title ||
+          payload.plan?.title || 
+          payload.plan?.name || 
+          payload.plan?.plan?.title || 
+          payload.additional_data?.description ||
+          payload.additional_data?.product_name ||
+          payload.description ||
+          payload.product_name ||
+          payload.order?.description ||
+          null;
 
         allTransactions.push({
           uid,
@@ -287,9 +299,9 @@ serve(async (req) => {
           customer_email: row.customer_email || payload.customer?.email || null,
           customer_name: payload.customer_name || null,
           customer_phone: payload.customer?.phone || null,
-          card_last_4: row.card_last4 || payload.card?.last_4 || payload.credit_card?.last_4 || null,
+          card_last_4: payload.card?.last_4 || payload.credit_card?.last_4 || null,
           card_brand: payload.card?.brand || payload.credit_card?.brand || null,
-          card_holder: row.card_holder || payload.card?.holder || payload.credit_card?.holder || null,
+          card_holder: payload.card?.holder || payload.credit_card?.holder || null,
           tracking_id: row.tracking_id || payload.tracking_id || null,
           message: lastTx?.message || row.last_error || null,
           _source: row.source || "system",
@@ -334,12 +346,17 @@ serve(async (req) => {
         }
       }
 
-      // Existing processed payments
+      // Existing processed payments with order data
       const { data: paymentRows, error: payErr } = await supabase
         .from("payments_v2")
-        .select(
-          "id, created_at, paid_at, amount, currency, status, provider, provider_payment_id, card_last4, card_brand, user_id, order_id, meta"
-        )
+        .select(`
+          id, created_at, paid_at, amount, currency, status, provider, provider_payment_id, card_last4, card_brand, user_id, order_id, meta,
+          orders_v2:order_id (
+            id, product_id, tariff_id, user_id, customer_email, customer_phone,
+            products_v2:product_id (name),
+            tariffs:tariff_id (name)
+          )
+        `)
         .eq("provider", "bepaid")
         .gte("created_at", fromTs)
         .lte("created_at", toTs)
@@ -349,7 +366,25 @@ serve(async (req) => {
         console.error("Simulation fallback: payments query error", payErr);
       }
 
+      // Get profile info for user_ids
+      const userIds = [...new Set((paymentRows || []).map(p => p.user_id).filter(Boolean))];
+      let profilesMap: Record<string, any> = {};
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("id, email, full_name, phone")
+          .in("id", userIds);
+        for (const pr of profiles || []) {
+          profilesMap[pr.id] = pr;
+        }
+      }
+
       for (const p of paymentRows || []) {
+        const order = (p as any).orders_v2;
+        const profile = profilesMap[p.user_id] || {};
+        const productName = order?.products_v2?.name;
+        const tariffName = order?.tariffs?.name;
+        
         allTransactions.push({
           uid: p.provider_payment_id || p.id,
           type: "transaction",
@@ -358,14 +393,14 @@ serve(async (req) => {
           currency: p.currency,
           paid_at: p.paid_at,
           created_at: p.created_at,
-          plan_title: p.meta?.product_name || p.meta?.description || null,
-          customer_email: p.meta?.customer_email || null,
-          customer_name: p.meta?.customer_name || null,
-          customer_phone: p.meta?.customer_phone || null,
+          plan_title: productName || tariffName || (p.meta as any)?.product_name || (p.meta as any)?.description || null,
+          customer_email: profile?.email || order?.customer_email || (p.meta as any)?.customer_email || null,
+          customer_name: profile?.full_name || (p.meta as any)?.customer_name || null,
+          customer_phone: profile?.phone || order?.customer_phone || (p.meta as any)?.customer_phone || null,
           card_last_4: p.card_last4 || null,
           card_brand: p.card_brand || null,
-          card_holder: p.meta?.card_holder || null,
-          tracking_id: p.meta?.tracking_id || null,
+          card_holder: (p.meta as any)?.card_holder || null,
+          tracking_id: (p.meta as any)?.tracking_id || null,
           message: null,
           _source: "payments_v2",
           order_id: p.order_id,
@@ -416,12 +451,16 @@ serve(async (req) => {
         phone: c.phone,
         created_at: c.created_at,
       })),
-      summary: {
+    summary: {
         total_transactions: allTransactions.length,
         total_subscriptions: allSubscriptions.length,
         total_customers: customers.length,
-        successful_transactions: allTransactions.filter(t => t.status === "successful").length,
-        failed_transactions: allTransactions.filter(t => t.status === "failed").length,
+        successful_transactions: allTransactions.filter(t => 
+          t.status === "successful" || t.status === "succeeded" || t.status === "completed" || t.status === "paid"
+        ).length,
+        failed_transactions: allTransactions.filter(t => 
+          t.status === "failed" || t.status === "error" || t.status === "declined"
+        ).length,
       },
     };
 
