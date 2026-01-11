@@ -254,8 +254,7 @@ export default function AdminBepaidSync() {
                     Нет платежей bePaid в системе
                   </div>
                 ) : (
-                  <ScrollArea className="h-[500px]">
-                    <div className="overflow-x-auto">
+                  <div className="max-h-[500px] overflow-auto -webkit-overflow-scrolling-touch">
                     <Table className="min-w-[900px]">
                       <TableHeader>
                         <TableRow>
@@ -333,8 +332,7 @@ export default function AdminBepaidSync() {
                         ))}
                       </TableBody>
                     </Table>
-                    </div>
-                  </ScrollArea>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -369,8 +367,7 @@ export default function AdminBepaidSync() {
                     Очередь пуста
                   </div>
                 ) : (
-                  <ScrollArea className="h-[500px]">
-                    <div className="overflow-x-auto">
+                  <div className="max-h-[500px] overflow-auto -webkit-overflow-scrolling-touch">
                     <Table className="min-w-[1000px]">
                       <TableHeader>
                         <TableRow>
@@ -484,8 +481,7 @@ export default function AdminBepaidSync() {
                         ))}
                       </TableBody>
                     </Table>
-                    </div>
-                  </ScrollArea>
+                  </div>
                 )}
               </CardContent>
             </Card>
