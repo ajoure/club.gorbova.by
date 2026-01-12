@@ -32,6 +32,7 @@ import {
 import { toast } from "sonner";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { MultiContactInput, ContactItem } from "@/components/ui/MultiContactInput";
+import { PhoneInput } from "@/components/ui/phone-input";
 
 interface Contact {
   id: string;
@@ -220,11 +221,10 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
 
             <div className="space-y-2">
               <Label>Основной телефон</Label>
-              <Input
-                type="tel"
+              <PhoneInput
                 value={formData.phone}
-                onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
-                placeholder="+375..."
+                onChange={(value) => setFormData(prev => ({ ...prev, phone: value }))}
+                placeholder="Номер телефона"
               />
             </div>
 

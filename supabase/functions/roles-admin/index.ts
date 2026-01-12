@@ -79,6 +79,80 @@ async function sendRoleChangeEmail(
   }
 }
 
+// Send Telegram notifications for role changes
+async function sendRoleTelegramNotification(
+  supabaseAdmin: any,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  targetUserId: string,
+  roleName: string,
+  isAssign: boolean,
+  actorEmail: string
+): Promise<void> {
+  try {
+    // Get target user's telegram info
+    const { data: profile } = await supabaseAdmin
+      .from("profiles")
+      .select("telegram_user_id, telegram_link_bot_id, full_name, email")
+      .eq("user_id", targetUserId)
+      .single();
+
+    // Send to user if they have Telegram linked
+    if (profile?.telegram_user_id && profile?.telegram_link_bot_id) {
+      const { data: bot } = await supabaseAdmin
+        .from("telegram_bots")
+        .select("bot_token_encrypted")
+        .eq("id", profile.telegram_link_bot_id)
+        .single();
+
+      if (bot?.bot_token_encrypted) {
+        const message = isAssign
+          ? `✅ Вам назначена роль: <b>${roleName}</b>`
+          : `❌ Роль <b>${roleName}</b> была снята`;
+
+        try {
+          await fetch(`https://api.telegram.org/bot${bot.bot_token_encrypted}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: profile.telegram_user_id,
+              text: message,
+              parse_mode: "HTML",
+            }),
+          });
+          console.log(`Telegram notification sent to user ${targetUserId}`);
+        } catch (err) {
+          console.error("Error sending Telegram to user:", err);
+        }
+      }
+    }
+
+    // Notify admins via telegram-notify-admins function
+    try {
+      await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${supabaseServiceKey}`,
+        },
+        body: JSON.stringify({
+          message: `👤 <b>Изменение роли</b>\n\n` +
+            `${isAssign ? '✅ Назначена' : '❌ Удалена'}: ${roleName}\n` +
+            `Пользователь: ${profile?.email || 'Unknown'}\n` +
+            `Исполнитель: ${actorEmail}`,
+          parse_mode: 'HTML',
+        }),
+      });
+      console.log("Admin notification sent");
+    } catch (err) {
+      console.error("Error sending admin notification:", err);
+    }
+  } catch (error) {
+    console.error("Error sending role Telegram notification:", error);
+    // Don't throw - notifications are non-critical
+  }
+}
+
 serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -307,6 +381,18 @@ serve(async (req: Request): Promise<Response> => {
         if (userEmail) {
           const roleDisplayName = await getRoleName(roleCode);
           await sendRoleChangeEmail(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY") || "", userEmail, roleDisplayName, true);
+          
+          // Send Telegram notifications
+          const actorEmail = await getUserEmail(actorUserId);
+          await sendRoleTelegramNotification(
+            supabaseAdmin,
+            supabaseUrl,
+            supabaseServiceKey,
+            userId,
+            roleDisplayName,
+            true,
+            actorEmail || 'Admin'
+          );
         }
 
         return new Response(JSON.stringify({ success: true }), {
@@ -391,6 +477,18 @@ serve(async (req: Request): Promise<Response> => {
         if (userEmail) {
           const roleDisplayName = await getRoleName(roleCode);
           await sendRoleChangeEmail(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY") || "", userEmail, roleDisplayName, false);
+          
+          // Send Telegram notifications
+          const actorEmail = await getUserEmail(actorUserId);
+          await sendRoleTelegramNotification(
+            supabaseAdmin,
+            supabaseUrl,
+            supabaseServiceKey,
+            userId,
+            roleDisplayName,
+            false,
+            actorEmail || 'Admin'
+          );
         }
 
         return new Response(JSON.stringify({ success: true }), {

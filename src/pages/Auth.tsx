@@ -62,12 +62,15 @@ const passwordSchema = z.object({
   path: ["confirmPassword"],
 });
 
-type AuthMode = "login" | "signup" | "forgot" | "update_password";
+type AuthMode = "login" | "signup" | "forgot" | "update_password" | "account_exists";
 
 interface FieldError {
   field: string;
   message: string;
 }
+
+// State for account_exists mode
+
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -84,6 +87,7 @@ export default function Auth() {
   const [fieldErrors, setFieldErrors] = useState<FieldError[]>([]);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [privacyConsent, setPrivacyConsent] = useState(false);
+  const [existingEmail, setExistingEmail] = useState(""); // For account_exists mode
 
   // Get redirectTo from URL params
   const redirectTo = searchParams.get("redirectTo") || "/dashboard";
@@ -297,7 +301,9 @@ export default function Auth() {
         const signUpResult = await signUp(email, password, firstName.trim(), lastName.trim(), cleanPhone);
         if (signUpResult.error) {
           if (signUpResult.error.message.includes("already registered")) {
-            setFieldErrors([{ field: "email", message: "Этот email уже зарегистрирован. Попробуйте войти." }]);
+            // Instead of just showing an error, redirect to account_exists mode
+            setExistingEmail(email);
+            setMode("account_exists");
           } else {
             toast({
               title: "Ошибка сервера",
@@ -409,12 +415,14 @@ export default function Auth() {
               {mode === "signup" && "Создать аккаунт"}
               {mode === "forgot" && "Восстановление пароля"}
               {mode === "update_password" && "Новый пароль"}
+              {mode === "account_exists" && "Аккаунт уже существует"}
             </h1>
             <p className="text-muted-foreground mt-2">
               {mode === "login" && "Войдите в свой аккаунт"}
               {mode === "signup" && "Зарегистрируйтесь для начала работы"}
               {mode === "forgot" && "Введите email для получения ссылки"}
               {mode === "update_password" && "Введите новый пароль для вашего аккаунта"}
+              {mode === "account_exists" && "Для входа необходимо установить пароль"}
             </p>
           </div>
 
@@ -487,6 +495,63 @@ export default function Auth() {
                 )}
               </Button>
             </form>
+          ) : mode === "account_exists" ? (
+            /* Account Exists - Reset Password Flow */
+            <div className="space-y-5">
+              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-center">
+                <div className="h-12 w-12 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-3">
+                  <Mail className="h-6 w-6 text-amber-600" />
+                </div>
+                <p className="text-sm text-amber-800">
+                  Email <strong>{existingEmail}</strong> уже зарегистрирован в системе.
+                  Для входа отправьте ссылку для установки пароля на вашу почту.
+                </p>
+              </div>
+              
+              <Button
+                onClick={async () => {
+                  setIsSubmitting(true);
+                  try {
+                    await supabase.functions.invoke("auth-actions", {
+                      body: { action: "reset_password", email: existingEmail },
+                    });
+                    toast({
+                      title: "Письмо отправлено",
+                      description: "Проверьте почту для установки пароля",
+                    });
+                    setMode("login");
+                  } catch {
+                    toast({
+                      title: "Ошибка",
+                      description: "Не удалось отправить письмо. Попробуйте позже.",
+                      variant: "destructive",
+                    });
+                  } finally {
+                    setIsSubmitting(false);
+                  }
+                }}
+                disabled={isSubmitting}
+                className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <>
+                    Отправить ссылку для входа
+                    <ArrowRight className="ml-2 h-5 w-5" />
+                  </>
+                )}
+              </Button>
+
+              <button
+                type="button"
+                onClick={() => setMode("login")}
+                className="w-full flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Вернуться ко входу
+              </button>
+            </div>
           ) : mode === "forgot" ? (
             /* Forgot Password Form */
             <form onSubmit={handleForgotPassword} className="space-y-5">
