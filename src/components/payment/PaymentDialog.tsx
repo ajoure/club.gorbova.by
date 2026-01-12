@@ -490,17 +490,15 @@ export function PaymentDialog({
       });
 
       if (error) {
-        const errorPayload = await extractFunctionsErrorData(error);
-
-        // Business error: trial already used (can come either in data or in the error payload for non-2xx)
-        if (data?.alreadyUsedTrial || errorPayload?.alreadyUsedTrial) {
+        // Supabase functions.invoke returns response body in `data` even for non-2xx
+        if (data?.alreadyUsedTrial) {
           toast.warning("Пробный период для этого продукта уже использован");
           setStep("ready");
           setIsLoading(false);
           return;
         }
 
-        throw new Error(errorPayload?.error || error.message);
+        throw new Error(data?.error || error.message);
       }
 
       if (!data.success) {
@@ -555,11 +553,11 @@ export function PaymentDialog({
         },
       });
 
+      // Note: Supabase functions.invoke returns the response body in `data` even for non-2xx status codes
+      // The `error` only indicates that a non-2xx status was returned
       if (createError || !createData?.success) {
-        const errorPayload = createError ? await extractFunctionsErrorData(createError) : null;
-
-        // Handle already used trial case gracefully (it may come either as data or inside error response)
-        if (createData?.alreadyUsedTrial || errorPayload?.alreadyUsedTrial) {
+        // Handle already used trial case gracefully
+        if (createData?.alreadyUsedTrial) {
           toast.warning("Пробный период для этого продукта уже использован", {
             duration: 8000,
           });
@@ -568,7 +566,6 @@ export function PaymentDialog({
 
         throw new Error(
           createData?.error ||
-            errorPayload?.error ||
             createError?.message ||
             "Ошибка создания заказа"
         );
@@ -637,24 +634,6 @@ export function PaymentDialog({
     }
   };
 
-  const extractFunctionsErrorData = async (err: unknown): Promise<any | null> => {
-    const anyErr = err as any;
-    const response: Response | undefined = anyErr?.context?.response;
-
-    if (!response || typeof response.clone !== "function") return null;
-
-    // The response body may already be consumed by the client, so we use clone() defensively.
-    try {
-      return await response.clone().json();
-    } catch {
-      try {
-        const text = await response.clone().text();
-        return text ? JSON.parse(text) : null;
-      } catch {
-        return null;
-      }
-    }
-  };
 
   const handleChangeEmail = () => {
     setFormData(prev => ({ ...prev, password: "" }));
