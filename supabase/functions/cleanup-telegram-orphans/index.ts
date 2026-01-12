@@ -82,90 +82,106 @@ Deno.serve(async (req) => {
       },
     };
 
-    // A1. Corruption Fix: Find records where user_id is actually a profile_id
-    // These need to be updated to the correct auth.users.id
-    // Note: We'll use direct queries instead of raw SQL RPC
-
-    // Use direct query approach to find corrupted records
-    const corruptedIds: string[] = [];
-    // Get telegram_access_grants and profiles to find corrupted records
-    const { data: grants } = await supabaseAdmin
-      .from("telegram_access_grants")
-      .select("id, user_id");
+    // ===== A1. Corruption Fix =====
+    // Find records where user_id is actually a profile_id (needs correction to auth.users.id)
+    // Using CTE approach via direct query
     
+    // First, get corrupted records for counting/sampling
+    const { data: corruptedRecords } = await supabaseAdmin
+      .from("telegram_access_grants")
+      .select("id, user_id")
+      .not("user_id", "is", null);
+
     const { data: profiles } = await supabaseAdmin
       .from("profiles")
       .select("id, user_id");
+
+    const profileIdToUserId = new Map(profiles?.map(p => [p.id, p.user_id]) || []);
     
-    const profileMap = new Map(profiles?.map(p => [p.id, p.user_id]) || []);
-    
-    // Find grants where user_id matches a profile_id instead of auth.users.id
-    const corrupted = (grants || []).filter(g => {
-      const profileUserId = profileMap.get(g.user_id);
-      return profileUserId && profileUserId !== g.user_id;
+    // Corrupted = grant.user_id matches a profile.id but not an auth.users.id
+    // AND the profile has a valid user_id we can correct to
+    const corrupted = (corruptedRecords || []).filter(g => {
+      const correctUserId = profileIdToUserId.get(g.user_id);
+      return correctUserId && correctUserId !== g.user_id;
     });
 
-    corrupted.forEach(c => corruptedIds.push(c.id));
-    result.sample_ids.corruption = corruptedIds.slice(0, 20);
-    result.corruption_fixed = corruptedIds.length;
+    result.corruption_fixed = corrupted.length;
+    result.sample_ids.corruption = corrupted.slice(0, 20).map(c => c.id);
 
-    if (mode === "execute" && corruptedIds.length > 0) {
-      // Fix each corrupted record
-      for (const grant of corrupted) {
-        const correctUserId = profileMap.get(grant.user_id);
+    if (mode === "execute" && corrupted.length > 0) {
+      // Execute corruption fix in batch using individual updates
+      // (Supabase JS doesn't support UPDATE with CTE, but we can batch by correct user_id)
+      const updatePromises = corrupted.map(async (grant) => {
+        const correctUserId = profileIdToUserId.get(grant.user_id);
         if (correctUserId) {
           await supabaseAdmin
             .from("telegram_access_grants")
             .update({ user_id: correctUserId })
             .eq("id", grant.id);
         }
-      }
+      });
+      await Promise.all(updatePromises);
     }
-    // A2. Real Orphan Delete: Records where user_id doesn't exist in auth.users OR profiles
-    // Get all telegram_access_grants and filter orphans
-    const { data: allGrants } = await supabaseAdmin
-      .from("telegram_access_grants")
-      .select("id, user_id");
 
+    // ===== A2. Real Orphan Delete =====
+    // Records where user_id doesn't exist in auth.users AND doesn't exist in profiles
+    
+    // Get all valid user IDs (from profiles.user_id and profiles.id)
     const { data: allProfiles } = await supabaseAdmin
       .from("profiles")
       .select("id, user_id");
 
     const validUserIds = new Set<string>();
     allProfiles?.forEach(p => {
-      validUserIds.add(p.id);
       if (p.user_id) validUserIds.add(p.user_id);
+      validUserIds.add(p.id); // profile.id is also valid (for ghost profiles)
     });
 
+    // Find orphans in telegram_access_grants
+    const { data: allGrants } = await supabaseAdmin
+      .from("telegram_access_grants")
+      .select("id, user_id");
+
     const orphanGrants = (allGrants || []).filter(g => !validUserIds.has(g.user_id));
-    result.sample_ids.orphans = orphanGrants.slice(0, 20).map(g => g.id);
 
-    if (mode === "execute" && orphanGrants.length > 0) {
-      const orphanIds = orphanGrants.map(g => g.id);
-      await supabaseAdmin
-        .from("telegram_access_grants")
-        .delete()
-        .in("id", orphanIds);
-    }
-    result.orphans_deleted = orphanGrants.length;
-
-    // Also check telegram_access table for orphans
+    // Find orphans in telegram_access
     const { data: allAccess } = await supabaseAdmin
       .from("telegram_access")
       .select("id, user_id");
 
     const orphanAccess = (allAccess || []).filter(a => !validUserIds.has(a.user_id));
-    
-    if (mode === "execute" && orphanAccess.length > 0) {
-      const orphanAccessIds = orphanAccess.map(a => a.id);
-      await supabaseAdmin
-        .from("telegram_access")
-        .delete()
-        .in("id", orphanAccessIds);
-    }
-    result.orphans_deleted += orphanAccess.length;
 
-    // A3. Expired Pending Tokens - strictly as specified
+    const totalOrphans = orphanGrants.length + orphanAccess.length;
+    result.orphans_deleted = totalOrphans;
+    result.sample_ids.orphans = [
+      ...orphanGrants.slice(0, 10).map(g => `grant:${g.id}`),
+      ...orphanAccess.slice(0, 10).map(a => `access:${a.id}`),
+    ];
+
+    if (mode === "execute") {
+      // Delete orphans from telegram_access_grants
+      if (orphanGrants.length > 0) {
+        const orphanGrantIds = orphanGrants.map(g => g.id);
+        await supabaseAdmin
+          .from("telegram_access_grants")
+          .delete()
+          .in("id", orphanGrantIds);
+      }
+
+      // Delete orphans from telegram_access
+      if (orphanAccess.length > 0) {
+        const orphanAccessIds = orphanAccess.map(a => a.id);
+        await supabaseAdmin
+          .from("telegram_access")
+          .delete()
+          .in("id", orphanAccessIds);
+      }
+    }
+
+    // ===== A3. Expired Pending Tokens =====
+    // Strictly: status='pending' AND expires_at < now()
+    // Plus: status='pending' AND expires_at IS NULL AND created_at < now() - 7 days
+    
     const now = new Date().toISOString();
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -190,8 +206,8 @@ Deno.serve(async (req) => {
       ...(expiredTokens2 || []).map(t => t.id),
     ];
 
-    result.sample_ids.expired_tokens = allExpiredTokenIds.slice(0, 20);
     result.expired_tokens_deleted = allExpiredTokenIds.length;
+    result.sample_ids.expired_tokens = allExpiredTokenIds.slice(0, 20);
 
     if (mode === "execute" && allExpiredTokenIds.length > 0) {
       await supabaseAdmin
@@ -200,7 +216,7 @@ Deno.serve(async (req) => {
         .in("id", allExpiredTokenIds);
     }
 
-    // Write audit log
+    // ===== Write Audit Log =====
     const finishedAt = new Date().toISOString();
     const { data: auditLog } = await supabaseAdmin.from("audit_logs").insert({
       actor_user_id: actorUserId,
