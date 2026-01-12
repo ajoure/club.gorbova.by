@@ -8,6 +8,8 @@ import { toast } from "sonner";
 const ADMIN_RETURN_URL_KEY = "admin_return_url";
 const IS_IMPERSONATING_KEY = "is_impersonating";
 const ADMIN_SESSION_KEY = "admin_session_backup";
+const IMPERSONATION_START_KEY = "impersonation_start_time";
+const MAX_IMPERSONATION_DURATION_MS = 15 * 60 * 1000; // 15 minutes max
 
 export function ImpersonationBar() {
   const [isImpersonating, setIsImpersonating] = useState(false);
@@ -40,11 +42,25 @@ export function ImpersonationBar() {
         : location.pathname;
       window.history.replaceState({}, "", newUrl);
       
-      // Mark as impersonating in localStorage
+      // Mark as impersonating in localStorage with timestamp
       localStorage.setItem(IS_IMPERSONATING_KEY, "true");
+      localStorage.setItem(IMPERSONATION_START_KEY, Date.now().toString());
     } else {
       // Check localStorage for persistent impersonation state
       const storedImpersonating = localStorage.getItem(IS_IMPERSONATING_KEY) === "true";
+      const impersonationStartTime = localStorage.getItem(IMPERSONATION_START_KEY);
+      
+      // Check if impersonation session has expired (15 minute limit)
+      if (storedImpersonating && impersonationStartTime) {
+        const elapsed = Date.now() - parseInt(impersonationStartTime, 10);
+        if (elapsed > MAX_IMPERSONATION_DURATION_MS) {
+          // Auto-return to admin due to session timeout
+          console.log("Impersonation session expired, auto-returning to admin");
+          handleReturnToAdmin();
+          return;
+        }
+      }
+      
       setIsImpersonating(storedImpersonating);
       
       if (storedImpersonating) {
@@ -69,11 +85,13 @@ export function ImpersonationBar() {
       // Sign out from impersonated session
       await supabase.auth.signOut();
       
-      // Clear impersonation state
+      // Clear impersonation state immediately
       localStorage.removeItem(IS_IMPERSONATING_KEY);
       localStorage.removeItem(ADMIN_SESSION_KEY);
       localStorage.removeItem(ADMIN_RETURN_URL_KEY);
+      localStorage.removeItem(IMPERSONATION_START_KEY);
       localStorage.removeItem("admin_token");
+      localStorage.removeItem("admin_session"); // Also clear alternative key used in ContactDetailSheet
       
       setIsImpersonating(false);
       setImpersonatedEmail(null);

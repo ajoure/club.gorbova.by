@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import DOMPurify from "dompurify";
 import { format, formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -439,7 +440,13 @@ export function EmailInboxView({ onContactClick }: EmailInboxViewProps) {
             {selectedEmail.body_html ? (
               <div 
                 className="prose prose-sm dark:prose-invert max-w-none"
-                dangerouslySetInnerHTML={{ __html: selectedEmail.body_html }}
+                dangerouslySetInnerHTML={{ 
+                  __html: DOMPurify.sanitize(selectedEmail.body_html, {
+                    ALLOWED_TAGS: ['p', 'br', 'b', 'i', 'u', 'strong', 'em', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'img', 'blockquote', 'pre', 'code'],
+                    ALLOWED_ATTR: ['href', 'src', 'alt', 'style', 'class', 'target'],
+                    ALLOW_DATA_ATTR: false,
+                  })
+                }}
               />
             ) : (
               <pre className="whitespace-pre-wrap font-sans text-sm">
