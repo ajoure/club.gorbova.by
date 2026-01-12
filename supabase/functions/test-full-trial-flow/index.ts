@@ -1,0 +1,479 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const { secretKey } = await req.json();
+    
+    if (secretKey !== "test-flow-2024") {
+      return new Response(JSON.stringify({ error: "Invalid secret key" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // User IDs from database - auth.users.id is different from profiles.id
+    const authUserId = "05cd3754-d589-4d90-97d1-89ba2bee610b"; // auth.users.id
+    const profileId = "a4b7c8c9-8210-499e-ae3f-2a5db2121577";  // profiles.id
+    const productId = "11c9f1b8-0355-4753-bd74-40b42aa53616";
+    const tariffId = "b276d8a5-8e5f-4876-9f99-36f818722d6c";
+    const trialOfferId = "220f923b-c69d-4e86-a8a7-f715a5ca1fdc";
+    const fullPaymentOfferId = "c5781abf-0376-4e1f-91dc-99773906ee77";
+    
+    const results: Record<string, unknown> = {};
+    const now = new Date();
+    
+    // Dates for simulation
+    const trialStartDate = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000); // 5 days ago
+    const trialEndDate = now; // Trial ends now
+    const accessEndDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days from now
+
+    // Get product and tariff info
+    const { data: product } = await supabase
+      .from("products_v2")
+      .select("name, code, telegram_club_id")
+      .eq("id", productId)
+      .single();
+
+    const { data: tariff } = await supabase
+      .from("tariffs")
+      .select("name, trial_price, price, trial_days, access_days, meta")
+      .eq("id", tariffId)
+      .single();
+
+    const { data: trialOffer } = await supabase
+      .from("tariff_offers")
+      .select("id, name, price, meta")
+      .eq("id", trialOfferId)
+      .single();
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("full_name, email, telegram_user_id")
+      .eq("id", profileId)
+      .single();
+
+    results.product = product;
+    results.tariff = tariff;
+    results.trialOffer = trialOffer;
+    results.profile = profile;
+
+    // Generate order number
+    const orderNumber = `SIM-TRIAL-${Date.now()}`;
+
+    // ========== STEP 1: Create Trial Order ==========
+    console.log("Step 1: Creating trial order...");
+
+    const { data: trialOrder, error: orderError } = await supabase
+      .from("orders_v2")
+      .insert({
+        order_number: orderNumber,
+        profile_id: profileId,
+        user_id: authUserId,
+        product_id: productId,
+        tariff_id: tariffId,
+        status: "paid",
+        base_price: tariff?.trial_price || 1,
+        final_price: tariff?.trial_price || 1,
+        currency: "BYN",
+        paid_amount: tariff?.trial_price || 1,
+        is_trial: true,
+        meta: {
+          offer_id: trialOfferId,
+          simulation: true,
+          simulation_date: now.toISOString(),
+          paid_at: trialStartDate.toISOString(),
+        },
+      })
+      .select()
+      .single();
+
+    if (orderError) {
+      console.error("Order creation error:", orderError);
+      throw new Error(`Failed to create order: ${orderError.message}`);
+    }
+    results.trialOrder = trialOrder;
+
+    // ========== STEP 2: Create Trial Payment ==========
+    console.log("Step 2: Creating trial payment...");
+
+    const { data: trialPayment, error: paymentError } = await supabase
+      .from("payments_v2")
+      .insert({
+        order_id: trialOrder.id,
+        user_id: authUserId,
+        profile_id: profileId,
+        amount: tariff?.trial_price || 1,
+        currency: "BYN",
+        status: "succeeded",
+        provider: "simulation",
+        provider_payment_id: `SIM-PAY-TRIAL-${Date.now()}`,
+        paid_at: trialStartDate.toISOString(),
+        meta: {
+          simulation: true,
+          type: "trial",
+        },
+      })
+      .select()
+      .single();
+
+    if (paymentError) {
+      console.error("Payment creation error:", paymentError);
+      throw new Error(`Failed to create payment: ${paymentError.message}`);
+    }
+    results.trialPayment = trialPayment;
+
+    // ========== STEP 3: Create Subscription ==========
+    console.log("Step 3: Creating subscription...");
+
+    const { data: subscription, error: subError } = await supabase
+      .from("subscriptions_v2")
+      .insert({
+        order_id: trialOrder.id,
+        profile_id: profileId,
+        user_id: authUserId,
+        product_id: productId,
+        tariff_id: tariffId,
+        status: "trial",
+        is_trial: true,
+        access_start_at: trialStartDate.toISOString(),
+        access_end_at: trialEndDate.toISOString(),
+        trial_end_at: trialEndDate.toISOString(),
+        next_charge_at: trialEndDate.toISOString(),
+        payment_token: `TEST-TOKEN-${Date.now()}`,
+        meta: {
+          simulation: true,
+          offer_id: trialOfferId,
+        },
+      })
+      .select()
+      .single();
+
+    if (subError) {
+      console.error("Subscription creation error:", subError);
+      throw new Error(`Failed to create subscription: ${subError.message}`);
+    }
+    results.subscription = subscription;
+
+    // ========== STEP 4: Create Entitlement ==========
+    console.log("Step 4: Creating entitlement...");
+
+    const { data: entitlement, error: entError } = await supabase
+      .from("entitlements")
+      .insert({
+        user_id: authUserId,
+        profile_id: profileId,
+        product_code: product?.code || "gorbova-club",
+        order_id: trialOrder.id,
+        status: "active",
+        expires_at: accessEndDate.toISOString(),
+        meta: {
+          simulation: true,
+          subscription_id: subscription.id,
+        },
+      })
+      .select()
+      .single();
+
+    if (entError) {
+      console.error("Entitlement creation error:", entError);
+      throw new Error(`Failed to create entitlement: ${entError.message}`);
+    }
+    results.entitlement = entitlement;
+
+    // ========== STEP 5: Grant Telegram Access ==========
+    console.log("Step 5: Granting Telegram access...");
+
+    try {
+      const telegramGrantResponse = await fetch(
+        `${supabaseUrl}/functions/v1/telegram-grant-access`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${supabaseServiceKey}`,
+          },
+          body: JSON.stringify({
+            userId: authUserId,
+            profileId: profileId,
+            productId: productId,
+            tariffId: tariffId,
+            offerId: trialOfferId,
+            orderId: trialOrder.id,
+            validUntil: accessEndDate.toISOString(),
+          }),
+        }
+      );
+
+      const telegramGrantResult = await telegramGrantResponse.json();
+      results.telegramGrant = telegramGrantResult;
+      console.log("Telegram grant result:", telegramGrantResult);
+    } catch (tgError) {
+      console.error("Telegram grant error:", tgError);
+      results.telegramGrantError = String(tgError);
+    }
+
+    // ========== STEP 6: Notify Admins about Trial Purchase ==========
+    console.log("Step 6: Notifying admins about trial purchase...");
+
+    try {
+      const adminNotifyResponse = await fetch(
+        `${supabaseUrl}/functions/v1/telegram-notify-admins`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${supabaseServiceKey}`,
+          },
+          body: JSON.stringify({
+            event: "new_order",
+            data: {
+              orderNumber: orderNumber,
+              productName: product?.name,
+              tariffName: tariff?.name,
+              amount: tariff?.trial_price || 1,
+              currency: "BYN",
+              userName: profile?.full_name,
+              userEmail: profile?.email,
+              isTrial: true,
+              simulation: true,
+            },
+          }),
+        }
+      );
+
+      const adminNotifyResult = await adminNotifyResponse.json();
+      results.adminNotifyTrial = adminNotifyResult;
+    } catch (notifyError) {
+      console.error("Admin notify error:", notifyError);
+      results.adminNotifyTrialError = String(notifyError);
+    }
+
+    // ========== STEP 7: Simulate 5 days passing - Full Payment ==========
+    console.log("Step 7: Simulating full payment after trial...");
+
+    // Create full payment
+    const { data: fullPayment, error: fullPayError } = await supabase
+      .from("payments_v2")
+      .insert({
+        order_id: trialOrder.id,
+        user_id: authUserId,
+        profile_id: profileId,
+        amount: tariff?.price || 150,
+        currency: "BYN",
+        status: "succeeded",
+        provider: "simulation",
+        provider_payment_id: `SIM-PAY-FULL-${Date.now()}`,
+        paid_at: now.toISOString(),
+        meta: {
+          simulation: true,
+          type: "full_after_trial",
+          offer_id: fullPaymentOfferId,
+        },
+      })
+      .select()
+      .single();
+
+    if (fullPayError) {
+      console.error("Full payment creation error:", fullPayError);
+      throw new Error(`Failed to create full payment: ${fullPayError.message}`);
+    }
+    results.fullPayment = fullPayment;
+
+    // ========== STEP 8: Update Subscription to Active ==========
+    console.log("Step 8: Updating subscription to active...");
+
+    const { data: updatedSubscription, error: updateSubError } = await supabase
+      .from("subscriptions_v2")
+      .update({
+        status: "active",
+        is_trial: false,
+        access_end_at: accessEndDate.toISOString(),
+        next_charge_at: null,
+        meta: {
+          ...((subscription.meta as Record<string, unknown>) || {}),
+          converted_from_trial: true,
+          converted_at: now.toISOString(),
+          full_payment_id: fullPayment.id,
+        },
+      })
+      .eq("id", subscription.id)
+      .select()
+      .single();
+
+    if (updateSubError) {
+      console.error("Subscription update error:", updateSubError);
+    }
+    results.updatedSubscription = updatedSubscription;
+
+    // ========== STEP 9: Update Order with Full Payment Info ==========
+    console.log("Step 9: Updating order with full payment info...");
+
+    const { error: updateOrderError } = await supabase
+      .from("orders_v2")
+      .update({
+        paid_amount: (tariff?.trial_price || 1) + (tariff?.price || 150),
+        meta: {
+          ...((trialOrder.meta as Record<string, unknown>) || {}),
+          full_payment_id: fullPayment.id,
+          full_payment_at: now.toISOString(),
+          full_offer_id: fullPaymentOfferId,
+        },
+      })
+      .eq("id", trialOrder.id);
+
+    if (updateOrderError) {
+      console.error("Order update error:", updateOrderError);
+    }
+    results.orderUpdated = !updateOrderError;
+
+    // ========== STEP 10: Send Telegram Notification about Renewal ==========
+    console.log("Step 10: Sending Telegram notification about renewal...");
+
+    if (profile?.telegram_user_id) {
+      try {
+        const sendNotifResponse = await fetch(
+          `${supabaseUrl}/functions/v1/telegram-send-notification`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${supabaseServiceKey}`,
+            },
+            body: JSON.stringify({
+              telegramUserId: profile.telegram_user_id,
+              message: `🎉 Поздравляем! Ваша подписка на "${product?.name}" (тариф "${tariff?.name}") успешно продлена!\n\n💳 Оплачено: ${tariff?.price || 150} BYN\n📅 Доступ до: ${accessEndDate.toLocaleDateString("ru-RU")}\n\nСпасибо, что вы с нами! 💜`,
+            }),
+          }
+        );
+
+        const sendNotifResult = await sendNotifResponse.json();
+        results.renewalNotification = sendNotifResult;
+      } catch (notifError) {
+        console.error("Renewal notification error:", notifError);
+        results.renewalNotificationError = String(notifError);
+      }
+    }
+
+    // ========== STEP 11: Notify Admins about Full Payment ==========
+    console.log("Step 11: Notifying admins about full payment...");
+
+    try {
+      const adminNotifyFullResponse = await fetch(
+        `${supabaseUrl}/functions/v1/telegram-notify-admins`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${supabaseServiceKey}`,
+          },
+          body: JSON.stringify({
+            event: "subscription_renewed",
+            data: {
+              orderNumber: orderNumber,
+              productName: product?.name,
+              tariffName: tariff?.name,
+              amount: tariff?.price || 150,
+              currency: "BYN",
+              userName: profile?.full_name,
+              userEmail: profile?.email,
+              convertedFromTrial: true,
+              simulation: true,
+            },
+          }),
+        }
+      );
+
+      const adminNotifyFullResult = await adminNotifyFullResponse.json();
+      results.adminNotifyFull = adminNotifyFullResult;
+    } catch (notifyError) {
+      console.error("Admin notify full error:", notifyError);
+      results.adminNotifyFullError = String(notifyError);
+    }
+
+    // ========== STEP 12: Send Renewal Email ==========
+    console.log("Step 12: Sending renewal email...");
+
+    try {
+      const emailResponse = await fetch(
+        `${supabaseUrl}/functions/v1/send-email`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${supabaseServiceKey}`,
+          },
+          body: JSON.stringify({
+            to: profile?.email,
+            subject: `Подписка продлена: ${product?.name}`,
+            html: `
+              <h2>Ваша подписка успешно продлена! 🎉</h2>
+              <p>Здравствуйте, ${profile?.full_name}!</p>
+              <p>Ваша подписка на <strong>${product?.name}</strong> (тариф "${tariff?.name}") была успешно оплачена и продлена.</p>
+              <p><strong>Сумма:</strong> ${tariff?.price || 150} BYN</p>
+              <p><strong>Доступ до:</strong> ${accessEndDate.toLocaleDateString("ru-RU")}</p>
+              <p>Спасибо, что вы с нами!</p>
+              <p>С уважением,<br>Команда Gorbova Club</p>
+            `,
+            templateCode: "subscription_renewed",
+            profileId: profileId,
+          }),
+        }
+      );
+
+      const emailResult = await emailResponse.json();
+      results.renewalEmail = emailResult;
+    } catch (emailError) {
+      console.error("Email error:", emailError);
+      results.renewalEmailError = String(emailError);
+    }
+
+    console.log("Simulation completed successfully!");
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        message: "Full trial flow simulation completed",
+        summary: {
+          user: profile?.email,
+          product: product?.name,
+          tariff: tariff?.name,
+          trialPayment: `${tariff?.trial_price || 1} BYN`,
+          fullPayment: `${tariff?.price || 150} BYN`,
+          totalPaid: `${(tariff?.trial_price || 1) + (tariff?.price || 150)} BYN`,
+          accessUntil: accessEndDate.toISOString(),
+          orderId: trialOrder.id,
+          subscriptionId: subscription.id,
+        },
+        results,
+      }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
+  } catch (error) {
+    console.error("Simulation error:", error);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
+  }
+});
