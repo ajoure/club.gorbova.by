@@ -5,6 +5,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Dialog,
   DialogContent,
@@ -959,21 +960,20 @@ export function PaymentDialog({
       case "ready":
         return (
           <div className="space-y-4">
-            {/* Trial info block */}
             {isTrial && (
-              <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-4 space-y-2">
-                <div className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-200">
-                  <Info className="h-4 w-4" />
-                  Важное о пробном периоде
-                </div>
-                <ul className="text-sm text-amber-700 dark:text-amber-300 space-y-1">
-                  <li>• Trial стоит {price} и действует {trialDays || 5} дней</li>
-                  <li>• Карта будет привязана для автоматического списания</li>
-                  <li>• После Trial произойдёт списание по выбранному тарифу</li>
-                  <li>• Вы можете отменить подписку в личном кабинете</li>
-                  <li>• При отмене доступ сохранится до конца оплаченного периода</li>
-                </ul>
-              </div>
+              <Alert className="bg-muted/50">
+                <Info className="h-4 w-4" />
+                <AlertTitle>Важное о пробном периоде</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li>Пробный доступ стоит 1 BYN и действует 5 дней</li>
+                    <li>Для активации пробного периода необходимо привязать банковскую карту</li>
+                    <li>По завершении пробного периода оплата будет автоматически списана по выбранному тарифу</li>
+                    <li>Вы можете в любой момент отменить подписку в личном кабинете</li>
+                    <li>В случае отмены доступ сохраняется до окончания уже оплаченного периода</li>
+                  </ul>
+                </AlertDescription>
+              </Alert>
             )}
 
             <div className="rounded-lg bg-muted/50 p-4 space-y-2">
