@@ -55,13 +55,13 @@ Deno.serve(async (req) => {
 
     const { data: trialOffer } = await supabase
       .from("tariff_offers")
-      .select("id, name, price, meta, getcourse_offer_id")
+      .select("id, button_label, amount, meta, getcourse_offer_id, offer_type")
       .eq("id", trialOfferId)
       .single();
 
     const { data: fullOffer } = await supabase
       .from("tariff_offers")
-      .select("id, name, price, meta, getcourse_offer_id")
+      .select("id, button_label, amount, meta, getcourse_offer_id, offer_type")
       .eq("id", fullPaymentOfferId)
       .single();
 
@@ -335,7 +335,7 @@ Deno.serve(async (req) => {
             message: `🆕 <b>Новый заказ (триал)</b>\n\n` +
               `📦 ${product?.name || "—"}\n` +
               `🏷 Тариф: ${tariff?.name || "—"}\n` +
-              `🎁 Предложение: ${trialOffer?.name || "—"}\n` +
+              `🎁 Предложение: ${trialOffer?.button_label || "—"}\n` +
               `👤 ${profile?.full_name || "—"}\n` +
               `📧 ${profile?.email || "—"}\n` +
               `💰 ${tariff?.trial_price || 1} BYN\n` +
@@ -602,7 +602,7 @@ Deno.serve(async (req) => {
             message: `💳 <b>Триал → Оплата</b>\n\n` +
               `📦 ${product?.name || "—"}\n` +
               `🏷 Тариф: ${tariff?.name || "—"}\n` +
-              `🎁 Предложение: ${fullOffer?.name || "—"}\n` +
+              `🎁 Предложение: ${fullOffer?.button_label || "—"}\n` +
               `👤 ${profile?.full_name || "—"}\n` +
               `📧 ${profile?.email || "—"}\n` +
               `💰 ${tariff?.price || 150} BYN\n` +
