@@ -553,6 +553,14 @@ export function PaymentDialog({
       });
 
       if (createError || !createData?.success) {
+        // Handle already used trial case gracefully
+        if (createData?.alreadyUsedTrial) {
+          toast.warning("Пробный период для этого продукта уже использован", {
+            duration: 8000,
+          });
+          setIsTestPaymentLoading(false);
+          return;
+        }
         throw new Error(createData?.error || createError?.message || "Ошибка создания заказа");
       }
 
