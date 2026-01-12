@@ -46,7 +46,7 @@ import {
 import { Loader2, Shield, UserPlus, Plus, Trash2, Search } from "lucide-react";
 import { RoleBadge } from "@/components/admin/RoleBadge";
 import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
-import { InviteUserDialog } from "@/components/admin/InviteUserDialog";
+import { AddEmployeeDialog } from "@/components/admin/AddEmployeeDialog";
 import { HelpIcon } from "@/components/help/HelpComponents";
 import { toast } from "sonner";
 
@@ -104,8 +104,8 @@ export default function AdminRoles() {
     roleCode: string;
   }>({ open: false, roleId: "", roleName: "", roleCode: "" });
 
-  // Invite dialog
-  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+  // Add employee dialog
+  const [addEmployeeDialogOpen, setAddEmployeeDialogOpen] = useState(false);
 
   // Get effective role for a user (single role model)
   const getEffectiveRole = (userRoles: { code: string; name: string }[]) => {
@@ -311,9 +311,9 @@ export default function AdminRoles() {
               />
             </div>
             {hasPermission("admins.manage") && (
-              <Button onClick={() => setInviteDialogOpen(true)}>
+              <Button onClick={() => setAddEmployeeDialogOpen(true)}>
                 <UserPlus className="w-4 h-4 mr-2" />
-                Пригласить сотрудника
+                Добавить сотрудника
               </Button>
             )}
           </div>
@@ -491,12 +491,14 @@ export default function AdminRoles() {
         </TabsContent>
       </Tabs>
 
-      {/* Invite User Dialog */}
-      <InviteUserDialog
-        open={inviteDialogOpen}
-        onOpenChange={setInviteDialogOpen}
+      {/* Add Employee Dialog */}
+      <AddEmployeeDialog
+        open={addEmployeeDialogOpen}
+        onOpenChange={setAddEmployeeDialogOpen}
         roles={roles}
         onSuccess={() => refetchUsers()}
+        currentUserId={currentUser?.id}
+        isSuperAdmin={isSuperAdmin()}
       />
 
       {/* Edit Permissions Dialog */}

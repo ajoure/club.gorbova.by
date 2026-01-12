@@ -7,13 +7,15 @@ const corsHeaders = {
 };
 
 interface RolesAdminRequest {
-  action: "assign_role" | "remove_role" | "create_role" | "set_role_permissions" | "delete_role";
+  action: "assign_role" | "remove_role" | "create_role" | "set_role_permissions" | "delete_role" | "search_users";
   userId?: string;
   roleCode?: string;
   roleId?: string;
   roleName?: string;
   roleDescription?: string;
   permissionCodes?: string[];
+  query?: string;  // for search_users
+  limit?: number;  // for search_users (default 20)
 }
 
 async function sendRoleChangeEmail(
@@ -509,6 +511,85 @@ serve(async (req: Request): Promise<Response> => {
 
         await logAction("roles.set_permissions", null, { roleId, permissionCodes });
         return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "search_users": {
+        const { query, limit = 20 } = body as RolesAdminRequest & { query?: string; limit?: number };
+
+        if (!(await hasPermission("admins.manage"))) {
+          return new Response(JSON.stringify({ error: "Permission denied" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        if (!query || query.trim().length < 2) {
+          return new Response(JSON.stringify([]), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const searchTerm = `%${query.trim()}%`;
+
+        // Search profiles with LEFT JOIN to get current role
+        const { data: profiles, error: searchError } = await supabaseAdmin
+          .from("profiles")
+          .select(`
+            user_id,
+            full_name,
+            email,
+            phone
+          `)
+          .or(`email.ilike.${searchTerm},full_name.ilike.${searchTerm},phone.ilike.${searchTerm}`)
+          .neq("user_id", actorUserId)
+          .limit(limit);
+
+        if (searchError) {
+          console.error("Search profiles error:", searchError);
+          return new Response(JSON.stringify({ error: "Search failed" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get roles for found users
+        const userIds = profiles?.map(p => p.user_id) || [];
+        let userRolesMap: Record<string, string> = {};
+
+        if (userIds.length > 0) {
+          const { data: userRoles, error: rolesError } = await supabaseAdmin
+            .from("user_roles_v2")
+            .select(`
+              user_id,
+              roles!inner (code)
+            `)
+            .in("user_id", userIds);
+
+          if (!rolesError && userRoles) {
+            userRolesMap = userRoles.reduce((acc, ur) => {
+              // roles is an object (not array) when using !inner
+              const rolesData = ur.roles as unknown as { code: string } | null;
+              const roleCode = rolesData?.code;
+              if (roleCode) {
+                acc[ur.user_id] = roleCode;
+              }
+              return acc;
+            }, {} as Record<string, string>);
+          }
+        }
+
+        // Combine profiles with roles
+        const result = profiles?.map(p => ({
+          user_id: p.user_id,
+          full_name: p.full_name,
+          email: p.email,
+          phone: p.phone,
+          role_code: userRolesMap[p.user_id] || "user",
+        })) || [];
+
+        return new Response(JSON.stringify(result), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
