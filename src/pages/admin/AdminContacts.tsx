@@ -136,7 +136,59 @@ interface GlobalSearchResults {
     profile_id: string | null;
     contact_name: string | null;
     telegram_user_id: number | null;
+    chat_id: number | null;      // для group сообщений
+    user_id: string | null;      // auth user ID
   }>;
+}
+
+// ResizableTableHead component for column resizing
+interface ResizableTableHeadProps {
+  column: ColumnConfig;
+  onResize: (key: string, width: number) => void;
+  children: React.ReactNode;
+  className?: string;
+}
+
+function ResizableTableHead({ column, onResize, children, className }: ResizableTableHeadProps) {
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = column.width;
+    
+    // Отключаем выделение текста во время ресайза
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientX - startX;
+      const newWidth = Math.max(60, startWidth + delta); // min 60px
+      onResize(column.key, newWidth);
+    };
+    
+    const handleMouseUp = () => {
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+  
+  return (
+    <TableHead 
+      style={{ width: column.width, minWidth: 60, position: 'relative' }}
+      className={className}
+    >
+      {children}
+      <div
+        className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/50 active:bg-primary transition-colors"
+        onMouseDown={handleMouseDown}
+      />
+    </TableHead>
+  );
 }
 
 export default function AdminContacts() {
@@ -174,6 +226,15 @@ export default function AdminContacts() {
     localStorage.setItem('admin_contacts_columns_v1', JSON.stringify(columns));
   }, [columns]);
   
+  // Handle column resize with immediate localStorage save
+  const handleColumnResize = useCallback((key: string, width: number) => {
+    setColumns(cols => {
+      const updated = cols.map(c => c.key === key ? { ...c, width } : c);
+      localStorage.setItem('admin_contacts_columns_v1', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+  
   // Global search with debounce
   useEffect(() => {
     if (search.length < 2) {
@@ -195,8 +256,14 @@ export default function AdminContacts() {
           setGlobalSearchResults(data as unknown as GlobalSearchResults);
           setShowSearchDropdown(true);
         }
-      } catch (err) {
-        console.error('Global search error:', err);
+      } catch (err: any) {
+        // Handle 403 Forbidden gracefully (ERRCODE 42501)
+        if (err?.code === '42501' || err?.message?.includes('Forbidden') || err?.message?.includes('Unauthorized')) {
+          console.warn('Search access denied - admin permissions required');
+          // Don't show error toast for permission issues
+        } else {
+          console.error('Global search error:', err);
+        }
       } finally {
         setIsGlobalSearching(false);
       }
@@ -770,7 +837,11 @@ export default function AdminContacts() {
                           if (m.profile_id) {
                             setSelectedContactId(m.profile_id);
                           } else {
-                            toast.info(`Сообщение не привязано к контакту (${m.source})`);
+                            // Показать метаданные для непривязанных сообщений
+                            const meta = m.source === 'group' 
+                              ? `Чат: ${m.chat_id || 'неизвестен'}, отправитель TG ID: ${m.telegram_user_id || 'неизвестен'}`
+                              : `TG ID: ${m.telegram_user_id || 'неизвестен'}`;
+                            toast.info(`Сообщение не привязано к контакту. ${meta}`);
                           }
                           setShowSearchDropdown(false);
                         }}
@@ -843,25 +914,62 @@ export default function AdminContacts() {
                     onCheckedChange={() => selectedContactIds.size === sortedContacts.length ? clearSelection() : selectAll()}
                   />
                 </TableHead>
-                <SortableTableHead sortKey="full_name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                  Имя / Email
-                </SortableTableHead>
-                <SortableTableHead sortKey="phone" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                  Телефон
-                </SortableTableHead>
-                <SortableTableHead sortKey="telegram_username" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                  Telegram
-                </SortableTableHead>
-                <TableHead className="w-12 text-center">TG</TableHead>
-                <SortableTableHead sortKey="deals_count" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort} className="text-center">
-                  Сделок
-                </SortableTableHead>
-                <SortableTableHead sortKey="last_deal_at" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                  Последняя сделка
-                </SortableTableHead>
-                <SortableTableHead sortKey="status" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                  Статус
-                </SortableTableHead>
+                <ResizableTableHead 
+                  column={columns.find(c => c.key === 'name_email') || { key: 'name_email', label: 'Имя / Email', visible: true, width: 250, order: 1 }}
+                  onResize={handleColumnResize}
+                >
+                  <SortableTableHead sortKey="full_name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                    Имя / Email
+                  </SortableTableHead>
+                </ResizableTableHead>
+                <ResizableTableHead 
+                  column={columns.find(c => c.key === 'phone') || { key: 'phone', label: 'Телефон', visible: true, width: 140, order: 2 }}
+                  onResize={handleColumnResize}
+                >
+                  <SortableTableHead sortKey="phone" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                    Телефон
+                  </SortableTableHead>
+                </ResizableTableHead>
+                <ResizableTableHead 
+                  column={columns.find(c => c.key === 'telegram') || { key: 'telegram', label: 'Telegram', visible: true, width: 150, order: 3 }}
+                  onResize={handleColumnResize}
+                >
+                  <SortableTableHead sortKey="telegram_username" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                    Telegram
+                  </SortableTableHead>
+                </ResizableTableHead>
+                <ResizableTableHead 
+                  column={columns.find(c => c.key === 'tg_linked') || { key: 'tg_linked', label: 'TG', visible: true, width: 50, order: 4 }}
+                  onResize={handleColumnResize}
+                  className="text-center"
+                >
+                  TG
+                </ResizableTableHead>
+                <ResizableTableHead 
+                  column={columns.find(c => c.key === 'deals_count') || { key: 'deals_count', label: 'Сделок', visible: true, width: 80, order: 5 }}
+                  onResize={handleColumnResize}
+                  className="text-center"
+                >
+                  <SortableTableHead sortKey="deals_count" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort} className="text-center">
+                    Сделок
+                  </SortableTableHead>
+                </ResizableTableHead>
+                <ResizableTableHead 
+                  column={columns.find(c => c.key === 'last_deal_at') || { key: 'last_deal_at', label: 'Последняя', visible: true, width: 130, order: 6 }}
+                  onResize={handleColumnResize}
+                >
+                  <SortableTableHead sortKey="last_deal_at" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                    Последняя сделка
+                  </SortableTableHead>
+                </ResizableTableHead>
+                <ResizableTableHead 
+                  column={columns.find(c => c.key === 'status') || { key: 'status', label: 'Статус', visible: true, width: 120, order: 7 }}
+                  onResize={handleColumnResize}
+                >
+                  <SortableTableHead sortKey="status" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                    Статус
+                  </SortableTableHead>
+                </ResizableTableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
