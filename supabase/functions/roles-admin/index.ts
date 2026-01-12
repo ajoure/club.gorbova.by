@@ -79,9 +79,8 @@ async function sendRoleChangeEmail(
   }
 }
 
-// Send Telegram notifications for role changes
+// Send Telegram notifications for role changes using existing edge functions
 async function sendRoleTelegramNotification(
-  supabaseAdmin: any,
   supabaseUrl: string,
   supabaseServiceKey: string,
   targetUserId: string,
@@ -90,41 +89,29 @@ async function sendRoleTelegramNotification(
   actorEmail: string
 ): Promise<void> {
   try {
-    // Get target user's telegram info
-    const { data: profile } = await supabaseAdmin
-      .from("profiles")
-      .select("telegram_user_id, telegram_link_bot_id, full_name, email")
-      .eq("user_id", targetUserId)
-      .single();
-
-    // Send to user if they have Telegram linked
-    if (profile?.telegram_user_id && profile?.telegram_link_bot_id) {
-      const { data: bot } = await supabaseAdmin
-        .from("telegram_bots")
-        .select("bot_token_encrypted")
-        .eq("id", profile.telegram_link_bot_id)
-        .single();
-
-      if (bot?.bot_token_encrypted) {
-        const message = isAssign
-          ? `✅ Вам назначена роль: <b>${roleName}</b>`
-          : `❌ Роль <b>${roleName}</b> была снята`;
-
-        try {
-          await fetch(`https://api.telegram.org/bot${bot.bot_token_encrypted}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: profile.telegram_user_id,
-              text: message,
-              parse_mode: "HTML",
-            }),
-          });
-          console.log(`Telegram notification sent to user ${targetUserId}`);
-        } catch (err) {
-          console.error("Error sending Telegram to user:", err);
-        }
-      }
+    // Send notification to user via telegram-send-notification function
+    // This function handles finding the user's telegram_user_id and bot token internally
+    try {
+      const userMessage = isAssign
+        ? `✅ Вам назначена роль: ${roleName}`
+        : `❌ Роль ${roleName} была снята`;
+      
+      await fetch(`${supabaseUrl}/functions/v1/telegram-send-notification`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${supabaseServiceKey}`,
+        },
+        body: JSON.stringify({
+          user_id: targetUserId,
+          message_type: "custom",
+          custom_message: userMessage,
+        }),
+      });
+      console.log(`Telegram notification sent to user ${targetUserId}`);
+    } catch (err) {
+      // User might not have Telegram linked - that's OK
+      console.log("Could not send Telegram to user (may not have TG linked):", err);
     }
 
     // Notify admins via telegram-notify-admins function
@@ -138,7 +125,6 @@ async function sendRoleTelegramNotification(
         body: JSON.stringify({
           message: `👤 <b>Изменение роли</b>\n\n` +
             `${isAssign ? '✅ Назначена' : '❌ Удалена'}: ${roleName}\n` +
-            `Пользователь: ${profile?.email || 'Unknown'}\n` +
             `Исполнитель: ${actorEmail}`,
           parse_mode: 'HTML',
         }),
@@ -385,7 +371,6 @@ serve(async (req: Request): Promise<Response> => {
           // Send Telegram notifications
           const actorEmail = await getUserEmail(actorUserId);
           await sendRoleTelegramNotification(
-            supabaseAdmin,
             supabaseUrl,
             supabaseServiceKey,
             userId,
@@ -481,7 +466,6 @@ serve(async (req: Request): Promise<Response> => {
           // Send Telegram notifications
           const actorEmail = await getUserEmail(actorUserId);
           await sendRoleTelegramNotification(
-            supabaseAdmin,
             supabaseUrl,
             supabaseServiceKey,
             userId,

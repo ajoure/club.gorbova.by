@@ -95,11 +95,28 @@ import { AvatarZoomDialog } from "./AvatarZoomDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 
+// Helper function to format contact name as "Фамилия Имя"
+function formatContactName(contact: { 
+  first_name?: string | null; 
+  last_name?: string | null; 
+  full_name?: string | null;
+}): string {
+  if (contact.last_name && contact.first_name) {
+    return `${contact.last_name} ${contact.first_name}`;
+  }
+  if (contact.last_name) return contact.last_name;
+  if (contact.first_name) return contact.first_name;
+  if (contact.full_name) return contact.full_name;
+  return "Без имени";
+}
+
 interface Contact {
   id: string;
   user_id: string | null;
   email: string | null;
   full_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
   phone: string | null;
   telegram_username: string | null;
   telegram_user_id: number | null;
@@ -554,7 +571,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           throw error;
         }
         
-        toast.success(`Вход от имени ${contact.full_name || contact.email}`);
+        toast.success(`Вход от имени ${formatContactName(contact) || contact.email}`);
         onOpenChange(false);
         window.location.href = "/?impersonating=true";
       }
@@ -814,7 +831,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       const dateStr = `${format(accessStart, "dd.MM.yy")} — ${format(accessEnd, "dd.MM.yy")}`;
       try {
         const giftMessage = `🎁 Выдан доступ\n\n` +
-          `👤 <b>Клиент:</b> ${contact.full_name || 'Не указано'}\n` +
+          `👤 <b>Клиент:</b> ${formatContactName(contact)}\n` +
           `📧 Email: ${contact.email || 'Не указан'}\n` +
           `📱 Телефон: ${contact.phone || 'Не указан'}\n` +
           (contact.telegram_username ? `💬 Telegram: @${contact.telegram_username}\n` : '') +
@@ -936,14 +953,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             <div className="flex items-center gap-3 min-w-0 flex-1">
               <AvatarZoomDialog
                 avatarUrl={contact.avatar_url}
-                fallbackText={contact.full_name?.[0]?.toUpperCase() || contact.email?.[0]?.toUpperCase() || "?"}
-                name={contact.full_name || undefined}
+                fallbackText={formatContactName(contact)?.[0]?.toUpperCase() || contact.email?.[0]?.toUpperCase() || "?"}
+                name={formatContactName(contact)}
                 onFetchFromTelegram={contact.telegram_user_id ? fetchPhotoFromTelegram : undefined}
                 isFetchingPhoto={isFetchingPhoto}
                 size="md"
               />
               <div className="min-w-0 flex-1">
-                <SheetTitle className="text-lg sm:text-xl truncate">{contact.full_name || "Без имени"}</SheetTitle>
+                <SheetTitle className="text-lg sm:text-xl truncate">{formatContactName(contact)}</SheetTitle>
                 <p className="text-xs sm:text-sm text-muted-foreground truncate">{contact.email}</p>
               </div>
             </div>

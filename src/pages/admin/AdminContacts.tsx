@@ -311,15 +311,26 @@ export default function AdminContacts() {
   const searchDropdownRef = useRef<HTMLDivElement>(null);
   
   // Column settings with localStorage persistence
+  // Migrate from v2 to v1 if needed, then use v1
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
-    const saved = localStorage.getItem('admin_contacts_columns_v2');
+    const STORAGE_KEY = 'admin_contacts_columns_v1';
+    const OLD_KEY = 'admin_contacts_columns_v2';
+    
+    // Check for old key and migrate
+    const oldSaved = localStorage.getItem(OLD_KEY);
+    if (oldSaved) {
+      localStorage.setItem(STORAGE_KEY, oldSaved);
+      localStorage.removeItem(OLD_KEY);
+    }
+    
+    const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         // Merge with defaults to ensure all columns exist
         const merged = DEFAULT_COLUMNS.map(dc => {
-          const saved = parsed.find((p: ColumnConfig) => p.key === dc.key);
-          return saved ? { ...dc, ...saved } : dc;
+          const savedCol = parsed.find((p: ColumnConfig) => p.key === dc.key);
+          return savedCol ? { ...dc, ...savedCol } : dc;
         });
         return merged;
       } catch {
@@ -336,14 +347,14 @@ export default function AdminContacts() {
   
   // Save column settings to localStorage
   useEffect(() => {
-    localStorage.setItem('admin_contacts_columns_v2', JSON.stringify(columns));
+    localStorage.setItem('admin_contacts_columns_v1', JSON.stringify(columns));
   }, [columns]);
   
   // Handle column resize with immediate localStorage save
   const handleColumnResize = useCallback((key: string, width: number) => {
     setColumns(cols => {
       const updated = cols.map(c => c.key === key ? { ...c, width } : c);
-      localStorage.setItem('admin_contacts_columns_v2', JSON.stringify(updated));
+      localStorage.setItem('admin_contacts_columns_v1', JSON.stringify(updated));
       return updated;
     });
   }, []);
@@ -356,7 +367,7 @@ export default function AdminContacts() {
         const oldIndex = cols.findIndex(c => c.key === active.id);
         const newIndex = cols.findIndex(c => c.key === over.id);
         const newCols = arrayMove(cols, oldIndex, newIndex).map((c, i) => ({ ...c, order: i }));
-        localStorage.setItem('admin_contacts_columns_v2', JSON.stringify(newCols));
+        localStorage.setItem('admin_contacts_columns_v1', JSON.stringify(newCols));
         return newCols;
       });
     }

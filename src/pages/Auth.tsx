@@ -189,6 +189,29 @@ export default function Auth() {
     }
   };
 
+  // Handle sending reset password from account_exists mode
+  const handleSendResetFromExists = async () => {
+    setIsSubmitting(true);
+    try {
+      await supabase.functions.invoke("auth-actions", {
+        body: { action: "reset_password", email: existingEmail },
+      });
+      toast({
+        title: "Письмо отправлено",
+        description: "Проверьте почту для установки пароля",
+      });
+      setMode("login");
+    } catch {
+      toast({
+        title: "Ошибка",
+        description: "Не удалось отправить письмо. Попробуйте позже.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -509,27 +532,7 @@ export default function Auth() {
               </div>
               
               <Button
-                onClick={async () => {
-                  setIsSubmitting(true);
-                  try {
-                    await supabase.functions.invoke("auth-actions", {
-                      body: { action: "reset_password", email: existingEmail },
-                    });
-                    toast({
-                      title: "Письмо отправлено",
-                      description: "Проверьте почту для установки пароля",
-                    });
-                    setMode("login");
-                  } catch {
-                    toast({
-                      title: "Ошибка",
-                      description: "Не удалось отправить письмо. Попробуйте позже.",
-                      variant: "destructive",
-                    });
-                  } finally {
-                    setIsSubmitting(false);
-                  }
-                }}
+                onClick={handleSendResetFromExists}
                 disabled={isSubmitting}
                 className="w-full h-12 rounded-xl text-base font-medium bg-gradient-to-r from-primary to-accent hover:opacity-90 transition-opacity"
               >
