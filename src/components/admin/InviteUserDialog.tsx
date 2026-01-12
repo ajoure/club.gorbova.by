@@ -26,14 +26,15 @@ interface Role {
   name: string;
 }
 
-interface InviteUserDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+interface InviteUserFormProps {
   roles: Role[];
   onSuccess: () => void;
+  onClose?: () => void;
+  showFooter?: boolean;
 }
 
-export function InviteUserDialog({ open, onOpenChange, roles, onSuccess }: InviteUserDialogProps) {
+// Exported form component without Dialog wrapper - for use in AddEmployeeDialog
+export function InviteUserForm({ roles, onSuccess, onClose, showFooter = true }: InviteUserFormProps) {
   const [email, setEmail] = useState("");
   const [selectedRole, setSelectedRole] = useState("user");
   const [loading, setLoading] = useState(false);
@@ -90,7 +91,6 @@ export function InviteUserDialog({ open, onOpenChange, roles, onSuccess }: Invit
       toast.success("Приглашение отправлено");
       setEmail("");
       setSelectedRole("user");
-      onOpenChange(false);
       onSuccess();
     } catch (error) {
       console.error("Invite error:", error);
@@ -100,14 +100,75 @@ export function InviteUserDialog({ open, onOpenChange, roles, onSuccess }: Invit
     }
   };
 
+  // Filter out super_admin from regular users
+  const availableRoles = roles.filter(r => r.code !== "super_admin");
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="invite-email">Email</Label>
+        <Input
+          id="invite-email"
+          type="email"
+          placeholder="user@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          disabled={loading}
+        />
+      </div>
+      
+      <div className="space-y-2">
+        <Label htmlFor="invite-role">Роль</Label>
+        <Select value={selectedRole} onValueChange={setSelectedRole} disabled={loading}>
+          <SelectTrigger id="invite-role">
+            <SelectValue placeholder="Выберите роль" />
+          </SelectTrigger>
+          <SelectContent>
+            {availableRoles.map((role) => (
+              <SelectItem key={role.code} value={role.code}>
+                {role.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Пользователь получит email с ссылкой для входа и сможет установить пароль самостоятельно.
+        </p>
+      </div>
+
+      {showFooter && (
+        <DialogFooter>
+          {onClose && (
+            <Button variant="outline" onClick={onClose} disabled={loading}>
+              Отмена
+            </Button>
+          )}
+          <Button onClick={handleInvite} disabled={loading}>
+            {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            Отправить приглашение
+          </Button>
+        </DialogFooter>
+      )}
+    </div>
+  );
+}
+
+interface InviteUserDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  roles: Role[];
+  onSuccess: () => void;
+}
+
+export function InviteUserDialog({ open, onOpenChange, roles, onSuccess }: InviteUserDialogProps) {
   const handleClose = () => {
-    setEmail("");
-    setSelectedRole("user");
     onOpenChange(false);
   };
 
-  // Filter out super_admin from regular users
-  const availableRoles = roles.filter(r => r.code !== "super_admin");
+  const handleSuccess = () => {
+    onOpenChange(false);
+    onSuccess();
+  };
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -119,48 +180,12 @@ export function InviteUserDialog({ open, onOpenChange, roles, onSuccess }: Invit
           </DialogTitle>
         </DialogHeader>
         
-        <div className="space-y-4 py-4">
-          <div className="space-y-2">
-            <Label htmlFor="invite-email">Email</Label>
-            <Input
-              id="invite-email"
-              type="email"
-              placeholder="user@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={loading}
-            />
-          </div>
-          
-          <div className="space-y-2">
-            <Label htmlFor="invite-role">Роль</Label>
-            <Select value={selectedRole} onValueChange={setSelectedRole} disabled={loading}>
-              <SelectTrigger id="invite-role">
-                <SelectValue placeholder="Выберите роль" />
-              </SelectTrigger>
-              <SelectContent>
-                {availableRoles.map((role) => (
-                  <SelectItem key={role.code} value={role.code}>
-                    {role.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Пользователь получит email с ссылкой для входа и сможет установить пароль самостоятельно.
-            </p>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={loading}>
-            Отмена
-          </Button>
-          <Button onClick={handleInvite} disabled={loading}>
-            {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-            Отправить приглашение
-          </Button>
-        </DialogFooter>
+        <InviteUserForm
+          roles={roles}
+          onSuccess={handleSuccess}
+          onClose={handleClose}
+          showFooter={true}
+        />
       </DialogContent>
     </Dialog>
   );
