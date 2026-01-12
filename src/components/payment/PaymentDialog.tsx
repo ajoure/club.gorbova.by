@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail } from "lucide-react";
+import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Info } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
@@ -490,10 +490,23 @@ export function PaymentDialog({
       });
 
       if (error) {
+        // Check if the error response contains alreadyUsedTrial flag
+        if (data?.alreadyUsedTrial) {
+          toast.warning("Пробный период для этого продукта уже использован");
+          setStep("ready");
+          setIsLoading(false);
+          return;
+        }
         throw new Error(error.message);
       }
 
       if (!data.success) {
+        if (data.alreadyUsedTrial) {
+          toast.warning("Пробный период для этого продукта уже использован");
+          setStep("ready");
+          setIsLoading(false);
+          return;
+        }
         throw new Error(data.error || "Ошибка создания платежа");
       }
 
@@ -856,14 +869,13 @@ export function PaymentDialog({
       case "telegram_prompt":
         return (
           <div className="space-y-4">
-            <div className="rounded-lg bg-primary/10 border border-primary/20 p-4 space-y-3">
-              <div className="flex items-center gap-2 text-primary">
+            <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-4 space-y-3">
+              <div className="flex items-center gap-2 text-blue-800 dark:text-blue-200">
                 <MessageCircle className="h-5 w-5" />
-                <span className="font-medium">Привяжите Telegram для доступа</span>
+                <span className="font-medium">Доступы отправляются через Telegram</span>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Для доступа в клуб необходимо привязать Telegram-аккаунт. 
-                После оплаты вы автоматически получите приглашение в закрытый чат/канал.
+              <p className="text-sm text-blue-700 dark:text-blue-300">
+                Ссылки на чат и канал клуба придут в Telegram. Без привязки Telegram доступ не будет выдан.
               </p>
             </div>
 
@@ -901,7 +913,7 @@ export function PaymentDialog({
                 ) : (
                   <ExternalLink className="h-4 w-4" />
                 )}
-                Привязать Telegram
+                Привязать Telegram сейчас
               </Button>
             )}
 
@@ -922,15 +934,32 @@ export function PaymentDialog({
               Пропустить и продолжить
             </Button>
 
-            <p className="text-xs text-center text-muted-foreground">
-              Вы сможете привязать Telegram позже в личном кабинете
-            </p>
+            <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-700 dark:text-amber-300">
+              Если пропустите — привяжите Telegram позже в личном кабинете, ссылки придут автоматически.
+            </div>
           </div>
         );
 
       case "ready":
         return (
           <div className="space-y-4">
+            {/* Trial info block */}
+            {isTrial && (
+              <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-4 space-y-2">
+                <div className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-200">
+                  <Info className="h-4 w-4" />
+                  Важное о пробном периоде
+                </div>
+                <ul className="text-sm text-amber-700 dark:text-amber-300 space-y-1">
+                  <li>• Trial стоит {price} и действует {trialDays || 5} дней</li>
+                  <li>• Карта будет привязана для автоматического списания</li>
+                  <li>• После Trial произойдёт списание по выбранному тарифу</li>
+                  <li>• Вы можете отменить подписку в личном кабинете</li>
+                  <li>• При отмене доступ сохранится до конца оплаченного периода</li>
+                </ul>
+              </div>
+            )}
+
             <div className="rounded-lg bg-muted/50 p-4 space-y-2">
               <div className="flex items-center gap-2 text-sm">
                 <CheckCircle className="h-4 w-4 text-primary" />

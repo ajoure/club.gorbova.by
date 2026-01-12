@@ -426,19 +426,44 @@ Deno.serve(async (req) => {
             console.error('Failed to fetch profile photo:', photoError);
           }
 
-          // Check subscription and grant access
-          const { data: subscription } = await supabase
-            .from('subscriptions')
-            .select('*')
+          // Check subscription and grant access (v2 first, then legacy)
+          let hasActiveSubscription = false;
+          
+          // Check subscriptions_v2 first
+          const { data: subV2 } = await supabase
+            .from('subscriptions_v2')
+            .select('id, order_id')
             .eq('user_id', tokenData.user_id)
-            .eq('is_active', true)
-            .gte('expires_at', new Date().toISOString())
-            .single();
+            .in('status', ['active', 'trial'])
+            .gte('access_end_at', new Date().toISOString())
+            .limit(1)
+            .maybeSingle();
 
-          if (subscription) {
+          if (subV2) {
+            hasActiveSubscription = true;
             await supabase.functions.invoke('telegram-grant-access', {
-              body: { user_id: tokenData.user_id },
+              body: { 
+                user_id: tokenData.user_id,
+                source: 'telegram_link',
+                source_id: subV2.order_id, // Pass order_id for GetCourse link
+              },
             });
+          } else {
+            // Fallback to legacy subscriptions table
+            const { data: subscription } = await supabase
+              .from('subscriptions')
+              .select('*')
+              .eq('user_id', tokenData.user_id)
+              .eq('is_active', true)
+              .gte('expires_at', new Date().toISOString())
+              .single();
+
+            if (subscription) {
+              hasActiveSubscription = true;
+              await supabase.functions.invoke('telegram-grant-access', {
+                body: { user_id: tokenData.user_id },
+              });
+            }
           }
 
           return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

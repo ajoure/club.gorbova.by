@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CreditCard, ShoppingBag, History, ClipboardList, FileText } from "lucide-react";
+import { CreditCard, ShoppingBag, History, ClipboardList, FileText, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OrderDocuments } from "@/components/purchases/OrderDocuments";
 import { format } from "date-fns";
@@ -27,6 +27,7 @@ import { SubscriptionDetailSheet } from "@/components/purchases/SubscriptionDeta
 import { OrderListItem } from "@/components/purchases/OrderListItem";
 import { PreregistrationListItem } from "@/components/purchases/PreregistrationListItem";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useTelegramLinkStatus } from "@/hooks/useTelegramLink";
 
 interface OrderV2 {
   id: string;
@@ -127,6 +128,10 @@ export default function Purchases() {
   const [selectedSubscription, setSelectedSubscription] = useState<SubscriptionV2 | null>(null);
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
   const [documentsOrderId, setDocumentsOrderId] = useState<string | null>(null);
+  
+  // Check Telegram link status
+  const { data: telegramStatus } = useTelegramLinkStatus();
+  const isTelegramLinked = telegramStatus?.status === 'active';
 
   // Fetch orders from orders_v2
   const { data: orders, isLoading: ordersLoading } = useQuery({
@@ -352,6 +357,22 @@ export default function Purchases() {
                     onClick={() => openSubscriptionDetail(sub)}
                   />
                 ))}
+                
+                {/* Telegram reminder for active subscriptions */}
+                {!isTelegramLinked && (
+                  <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-4 mt-4">
+                    <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 mb-2">
+                      <MessageCircle className="h-5 w-5" />
+                      <span className="font-medium">Привяжите Telegram для получения доступов</span>
+                    </div>
+                    <p className="text-sm text-amber-700 dark:text-amber-300 mb-3">
+                      Ссылки на чат и канал клуба будут отправлены автоматически после привязки.
+                    </p>
+                    <Button variant="outline" size="sm" onClick={() => window.location.href = '/dashboard'}>
+                      Привязать Telegram
+                    </Button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="text-center py-8 text-muted-foreground">

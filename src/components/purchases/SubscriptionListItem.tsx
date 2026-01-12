@@ -97,6 +97,17 @@ export function SubscriptionListItem({ subscription, onClick }: SubscriptionList
             </span>
           )}
         </div>
+        {/* Trial info */}
+        {subscription.is_trial && subscription.trial_end_at && (
+          <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+            Пробный период до: {formatShortDate(subscription.trial_end_at)}
+            {subscription.next_charge_at && (
+              <span className="ml-2">
+                • Следующее списание: {formatShortDate(subscription.next_charge_at)}
+              </span>
+            )}
+          </div>
+        )}
         {isCanceled && subscription.cancel_at && (
           <p className="text-xs text-amber-600 mt-1">
             Доступ сохранится до {formatShortDate(subscription.cancel_at)}

@@ -260,6 +260,31 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Check for existing trial usage for this product (prevent repeat trials)
+    if (isTrial && (userId || authUserId)) {
+      const checkUserId = userId || authUserId;
+      const { data: existingTrial } = await supabase
+        .from('subscriptions_v2')
+        .select('id')
+        .eq('user_id', checkUserId)
+        .eq('product_id', productId)
+        .eq('is_trial', true)
+        .limit(1)
+        .maybeSingle();
+      
+      if (existingTrial) {
+        console.log('User already used trial for this product:', productId);
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Пробный период для этого продукта уже использован',
+          alreadyUsedTrial: true,
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // If no user ID, check if user exists by email or create new one
     if (!userId) {
       // Check if profile exists with this email

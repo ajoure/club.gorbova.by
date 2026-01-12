@@ -327,8 +327,36 @@ Deno.serve(async (req) => {
         // Update can_dm status
         const canDm = !result.description?.includes('bot was blocked') && !result.description?.includes("can't initiate");
         await supabase.from('telegram_club_members').update({
-          can_dm: canDm,
-        }).eq('telegram_user_id', telegramUserId).eq('club_id', club.id);
+        can_dm: canDm,
+      }).eq('telegram_user_id', telegramUserId).eq('club_id', club.id);
+
+      // Send GetCourse materials link if tariff has materials (for source_id = order_id)
+      if (dmSent && source_id) {
+        try {
+          // Get order with tariff info
+          const { data: orderInfo } = await supabase
+            .from('orders_v2')
+            .select('tariff_id, tariffs(getcourse_offer_id, meta)')
+            .eq('id', source_id)
+            .maybeSingle();
+          
+          const getcourseOfferId = orderInfo?.tariffs?.getcourse_offer_id;
+          const tariffMeta = orderInfo?.tariffs?.meta as Record<string, unknown> | null;
+          const gcUrl = tariffMeta?.getcourse_lesson_url as string | undefined;
+          
+          if (getcourseOfferId || gcUrl) {
+            const gcMessage = 
+              `📚 Материалы доступны на GetCourse.\n\n` +
+              `Письмо с доступом придёт на email в течение ~5 минут.\n\n` +
+              (gcUrl ? `Ссылка: ${gcUrl}` : 'https://gorbova.getcourse.ru/teach');
+            
+            await sendMessage(botToken, telegramUserId, gcMessage);
+            console.log('Sent GetCourse link message to user', telegramUserId);
+          }
+        } catch (gcError) {
+          console.error('Error sending GetCourse link:', gcError);
+        }
+      }
       }
 
       // Log audit
