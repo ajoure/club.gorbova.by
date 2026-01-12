@@ -533,7 +533,7 @@ serve(async (req: Request): Promise<Response> => {
 
         const searchTerm = `%${query.trim()}%`;
 
-        // Search profiles with LEFT JOIN to get current role
+        // Step 1: Search profiles
         const { data: profiles, error: searchError } = await supabaseAdmin
           .from("profiles")
           .select(`
@@ -554,30 +554,46 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Get roles for found users
+        // Step 2: Get user_roles_v2 records for found users (2-step approach, no join magic)
         const userIds = profiles?.map(p => p.user_id) || [];
         let userRolesMap: Record<string, string> = {};
 
         if (userIds.length > 0) {
-          const { data: userRoles, error: rolesError } = await supabaseAdmin
+          // Get user_roles_v2 records
+          const { data: userRolesRaw, error: userRolesError } = await supabaseAdmin
             .from("user_roles_v2")
-            .select(`
-              user_id,
-              roles!inner (code)
-            `)
+            .select("user_id, role_id")
             .in("user_id", userIds);
 
-          if (!rolesError && userRoles) {
-            userRolesMap = userRoles.reduce((acc, ur) => {
-              // roles is an object (not array) when using !inner
-              const rolesData = ur.roles as unknown as { code: string } | null;
-              const roleCode = rolesData?.code;
-              if (roleCode) {
-                acc[ur.user_id] = roleCode;
-              }
+          if (userRolesError) {
+            console.error("User roles query error:", userRolesError);
+          }
+
+          // Step 3: Get role codes by role_ids
+          const roleIds = [...new Set((userRolesRaw || []).map(ur => ur.role_id))];
+          let roleCodesMap: Record<string, string> = {};
+
+          if (roleIds.length > 0) {
+            const { data: rolesData, error: rolesError } = await supabaseAdmin
+              .from("roles")
+              .select("id, code")
+              .in("id", roleIds);
+
+            if (rolesError) {
+              console.error("Roles query error:", rolesError);
+            }
+
+            roleCodesMap = (rolesData || []).reduce((acc, r) => {
+              acc[r.id] = r.code;
               return acc;
             }, {} as Record<string, string>);
           }
+
+          // Build userRolesMap: user_id -> role_code
+          userRolesMap = (userRolesRaw || []).reduce((acc, ur) => {
+            acc[ur.user_id] = roleCodesMap[ur.role_id] || "user";
+            return acc;
+          }, {} as Record<string, string>);
         }
 
         // Combine profiles with roles

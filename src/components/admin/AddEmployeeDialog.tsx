@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -22,6 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, Search, UserPlus, Mail, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import { InviteUserForm } from "./InviteUserDialog";
 
 interface Role {
   id: string;
@@ -59,6 +59,15 @@ const getRoleDisplayName = (code: string) => {
   return displayNames[code] || code;
 };
 
+// Error messages mapping
+const errorMap: Record<string, string> = {
+  "SELF_ROLE_CHANGE_FORBIDDEN": "Нельзя изменить свою собственную роль",
+  "LAST_OWNER_PROTECTED": "Нельзя убрать последнего Владельца",
+  "Only super admin can assign super admin role": "Только Владелец может назначить роль Владельца",
+  "Permission denied": "Нет прав для этого действия",
+  "Search failed": "Ошибка поиска",
+};
+
 export function AddEmployeeDialog({
   open,
   onOpenChange,
@@ -70,18 +79,14 @@ export function AddEmployeeDialog({
   // Tab state
   const [activeTab, setActiveTab] = useState("invite");
 
-  // Invite tab state
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("user");
-  const [inviteLoading, setInviteLoading] = useState(false);
-
   // Search tab state
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchedUser[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [selectedRoleForAssign, setSelectedRoleForAssign] = useState("");
-  const [assignLoading, setAssignLoading] = useState(false);
+  
+  // Per-row state for role selection and loading
+  const [selectedRoleByUserId, setSelectedRoleByUserId] = useState<Record<string, string>>({});
+  const [assignLoadingUserId, setAssignLoadingUserId] = useState<string | null>(null);
 
   // Debounce search
   useEffect(() => {
@@ -101,12 +106,10 @@ export function AddEmployeeDialog({
   useEffect(() => {
     if (!open) {
       setActiveTab("invite");
-      setInviteEmail("");
-      setInviteRole("user");
       setSearchQuery("");
       setSearchResults([]);
-      setSelectedUserId(null);
-      setSelectedRoleForAssign("");
+      setSelectedRoleByUserId({});
+      setAssignLoadingUserId(null);
     }
   }, [open]);
 
@@ -138,7 +141,8 @@ export function AddEmployeeDialog({
       }
 
       if (response.data?.error) {
-        toast.error(response.data.error);
+        const message = errorMap[response.data.error] || response.data.error;
+        toast.error(message);
         return;
       }
 
@@ -151,73 +155,21 @@ export function AddEmployeeDialog({
     }
   }, []);
 
-  // Invite handlers (same logic as InviteUserDialog)
-  const handleInvite = async () => {
-    if (!inviteEmail.trim()) {
-      toast.error("Введите email");
-      return;
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(inviteEmail)) {
-      toast.error("Некорректный формат email");
-      return;
-    }
-
-    setInviteLoading(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      if (!token) {
-        toast.error("Сессия истекла — войдите снова");
-        return;
-      }
-
-      const response = await supabase.functions.invoke("users-admin-actions", {
-        body: {
-          action: "invite",
-          email: inviteEmail.trim(),
-          roleCode: inviteRole,
-        },
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (response.error) {
-        console.error("Invite error:", response.error);
-        toast.error("Ошибка отправки приглашения");
-        return;
-      }
-
-      if (response.data?.error) {
-        if (response.data.error === "User already exists") {
-          toast.error("Пользователь с таким email уже существует");
-        } else {
-          toast.error(response.data.error);
-        }
-        return;
-      }
-
-      toast.success("Приглашение отправлено");
-      onOpenChange(false);
-      onSuccess();
-    } catch (error) {
-      console.error("Invite error:", error);
-      toast.error("Ошибка отправки приглашения");
-    } finally {
-      setInviteLoading(false);
-    }
+  // Handle invite success from InviteUserForm
+  const handleInviteSuccess = () => {
+    onOpenChange(false);
+    onSuccess();
   };
 
-  // Assign role handler
+  // Assign role handler - now uses per-row state
   const handleAssignRole = async (userId: string) => {
-    if (!selectedRoleForAssign) {
+    const selectedRole = selectedRoleByUserId[userId];
+    if (!selectedRole) {
       toast.error("Выберите роль");
       return;
     }
 
-    setAssignLoading(true);
+    setAssignLoadingUserId(userId);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
@@ -230,7 +182,7 @@ export function AddEmployeeDialog({
         body: {
           action: "assign_role",
           userId,
-          roleCode: selectedRoleForAssign,
+          roleCode: selectedRole,
         },
         headers: {
           Authorization: `Bearer ${token}`,
@@ -244,19 +196,18 @@ export function AddEmployeeDialog({
       }
 
       if (response.data?.error) {
-        const errorMap: Record<string, string> = {
-          "SELF_ROLE_CHANGE_FORBIDDEN": "Нельзя изменить свою собственную роль",
-          "LAST_OWNER_PROTECTED": "Нельзя убрать последнего Владельца",
-          "Only super admin can assign super admin role": "Только Владелец может назначить роль Владельца",
-          "Permission denied": "Нет прав для этого действия",
-        };
-        toast.error(errorMap[response.data.error] || response.data.error);
+        const message = errorMap[response.data.error] || response.data.error;
+        toast.error(message);
         return;
       }
 
       toast.success("Роль назначена");
-      setSelectedUserId(null);
-      setSelectedRoleForAssign("");
+      // Clear this user's selected role
+      setSelectedRoleByUserId(prev => {
+        const updated = { ...prev };
+        delete updated[userId];
+        return updated;
+      });
       // Update search results to reflect new role
       await performSearch(searchQuery);
       onSuccess();
@@ -264,12 +215,19 @@ export function AddEmployeeDialog({
       console.error("Assign role error:", error);
       toast.error("Ошибка назначения роли");
     } finally {
-      setAssignLoading(false);
+      setAssignLoadingUserId(null);
     }
   };
 
-  // Filter out super_admin from regular users
-  const availableRolesForInvite = roles.filter(r => r.code !== "super_admin");
+  // Handle per-row role selection
+  const handleRoleSelect = (userId: string, roleCode: string) => {
+    setSelectedRoleByUserId(prev => ({
+      ...prev,
+      [userId]: roleCode,
+    }));
+  };
+
+  // Filter roles for assign dropdown - exclude "user" (no role needed) and super_admin unless isSuperAdmin
   const availableRolesForAssign = roles.filter(r => 
     r.code !== "user" && (r.code !== "super_admin" || isSuperAdmin)
   );
@@ -296,48 +254,14 @@ export function AddEmployeeDialog({
             </TabsTrigger>
           </TabsList>
 
-          {/* TAB A: Invite */}
-          <TabsContent value="invite" className="space-y-4 pt-4">
-            <div className="space-y-2">
-              <Label htmlFor="invite-email">Email</Label>
-              <Input
-                id="invite-email"
-                type="email"
-                placeholder="user@example.com"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                disabled={inviteLoading}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="invite-role">Роль</Label>
-              <Select value={inviteRole} onValueChange={setInviteRole} disabled={inviteLoading}>
-                <SelectTrigger id="invite-role">
-                  <SelectValue placeholder="Выберите роль" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableRolesForInvite.map((role) => (
-                    <SelectItem key={role.code} value={role.code}>
-                      {role.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Пользователь получит email с ссылкой для входа.
-              </p>
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={inviteLoading}>
-                Отмена
-              </Button>
-              <Button onClick={handleInvite} disabled={inviteLoading}>
-                {inviteLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Отправить приглашение
-              </Button>
-            </DialogFooter>
+          {/* TAB A: Invite - uses InviteUserForm component */}
+          <TabsContent value="invite" className="pt-4">
+            <InviteUserForm
+              roles={roles}
+              onSuccess={handleInviteSuccess}
+              onClose={() => onOpenChange(false)}
+              showFooter={true}
+            />
           </TabsContent>
 
           {/* TAB B: Search existing users */}
@@ -367,18 +291,19 @@ export function AddEmployeeDialog({
               )}
 
               {!searchLoading && searchResults.map((user) => {
-                const isCurrentUser = user.user_id === currentUserId;
+                // Filter out current user (already done on backend, but double-check)
+                if (user.user_id === currentUserId) return null;
+                
                 const hasNonUserRole = user.role_code !== "user";
-                const isSelected = selectedUserId === user.user_id;
+                const userSelectedRole = selectedRoleByUserId[user.user_id] || "";
+                const isLoading = assignLoadingUserId === user.user_id;
 
                 return (
                   <div
                     key={user.user_id}
-                    className={`border rounded-lg p-3 ${
-                      isCurrentUser ? "opacity-50" : "hover:bg-accent/50 cursor-pointer"
-                    } ${isSelected ? "border-primary bg-accent/30" : ""}`}
-                    onClick={() => !isCurrentUser && setSelectedUserId(isSelected ? null : user.user_id)}
+                    className="border rounded-lg p-3 space-y-3"
                   >
+                    {/* User info row */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         <div className="font-medium truncate">
@@ -398,48 +323,44 @@ export function AddEmployeeDialog({
                       </Badge>
                     </div>
 
-                    {isSelected && !isCurrentUser && (
-                      <div className="mt-3 pt-3 border-t space-y-3">
-                        {hasNonUserRole && (
-                          <Alert variant="default" className="py-2">
-                            <AlertTriangle className="h-4 w-4" />
-                            <AlertDescription className="text-sm">
-                              Текущая роль будет заменена (в системе одна активная роль).
-                            </AlertDescription>
-                          </Alert>
-                        )}
-
-                        <div className="flex items-center gap-2">
-                          <Select
-                            value={selectedRoleForAssign}
-                            onValueChange={setSelectedRoleForAssign}
-                          >
-                            <SelectTrigger className="flex-1">
-                              <SelectValue placeholder="Выберите роль" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {availableRolesForAssign.map((role) => (
-                                <SelectItem key={role.code} value={role.code}>
-                                  {getRoleDisplayName(role.code)}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-
-                          <Button
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleAssignRole(user.user_id);
-                            }}
-                            disabled={!selectedRoleForAssign || assignLoading}
-                          >
-                            {assignLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                            Назначить
-                          </Button>
-                        </div>
-                      </div>
+                    {/* Role replacement warning */}
+                    {hasNonUserRole && userSelectedRole && (
+                      <Alert variant="default" className="py-2">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertDescription className="text-sm">
+                          Текущая роль будет заменена (в системе одна активная роль).
+                        </AlertDescription>
+                      </Alert>
                     )}
+
+                    {/* Role select + Assign button - always visible in each row */}
+                    <div className="flex items-center gap-2">
+                      <Select
+                        value={userSelectedRole}
+                        onValueChange={(value) => handleRoleSelect(user.user_id, value)}
+                        disabled={isLoading}
+                      >
+                        <SelectTrigger className="flex-1">
+                          <SelectValue placeholder="Выберите роль" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableRolesForAssign.map((role) => (
+                            <SelectItem key={role.code} value={role.code}>
+                              {getRoleDisplayName(role.code)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      <Button
+                        size="sm"
+                        onClick={() => handleAssignRole(user.user_id)}
+                        disabled={!userSelectedRole || isLoading}
+                      >
+                        {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                        Назначить
+                      </Button>
+                    </div>
                   </div>
                 );
               })}
