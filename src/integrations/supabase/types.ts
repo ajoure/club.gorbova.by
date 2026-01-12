@@ -5362,6 +5362,70 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cleanup_demo_counts: {
+        Args: never
+        Returns: {
+          consent_logs_count: number
+          pending_notifications_count: number
+          profiles_count: number
+          telegram_access_count: number
+          telegram_access_grants_count: number
+          telegram_club_members_count: number
+          telegram_link_tokens_count: number
+          user_roles_count: number
+        }[]
+      }
+      cleanup_demo_delete_all: {
+        Args: never
+        Returns: {
+          consent_logs_deleted: number
+          pending_notifications_deleted: number
+          profiles_deleted: number
+          telegram_access_deleted: number
+          telegram_access_grants_deleted: number
+          telegram_club_members_deleted: number
+          telegram_link_tokens_deleted: number
+          user_roles_deleted: number
+        }[]
+      }
+      cleanup_demo_entitlements: {
+        Args: { p_execute?: boolean }
+        Returns: {
+          deleted_count: number
+          sample_ids: string[]
+        }[]
+      }
+      cleanup_demo_safeguard_check: {
+        Args: never
+        Returns: {
+          entitlements_nonrevoked_count: number
+          orders_count: number
+          payments_count: number
+        }[]
+      }
+      cleanup_telegram_corruption_fix: {
+        Args: { p_execute?: boolean }
+        Returns: {
+          fixed_count: number
+          sample_ids: string[]
+        }[]
+      }
+      cleanup_telegram_expired_tokens: {
+        Args: { p_execute?: boolean }
+        Returns: {
+          deleted_count: number
+          sample_ids: string[]
+        }[]
+      }
+      cleanup_telegram_orphans_delete: {
+        Args: { p_execute?: boolean }
+        Returns: {
+          access_count: number
+          access_samples: string[]
+          grant_samples: string[]
+          grants_count: number
+        }[]
+      }
       generate_order_number: { Args: never; Returns: string }
       get_demo_profile_ids: {
         Args: never

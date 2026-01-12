@@ -32,13 +32,13 @@ interface CleanupCounts {
 }
 
 interface CleanupResult {
-  status: "success" | "error" | "dry-run" | "STOP";
+  status: "success" | "error" | "dry-run" | "STOP" | "PARTIAL_FAILURE";
   mode: string;
   safeguard: SafeguardCounts;
   stop_reason?: string;
   demo_profiles_count: number;
   counts: CleanupCounts;
-  sample_profiles: Array<{ id: string; email: string | null; created_at?: string }>;
+  sample_profiles: Array<{ id: string; email: string | null }>;
   failed_auth_users?: Array<{ userId: string; error: string }>;
   audit_log_id?: string;
   error?: string;
@@ -101,13 +101,12 @@ Deno.serve(async (req) => {
       throw new Error(`Failed to get demo profiles: ${demoError.message}`);
     }
 
-    const demoProfiles: DemoProfile[] = (demoProfilesRaw || []).map((p: any) => ({
-      profile_id: p.profile_id,
-      auth_user_id: p.auth_user_id,
-      email: p.email,
+    const demoProfiles: DemoProfile[] = (demoProfilesRaw || []).map((p: Record<string, unknown>) => ({
+      profile_id: p.profile_id as string,
+      auth_user_id: p.auth_user_id as string | null,
+      email: p.email as string | null,
     }));
 
-    const demoProfileIds = demoProfiles.map(p => p.profile_id);
     const demoUserIds = demoProfiles.filter(p => p.auth_user_id).map(p => p.auth_user_id!);
 
     const result: CleanupResult = {
@@ -131,8 +130,7 @@ Deno.serve(async (req) => {
       sample_profiles: demoProfiles.slice(0, 20).map(p => ({ id: p.profile_id, email: p.email })),
     };
 
-    if (demoProfileIds.length === 0) {
-      // No demo profiles found
+    if (demoProfiles.length === 0) {
       const finishedAt = new Date().toISOString();
       const { data: auditLog } = await supabaseAdmin.from("audit_logs").insert({
         actor_user_id: actorUserId,
@@ -153,35 +151,31 @@ Deno.serve(async (req) => {
       });
     }
 
-    // STEP 2: Check B0 safeguard FIRST (critical - before any deletions)
-    const { count: ordersCount } = await supabaseAdmin
-      .from("orders_v2")
-      .select("*", { count: "exact", head: true })
-      .in("profile_id", demoProfileIds);
+    // STEP 2: Check B0 safeguard via SQL function
+    const { data: safeguardResult, error: safeguardError } = await supabaseAdmin
+      .rpc("cleanup_demo_safeguard_check");
 
-    const { count: paymentsCount } = await supabaseAdmin
-      .from("payments_v2")
-      .select("*", { count: "exact", head: true })
-      .in("profile_id", demoProfileIds);
+    if (safeguardError) {
+      throw new Error(`Safeguard check failed: ${safeguardError.message}`);
+    }
 
-    const { count: nonRevokedEntitlements } = await supabaseAdmin
-      .from("entitlements")
-      .select("*", { count: "exact", head: true })
-      .in("profile_id", demoProfileIds)
-      .neq("status", "revoked");
+    const safeguardData = safeguardResult?.[0] || { 
+      orders_count: 0, 
+      payments_count: 0, 
+      entitlements_nonrevoked_count: 0 
+    };
 
     result.safeguard = {
-      orders: ordersCount || 0,
-      payments: paymentsCount || 0,
-      entitlements_nonrevoked: nonRevokedEntitlements || 0,
+      orders: safeguardData.orders_count || 0,
+      payments: safeguardData.payments_count || 0,
+      entitlements_nonrevoked: safeguardData.entitlements_nonrevoked_count || 0,
     };
 
     // STEP 3: STOP if any safeguard count > 0
-    if ((ordersCount || 0) > 0 || (paymentsCount || 0) > 0 || (nonRevokedEntitlements || 0) > 0) {
+    if (result.safeguard.orders > 0 || result.safeguard.payments > 0 || result.safeguard.entitlements_nonrevoked > 0) {
       result.status = "STOP";
-      result.stop_reason = `Предохранитель не пройден: orders=${ordersCount}, payments=${paymentsCount}, entitlements_nonrevoked=${nonRevokedEntitlements}`;
+      result.stop_reason = `Предохранитель не пройден: orders=${result.safeguard.orders}, payments=${result.safeguard.payments}, entitlements_nonrevoked=${result.safeguard.entitlements_nonrevoked}`;
       
-      // Write audit log for STOP
       const finishedAt = new Date().toISOString();
       const { data: auditLog } = await supabaseAdmin.from("audit_logs").insert({
         actor_user_id: actorUserId,
@@ -204,146 +198,65 @@ Deno.serve(async (req) => {
       });
     }
 
-    // STEP 4: Count records to be deleted for dry-run (all tables)
-    if (demoUserIds.length > 0) {
-      const { count: tokensCount } = await supabaseAdmin
-        .from("telegram_link_tokens")
-        .select("*", { count: "exact", head: true })
-        .in("user_id", demoUserIds);
-      result.counts.telegram_link_tokens = tokensCount || 0;
+    // STEP 4: Get counts via SQL function (for dry-run display)
+    const { data: countsResult, error: countsError } = await supabaseAdmin
+      .rpc("cleanup_demo_counts");
 
-      const { count: grantsCount } = await supabaseAdmin
-        .from("telegram_access_grants")
-        .select("*", { count: "exact", head: true })
-        .in("user_id", demoUserIds);
-      result.counts.telegram_access_grants = grantsCount || 0;
-
-      const { count: accessCount } = await supabaseAdmin
-        .from("telegram_access")
-        .select("*", { count: "exact", head: true })
-        .in("user_id", demoUserIds);
-      result.counts.telegram_access = accessCount || 0;
-
-      const { count: notificationsCount } = await supabaseAdmin
-        .from("pending_telegram_notifications")
-        .select("*", { count: "exact", head: true })
-        .in("user_id", demoUserIds);
-      result.counts.pending_telegram_notifications = notificationsCount || 0;
-
-      const { count: rolesCount } = await supabaseAdmin
-        .from("user_roles_v2")
-        .select("*", { count: "exact", head: true })
-        .in("user_id", demoUserIds);
-      result.counts.user_roles_v2 = rolesCount || 0;
-
-      const { count: consentCount } = await supabaseAdmin
-        .from("consent_logs")
-        .select("*", { count: "exact", head: true })
-        .in("user_id", demoUserIds);
-      result.counts.consent_logs = consentCount || 0;
+    if (countsError) {
+      throw new Error(`Counts fetch failed: ${countsError.message}`);
     }
 
-    const { count: membersCount } = await supabaseAdmin
-      .from("telegram_club_members")
-      .select("*", { count: "exact", head: true })
-      .in("profile_id", demoProfileIds);
-    result.counts.telegram_club_members = membersCount || 0;
-
-    // Count entitlements (only revoked with no valid order)
-    const { data: revokedEntitlements } = await supabaseAdmin
-      .from("entitlements")
-      .select("id, order_id")
-      .in("profile_id", demoProfileIds)
-      .eq("status", "revoked");
-
-    // Filter only those with null or invalid order_id
-    const { data: validOrders } = await supabaseAdmin
-      .from("orders_v2")
-      .select("id");
-    const validOrderIds = new Set((validOrders || []).map(o => o.id));
-    
-    const entitlementsToDelete = (revokedEntitlements || []).filter(
-      e => !e.order_id || !validOrderIds.has(e.order_id)
-    );
-    result.counts.entitlements = entitlementsToDelete.length;
-
-    result.counts.profiles = demoProfileIds.length;
+    const countsData = countsResult?.[0] || {};
+    result.counts.telegram_link_tokens = countsData.telegram_link_tokens_count || 0;
+    result.counts.telegram_access_grants = countsData.telegram_access_grants_count || 0;
+    result.counts.telegram_access = countsData.telegram_access_count || 0;
+    result.counts.telegram_club_members = countsData.telegram_club_members_count || 0;
+    result.counts.pending_telegram_notifications = countsData.pending_notifications_count || 0;
+    result.counts.user_roles_v2 = countsData.user_roles_count || 0;
+    result.counts.consent_logs = countsData.consent_logs_count || 0;
+    result.counts.profiles = countsData.profiles_count || 0;
     result.counts.auth_users = demoUserIds.length;
+
+    // Get entitlements count via SQL function
+    const { data: entitlementsResult, error: entitlementsError } = await supabaseAdmin
+      .rpc("cleanup_demo_entitlements", { p_execute: false });
+
+    if (entitlementsError) {
+      throw new Error(`Entitlements count failed: ${entitlementsError.message}`);
+    }
+
+    const entitlementsData = entitlementsResult?.[0] || { deleted_count: 0 };
+    result.counts.entitlements = entitlementsData.deleted_count || 0;
 
     // STEP 5: Execute deletions if mode is execute
     if (mode === "execute") {
-      // Delete in cascade order using collected IDs
+      // Delete entitlements via SQL function (revoked AND order missing)
+      const { error: entDeleteError } = await supabaseAdmin
+        .rpc("cleanup_demo_entitlements", { p_execute: true });
 
-      // 1. telegram_link_tokens
-      if (demoUserIds.length > 0) {
-        await supabaseAdmin
-          .from("telegram_link_tokens")
-          .delete()
-          .in("user_id", demoUserIds);
+      if (entDeleteError) {
+        throw new Error(`Entitlements delete failed: ${entDeleteError.message}`);
       }
 
-      // 2. telegram_access_grants
-      if (demoUserIds.length > 0) {
-        await supabaseAdmin
-          .from("telegram_access_grants")
-          .delete()
-          .in("user_id", demoUserIds);
+      // Delete all related tables via SQL function
+      const { data: deleteResult, error: deleteError } = await supabaseAdmin
+        .rpc("cleanup_demo_delete_all");
+
+      if (deleteError) {
+        throw new Error(`Delete all failed: ${deleteError.message}`);
       }
 
-      // 3. telegram_access
-      if (demoUserIds.length > 0) {
-        await supabaseAdmin
-          .from("telegram_access")
-          .delete()
-          .in("user_id", demoUserIds);
-      }
+      const deleteData = deleteResult?.[0] || {};
+      result.counts.telegram_link_tokens = deleteData.telegram_link_tokens_deleted || 0;
+      result.counts.telegram_access_grants = deleteData.telegram_access_grants_deleted || 0;
+      result.counts.telegram_access = deleteData.telegram_access_deleted || 0;
+      result.counts.telegram_club_members = deleteData.telegram_club_members_deleted || 0;
+      result.counts.pending_telegram_notifications = deleteData.pending_notifications_deleted || 0;
+      result.counts.user_roles_v2 = deleteData.user_roles_deleted || 0;
+      result.counts.consent_logs = deleteData.consent_logs_deleted || 0;
+      result.counts.profiles = deleteData.profiles_deleted || 0;
 
-      // 4. telegram_club_members
-      await supabaseAdmin
-        .from("telegram_club_members")
-        .delete()
-        .in("profile_id", demoProfileIds);
-
-      // 5. pending_telegram_notifications
-      if (demoUserIds.length > 0) {
-        await supabaseAdmin
-          .from("pending_telegram_notifications")
-          .delete()
-          .in("user_id", demoUserIds);
-      }
-
-      // 6. user_roles_v2
-      if (demoUserIds.length > 0) {
-        await supabaseAdmin
-          .from("user_roles_v2")
-          .delete()
-          .in("user_id", demoUserIds);
-      }
-
-      // 7. consent_logs
-      if (demoUserIds.length > 0) {
-        await supabaseAdmin
-          .from("consent_logs")
-          .delete()
-          .in("user_id", demoUserIds);
-      }
-
-      // 8. entitlements (only revoked with no valid order)
-      if (entitlementsToDelete.length > 0) {
-        const entitlementIds = entitlementsToDelete.map(e => e.id);
-        await supabaseAdmin
-          .from("entitlements")
-          .delete()
-          .in("id", entitlementIds);
-      }
-
-      // 9. profiles
-      await supabaseAdmin
-        .from("profiles")
-        .delete()
-        .in("id", demoProfileIds);
-
-      // 10. auth.users (via Admin API, with error handling)
+      // Delete auth.users via Admin API (only operation that requires JS)
       const failedAuthUsers: Array<{ userId: string; error: string }> = [];
       let successAuthUsers = 0;
 
@@ -361,7 +274,7 @@ Deno.serve(async (req) => {
       
       if (failedAuthUsers.length > 0) {
         result.failed_auth_users = failedAuthUsers;
-        result.status = "success"; // Still mark as success, but include failures in response
+        result.status = "PARTIAL_FAILURE"; // Changed from "success" to indicate partial failure
       }
     }
 
