@@ -22,6 +22,7 @@ import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact"
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffPreviewCard } from "@/components/admin/product/TariffPreviewCard";
 import { TariffWelcomeMessageEditor, type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
+import { OfferWelcomeMessageEditor, type OfferMetaConfig } from "@/components/admin/product/OfferWelcomeMessageEditor";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
 import {
@@ -38,6 +39,7 @@ import {
   type TariffOffer,
   type TariffOfferInsert,
   type PaymentMethod,
+  type OfferMetaConfig as OfferMetaConfigFromHook,
 } from "@/hooks/useTariffOffers";
 import { isFeatureVisible, type TariffFeature } from "@/hooks/useTariffFeatures";
 
@@ -138,6 +140,8 @@ export default function AdminProductDetailV2() {
     installment_count: 3,
     installment_interval_days: 30,
     first_payment_delay_days: 0,
+    // Meta for welcome message
+    meta: {} as OfferMetaConfig,
   });
 
   // Flow form
@@ -234,6 +238,8 @@ export default function AdminProductDetailV2() {
   // Offer handlers
   const openOfferDialog = (offer?: any) => {
     if (offer) {
+      // Parse meta from offer
+      const meta = (offer.meta || {}) as OfferMetaConfig;
       setOfferForm({
         tariff_id: offer.tariff_id,
         offer_type: offer.offer_type,
@@ -253,6 +259,7 @@ export default function AdminProductDetailV2() {
         installment_count: offer.installment_count || 3,
         installment_interval_days: offer.installment_interval_days || 30,
         first_payment_delay_days: offer.first_payment_delay_days || 0,
+        meta,
       });
       setOfferDialog({ open: true, editing: offer });
     } else {
@@ -275,8 +282,10 @@ export default function AdminProductDetailV2() {
         installment_count: 3,
         installment_interval_days: 30,
         first_payment_delay_days: 0,
+        meta: {},
       });
-      setOfferDialog({ open: true, editing: null });
+      setOfferDialog({ open: false, editing: null });
+      setTimeout(() => setOfferDialog({ open: true, editing: null }), 0);
     }
   };
   
@@ -291,6 +300,8 @@ export default function AdminProductDetailV2() {
       return;
     }
     const isInstallment = offerForm.payment_method === "internal_installment";
+    // Build data with meta field
+    const { meta, ...formWithoutMeta } = offerForm;
     const data: TariffOfferInsert = {
       tariff_id: offerForm.tariff_id,
       offer_type: offerForm.offer_type,
@@ -315,6 +326,8 @@ export default function AdminProductDetailV2() {
       installment_count: isInstallment ? offerForm.installment_count : null,
       installment_interval_days: isInstallment ? offerForm.installment_interval_days : null,
       first_payment_delay_days: isInstallment ? offerForm.first_payment_delay_days : null,
+      // Meta field for welcome message
+      meta: Object.keys(meta).length > 0 ? meta : null,
     };
     if (offerDialog.editing) {
       await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
@@ -1120,6 +1133,15 @@ export default function AdminProductDetailV2() {
                 <Label>Основная цена</Label>
               </div>
             )}
+
+            {/* Welcome Message Editor for Offer */}
+            <div className="border-t pt-4">
+              <OfferWelcomeMessageEditor
+                offerId={offerDialog.editing?.id || null}
+                meta={offerForm.meta}
+                onMetaChange={(newMeta) => setOfferForm({ ...offerForm, meta: newMeta })}
+              />
+            </div>
           </div>
 
           <DialogFooter>
