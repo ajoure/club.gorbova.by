@@ -607,7 +607,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   // Grant new access - performs all the same actions as a regular purchase
   const handleGrantNewAccess = async () => {
-    if (!contact?.user_id || !grantProductId || !grantTariffId) {
+    if (!contact?.user_id) {
+      toast.error("У контакта нет привязанного аккаунта. Создайте аккаунт или подождите регистрации.");
+      return;
+    }
+    if (!grantProductId || !grantTariffId) {
       toast.error("Выберите продукт и тариф");
       return;
     }
