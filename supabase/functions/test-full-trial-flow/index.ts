@@ -55,8 +55,14 @@ Deno.serve(async (req) => {
 
     const { data: trialOffer } = await supabase
       .from("tariff_offers")
-      .select("id, name, price, meta")
+      .select("id, name, price, meta, getcourse_offer_id")
       .eq("id", trialOfferId)
+      .single();
+
+    const { data: fullOffer } = await supabase
+      .from("tariff_offers")
+      .select("id, name, price, meta, getcourse_offer_id")
+      .eq("id", fullPaymentOfferId)
       .single();
 
     const { data: profile } = await supabase
@@ -68,7 +74,13 @@ Deno.serve(async (req) => {
     results.product = product;
     results.tariff = tariff;
     results.trialOffer = trialOffer;
+    results.fullOffer = fullOffer;
     results.profile = profile;
+    
+    // Log tariff info for debugging
+    console.log("Tariff data:", tariff);
+    console.log("Trial offer:", trialOffer);
+    console.log("Full offer:", fullOffer);
 
     // Generate order number
     const orderNumber = `SIM-TRIAL-${Date.now()}`;
@@ -267,6 +279,47 @@ Deno.serve(async (req) => {
       results.telegramGrantError = String(tgError);
     }
 
+    // ========== STEP 5.5: Sync Trial to GetCourse ==========
+    console.log("Step 5.5: Syncing trial order to GetCourse...");
+
+    try {
+      // Find GetCourse integration instance
+      const { data: gcInstance } = await supabase
+        .from("integration_instances")
+        .select("id")
+        .eq("provider", "getcourse")
+        .eq("is_active", true)
+        .limit(1)
+        .maybeSingle();
+
+      if (gcInstance && trialOffer?.getcourse_offer_id) {
+        const gcSyncResponse = await fetch(
+          `${supabaseUrl}/functions/v1/getcourse-sync`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${supabaseServiceKey}`,
+            },
+            body: JSON.stringify({
+              instance_id: gcInstance.id,
+              action: "add_user_to_offer",
+              user_id: authUserId,
+              offer_code: trialOffer.getcourse_offer_id,
+            }),
+          }
+        );
+        const gcSyncResult = await gcSyncResponse.json();
+        results.gcSyncTrial = gcSyncResult;
+        console.log("GC trial sync result:", gcSyncResult);
+      } else {
+        results.gcSyncTrial = { skipped: true, reason: "No GC instance or offer code" };
+      }
+    } catch (gcError) {
+      console.error("GC sync trial error:", gcError);
+      results.gcSyncTrialError = String(gcError);
+    }
+
     // ========== STEP 6: Notify Admins about Trial Purchase ==========
     console.log("Step 6: Notifying admins about trial purchase...");
 
@@ -277,14 +330,14 @@ Deno.serve(async (req) => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            // No Authorization header - telegram-notify-admins allows internal calls without auth
           },
           body: JSON.stringify({
             message: `🆕 <b>Новый заказ (триал)</b>\n\n` +
-              `📦 ${product?.name}\n` +
-              `🏷 Тариф: ${tariff?.name}\n` +
-              `👤 ${profile?.full_name}\n` +
-              `📧 ${profile?.email}\n` +
+              `📦 ${product?.name || "—"}\n` +
+              `🏷 Тариф: ${tariff?.name || "—"}\n` +
+              `🎁 Предложение: ${trialOffer?.name || "—"}\n` +
+              `👤 ${profile?.full_name || "—"}\n` +
+              `📧 ${profile?.email || "—"}\n` +
               `💰 ${tariff?.trial_price || 1} BYN\n` +
               `🔢 №${orderNumber}\n` +
               `🧪 <i>Симуляция</i>`,
@@ -378,12 +431,125 @@ Deno.serve(async (req) => {
     }
     results.orderUpdated = !updateOrderError;
 
+    // ========== STEP 9.5: Sync Full Payment to GetCourse ==========
+    console.log("Step 9.5: Syncing full payment to GetCourse...");
+
+    try {
+      const { data: gcInstance } = await supabase
+        .from("integration_instances")
+        .select("id")
+        .eq("provider", "getcourse")
+        .eq("is_active", true)
+        .limit(1)
+        .maybeSingle();
+
+      if (gcInstance && fullOffer?.getcourse_offer_id) {
+        const gcSyncResponse = await fetch(
+          `${supabaseUrl}/functions/v1/getcourse-sync`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${supabaseServiceKey}`,
+            },
+            body: JSON.stringify({
+              instance_id: gcInstance.id,
+              action: "add_user_to_offer",
+              user_id: authUserId,
+              offer_code: fullOffer.getcourse_offer_id,
+            }),
+          }
+        );
+        const gcSyncResult = await gcSyncResponse.json();
+        results.gcSyncFull = gcSyncResult;
+        console.log("GC full sync result:", gcSyncResult);
+      } else {
+        results.gcSyncFull = { skipped: true, reason: "No GC instance or offer code" };
+      }
+    } catch (gcError) {
+      console.error("GC sync full error:", gcError);
+      results.gcSyncFullError = String(gcError);
+    }
+
+    // ========== STEP 9.6: Send Full Offer Welcome Message ==========
+    console.log("Step 9.6: Sending full offer welcome message...");
+
+    if (profile?.telegram_user_id && fullOffer?.meta) {
+      try {
+        const { data: botData } = await supabase
+          .from("telegram_bots")
+          .select("bot_token_encrypted")
+          .eq("status", "active")
+          .eq("is_primary", true)
+          .limit(1)
+          .maybeSingle();
+
+        if (botData?.bot_token_encrypted) {
+          const botToken = botData.bot_token_encrypted;
+          const fullOfferMeta = fullOffer.meta as Record<string, unknown>;
+          const fullOfferWelcome = fullOfferMeta?.welcome_message as {
+            enabled?: boolean;
+            text?: string;
+            button?: { enabled?: boolean; text?: string; url?: string };
+            media?: { type?: string; storage_path?: string };
+          } | undefined;
+
+          if (fullOfferWelcome?.enabled) {
+            // Send media if present
+            if (fullOfferWelcome.media?.type && fullOfferWelcome.media?.storage_path) {
+              const { data: mediaData } = await supabase.storage
+                .from("telegram-media")
+                .download(fullOfferWelcome.media.storage_path);
+              
+              if (mediaData) {
+                const formData = new FormData();
+                formData.append("chat_id", String(profile.telegram_user_id));
+                formData.append(fullOfferWelcome.media.type === "video" ? "video" : "photo", mediaData, "media");
+                
+                await fetch(`https://api.telegram.org/bot${botToken}/send${fullOfferWelcome.media.type === "video" ? "Video" : "Photo"}`, {
+                  method: "POST",
+                  body: formData,
+                });
+              }
+            }
+
+            // Send text with button
+            if (fullOfferWelcome.text) {
+              const keyboard = fullOfferWelcome.button?.enabled && fullOfferWelcome.button.url ? {
+                inline_keyboard: [[{
+                  text: fullOfferWelcome.button.text || "Открыть",
+                  url: fullOfferWelcome.button.url,
+                }]]
+              } : undefined;
+
+              await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chat_id: profile.telegram_user_id,
+                  text: fullOfferWelcome.text,
+                  parse_mode: "HTML",
+                  reply_markup: keyboard,
+                }),
+              });
+              console.log("Sent full offer welcome message");
+            }
+            results.fullOfferWelcome = { sent: true };
+          } else {
+            results.fullOfferWelcome = { skipped: true, reason: "Welcome not enabled" };
+          }
+        }
+      } catch (welcomeError) {
+        console.error("Full offer welcome error:", welcomeError);
+        results.fullOfferWelcomeError = String(welcomeError);
+      }
+    }
+
     // ========== STEP 10: Send Telegram Notification about Renewal ==========
     console.log("Step 10: Sending Telegram notification about renewal...");
 
     if (profile?.telegram_user_id) {
       try {
-        // Get bot token directly from telegram_bots table (column is bot_token_encrypted, status = 'active')
         const { data: botData } = await supabase
           .from("telegram_bots")
           .select("bot_token_encrypted")
@@ -394,7 +560,7 @@ Deno.serve(async (req) => {
         
         if (botData?.bot_token_encrypted) {
           const botToken = botData.bot_token_encrypted;
-          const message = `🎉 Поздравляем! Ваша подписка на "${product?.name}" (тариф "${tariff?.name}") успешно продлена!\n\n💳 Оплачено: ${tariff?.price || 150} BYN\n📅 Доступ до: ${accessEndDate.toLocaleDateString("ru-RU")}\n\nСпасибо, что вы с нами! 💜\n\n🧪 <i>Это тестовое сообщение</i>`;
+          const message = `🎉 Поздравляем! Ваша подписка на "${product?.name || "—"}" (тариф "${tariff?.name || "—"}") успешно продлена!\n\n💳 Оплачено: ${tariff?.price || 150} BYN\n📅 Доступ до: ${accessEndDate.toLocaleDateString("ru-RU")}\n\nСпасибо, что вы с нами! 💜\n\n🧪 <i>Это тестовое сообщение</i>`;
           
           const tgResponse = await fetch(
             `https://api.telegram.org/bot${botToken}/sendMessage`,
@@ -431,14 +597,14 @@ Deno.serve(async (req) => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            // No Authorization header - telegram-notify-admins allows internal calls without auth
           },
           body: JSON.stringify({
             message: `💳 <b>Триал → Оплата</b>\n\n` +
-              `📦 ${product?.name}\n` +
-              `🏷 Тариф: ${tariff?.name}\n` +
-              `👤 ${profile?.full_name}\n` +
-              `📧 ${profile?.email}\n` +
+              `📦 ${product?.name || "—"}\n` +
+              `🏷 Тариф: ${tariff?.name || "—"}\n` +
+              `🎁 Предложение: ${fullOffer?.name || "—"}\n` +
+              `👤 ${profile?.full_name || "—"}\n` +
+              `📧 ${profile?.email || "—"}\n` +
               `💰 ${tariff?.price || 150} BYN\n` +
               `🔢 №${orderNumber}\n` +
               `🧪 <i>Симуляция</i>`,

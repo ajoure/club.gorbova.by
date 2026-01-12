@@ -439,6 +439,7 @@ Deno.serve(async (req) => {
             }
             
             // 2. Send OFFER welcome message if configured (additional message)
+            let offerWelcomeEnabled = false;
             if (offerId) {
               const { data: offerData } = await supabase
                 .from('tariff_offers')
@@ -453,6 +454,8 @@ Deno.serve(async (req) => {
                 button?: { enabled?: boolean; text?: string; url?: string };
                 media?: { type?: string; storage_path?: string };
               } | undefined;
+              
+              offerWelcomeEnabled = !!offerWelcomeMessage?.enabled;
               
               if (offerWelcomeMessage?.enabled) {
                 // Send offer media first if present
@@ -475,11 +478,11 @@ Deno.serve(async (req) => {
               }
             }
             
-            // Send GetCourse link (as fallback if no welcome messages)
+            // Send GetCourse link ONLY if NEITHER tariff NOR offer have welcome messages enabled
             const gcUrl = tariffMeta?.getcourse_lesson_url as string | undefined;
             const getcourseOfferId = tariffData?.getcourse_offer_id;
             
-            if (!welcomeMessage?.enabled && (getcourseOfferId || gcUrl)) {
+            if (!welcomeMessage?.enabled && !offerWelcomeEnabled && (getcourseOfferId || gcUrl)) {
               const gcMessage = 
                 `📚 Материалы доступны на GetCourse.\n\n` +
                 `Письмо с доступом придёт на email в течение ~5 минут.\n\n` +
