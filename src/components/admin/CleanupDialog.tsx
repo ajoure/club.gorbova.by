@@ -25,9 +25,14 @@ interface TelegramResult {
   status: string;
   mode: string;
   corruption_fixed: number;
-  orphans_deleted: number;
+  orphans_deleted: { grants: number; access: number };
   expired_tokens_deleted: number;
-  sample_ids: { corruption: string[]; orphans: string[]; expired_tokens: string[] };
+  sample_ids: { 
+    corruption: string[]; 
+    orphans_grants: string[]; 
+    orphans_access: string[];
+    expired_tokens: string[] 
+  };
   audit_log_id?: string;
   error?: string;
 }
@@ -66,8 +71,12 @@ export function CleanupDialog({ open, onOpenChange, type, onSuccess }: CleanupDi
         setStep("confirm");
       } else {
         setStep("done");
+        setDryRunResult(data); // Update result with execute data
         if (data.status === "success") {
           toast.success(`Очистка завершена. Audit ID: ${data.audit_log_id}`);
+          onSuccess?.();
+        } else if (data.status === "PARTIAL_FAILURE") {
+          toast.warning(`Очистка завершена частично. Ошибки: ${data.failed_auth_users?.length || 0}`);
           onSuccess?.();
         } else if (data.status === "STOP") {
           toast.warning("Очистка остановлена: " + data.stop_reason);
@@ -144,8 +153,12 @@ export function CleanupDialog({ open, onOpenChange, type, onSuccess }: CleanupDi
                     <Badge variant="secondary">{dryRunResult.corruption_fixed}</Badge>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span>Удалить orphans:</span>
-                    <Badge variant="secondary">{dryRunResult.orphans_deleted}</Badge>
+                    <span>Удалить orphan grants:</span>
+                    <Badge variant="secondary">{dryRunResult.orphans_deleted.grants}</Badge>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span>Удалить orphan access:</span>
+                    <Badge variant="secondary">{dryRunResult.orphans_deleted.access}</Badge>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span>Удалить expired tokens:</span>
@@ -187,13 +200,35 @@ export function CleanupDialog({ open, onOpenChange, type, onSuccess }: CleanupDi
           )}
 
           {step === "done" && dryRunResult && (
-            <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-md">
-              <div className="flex items-center gap-2 text-green-600 font-medium">
-                <CheckCircle className="h-4 w-4" />
-                Очистка завершена
+            <div className={`p-3 rounded-md ${
+              dryRunResult.status === "PARTIAL_FAILURE" 
+                ? "bg-amber-500/10 border border-amber-500/30" 
+                : "bg-green-500/10 border border-green-500/30"
+            }`}>
+              <div className={`flex items-center gap-2 font-medium ${
+                dryRunResult.status === "PARTIAL_FAILURE" ? "text-amber-600" : "text-green-600"
+              }`}>
+                {dryRunResult.status === "PARTIAL_FAILURE" ? (
+                  <AlertTriangle className="h-4 w-4" />
+                ) : (
+                  <CheckCircle className="h-4 w-4" />
+                )}
+                {dryRunResult.status === "PARTIAL_FAILURE" 
+                  ? "Очистка завершена частично" 
+                  : "Очистка завершена"}
               </div>
               {dryRunResult.audit_log_id && (
                 <p className="text-sm mt-1">Audit ID: {dryRunResult.audit_log_id}</p>
+              )}
+              {isDemoResult(dryRunResult) && dryRunResult.failed_auth_users && dryRunResult.failed_auth_users.length > 0 && (
+                <div className="text-sm mt-2 text-muted-foreground">
+                  <p>Не удалось удалить auth.users: {dryRunResult.failed_auth_users.length}</p>
+                  <ul className="text-xs max-h-20 overflow-auto">
+                    {dryRunResult.failed_auth_users.slice(0, 5).map((f, i) => (
+                      <li key={i}>{f.userId}: {f.error}</li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
           )}
