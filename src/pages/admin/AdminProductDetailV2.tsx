@@ -21,6 +21,7 @@ import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffPreviewCard } from "@/components/admin/product/TariffPreviewCard";
+import { TariffWelcomeMessageEditor, type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
 import {
@@ -113,6 +114,7 @@ export default function AdminProductDetailV2() {
     badge: "",
     access_days: 30,
     is_active: true,
+    meta: {} as TariffMetaConfig,
   });
 
   // Offer form
@@ -176,6 +178,8 @@ export default function AdminProductDetailV2() {
   // Tariff handlers
   const openTariffDialog = (tariff?: any) => {
     if (tariff) {
+      // Parse meta from tariff
+      const meta = (tariff.meta || {}) as TariffMetaConfig;
       setTariffForm({
         code: tariff.code,
         name: tariff.name,
@@ -186,6 +190,7 @@ export default function AdminProductDetailV2() {
         badge: tariff.badge || "",
         access_days: tariff.access_days,
         is_active: tariff.is_active,
+        meta,
       });
       setTariffDialog({ open: true, editing: tariff });
     } else {
@@ -199,6 +204,7 @@ export default function AdminProductDetailV2() {
         badge: "",
         access_days: 30,
         is_active: true,
+        meta: {},
       });
       setTariffDialog({ open: true, editing: null });
     }
@@ -209,7 +215,13 @@ export default function AdminProductDetailV2() {
       toast.error("Заполните код и название");
       return;
     }
-    const data = { ...tariffForm, product_id: productId! };
+    // Build data with meta field
+    const { meta, ...formWithoutMeta } = tariffForm;
+    const data: any = { 
+      ...formWithoutMeta, 
+      product_id: productId!,
+      meta: Object.keys(meta).length > 0 ? meta : null,
+    };
     if (tariffDialog.editing) {
       await updateTariff.mutateAsync({ id: tariffDialog.editing.id, ...data });
     } else {
@@ -739,6 +751,15 @@ export default function AdminProductDetailV2() {
                 <TariffFeaturesEditor tariffId={tariffDialog.editing.id} />
               </div>
             )}
+
+            {/* Welcome Message Editor */}
+            <div className="border-t pt-4">
+              <TariffWelcomeMessageEditor
+                tariffId={tariffDialog.editing?.id || null}
+                meta={tariffForm.meta}
+                onMetaChange={(newMeta) => setTariffForm({ ...tariffForm, meta: newMeta })}
+              />
+            </div>
           </div>
 
           <DialogFooter>

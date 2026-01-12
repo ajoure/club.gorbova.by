@@ -71,6 +71,65 @@ async function sendMessage(botToken: string, chatId: number, text: string, reply
   return telegramRequest(botToken, 'sendMessage', body);
 }
 
+// Send tariff media (photo, video, document, video_note)
+async function sendTariffMedia(
+  supabase: any,
+  botToken: string,
+  chatId: number,
+  media: { type?: string; storage_path?: string }
+) {
+  if (!media.type || !media.storage_path) return;
+  
+  try {
+    // Download from Storage
+    const { data, error } = await supabase.storage
+      .from('tariff-media')
+      .download(media.storage_path);
+    
+    if (error || !data) {
+      console.error('Failed to download tariff media:', error);
+      return;
+    }
+
+    // Get filename from path
+    const filename = media.storage_path.split('/').pop() || 'file';
+    
+    // Determine method and field based on type
+    const methodMap: Record<string, { method: string; field: string }> = {
+      photo: { method: 'sendPhoto', field: 'photo' },
+      video: { method: 'sendVideo', field: 'video' },
+      document: { method: 'sendDocument', field: 'document' },
+      video_note: { method: 'sendVideoNote', field: 'video_note' },
+    };
+    
+    const config = methodMap[media.type] || methodMap.document;
+    
+    // Create FormData and send
+    const formData = new FormData();
+    formData.append('chat_id', String(chatId));
+    formData.append(config.field, new Blob([await data.arrayBuffer()]), filename);
+    
+    // Video notes require specific dimensions
+    if (media.type === 'video_note') {
+      formData.append('length', '384');
+    }
+    
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/${config.method}`, {
+      method: 'POST',
+      body: formData,
+    });
+    
+    const result = await response.json();
+    if (!result.ok) {
+      console.error('Telegram send media error:', result);
+    } else {
+      console.log('Sent tariff media:', media.type);
+    }
+  } catch (err) {
+    console.error('Error sending tariff media:', err);
+  }
+}
+
 function getSiteUrl(): string {
   return Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
 }
@@ -330,31 +389,68 @@ Deno.serve(async (req) => {
         can_dm: canDm,
       }).eq('telegram_user_id', telegramUserId).eq('club_id', club.id);
 
-      // Send GetCourse materials link if tariff has materials (for source_id = order_id)
+      // Send custom tariff welcome message and/or GetCourse link (for source_id = order_id)
       if (dmSent && source_id) {
         try {
-          // Get order with tariff info
+          // Get order with tariff info - use explicit join syntax
           const { data: orderInfo } = await supabase
             .from('orders_v2')
-            .select('tariff_id, tariffs(getcourse_offer_id, meta)')
+            .select('tariff_id')
             .eq('id', source_id)
             .maybeSingle();
           
-          const getcourseOfferId = orderInfo?.tariffs?.getcourse_offer_id;
-          const tariffMeta = orderInfo?.tariffs?.meta as Record<string, unknown> | null;
-          const gcUrl = tariffMeta?.getcourse_lesson_url as string | undefined;
-          
-          if (getcourseOfferId || gcUrl) {
-            const gcMessage = 
-              `📚 Материалы доступны на GetCourse.\n\n` +
-              `Письмо с доступом придёт на email в течение ~5 минут.\n\n` +
-              (gcUrl ? `Ссылка: ${gcUrl}` : 'https://gorbova.getcourse.ru/teach');
+          if (orderInfo?.tariff_id) {
+            const { data: tariffData } = await supabase
+              .from('tariffs')
+              .select('getcourse_offer_id, meta')
+              .eq('id', orderInfo.tariff_id)
+              .maybeSingle();
             
-            await sendMessage(botToken, telegramUserId, gcMessage);
-            console.log('Sent GetCourse link message to user', telegramUserId);
+            const tariffMeta = tariffData?.meta as Record<string, unknown> | null;
+            const welcomeMessage = tariffMeta?.welcome_message as {
+              enabled?: boolean;
+              text?: string;
+              button?: { enabled?: boolean; text?: string; url?: string };
+              media?: { type?: string; storage_path?: string };
+            } | undefined;
+            
+            // Send custom welcome message if configured
+            if (welcomeMessage?.enabled) {
+              // Send media first if present
+              if (welcomeMessage.media?.type && welcomeMessage.media?.storage_path) {
+                await sendTariffMedia(supabase, botToken, telegramUserId, welcomeMessage.media);
+              }
+              
+              // Send text with optional button
+              if (welcomeMessage.text) {
+                const keyboard = welcomeMessage.button?.enabled && welcomeMessage.button.url ? {
+                  inline_keyboard: [[{
+                    text: welcomeMessage.button.text || 'Открыть',
+                    url: welcomeMessage.button.url,
+                  }]]
+                } : undefined;
+                
+                await sendMessage(botToken, telegramUserId, welcomeMessage.text, keyboard);
+                console.log('Sent custom welcome message to user', telegramUserId);
+              }
+            }
+            
+            // Send GetCourse link (as fallback or additional)
+            const gcUrl = tariffMeta?.getcourse_lesson_url as string | undefined;
+            const getcourseOfferId = tariffData?.getcourse_offer_id;
+            
+            if (!welcomeMessage?.enabled && (getcourseOfferId || gcUrl)) {
+              const gcMessage = 
+                `📚 Материалы доступны на GetCourse.\n\n` +
+                `Письмо с доступом придёт на email в течение ~5 минут.\n\n` +
+                (gcUrl ? `Ссылка: ${gcUrl}` : 'https://gorbova.getcourse.ru/teach');
+              
+              await sendMessage(botToken, telegramUserId, gcMessage);
+              console.log('Sent GetCourse link message to user', telegramUserId);
+            }
           }
         } catch (gcError) {
-          console.error('Error sending GetCourse link:', gcError);
+          console.error('Error sending welcome message:', gcError);
         }
       }
       }
