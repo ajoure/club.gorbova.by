@@ -333,7 +333,7 @@ export default function AdminUsers() {
             <SelectItem value="support">Поддержка</SelectItem>
             <SelectItem value="editor">Редактор</SelectItem>
             <SelectItem value="admin">Администратор</SelectItem>
-            <SelectItem value="super_admin">Супер-администратор</SelectItem>
+            <SelectItem value="super_admin">Владелец</SelectItem>
           </SelectContent>
         </Select>
 

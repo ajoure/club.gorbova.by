@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useAdminRoles } from "@/hooks/useAdminRoles";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,21 +27,56 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Shield, UserPlus, Plus } from "lucide-react";
+import { Loader2, Shield, UserPlus, Plus, Trash2, Search } from "lucide-react";
 import { RoleBadge } from "@/components/admin/RoleBadge";
 import { RemoveRoleDialog } from "@/components/admin/RemoveRoleDialog";
+import { InviteUserDialog } from "@/components/admin/InviteUserDialog";
 import { HelpIcon } from "@/components/help/HelpComponents";
+import { toast } from "sonner";
+
+// System roles that cannot be deleted
+const SYSTEM_ROLES = ["super_admin", "admin", "user", "support", "editor"];
+
+// Role display names
+const getRoleDisplayName = (code: string) => {
+  const displayNames: Record<string, string> = {
+    super_admin: "Владелец",
+    admin: "Администратор",
+    editor: "Редактор",
+    support: "Поддержка",
+    staff: "Сотрудник",
+    user: "Пользователь",
+  };
+  return displayNames[code] || code;
+};
 
 export default function AdminRoles() {
   const { roles, allPermissions, loading, assignRole, removeRole, setRolePermissions, createRole, refetch } = useAdminRoles();
   const { users, refetch: refetchUsers } = useAdminUsers();
   const { hasPermission, isSuperAdmin } = usePermissions();
+  const { user: currentUser } = useAuth();
+
+  // Staff search
+  const [staffSearch, setStaffSearch] = useState("");
+
+  // Permission search in dialog
+  const [permissionSearch, setPermissionSearch] = useState("");
 
   const [editingRole, setEditingRole] = useState<string | null>(null);
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
@@ -59,6 +96,17 @@ export default function AdminRoles() {
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleDescription, setNewRoleDescription] = useState("");
 
+  // Delete role dialog
+  const [deleteRoleDialog, setDeleteRoleDialog] = useState<{
+    open: boolean;
+    roleId: string;
+    roleName: string;
+    roleCode: string;
+  }>({ open: false, roleId: "", roleName: "", roleCode: "" });
+
+  // Invite dialog
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+
   // Get effective role for a user (single role model)
   const getEffectiveRole = (userRoles: { code: string; name: string }[]) => {
     const priority = ["super_admin", "admin", "editor", "support", "staff"];
@@ -70,15 +118,52 @@ export default function AdminRoles() {
   };
 
   // Staff = users with non-user roles
-  const staffUsers = users.filter((u) => {
-    const effectiveRole = getEffectiveRole(u.roles);
-    return effectiveRole !== null;
-  });
+  const staffUsers = useMemo(() => {
+    return users.filter((u) => {
+      const effectiveRole = getEffectiveRole(u.roles);
+      if (effectiveRole === null) return false;
+
+      // Apply search filter
+      if (staffSearch) {
+        const search = staffSearch.toLowerCase();
+        const matchesEmail = u.email?.toLowerCase().includes(search);
+        const matchesName = u.full_name?.toLowerCase().includes(search);
+        return matchesEmail || matchesName;
+      }
+      return true;
+    });
+  }, [users, staffSearch]);
+
+  // Grouped permissions with search filter
+  const groupedPermissions = useMemo(() => {
+    const grouped = allPermissions.reduce((acc, perm) => {
+      const category = perm.category || "other";
+      if (!acc[category]) acc[category] = [];
+      acc[category].push(perm);
+      return acc;
+    }, {} as Record<string, typeof allPermissions>);
+    return grouped;
+  }, [allPermissions]);
+
+  const filteredGroupedPermissions = useMemo(() => {
+    if (!permissionSearch.trim()) return groupedPermissions;
+
+    const search = permissionSearch.toLowerCase();
+    return Object.entries(groupedPermissions).reduce((acc, [category, perms]) => {
+      const filtered = perms.filter(p =>
+        p.name.toLowerCase().includes(search) ||
+        p.code.toLowerCase().includes(search)
+      );
+      if (filtered.length > 0) acc[category] = filtered;
+      return acc;
+    }, {} as typeof groupedPermissions);
+  }, [groupedPermissions, permissionSearch]);
 
   const handleEditPermissions = (roleId: string) => {
     const role = roles.find((r) => r.id === roleId);
     if (role) {
       setSelectedPermissions(role.permissions.map((p) => p.code));
+      setPermissionSearch("");
       setEditingRole(roleId);
     }
   };
@@ -90,8 +175,41 @@ export default function AdminRoles() {
     }
   };
 
+  // Inline role change handler with safeguards
+  const handleInlineRoleChange = async (userId: string, currentRoleCode: string | undefined, newRoleCode: string) => {
+    // UI safeguard: prevent self-role change
+    if (userId === currentUser?.id) {
+      toast.error("Нельзя изменить свою собственную роль");
+      return;
+    }
+
+    // UI safeguard: only super_admin can change super_admin roles
+    if (currentRoleCode === "super_admin" && !isSuperAdmin()) {
+      toast.error("Только Владелец может изменять роль другого Владельца");
+      return;
+    }
+
+    if (newRoleCode === "user") {
+      // Remove role = make user regular user
+      if (currentRoleCode) {
+        await removeRole(userId, currentRoleCode);
+      }
+    } else {
+      await assignRole(userId, newRoleCode);
+    }
+    await refetchUsers();
+  };
+
   const handleAssignRole = async () => {
     if (assignDialog.userId && selectedRole) {
+      // UI safeguard: prevent self-role change
+      if (assignDialog.userId === currentUser?.id) {
+        toast.error("Нельзя изменить свою собственную роль");
+        setAssignDialog({ open: false, userId: "", email: "" });
+        setSelectedRole("");
+        return;
+      }
+
       await assignRole(assignDialog.userId, selectedRole);
       await refetchUsers();
       setAssignDialog({ open: false, userId: "", email: "" });
@@ -117,12 +235,47 @@ export default function AdminRoles() {
     }
   };
 
-  const groupedPermissions = allPermissions.reduce((acc, perm) => {
-    const category = perm.category || "other";
-    if (!acc[category]) acc[category] = [];
-    acc[category].push(perm);
-    return acc;
-  }, {} as Record<string, typeof allPermissions>);
+  const handleDeleteRole = async () => {
+    if (!deleteRoleDialog.roleId) return;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) {
+        toast.error("Сессия истекла — войдите снова");
+        return;
+      }
+
+      const response = await supabase.functions.invoke("roles-admin", {
+        body: { action: "delete_role", roleId: deleteRoleDialog.roleId },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.error) {
+        toast.error("Ошибка удаления роли");
+        return;
+      }
+
+      if (response.data?.error) {
+        const errorMap: Record<string, string> = {
+          "Cannot delete system role": "Нельзя удалить системную роль",
+          "Role is assigned to users. Remove role from all users first.": "Роль назначена пользователям. Сначала снимите роль со всех пользователей.",
+          "Role not found": "Роль не найдена",
+          "Permission denied": "Нет прав для удаления роли",
+        };
+        toast.error(errorMap[response.data.error] || response.data.error);
+        return;
+      }
+
+      toast.success("Роль удалена");
+      await refetch();
+    } catch (error) {
+      console.error("Delete role error:", error);
+      toast.error("Ошибка удаления роли");
+    } finally {
+      setDeleteRoleDialog({ open: false, roleId: "", roleName: "", roleCode: "" });
+    }
+  };
 
   if (loading) {
     return (
@@ -146,6 +299,25 @@ export default function AdminRoles() {
         </TabsList>
 
         <TabsContent value="staff" className="mt-4">
+          {/* Staff header with search and invite */}
+          <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
+            <div className="relative w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Поиск по имени или email..."
+                value={staffSearch}
+                onChange={(e) => setStaffSearch(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+            {hasPermission("admins.manage") && (
+              <Button onClick={() => setInviteDialogOpen(true)}>
+                <UserPlus className="w-4 h-4 mr-2" />
+                Пригласить сотрудника
+              </Button>
+            )}
+          </div>
+
           <GlassCard>
             <Table>
               <TableHeader>
@@ -160,8 +332,9 @@ export default function AdminRoles() {
                   const effectiveRole = getEffectiveRole(user.roles);
                   if (!effectiveRole) return null;
 
-                  const canRemove = hasPermission("admins.manage") && 
-                    (effectiveRole.code !== "super_admin" || isSuperAdmin());
+                  const isCurrentUser = user.user_id === currentUser?.id;
+                  const canChangeRole = hasPermission("admins.manage") && !isCurrentUser;
+                  const canRemove = canChangeRole && (effectiveRole.code !== "super_admin" || isSuperAdmin());
 
                   return (
                     <TableRow key={user.user_id}>
@@ -172,20 +345,42 @@ export default function AdminRoles() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <RoleBadge
-                          role={effectiveRole}
-                          canRemove={canRemove}
-                          onRemove={canRemove ? () => setRemoveRoleDialog({
-                            open: true,
-                            userId: user.user_id,
-                            email: user.email || "",
-                            roleCode: effectiveRole.code,
-                            roleName: effectiveRole.name
-                          }) : undefined}
-                        />
+                        {canChangeRole ? (
+                          <Select
+                            value={effectiveRole.code}
+                            onValueChange={(newRole) => handleInlineRoleChange(user.user_id, effectiveRole.code, newRole)}
+                            disabled={isCurrentUser}
+                          >
+                            <SelectTrigger className="w-[180px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {roles
+                                .filter(r => r.code !== "super_admin" || isSuperAdmin())
+                                .map(role => (
+                                  <SelectItem key={role.code} value={role.code}>
+                                    {getRoleDisplayName(role.code)}
+                                  </SelectItem>
+                                ))}
+                              <SelectItem value="user">Пользователь (снять роль)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <RoleBadge
+                            role={effectiveRole}
+                            canRemove={canRemove}
+                            onRemove={canRemove ? () => setRemoveRoleDialog({
+                              open: true,
+                              userId: user.user_id,
+                              email: user.email || "",
+                              roleCode: effectiveRole.code,
+                              roleName: effectiveRole.name
+                            }) : undefined}
+                          />
+                        )}
                       </TableCell>
                       <TableCell>
-                        {hasPermission("admins.manage") && (
+                        {canChangeRole && (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -201,7 +396,7 @@ export default function AdminRoles() {
                 {staffUsers.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
-                      Нет сотрудников с административными ролями
+                      {staffSearch ? "Сотрудники не найдены" : "Нет сотрудников с административными ролями"}
                     </TableCell>
                   </TableRow>
                 )}
@@ -226,49 +421,83 @@ export default function AdminRoles() {
                   <TableHead>Роль</TableHead>
                   <TableHead>Описание</TableHead>
                   <TableHead>Права</TableHead>
-                  <TableHead className="w-[100px]"></TableHead>
+                  <TableHead className="w-[150px]"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {roles.map((role) => (
-                  <TableRow key={role.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-primary" />
-                        <span className="font-medium">{role.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {role.description || "—"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1 max-w-md">
-                        {role.permissions.slice(0, 5).map((p) => (
-                          <Badge key={p.code} variant="outline" className="text-xs">
-                            {p.name}
-                          </Badge>
-                        ))}
-                        {role.permissions.length > 5 && (
-                          <Badge variant="outline" className="text-xs">
-                            +{role.permissions.length - 5}
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin()) && (
-                        <Button size="sm" variant="ghost" onClick={() => handleEditPermissions(role.id)}>
-                          Изменить
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {roles.map((role) => {
+                  const isSystemRole = SYSTEM_ROLES.includes(role.code);
+                  const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin());
+                  const canDelete = hasPermission("roles.manage") && !isSystemRole;
+
+                  return (
+                    <TableRow key={role.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-4 h-4 text-primary" />
+                          <span className="font-medium">{getRoleDisplayName(role.code)}</span>
+                          {isSystemRole && (
+                            <Badge variant="outline" className="text-xs">Системная</Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {role.description || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1 max-w-md">
+                          {role.permissions.slice(0, 5).map((p) => (
+                            <Badge key={p.code} variant="outline" className="text-xs">
+                              {p.name}
+                            </Badge>
+                          ))}
+                          {role.permissions.length > 5 && (
+                            <Badge variant="outline" className="text-xs">
+                              +{role.permissions.length - 5}
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          {canEdit && (
+                            <Button size="sm" variant="ghost" onClick={() => handleEditPermissions(role.id)}>
+                              Изменить
+                            </Button>
+                          )}
+                          {canDelete && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => setDeleteRoleDialog({
+                                open: true,
+                                roleId: role.id,
+                                roleName: role.name,
+                                roleCode: role.code
+                              })}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </GlassCard>
         </TabsContent>
       </Tabs>
+
+      {/* Invite User Dialog */}
+      <InviteUserDialog
+        open={inviteDialogOpen}
+        onOpenChange={setInviteDialogOpen}
+        roles={roles}
+        onSuccess={() => refetchUsers()}
+      />
 
       {/* Edit Permissions Dialog */}
       <Dialog open={!!editingRole} onOpenChange={() => setEditingRole(null)}>
@@ -277,7 +506,17 @@ export default function AdminRoles() {
             <DialogTitle>Редактирование прав роли</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            {Object.entries(groupedPermissions).map(([category, perms]) => (
+            {/* Permission search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Поиск прав..."
+                value={permissionSearch}
+                onChange={(e) => setPermissionSearch(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+            {Object.entries(filteredGroupedPermissions).map(([category, perms]) => (
               <div key={category}>
                 <h4 className="font-medium capitalize mb-2">{category}</h4>
                 <div className="grid grid-cols-2 gap-2">
@@ -299,6 +538,9 @@ export default function AdminRoles() {
                 </div>
               </div>
             ))}
+            {Object.keys(filteredGroupedPermissions).length === 0 && (
+              <p className="text-center text-muted-foreground py-4">Права не найдены</p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingRole(null)}>Отмена</Button>
@@ -328,7 +570,7 @@ export default function AdminRoles() {
                 .filter((r) => r.code !== "user" && (r.code !== "super_admin" || isSuperAdmin()))
                 .map((role) => (
                   <SelectItem key={role.code} value={role.code}>
-                    {role.name}
+                    {getRoleDisplayName(role.code)}
                   </SelectItem>
                 ))}
             </SelectContent>
@@ -348,6 +590,25 @@ export default function AdminRoles() {
         roleName={removeRoleDialog.roleName}
         userEmail={removeRoleDialog.email}
       />
+
+      {/* Delete Role Confirm Dialog */}
+      <AlertDialog open={deleteRoleDialog.open} onOpenChange={(open) => setDeleteRoleDialog({ ...deleteRoleDialog, open })}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить роль?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Вы уверены, что хотите удалить роль "{deleteRoleDialog.roleName}"?
+              Это действие нельзя отменить. Все связанные права будут удалены.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteRole} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Create Role Dialog */}
       <Dialog open={createRoleDialog} onOpenChange={setCreateRoleDialog}>

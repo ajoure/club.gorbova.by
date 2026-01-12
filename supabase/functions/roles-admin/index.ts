@@ -155,6 +155,29 @@ serve(async (req: Request): Promise<Response> => {
       return await isTargetSuperAdmin(actorUserId);
     };
 
+    // Get super_admin role ID for counting
+    const getSuperAdminRoleId = async (): Promise<string | null> => {
+      const { data } = await supabaseAdmin
+        .from("roles")
+        .select("id")
+        .eq("code", "super_admin")
+        .single();
+      return data?.id || null;
+    };
+
+    // Count how many super_admins exist
+    const countSuperAdmins = async (): Promise<number> => {
+      const superAdminRoleId = await getSuperAdminRoleId();
+      if (!superAdminRoleId) return 0;
+
+      const { count } = await supabaseAdmin
+        .from("user_roles_v2")
+        .select("*", { count: "exact", head: true })
+        .eq("role_id", superAdminRoleId);
+      
+      return count || 0;
+    };
+
     const logAction = async (actionType: string, targetId: string | null, meta: Record<string, unknown> = {}) => {
       await supabaseAdmin.from("audit_logs").insert({
         actor_user_id: actorUserId,
@@ -202,12 +225,31 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
+        // SAFEGUARD: Prevent self-role change
+        if (userId === actorUserId) {
+          return new Response(JSON.stringify({ error: "SELF_ROLE_CHANGE_FORBIDDEN" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
         // Prevent assigning super_admin unless actor is super_admin
         if (roleCode === "super_admin" && !(await isActorSuperAdmin())) {
           return new Response(JSON.stringify({ error: "Only super admin can assign super admin role" }), {
             status: 403,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
+        }
+
+        // SAFEGUARD: Last owner protection - if target is super_admin and we're changing their role
+        if (await isTargetSuperAdmin(userId) && roleCode !== "super_admin") {
+          const superAdminCount = await countSuperAdmins();
+          if (superAdminCount <= 1) {
+            return new Response(JSON.stringify({ error: "LAST_OWNER_PROTECTED" }), {
+              status: 409,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
         }
 
         // Get role ID
@@ -285,12 +327,31 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
+        // SAFEGUARD: Prevent self-role change
+        if (userId === actorUserId) {
+          return new Response(JSON.stringify({ error: "SELF_ROLE_CHANGE_FORBIDDEN" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
         // Prevent removing super_admin unless actor is super_admin
         if (roleCode === "super_admin" && !(await isActorSuperAdmin())) {
           return new Response(JSON.stringify({ error: "Only super admin can remove super admin role" }), {
             status: 403,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
+        }
+
+        // SAFEGUARD: Last owner protection
+        if (roleCode === "super_admin") {
+          const superAdminCount = await countSuperAdmins();
+          if (superAdminCount <= 1) {
+            return new Response(JSON.stringify({ error: "LAST_OWNER_PROTECTED" }), {
+              status: 409,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
         }
 
         // Get role ID
@@ -481,8 +542,9 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Prevent deleting super_admin or user roles
-        if (role.code === "super_admin" || role.code === "user") {
+        // Prevent deleting system roles
+        const systemRoles = ["super_admin", "admin", "user", "support", "editor"];
+        if (systemRoles.includes(role.code)) {
           return new Response(JSON.stringify({ error: "Cannot delete system role" }), {
             status: 403,
             headers: { ...corsHeaders, "Content-Type": "application/json" },

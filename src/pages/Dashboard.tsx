@@ -81,7 +81,7 @@ export default function Dashboard() {
 
   const getRoleDisplayName = (roleCode: string) => {
     const displayNames: Record<string, string> = {
-      super_admin: "Супер-администратор",
+      super_admin: "Владелец",
       admin: "Администратор",
       editor: "Редактор",
       support: "Поддержка",

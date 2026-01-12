@@ -121,7 +121,9 @@ export function useAdminRoles() {
           "Role not found": "Роль не найдена",
           "User already has this role": "Пользователь уже имеет эту роль",
           "Unauthorized": "Не авторизован",
-          "Only super admin can assign super admin role": "Только супер-администратор может назначать эту роль",
+          "Only super admin can assign super admin role": "Только Владелец может назначать эту роль",
+          "SELF_ROLE_CHANGE_FORBIDDEN": "Нельзя изменить свою собственную роль",
+          "LAST_OWNER_PROTECTED": "Нельзя убрать роль «Владелец» у последнего владельца системы",
         };
         toast.error(errorMap[response.data.error] || response.data.error);
         return false;
@@ -156,7 +158,9 @@ export function useAdminRoles() {
           "Permission denied": "Нет прав для удаления роли",
           "Role not found": "Роль не найдена",
           "Unauthorized": "Не авторизован",
-          "Only super admin can remove super admin role": "Только супер-администратор может удалять эту роль",
+          "Only super admin can remove super admin role": "Только Владелец может удалять эту роль",
+          "SELF_ROLE_CHANGE_FORBIDDEN": "Нельзя изменить свою собственную роль",
+          "LAST_OWNER_PROTECTED": "Нельзя убрать роль «Владелец» у последнего владельца системы",
         };
         toast.error(errorMap[response.data.error] || response.data.error);
         return false;

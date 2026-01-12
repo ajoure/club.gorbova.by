@@ -35,7 +35,7 @@ export function RoleBadge({ role, onRemove, canRemove = false, className }: Role
 
   const getRoleDisplayName = (role: Role) => {
     const displayNames: Record<string, string> = {
-      super_admin: "Супер-администратор",
+      super_admin: "Владелец",
       admin: "Администратор",
       editor: "Редактор",
       support: "Поддержка",

@@ -109,7 +109,7 @@ export function AppSidebar() {
   const getRoleLabel = () => {
     switch (role) {
       case "superadmin":
-        return "Супер Админ";
+        return "Владелец";
       case "admin":
         return "Администратор";
       default:
