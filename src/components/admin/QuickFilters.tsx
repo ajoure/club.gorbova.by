@@ -300,18 +300,26 @@ export function applyFilters<T>(
         const composite = value as { status: string; hasAccount: boolean } | undefined;
         if (!composite) return false;
         
+        // Calculate match based on filterValue
+        let match = false;
         switch (filterValue) {
           case "no_account":
-            return !composite.hasAccount;
+            match = !composite.hasAccount;
+            break;
           case "has_account":
-            return composite.hasAccount;
+            match = composite.hasAccount;
+            break;
           case "active":
           case "archived":
           case "ghost":
-            return composite.status === filterValue;
+            match = composite.status === filterValue;
+            break;
           default:
-            return true;
+            match = true;
         }
+        
+        // Apply operator
+        return filter.operator === "not_equals" ? !match : match;
       }
 
       switch (filter.operator) {
@@ -323,11 +331,6 @@ export function applyFilters<T>(
           }
           return String(value || "").toLowerCase() === filterValue.toLowerCase();
         case "not_equals":
-          // Handle status_account not_equals for preset compatibility
-          if (filter.field === "status_account" && typeof value === "object" && value !== null) {
-            const composite = value as { status: string; hasAccount: boolean };
-            return composite.status !== filterValue;
-          }
           return String(value || "").toLowerCase() !== filterValue.toLowerCase();
         case "gt":
           return Number(value) > Number(filterValue);
