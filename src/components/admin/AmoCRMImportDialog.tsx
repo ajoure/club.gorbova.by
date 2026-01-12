@@ -217,6 +217,9 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
   const [skippedNoContacts, setSkippedNoContacts] = useState(0);
   const [skippedInvalidTelegram, setSkippedInvalidTelegram] = useState(0);
   
+  // Import as archived by default
+  const [importAsArchived, setImportAsArchived] = useState(true);
+  
   // Rollback dialog
   const [showRollbackDialog, setShowRollbackDialog] = useState(false);
   
@@ -509,7 +512,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
             phones: c.phones,
             telegram_username: c.telegram_username,
           })),
-          options: { updateExisting, dryRun: true },
+          options: { updateExisting, dryRun: true, importAsArchived },
         },
       });
 
@@ -574,7 +577,7 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
           phones: c.phones,
           telegram_username: c.telegram_username,
         })),
-        options: { updateExisting },
+        options: { updateExisting, importAsArchived },
         jobId: job.id,
       },
     });
@@ -814,6 +817,14 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
                       onCheckedChange={setAutoMatch}
                     />
                     <Label htmlFor="auto-match" className="text-sm">Автосопоставление</Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="import-archived"
+                      checked={importAsArchived}
+                      onCheckedChange={setImportAsArchived}
+                    />
+                    <Label htmlFor="import-archived" className="text-sm">Импорт в «Архив»</Label>
                   </div>
                 </div>
 

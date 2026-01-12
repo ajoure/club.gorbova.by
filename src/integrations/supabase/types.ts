@@ -5486,6 +5486,10 @@ export type Database = {
           resolved_from: string
         }[]
       }
+      search_global: {
+        Args: { p_limit?: number; p_offset?: number; p_query: string }
+        Returns: Json
+      }
     }
     Enums: {
       app_role: "user" | "admin" | "superadmin"

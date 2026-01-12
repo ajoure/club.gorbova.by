@@ -29,6 +29,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Search,
   Users,
@@ -45,6 +46,9 @@ import {
   FileSpreadsheet,
   Trash,
   Sparkles,
+  ShoppingCart,
+  FileText,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
@@ -58,6 +62,8 @@ import { useTableSort } from "@/hooks/useTableSort";
 import AmoCRMImportDialog from "@/components/admin/AmoCRMImportDialog";
 import { CleanupDialog } from "@/components/admin/CleanupDialog";
 import { usePermissions } from "@/hooks/usePermissions";
+import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
+import { formatTelegramDisplay, getTelegramLink } from "@/utils/telegramUtils";
 
 interface Contact {
   id: string;
@@ -76,41 +82,62 @@ interface Contact {
   last_deal_at: string | null;
 }
 
+// Simplified filters - only 4
 const CONTACT_FILTER_FIELDS: FilterField[] = [
-  { key: "full_name", label: "Имя", type: "text" },
-  { key: "email", label: "Email", type: "text" },
-  { key: "phone", label: "Телефон", type: "text" },
-  { key: "telegram_username", label: "Telegram", type: "text" },
   { 
     key: "status", 
     label: "Статус", 
     type: "select",
     options: [
-      { value: "ghost", label: "Новый" },
       { value: "active", label: "Активен" },
       { value: "archived", label: "Архивный" },
-      { value: "blocked", label: "Заблокирован" },
-      { value: "deleted", label: "Удален" },
     ]
   },
-  { key: "deals_count", label: "Кол-во сделок", type: "number" },
-  { 
-    key: "has_telegram", 
-    label: "Есть Telegram", 
-    type: "boolean" 
-  },
-  { 
-    key: "is_duplicate", 
-    label: "Дубль", 
-    type: "boolean" 
-  },
-  {
-    key: "was_club_member",
-    label: "Бывший участник клуба",
-    type: "boolean"
-  },
-  { key: "created_at", label: "Дата создания", type: "date" },
+  { key: "has_deals", label: "Есть покупки", type: "boolean" },
+  { key: "has_telegram", label: "Есть Telegram", type: "boolean" },
+  { key: "is_duplicate", label: "Дубль", type: "boolean" },
 ];
+
+// Default columns configuration
+const DEFAULT_COLUMNS: ColumnConfig[] = [
+  { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
+  { key: "name_email", label: "Имя / Email", visible: true, width: 250, order: 1 },
+  { key: "phone", label: "Телефон", visible: true, width: 140, order: 2 },
+  { key: "telegram", label: "Telegram", visible: true, width: 150, order: 3 },
+  { key: "tg_linked", label: "TG", visible: true, width: 50, order: 4 },
+  { key: "deals_count", label: "Сделок", visible: true, width: 80, order: 5 },
+  { key: "last_deal_at", label: "Последняя", visible: true, width: 130, order: 6 },
+  { key: "status", label: "Статус", visible: true, width: 120, order: 7 },
+];
+
+// Global search result interfaces
+interface GlobalSearchResults {
+  contacts: Array<{
+    profile_id: string;
+    full_name: string | null;
+    email: string | null;
+    phone: string | null;
+    telegram_username: string | null;
+    status: string;
+  }>;
+  deals: Array<{
+    order_id: string;
+    order_number: string;
+    status: string;
+    profile_id: string | null;
+    customer_email: string | null;
+    contact_name: string | null;
+  }>;
+  messages: Array<{
+    id: string;
+    source: 'private' | 'group';
+    snippet: string;
+    created_at: string;
+    profile_id: string | null;
+    contact_name: string | null;
+    telegram_user_id: number | null;
+  }>;
+}
 
 export default function AdminContacts() {
   const navigate = useNavigate();
@@ -129,6 +156,65 @@ export default function AdminContacts() {
   const [showTelegramCleanup, setShowTelegramCleanup] = useState(false);
   const [showDemoCleanup, setShowDemoCleanup] = useState(false);
   const { hasPermission } = usePermissions();
+  
+  // Global search state
+  const [globalSearchResults, setGlobalSearchResults] = useState<GlobalSearchResults | null>(null);
+  const [isGlobalSearching, setIsGlobalSearching] = useState(false);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const searchDropdownRef = useRef<HTMLDivElement>(null);
+  
+  // Column settings with localStorage persistence
+  const [columns, setColumns] = useState<ColumnConfig[]>(() => {
+    const saved = localStorage.getItem('admin_contacts_columns_v1');
+    return saved ? JSON.parse(saved) : DEFAULT_COLUMNS;
+  });
+  
+  // Save column settings to localStorage
+  useEffect(() => {
+    localStorage.setItem('admin_contacts_columns_v1', JSON.stringify(columns));
+  }, [columns]);
+  
+  // Global search with debounce
+  useEffect(() => {
+    if (search.length < 2) {
+      setGlobalSearchResults(null);
+      setShowSearchDropdown(false);
+      return;
+    }
+    
+    const timer = setTimeout(async () => {
+      setIsGlobalSearching(true);
+      try {
+        const { data, error } = await supabase.rpc('search_global', {
+          p_query: search,
+          p_limit: 10,
+          p_offset: 0
+        });
+        
+        if (!error && data) {
+          setGlobalSearchResults(data as unknown as GlobalSearchResults);
+          setShowSearchDropdown(true);
+        }
+      } catch (err) {
+        console.error('Global search error:', err);
+      } finally {
+        setIsGlobalSearching(false);
+      }
+    }, 300);
+    
+    return () => clearTimeout(timer);
+  }, [search]);
+  
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchDropdownRef.current && !searchDropdownRef.current.contains(e.target as Node)) {
+        setShowSearchDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   
   // Check for contact query param to auto-open contact card
   const contactFromUrl = searchParams.get("contact");
@@ -285,6 +371,8 @@ export default function AdminContacts() {
     switch (fieldKey) {
       case "has_telegram":
         return !!contact.telegram_user_id;
+      case "has_deals":
+        return contact.deals_count > 0;
       case "is_duplicate":
         return (
           computedDuplicateIds.has(contact.id) ||
@@ -339,12 +427,10 @@ export default function AdminContacts() {
   }, [contacts, computedDuplicateIds]);
 
   const CONTACT_PRESETS: FilterPreset[] = useMemo(() => [
-    { id: "all", label: "Все активные", filters: [{ field: "status", operator: "not_equals", value: "archived" }] },
-    { id: "active", label: "Активные", filters: [{ field: "status", operator: "equals", value: "active" }], count: presetCounts.active },
-    { id: "ghost", label: "Новые", filters: [{ field: "status", operator: "equals", value: "ghost" }], count: presetCounts.ghost },
+    { id: "all", label: "Все", filters: [{ field: "status", operator: "not_equals", value: "archived" }] },
     { id: "withDeals", label: "С покупками", filters: [{ field: "deals_count", operator: "gt", value: "0" }], count: presetCounts.withDeals },
     { id: "duplicates", label: "Дубли", filters: [{ field: "is_duplicate", operator: "equals", value: "true" }], count: presetCounts.duplicates },
-    { id: "archived", label: "Архивные", filters: [{ field: "status", operator: "equals", value: "archived" }], count: presetCounts.archived },
+    { id: "archived", label: "Архив", filters: [{ field: "status", operator: "equals", value: "archived" }], count: presetCounts.archived },
   ], [presetCounts]);
 
   const getStatusBadge = (status: string) => {
@@ -616,15 +702,96 @@ export default function AdminContacts() {
       {/* Search and Filters */}
       <div className="flex flex-col gap-4">
         <div className="flex flex-col sm:flex-row gap-4">
-          <div className="relative flex-1">
+          <div className="relative flex-1" ref={searchDropdownRef}>
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Поиск по email, имени, телефону, Telegram..."
+              placeholder="Глобальный поиск по контактам, сделкам, сообщениям..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onFocus={() => search.length >= 2 && globalSearchResults && setShowSearchDropdown(true)}
               className="pl-9"
             />
+            {isGlobalSearching && (
+              <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+            )}
+            
+            {/* Global Search Dropdown */}
+            {showSearchDropdown && globalSearchResults && (
+              <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border rounded-lg shadow-lg max-h-96 overflow-auto">
+                {/* Contacts */}
+                {globalSearchResults.contacts.length > 0 && (
+                  <div className="p-2">
+                    <div className="text-xs font-medium text-muted-foreground px-2 py-1 flex items-center gap-1">
+                      <Users className="w-3 h-3" /> Контакты
+                    </div>
+                    {globalSearchResults.contacts.map((c) => (
+                      <div
+                        key={c.profile_id}
+                        className="px-2 py-1.5 hover:bg-muted rounded cursor-pointer"
+                        onClick={() => { setSelectedContactId(c.profile_id); setShowSearchDropdown(false); }}
+                      >
+                        <div className="font-medium text-sm">{c.full_name || c.email || 'Без имени'}</div>
+                        <div className="text-xs text-muted-foreground">{c.email} {c.phone && `• ${c.phone}`}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Deals */}
+                {globalSearchResults.deals.length > 0 && (
+                  <div className="p-2 border-t">
+                    <div className="text-xs font-medium text-muted-foreground px-2 py-1 flex items-center gap-1">
+                      <ShoppingCart className="w-3 h-3" /> Сделки
+                    </div>
+                    {globalSearchResults.deals.map((d) => (
+                      <div
+                        key={d.order_id}
+                        className="px-2 py-1.5 hover:bg-muted rounded cursor-pointer"
+                        onClick={() => { navigate(`/admin/deals?deal=${d.order_id}`); setShowSearchDropdown(false); }}
+                      >
+                        <div className="font-medium text-sm">#{d.order_number}</div>
+                        <div className="text-xs text-muted-foreground">{d.contact_name || d.customer_email} • {d.status}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Messages */}
+                {globalSearchResults.messages.length > 0 && (
+                  <div className="p-2 border-t">
+                    <div className="text-xs font-medium text-muted-foreground px-2 py-1 flex items-center gap-1">
+                      <FileText className="w-3 h-3" /> Сообщения
+                    </div>
+                    {globalSearchResults.messages.map((m) => (
+                      <div
+                        key={m.id}
+                        className="px-2 py-1.5 hover:bg-muted rounded cursor-pointer"
+                        onClick={() => { 
+                          if (m.profile_id) {
+                            setSelectedContactId(m.profile_id);
+                          } else {
+                            toast.info(`Сообщение не привязано к контакту (${m.source})`);
+                          }
+                          setShowSearchDropdown(false);
+                        }}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant="outline" className="text-xs">{m.source === 'private' ? 'Личное' : 'Группа'}</Badge>
+                          <span className="font-medium text-sm">{m.contact_name || 'Неизвестно'}</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground line-clamp-1">{m.snippet}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {globalSearchResults.contacts.length === 0 && globalSearchResults.deals.length === 0 && globalSearchResults.messages.length === 0 && (
+                  <div className="p-4 text-center text-muted-foreground text-sm">Ничего не найдено</div>
+                )}
+              </div>
+            )}
           </div>
+          <ColumnSettings columns={columns} onChange={setColumns} />
         </div>
         
         <QuickFilters
@@ -685,6 +852,7 @@ export default function AdminContacts() {
                 <SortableTableHead sortKey="telegram_username" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
                   Telegram
                 </SortableTableHead>
+                <TableHead className="w-12 text-center">TG</TableHead>
                 <SortableTableHead sortKey="deals_count" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort} className="text-center">
                   Сделок
                 </SortableTableHead>
@@ -760,6 +928,13 @@ export default function AdminContacts() {
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {contact.telegram_user_id ? (
+                      <CheckCircle className="w-4 h-4 text-green-500 mx-auto" />
+                    ) : contact.telegram_username ? (
+                      <span className="w-2 h-2 rounded-full bg-muted-foreground/30 inline-block" />
+                    ) : null}
                   </TableCell>
                   <TableCell className="text-center">
                     {contact.deals_count > 0 ? (

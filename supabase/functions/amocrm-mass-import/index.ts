@@ -21,6 +21,7 @@ interface ParsedContact {
 interface ImportOptions {
   updateExisting: boolean;
   dryRun?: boolean;
+  importAsArchived?: boolean;
 }
 
 // Clean and validate Telegram username (server-side validation)
@@ -264,6 +265,9 @@ serve(async (req) => {
           } else if (!matchedProfileId) {
             // Create new profile
             if (!isDryRun && job) {
+              // Determine status: archived by default (importAsArchived), otherwise ghost
+              const newStatus = options.importAsArchived !== false ? 'archived' : 'ghost';
+              
               const { error } = await supabase
                 .from('profiles')
                 .insert({
@@ -276,7 +280,7 @@ serve(async (req) => {
                   phones: contact.phones.map(p => '+' + p),
                   telegram_username: cleanedTelegram, // Use cleaned telegram
                   external_id_amo: contact.amo_id,
-                  status: 'ghost',
+                  status: newStatus,
                   source: 'amocrm_import',
                   import_batch_id: job.id,
                 });

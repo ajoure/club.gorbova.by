@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { cleanTelegramUsername } from "@/utils/telegramUtils";
 import {
   Dialog,
   DialogContent,
@@ -103,7 +104,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
         full_name: formData.full_name || null,
         email: formData.email || null,
         phone: formData.phone || null,
-        telegram_username: formData.telegram_username || null,
+        telegram_username: cleanTelegramUsername(formData.telegram_username),
         status: formData.status,
         emails: emails as unknown as null,
         phones: phones as unknown as null,
