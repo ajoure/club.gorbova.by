@@ -395,9 +395,12 @@ Deno.serve(async (req) => {
           // Get order with tariff and offer info
           const { data: orderInfo } = await supabase
             .from('orders_v2')
-            .select('tariff_id, offer_id')
+            .select('tariff_id, meta')
             .eq('id', source_id)
             .maybeSingle();
+          
+          // Extract offer_id from meta (not a direct column)
+          const offerId = (orderInfo?.meta as Record<string, unknown> | null)?.offer_id as string | undefined;
           
           if (orderInfo?.tariff_id) {
             const { data: tariffData } = await supabase
@@ -436,11 +439,11 @@ Deno.serve(async (req) => {
             }
             
             // 2. Send OFFER welcome message if configured (additional message)
-            if (orderInfo.offer_id) {
+            if (offerId) {
               const { data: offerData } = await supabase
                 .from('tariff_offers')
                 .select('meta')
-                .eq('id', orderInfo.offer_id)
+                .eq('id', offerId)
                 .maybeSingle();
               
               const offerMeta = offerData?.meta as Record<string, unknown> | null;

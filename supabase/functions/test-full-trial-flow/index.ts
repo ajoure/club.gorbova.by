@@ -73,6 +73,51 @@ Deno.serve(async (req) => {
     // Generate order number
     const orderNumber = `SIM-TRIAL-${Date.now()}`;
 
+    // ========== STEP 0: Cleanup previous simulation data ==========
+    console.log("Step 0: Cleaning up previous simulation data...");
+    
+    // Get simulation orders for this user/product/tariff
+    const { data: simOrders } = await supabase
+      .from("orders_v2")
+      .select("id")
+      .eq("profile_id", profileId)
+      .eq("product_id", productId)
+      .eq("tariff_id", tariffId)
+      .eq("meta->simulation", true);
+    
+    const simOrderIds = simOrders?.map(o => o.id) || [];
+    
+    if (simOrderIds.length > 0) {
+      // Delete entitlements for simulation orders
+      await supabase
+        .from("entitlements")
+        .delete()
+        .eq("user_id", authUserId)
+        .eq("product_code", product?.code || "club");
+      
+      // Delete subscriptions for simulation orders
+      await supabase
+        .from("subscriptions_v2")
+        .delete()
+        .in("order_id", simOrderIds);
+      
+      // Delete payments for simulation orders
+      await supabase
+        .from("payments_v2")
+        .delete()
+        .in("order_id", simOrderIds);
+      
+      // Delete simulation orders
+      await supabase
+        .from("orders_v2")
+        .delete()
+        .in("id", simOrderIds);
+      
+      console.log(`Cleaned up ${simOrderIds.length} simulation orders`);
+    }
+    
+    results.cleanup = { deletedOrders: simOrderIds.length };
+
     // ========== STEP 1: Create Trial Order ==========
     console.log("Step 1: Creating trial order...");
 
@@ -206,13 +251,10 @@ Deno.serve(async (req) => {
             Authorization: `Bearer ${supabaseServiceKey}`,
           },
           body: JSON.stringify({
-            userId: authUserId,
-            profileId: profileId,
-            productId: productId,
-            tariffId: tariffId,
-            offerId: trialOfferId,
-            orderId: trialOrder.id,
-            validUntil: accessEndDate.toISOString(),
+            user_id: authUserId,
+            source: "payment",
+            source_id: trialOrder.id,
+            valid_until: accessEndDate.toISOString(),
           }),
         }
       );
@@ -235,21 +277,18 @@ Deno.serve(async (req) => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${supabaseServiceKey}`,
+            // No Authorization header - telegram-notify-admins allows internal calls without auth
           },
           body: JSON.stringify({
-            event: "new_order",
-            data: {
-              orderNumber: orderNumber,
-              productName: product?.name,
-              tariffName: tariff?.name,
-              amount: tariff?.trial_price || 1,
-              currency: "BYN",
-              userName: profile?.full_name,
-              userEmail: profile?.email,
-              isTrial: true,
-              simulation: true,
-            },
+            message: `🆕 <b>Новый заказ (триал)</b>\n\n` +
+              `📦 ${product?.name}\n` +
+              `🏷 Тариф: ${tariff?.name}\n` +
+              `👤 ${profile?.full_name}\n` +
+              `📧 ${profile?.email}\n` +
+              `💰 ${tariff?.trial_price || 1} BYN\n` +
+              `🔢 №${orderNumber}\n` +
+              `🧪 <i>Симуляция</i>`,
+            parse_mode: "HTML",
           }),
         }
       );
@@ -344,23 +383,38 @@ Deno.serve(async (req) => {
 
     if (profile?.telegram_user_id) {
       try {
-        const sendNotifResponse = await fetch(
-          `${supabaseUrl}/functions/v1/telegram-send-notification`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${supabaseServiceKey}`,
-            },
-            body: JSON.stringify({
-              telegramUserId: profile.telegram_user_id,
-              message: `🎉 Поздравляем! Ваша подписка на "${product?.name}" (тариф "${tariff?.name}") успешно продлена!\n\n💳 Оплачено: ${tariff?.price || 150} BYN\n📅 Доступ до: ${accessEndDate.toLocaleDateString("ru-RU")}\n\nСпасибо, что вы с нами! 💜`,
-            }),
-          }
-        );
-
-        const sendNotifResult = await sendNotifResponse.json();
-        results.renewalNotification = sendNotifResult;
+        // Get bot token directly from telegram_bots table (column is bot_token_encrypted, status = 'active')
+        const { data: botData } = await supabase
+          .from("telegram_bots")
+          .select("bot_token_encrypted")
+          .eq("status", "active")
+          .eq("is_primary", true)
+          .limit(1)
+          .maybeSingle();
+        
+        if (botData?.bot_token_encrypted) {
+          const botToken = botData.bot_token_encrypted;
+          const message = `🎉 Поздравляем! Ваша подписка на "${product?.name}" (тариф "${tariff?.name}") успешно продлена!\n\n💳 Оплачено: ${tariff?.price || 150} BYN\n📅 Доступ до: ${accessEndDate.toLocaleDateString("ru-RU")}\n\nСпасибо, что вы с нами! 💜\n\n🧪 <i>Это тестовое сообщение</i>`;
+          
+          const tgResponse = await fetch(
+            `https://api.telegram.org/bot${botToken}/sendMessage`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: profile.telegram_user_id,
+                text: message,
+                parse_mode: "HTML",
+              }),
+            }
+          );
+          
+          const tgResult = await tgResponse.json();
+          results.renewalNotification = tgResult;
+          console.log("Renewal notification result:", tgResult);
+        } else {
+          results.renewalNotificationError = "No active primary bot found";
+        }
       } catch (notifError) {
         console.error("Renewal notification error:", notifError);
         results.renewalNotificationError = String(notifError);
@@ -377,21 +431,18 @@ Deno.serve(async (req) => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${supabaseServiceKey}`,
+            // No Authorization header - telegram-notify-admins allows internal calls without auth
           },
           body: JSON.stringify({
-            event: "subscription_renewed",
-            data: {
-              orderNumber: orderNumber,
-              productName: product?.name,
-              tariffName: tariff?.name,
-              amount: tariff?.price || 150,
-              currency: "BYN",
-              userName: profile?.full_name,
-              userEmail: profile?.email,
-              convertedFromTrial: true,
-              simulation: true,
-            },
+            message: `💳 <b>Триал → Оплата</b>\n\n` +
+              `📦 ${product?.name}\n` +
+              `🏷 Тариф: ${tariff?.name}\n` +
+              `👤 ${profile?.full_name}\n` +
+              `📧 ${profile?.email}\n` +
+              `💰 ${tariff?.price || 150} BYN\n` +
+              `🔢 №${orderNumber}\n` +
+              `🧪 <i>Симуляция</i>`,
+            parse_mode: "HTML",
           }),
         }
       );
