@@ -316,10 +316,21 @@ export default function AdminContacts() {
     const STORAGE_KEY = 'admin_contacts_columns_v1';
     const OLD_KEY = 'admin_contacts_columns_v2';
     
-    // Check for old key and migrate
+    // Migrate from old key ONLY if v1 doesn't exist
+    const existingV1 = localStorage.getItem(STORAGE_KEY);
     const oldSaved = localStorage.getItem(OLD_KEY);
-    if (oldSaved) {
-      localStorage.setItem(STORAGE_KEY, oldSaved);
+    if (!existingV1 && oldSaved) {
+      try {
+        // Validate JSON before migrating
+        JSON.parse(oldSaved);
+        localStorage.setItem(STORAGE_KEY, oldSaved);
+        localStorage.removeItem(OLD_KEY);
+      } catch {
+        // Broken JSON — just remove it
+        localStorage.removeItem(OLD_KEY);
+      }
+    } else if (oldSaved) {
+      // v1 already exists, just remove old v2
       localStorage.removeItem(OLD_KEY);
     }
     
