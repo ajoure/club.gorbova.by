@@ -43,6 +43,8 @@ import {
   Archive,
   Camera,
   FileSpreadsheet,
+  Trash,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
@@ -54,6 +56,8 @@ import { MergeContactsDialog } from "@/components/admin/MergeContactsDialog";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import AmoCRMImportDialog from "@/components/admin/AmoCRMImportDialog";
+import { CleanupDialog } from "@/components/admin/CleanupDialog";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface Contact {
   id: string;
@@ -122,6 +126,9 @@ export default function AdminContacts() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showMergeDialog, setShowMergeDialog] = useState(false);
   const [showAmoCRMImport, setShowAmoCRMImport] = useState(false);
+  const [showTelegramCleanup, setShowTelegramCleanup] = useState(false);
+  const [showDemoCleanup, setShowDemoCleanup] = useState(false);
+  const { hasPermission } = usePermissions();
   
   // Check for contact query param to auto-open contact card
   const contactFromUrl = searchParams.get("contact");
@@ -566,6 +573,18 @@ export default function AdminContacts() {
             <FileSpreadsheet className="h-4 w-4 mr-2" />
             Импорт amoCRM
           </Button>
+          {hasPermission("admins.manage") && (
+            <>
+              <Button variant="outline" onClick={() => setShowTelegramCleanup(true)}>
+                <Sparkles className="h-4 w-4 mr-2" />
+                Очистить TG
+              </Button>
+              <Button variant="outline" onClick={() => setShowDemoCleanup(true)}>
+                <Trash className="h-4 w-4 mr-2" />
+                Удалить Demo
+              </Button>
+            </>
+          )}
           <Button variant="outline" onClick={() => refetch()}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Обновить
@@ -577,6 +596,20 @@ export default function AdminContacts() {
       <AmoCRMImportDialog
         open={showAmoCRMImport}
         onOpenChange={setShowAmoCRMImport}
+        onSuccess={() => refetch()}
+      />
+
+      {/* Cleanup Dialogs */}
+      <CleanupDialog
+        open={showTelegramCleanup}
+        onOpenChange={setShowTelegramCleanup}
+        type="telegram"
+        onSuccess={() => refetch()}
+      />
+      <CleanupDialog
+        open={showDemoCleanup}
+        onOpenChange={setShowDemoCleanup}
+        type="demo"
         onSuccess={() => refetch()}
       />
 

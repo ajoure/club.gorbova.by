@@ -5363,6 +5363,14 @@ export type Database = {
     }
     Functions: {
       generate_order_number: { Args: never; Returns: string }
+      get_demo_profile_ids: {
+        Args: never
+        Returns: {
+          auth_user_id: string
+          email: string
+          profile_id: string
+        }[]
+      }
       get_next_document_number: {
         Args: { p_document_type: string; p_prefix?: string }
         Returns: string

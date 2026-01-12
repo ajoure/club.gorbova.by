@@ -150,3 +150,9 @@ verify_jwt = false
 [functions.amocrm-mass-import]
 verify_jwt = false
 timeout_ms = 300000
+
+[functions.cleanup-telegram-orphans]
+verify_jwt = false
+
+[functions.cleanup-demo-contacts]
+verify_jwt = false
