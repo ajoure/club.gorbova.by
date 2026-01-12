@@ -3960,6 +3960,7 @@ export type Database = {
           is_active: boolean | null
           is_installment: boolean | null
           is_primary: boolean | null
+          meta: Json | null
           offer_type: string
           payment_method: string | null
           reentry_amount: number | null
@@ -3988,6 +3989,7 @@ export type Database = {
           is_active?: boolean | null
           is_installment?: boolean | null
           is_primary?: boolean | null
+          meta?: Json | null
           offer_type: string
           payment_method?: string | null
           reentry_amount?: number | null
@@ -4016,6 +4018,7 @@ export type Database = {
           is_active?: boolean | null
           is_installment?: boolean | null
           is_primary?: boolean | null
+          meta?: Json | null
           offer_type?: string
           payment_method?: string | null
           reentry_amount?: number | null

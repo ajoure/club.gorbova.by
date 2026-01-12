@@ -4,6 +4,23 @@ import { toast } from "sonner";
 
 export type PaymentMethod = "full_payment" | "internal_installment" | "bank_installment";
 
+export interface OfferMetaConfig {
+  welcome_message?: {
+    enabled: boolean;
+    text: string;
+    button?: {
+      enabled: boolean;
+      text: string;
+      url: string;
+    };
+    media?: {
+      type: "photo" | "video" | "document" | "video_note" | null;
+      storage_path: string | null;
+      filename?: string;
+    };
+  };
+}
+
 export interface TariffOffer {
   id: string;
   tariff_id: string;
@@ -29,11 +46,13 @@ export interface TariffOffer {
   installment_count: number | null;
   installment_interval_days: number | null;
   first_payment_delay_days: number | null;
+  // Meta field for welcome message config
+  meta: OfferMetaConfig | null;
   created_at: string;
   updated_at: string;
 }
 
-export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated_at" | "getcourse_offer_id" | "payment_method" | "installment_count" | "installment_interval_days" | "first_payment_delay_days" | "auto_charge_offer_id" | "reentry_amount"> & { 
+export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated_at" | "getcourse_offer_id" | "payment_method" | "installment_count" | "installment_interval_days" | "first_payment_delay_days" | "auto_charge_offer_id" | "reentry_amount" | "meta"> & { 
   getcourse_offer_id?: string | null;
   payment_method?: PaymentMethod;
   installment_count?: number | null;
@@ -41,6 +60,7 @@ export type TariffOfferInsert = Omit<TariffOffer, "id" | "created_at" | "updated
   first_payment_delay_days?: number | null;
   auto_charge_offer_id?: string | null;
   reentry_amount?: number | null;
+  meta?: OfferMetaConfig | null;
 };
 export type TariffOfferUpdate = Partial<Omit<TariffOffer, "id" | "created_at" | "updated_at">> & { id: string };
 
@@ -99,9 +119,11 @@ export function useCreateTariffOffer() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (offer: TariffOfferInsert) => {
+      // Cast meta to any to satisfy Supabase's Json type
+      const insertData = { ...offer, meta: offer.meta as any };
       const { data, error } = await supabase
         .from("tariff_offers")
-        .insert(offer)
+        .insert(insertData)
         .select()
         .single();
       if (error) throw error;
@@ -122,9 +144,11 @@ export function useUpdateTariffOffer() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...offer }: TariffOfferUpdate) => {
+      // Cast meta to any to satisfy Supabase's Json type
+      const updateData = { ...offer, meta: offer.meta as any };
       const { data, error } = await supabase
         .from("tariff_offers")
-        .update(offer)
+        .update(updateData)
         .eq("id", id)
         .select()
         .single();

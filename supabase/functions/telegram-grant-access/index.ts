@@ -392,10 +392,10 @@ Deno.serve(async (req) => {
       // Send custom tariff welcome message and/or GetCourse link (for source_id = order_id)
       if (dmSent && source_id) {
         try {
-          // Get order with tariff info - use explicit join syntax
+          // Get order with tariff and offer info
           const { data: orderInfo } = await supabase
             .from('orders_v2')
-            .select('tariff_id')
+            .select('tariff_id, offer_id')
             .eq('id', source_id)
             .maybeSingle();
           
@@ -414,7 +414,7 @@ Deno.serve(async (req) => {
               media?: { type?: string; storage_path?: string };
             } | undefined;
             
-            // Send custom welcome message if configured
+            // 1. Send TARIFF welcome message if configured
             if (welcomeMessage?.enabled) {
               // Send media first if present
               if (welcomeMessage.media?.type && welcomeMessage.media?.storage_path) {
@@ -431,11 +431,48 @@ Deno.serve(async (req) => {
                 } : undefined;
                 
                 await sendMessage(botToken, telegramUserId, welcomeMessage.text, keyboard);
-                console.log('Sent custom welcome message to user', telegramUserId);
+                console.log('Sent tariff welcome message to user', telegramUserId);
               }
             }
             
-            // Send GetCourse link (as fallback or additional)
+            // 2. Send OFFER welcome message if configured (additional message)
+            if (orderInfo.offer_id) {
+              const { data: offerData } = await supabase
+                .from('tariff_offers')
+                .select('meta')
+                .eq('id', orderInfo.offer_id)
+                .maybeSingle();
+              
+              const offerMeta = offerData?.meta as Record<string, unknown> | null;
+              const offerWelcomeMessage = offerMeta?.welcome_message as {
+                enabled?: boolean;
+                text?: string;
+                button?: { enabled?: boolean; text?: string; url?: string };
+                media?: { type?: string; storage_path?: string };
+              } | undefined;
+              
+              if (offerWelcomeMessage?.enabled) {
+                // Send offer media first if present
+                if (offerWelcomeMessage.media?.type && offerWelcomeMessage.media?.storage_path) {
+                  await sendTariffMedia(supabase, botToken, telegramUserId, offerWelcomeMessage.media);
+                }
+                
+                // Send offer text with optional button
+                if (offerWelcomeMessage.text) {
+                  const keyboard = offerWelcomeMessage.button?.enabled && offerWelcomeMessage.button.url ? {
+                    inline_keyboard: [[{
+                      text: offerWelcomeMessage.button.text || 'Открыть',
+                      url: offerWelcomeMessage.button.url,
+                    }]]
+                  } : undefined;
+                  
+                  await sendMessage(botToken, telegramUserId, offerWelcomeMessage.text, keyboard);
+                  console.log('Sent offer welcome message to user', telegramUserId);
+                }
+              }
+            }
+            
+            // Send GetCourse link (as fallback if no welcome messages)
             const gcUrl = tariffMeta?.getcourse_lesson_url as string | undefined;
             const getcourseOfferId = tariffData?.getcourse_offer_id;
             
