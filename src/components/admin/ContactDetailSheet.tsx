@@ -532,11 +532,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       // Store current session before impersonating
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        localStorage.setItem("admin_session", JSON.stringify({
+        // Use consistent keys with ImpersonationBar and add timestamp for session expiry
+        localStorage.setItem("admin_session_backup", JSON.stringify({
           access_token: session.access_token,
           refresh_token: session.refresh_token,
         }));
         localStorage.setItem("admin_return_url", window.location.pathname);
+        localStorage.setItem("impersonation_start_time", Date.now().toString());
       }
 
       const result = await startImpersonation(contact.user_id);

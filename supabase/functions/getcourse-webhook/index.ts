@@ -22,9 +22,9 @@ async function verifyWebhookSecret(req: Request, instanceId: string | null, supa
   const webhookSecret = instance?.config?.webhook_secret || Deno.env.get('GETCOURSE_WEBHOOK_SECRET');
   
   if (!webhookSecret) {
-    // If no secret configured, allow but log warning
-    console.warn('No GetCourse webhook secret configured - verification skipped');
-    return { valid: true, reason: 'no_secret_configured' };
+    // Webhook secret is required for security - reject requests without it
+    console.error('GetCourse webhook secret not configured - request rejected');
+    return { valid: false, reason: 'secret_required' };
   }
   
   // Check for secret in query params or headers
@@ -62,11 +62,7 @@ serve(async (req) => {
       );
     }
     
-    if (verification.reason === 'no_secret_configured') {
-      console.log('Webhook processed without secret verification');
-    } else {
-      console.log('GetCourse webhook verified successfully');
-    }
+    console.log('GetCourse webhook verified successfully');
 
     // Parse request body
     let body: Record<string, unknown> = {};

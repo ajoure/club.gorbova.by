@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import DOMPurify from "dompurify";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Card, CardContent } from "@/components/ui/card";
@@ -221,7 +222,11 @@ export function ContactEmailHistory({ userId, email, clientName }: ContactEmailH
                           <div 
                             className="text-sm bg-muted/50 p-3 rounded max-h-[200px] overflow-y-auto"
                             dangerouslySetInnerHTML={{ 
-                              __html: emailItem.body_html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '') 
+                              __html: DOMPurify.sanitize(emailItem.body_html, {
+                                ALLOWED_TAGS: ['p', 'br', 'b', 'i', 'u', 'strong', 'em', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'img'],
+                                ALLOWED_ATTR: ['href', 'src', 'alt', 'style', 'class', 'target'],
+                                ALLOW_DATA_ATTR: false,
+                              })
                             }}
                           />
                         )}
