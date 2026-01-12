@@ -82,6 +82,11 @@ export function ConsultationPaymentDialog({
 
       if (error) throw error;
 
+      if (data?.alreadyUsedTrial) {
+        toast.warning("Пробный период для этого продукта уже использован", { duration: 8000 });
+        return;
+      }
+
       if (data?.checkout?.redirect_url) {
         window.location.href = data.checkout.redirect_url;
       } else if (data?.error) {

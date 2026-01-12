@@ -274,12 +274,13 @@ Deno.serve(async (req) => {
       
       if (existingTrial) {
         console.log('User already used trial for this product:', productId);
+        // Business rule violation (not a server error): return 200 so clients don't treat it as transport failure
         return new Response(JSON.stringify({
           success: false,
           error: 'Пробный период для этого продукта уже использован',
           alreadyUsedTrial: true,
         }), {
-          status: 400,
+          status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
