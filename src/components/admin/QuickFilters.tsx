@@ -295,6 +295,25 @@ export function applyFilters<T>(
       const value = getFieldValue(item, filter.field);
       const filterValue = filter.value;
 
+      // Special handling for status_account composite filter
+      if (filter.field === "status_account") {
+        const composite = value as { status: string; hasAccount: boolean } | undefined;
+        if (!composite) return false;
+        
+        switch (filterValue) {
+          case "no_account":
+            return !composite.hasAccount;
+          case "has_account":
+            return composite.hasAccount;
+          case "active":
+          case "archived":
+          case "ghost":
+            return composite.status === filterValue;
+          default:
+            return true;
+        }
+      }
+
       switch (filter.operator) {
         case "contains":
           return String(value || "").toLowerCase().includes(filterValue.toLowerCase());
@@ -304,6 +323,11 @@ export function applyFilters<T>(
           }
           return String(value || "").toLowerCase() === filterValue.toLowerCase();
         case "not_equals":
+          // Handle status_account not_equals for preset compatibility
+          if (filter.field === "status_account" && typeof value === "object" && value !== null) {
+            const composite = value as { status: string; hasAccount: boolean };
+            return composite.status !== filterValue;
+          }
           return String(value || "").toLowerCase() !== filterValue.toLowerCase();
         case "gt":
           return Number(value) > Number(filterValue);

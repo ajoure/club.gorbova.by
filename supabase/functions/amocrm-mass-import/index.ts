@@ -133,7 +133,22 @@ serve(async (req) => {
     const telegramIndex = new Map<string, { id: string; name: string }>();
     const amoIdIndex = new Map<string, { id: string; name: string }>();
 
-    const normalizeEmail = (email: string) => email?.toLowerCase().trim() || '';
+    // Enhanced email normalization with junk filtering
+    const normalizeEmail = (email: string): string => {
+      if (!email) return '';
+      const trimmed = email.toLowerCase().trim();
+      
+      // Filter junk emails
+      if (!trimmed.includes('@')) return '';
+      if (trimmed.startsWith('noemail@')) return '';
+      if (trimmed.startsWith('no-email@')) return '';
+      if (trimmed.startsWith('noemail.')) return '';
+      if (trimmed.startsWith('test@') && (trimmed.endsWith('.test') || trimmed.endsWith('.local'))) return '';
+      if (trimmed === 'n/a' || trimmed === 'na' || trimmed === '-') return '';
+      
+      return trimmed;
+    };
+    
     const normalizePhone = (phone: string) => {
       if (!phone) return '';
       let normalized = phone.replace(/[^\d+]/g, '');
@@ -148,7 +163,8 @@ serve(async (req) => {
     };
 
     for (const p of profiles || []) {
-      if (p.email) emailIndex.set(normalizeEmail(p.email), { id: p.id, name: p.full_name || '' });
+      const normEmail = normalizeEmail(p.email || '');
+      if (normEmail) emailIndex.set(normEmail, { id: p.id, name: p.full_name || '' });
       if (p.phone) phoneIndex.set(normalizePhone(p.phone), { id: p.id, name: p.full_name || '' });
       if (p.telegram_username) telegramIndex.set(p.telegram_username.toLowerCase(), { id: p.id, name: p.full_name || '' });
       if (p.external_id_amo) amoIdIndex.set(p.external_id_amo, { id: p.id, name: p.full_name || '' });
@@ -157,7 +173,10 @@ serve(async (req) => {
       const emails = p.emails as string[] | null;
       const phones = p.phones as string[] | null;
       if (emails) {
-        emails.forEach(e => emailIndex.set(normalizeEmail(e), { id: p.id, name: p.full_name || '' }));
+        emails.forEach(e => {
+          const norm = normalizeEmail(e);
+          if (norm) emailIndex.set(norm, { id: p.id, name: p.full_name || '' });
+        });
       }
       if (phones) {
         phones.forEach(ph => phoneIndex.set(normalizePhone(ph), { id: p.id, name: p.full_name || '' }));
@@ -173,15 +192,36 @@ serve(async (req) => {
     let skippedCount = 0;
     let skippedNoContacts = 0;
     let skippedInvalidTelegram = 0;
+    let skippedInvalidEmail = 0;
+    let skippedDuplicate = 0;
     const errorLog: { contact: string; error: string }[] = [];
+    const invalidEmailSamples: string[] = [];
+    const duplicateSamples: string[] = [];
 
     for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
       const batch = contacts.slice(i, i + BATCH_SIZE);
       
       for (const contact of batch) {
         try {
+          // Validate emails first - filter out invalid ones
+          const validEmails = contact.emails
+            .map(e => normalizeEmail(e))
+            .filter(e => e !== '');
+          
+          // Track if original emails were all invalid
+          if (contact.emails.length > 0 && validEmails.length === 0) {
+            skippedInvalidEmail++;
+            if (invalidEmailSamples.length < 10) {
+              invalidEmailSamples.push(`${contact.full_name}: ${contact.emails[0]}`);
+            }
+          }
+          
+          // Replace with only valid emails
+          contact.emails = validEmails;
+          contact.email = validEmails[0] || undefined;
+          
           // Validate: skip contacts without email AND without phone
-          if ((!contact.emails || contact.emails.length === 0) && (!contact.phones || contact.phones.length === 0)) {
+          if (validEmails.length === 0 && (!contact.phones || contact.phones.length === 0)) {
             skippedNoContacts++;
             skippedCount++;
             processed++;
@@ -301,6 +341,10 @@ serve(async (req) => {
             }
           } else {
             skippedCount++; // Profile exists but updateExisting is false
+            skippedDuplicate++;
+            if (duplicateSamples.length < 10) {
+              duplicateSamples.push(contact.full_name);
+            }
           }
           
           processed++;
@@ -339,10 +383,34 @@ serve(async (req) => {
           error_log: errorLog.length > 0 ? errorLog : null,
         })
         .eq('id', job.id);
+      
+      // Add audit log for import validation
+      await supabase
+        .from('audit_logs')
+        .insert({
+          action: 'amo_import_validation',
+          actor_user_id: user.id,
+          meta: {
+            job_id: job.id,
+            total: contacts.length,
+            inserted: createdCount,
+            updated: updatedCount,
+            skipped_invalid: skippedNoContacts + skippedInvalidEmail,
+            skipped_duplicate: skippedDuplicate,
+            skipped_no_contacts: skippedNoContacts,
+            skipped_invalid_email: skippedInvalidEmail,
+            skipped_invalid_telegram: skippedInvalidTelegram,
+            samples: {
+              invalid_emails: invalidEmailSamples.slice(0, 5),
+              duplicates: duplicateSamples.slice(0, 5),
+              errors: errorLog.slice(0, 5).map(e => e.contact),
+            }
+          }
+        });
     }
 
     const logMessage = isDryRun 
-      ? `🔍 Dry run completed: would create ${createdCount}, update ${updatedCount}, skip ${skippedCount} (${skippedNoContacts} no contacts, ${skippedInvalidTelegram} invalid telegram)`
+      ? `🔍 Dry run completed: would create ${createdCount}, update ${updatedCount}, skip ${skippedCount} (${skippedNoContacts} no contacts, ${skippedInvalidEmail} invalid email, ${skippedInvalidTelegram} invalid telegram)`
       : `✅ Import completed: ${createdCount} created, ${updatedCount} updated, ${errorsCount} errors`;
     console.log(logMessage);
 
@@ -356,11 +424,25 @@ serve(async (req) => {
         wouldSkip: isDryRun ? skippedCount : undefined,
         skippedNoContacts: isDryRun ? skippedNoContacts : undefined,
         skippedInvalidTelegram: isDryRun ? skippedInvalidTelegram : undefined,
+        skippedInvalidEmail: isDryRun ? skippedInvalidEmail : undefined,
         created: isDryRun ? undefined : createdCount,
         updated: isDryRun ? undefined : updatedCount,
         skipped: skippedCount,
         errors: errorsCount,
         errorLog: errorLog.length > 0 ? errorLog.slice(0, 10) : undefined,
+        // Extended dry-run samples
+        samples: isDryRun ? {
+          wouldCreate: createdCount,
+          wouldUpdate: updatedCount,
+          wouldSkip: {
+            noContacts: skippedNoContacts,
+            invalidEmail: skippedInvalidEmail,
+            invalidTelegram: skippedInvalidTelegram,
+            duplicate: skippedDuplicate,
+          },
+          invalidEmails: invalidEmailSamples,
+          duplicates: duplicateSamples,
+        } : undefined,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

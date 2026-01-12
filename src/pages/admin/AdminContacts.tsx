@@ -82,15 +82,17 @@ interface Contact {
   last_deal_at: string | null;
 }
 
-// Simplified filters - only 4
+// Simplified filters - only 4 (status_account combines status + account check)
 const CONTACT_FILTER_FIELDS: FilterField[] = [
   { 
-    key: "status", 
-    label: "Статус", 
+    key: "status_account", 
+    label: "Статус / Аккаунт", 
     type: "select",
     options: [
       { value: "active", label: "Активен" },
       { value: "archived", label: "Архивный" },
+      { value: "no_account", label: "Без аккаунта" },
+      { value: "has_account", label: "С аккаунтом" },
     ]
   },
   { key: "has_deals", label: "Есть покупки", type: "boolean" },
@@ -198,7 +200,7 @@ export default function AdminContacts() {
   const [search, setSearch] = useState("");
   // Initialize with "all" preset filter (hide archived by default)
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([
-    { field: "status", operator: "not_equals", value: "archived" }
+    { field: "status_account", operator: "not_equals", value: "archived" }
   ]);
   const [activePreset, setActivePreset] = useState("all");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
@@ -436,6 +438,9 @@ export default function AdminContacts() {
 
   const getContactFieldValue = useCallback((contact: Contact, fieldKey: string): any => {
     switch (fieldKey) {
+      case "status_account":
+        // Return composite value for complex filtering
+        return { status: contact.status, hasAccount: !!contact.user_id };
       case "has_telegram":
         return !!contact.telegram_user_id;
       case "has_deals":
@@ -494,10 +499,10 @@ export default function AdminContacts() {
   }, [contacts, computedDuplicateIds]);
 
   const CONTACT_PRESETS: FilterPreset[] = useMemo(() => [
-    { id: "all", label: "Все", filters: [{ field: "status", operator: "not_equals", value: "archived" }] },
+    { id: "all", label: "Все", filters: [{ field: "status_account", operator: "not_equals", value: "archived" }] },
     { id: "withDeals", label: "С покупками", filters: [{ field: "deals_count", operator: "gt", value: "0" }], count: presetCounts.withDeals },
     { id: "duplicates", label: "Дубли", filters: [{ field: "is_duplicate", operator: "equals", value: "true" }], count: presetCounts.duplicates },
-    { id: "archived", label: "Архив", filters: [{ field: "status", operator: "equals", value: "archived" }], count: presetCounts.archived },
+    { id: "archived", label: "Архив", filters: [{ field: "status_account", operator: "equals", value: "archived" }], count: presetCounts.archived },
   ], [presetCounts]);
 
   const getStatusBadge = (status: string) => {
