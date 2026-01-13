@@ -618,6 +618,10 @@ Deno.serve(async (req) => {
         payment_method: {
           types: ['credit_card'],
         },
+        // URL для кнопки "Отмена/Назад" на странице оплаты
+        cancel_url: buildReturnUrl(failUrl, 'cancelled'),
+        // Время показа результата перед редиректом (секунды)
+        auto_return: 3,
       },
       additional_data: {
         order_id: order.id,
