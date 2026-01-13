@@ -87,8 +87,9 @@ export function ConsultationPaymentDialog({
         return;
       }
 
-      if (data?.checkout?.redirect_url) {
-        window.location.href = data.checkout.redirect_url;
+      const redirectUrl = data?.redirectUrl || data?.checkout?.redirect_url;
+      if (redirectUrl) {
+        window.location.href = redirectUrl;
       } else if (data?.error) {
         throw new Error(data.error);
       } else {
