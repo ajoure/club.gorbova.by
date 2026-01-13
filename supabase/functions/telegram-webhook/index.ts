@@ -426,7 +426,93 @@ Deno.serve(async (req) => {
             console.error('Failed to fetch profile photo:', photoError);
           }
 
-          // Check subscription and grant access (v2 first, then legacy)
+          // ============================================================
+          // CRITICAL: Process PENDING orders that were waiting for Telegram link
+          // ============================================================
+          console.log('Checking for pending orders after Telegram link...');
+          
+          const { data: pendingOrders } = await supabase
+            .from('orders_v2')
+            .select(`
+              id, 
+              order_number,
+              product_id,
+              tariff_id,
+              offer_id,
+              customer_email,
+              customer_phone,
+              final_price,
+              meta,
+              products_v2!inner(name, telegram_club_id),
+              tariffs!inner(name, code, getcourse_offer_id, access_days)
+            `)
+            .eq('user_id', tokenData.user_id)
+            .eq('status', 'paid')
+            .not('meta->gc_sync_pending', 'is', null);
+
+          console.log(`Found ${pendingOrders?.length || 0} pending orders to process`);
+
+          for (const order of pendingOrders || []) {
+            try {
+              const product = (order as any).products_v2;
+              const tariff = (order as any).tariffs;
+              const orderMeta = (order.meta as Record<string, any>) || {};
+              
+              console.log(`Processing pending order ${order.order_number}...`);
+              
+              // 1. Grant Telegram access if product has club
+              if (product?.telegram_club_id) {
+                console.log('Granting Telegram access for pending order');
+                await supabase.functions.invoke('telegram-grant-access', {
+                  body: {
+                    user_id: tokenData.user_id,
+                    duration_days: tariff?.access_days || 30,
+                    source: 'telegram_link_pending',
+                    source_id: order.id,
+                  },
+                });
+              }
+              
+              // 2. Sync to GetCourse if configured
+              const getcourseOfferId = tariff?.getcourse_offer_id;
+              if (getcourseOfferId && order.customer_email) {
+                console.log(`Syncing pending order to GetCourse: offer_id=${getcourseOfferId}`);
+                
+                // Call test-getcourse-sync or send directly
+                await supabase.functions.invoke('test-getcourse-sync', {
+                  body: { orderId: order.id },
+                });
+              }
+              
+              // 3. Mark order as synced (remove pending flags)
+              await supabase
+                .from('orders_v2')
+                .update({
+                  meta: {
+                    ...orderMeta,
+                    gc_sync_pending: null,
+                    telegram_access_pending: null,
+                    synced_at: new Date().toISOString(),
+                    synced_trigger: 'telegram_link',
+                  }
+                })
+                .eq('id', order.id);
+              
+              console.log(`Order ${order.order_number} synced successfully after Telegram link`);
+            } catch (orderErr) {
+              console.error(`Error processing pending order ${order.id}:`, orderErr);
+            }
+          }
+          
+          // Clear pending notifications about Telegram linking
+          await supabase
+            .from('pending_telegram_notifications')
+            .update({ status: 'sent', sent_at: new Date().toISOString() })
+            .eq('user_id', tokenData.user_id)
+            .eq('notification_type', 'telegram_link_required')
+            .eq('status', 'pending');
+
+          // Check subscription and grant access (v2 first, then legacy) for other subscriptions
           let hasActiveSubscription = false;
           
           // Check subscriptions_v2 first
@@ -445,7 +531,7 @@ Deno.serve(async (req) => {
               body: { 
                 user_id: tokenData.user_id,
                 source: 'telegram_link',
-                source_id: subV2.order_id, // Pass order_id for GetCourse link
+                source_id: subV2.order_id,
               },
             });
           } else {

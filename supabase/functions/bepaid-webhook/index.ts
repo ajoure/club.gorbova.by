@@ -956,42 +956,78 @@ Deno.serve(async (req) => {
               }
             }
 
-            // Telegram access
-            if (productV2.telegram_club_id) {
-              await supabase.functions.invoke('telegram-grant-access', {
-                body: {
-                  user_id: orderV2.user_id,
-                  duration_days: accessDays,
+            // Check if user has Telegram linked BEFORE syncing
+            const { data: userProfile } = await supabase
+              .from('profiles')
+              .select('telegram_user_id, telegram_link_status, phone, first_name, last_name')
+              .eq('user_id', orderV2.user_id)
+              .maybeSingle();
+
+            const hasTelegramLinked = userProfile?.telegram_user_id && userProfile?.telegram_link_status === 'active';
+            
+            if (hasTelegramLinked) {
+              // Telegram linked - sync immediately
+              console.log('Telegram linked, syncing GetCourse and granting access');
+              
+              // Telegram access
+              if (productV2.telegram_club_id) {
+                await supabase.functions.invoke('telegram-grant-access', {
+                  body: {
+                    user_id: orderV2.user_id,
+                    duration_days: accessDays,
+                  },
+                });
+              }
+
+              // GetCourse sync - prefer offer-level getcourse_offer_id, fallback to tariff-level
+              const getcourseOfferId = offer?.getcourse_offer_id || tariff.getcourse_offer_id;
+              if (getcourseOfferId && orderV2.customer_email) {
+                console.log(`Syncing to GetCourse: offer_id=${getcourseOfferId}, email=${orderV2.customer_email}`);
+
+                const gcResult = await sendToGetCourse(
+                  {
+                    email: orderV2.customer_email,
+                    phone: userProfile?.phone || orderV2.customer_phone || null,
+                    firstName: userProfile?.first_name || null,
+                    lastName: userProfile?.last_name || null,
+                  },
+                  parseInt(getcourseOfferId, 10) || 0,
+                  orderV2.order_number,
+                  paymentV2.amount,
+                  tariff.code || tariff.name
+                );
+                
+                console.log('GetCourse sync result (V2):', gcResult);
+              }
+            } else {
+              // Telegram NOT linked - defer sync, mark order as pending
+              console.log('Telegram NOT linked, deferring GetCourse sync and access grant');
+              
+              await supabase
+                .from('orders_v2')
+                .update({
+                  meta: {
+                    ...((orderV2.meta as object) || {}),
+                    gc_sync_pending: true,
+                    telegram_access_pending: true,
+                    pending_since: new Date().toISOString(),
+                  }
+                })
+                .eq('id', orderV2.id);
+              
+              // Queue notification for user to link Telegram
+              await supabase.from('pending_telegram_notifications').insert({
+                user_id: orderV2.user_id,
+                notification_type: 'telegram_link_required',
+                payload: {
+                  order_id: orderV2.id,
+                  product_name: productV2.name,
+                  tariff_name: tariff.name,
                 },
+                priority: 10,
               });
-            }
-
-            // GetCourse sync - prefer offer-level getcourse_offer_id, fallback to tariff-level
-            const getcourseOfferId = offer?.getcourse_offer_id || tariff.getcourse_offer_id;
-            if (getcourseOfferId && orderV2.customer_email) {
-              console.log(`Syncing to GetCourse: offer_id=${getcourseOfferId}, email=${orderV2.customer_email}`);
               
-              // Get customer data from profile
-              const { data: profile } = await supabase
-                .from('profiles')
-                .select('phone, first_name, last_name')
-                .eq('user_id', orderV2.user_id)
-                .maybeSingle();
-
-              const gcResult = await sendToGetCourse(
-                {
-                  email: orderV2.customer_email,
-                  phone: profile?.phone || orderV2.customer_phone || null,
-                  firstName: profile?.first_name || null,
-                  lastName: profile?.last_name || null,
-                },
-                parseInt(getcourseOfferId, 10) || 0,
-                orderV2.order_number,
-                paymentV2.amount,
-                tariff.code || tariff.name
-              );
-              
-              console.log('GetCourse sync result (V2):', gcResult);
+              console.log('Created pending notification for Telegram linking');
             }
 
             // Audit

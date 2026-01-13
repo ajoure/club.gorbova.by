@@ -59,6 +59,9 @@ export default function AdminBepaidSync() {
   // Process queue state
   const [isProcessingQueue, setIsProcessingQueue] = useState(false);
   
+  // Refresh from bePaid API state
+  const [isRefreshingFromApi, setIsRefreshingFromApi] = useState(false);
+  
   const queryClient = useQueryClient();
 
   const { payments, paymentsLoading, refetchPayments } = useBepaidPayments(dateFilter);
@@ -109,6 +112,39 @@ export default function AdminBepaidSync() {
     refetchPayments();
     refetchQueue();
     queryClient.invalidateQueries({ queryKey: ["bepaid-stats"] });
+  };
+
+  // Fetch new transactions from bePaid API
+  const handleRefreshFromBepaidApi = async () => {
+    setIsRefreshingFromApi(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('bepaid-fetch-transactions');
+      if (error) throw error;
+      
+      const result = data as { 
+        transactions_fetched?: number; 
+        queued_for_review?: number;
+        new_payments?: number;
+        error?: string;
+      };
+      
+      if (result.error) {
+        toast.error(`Ошибка: ${result.error}`);
+      } else {
+        toast.success(
+          `Загружено ${result.transactions_fetched || 0} транзакций, ` +
+          `${result.queued_for_review || 0} добавлено в очередь`
+        );
+        refetchPayments();
+        refetchQueue();
+        queryClient.invalidateQueries({ queryKey: ["bepaid-stats"] });
+      }
+    } catch (e: any) {
+      console.error('Error refreshing from bePaid:', e);
+      toast.error('Ошибка обновления: ' + (e.message || 'Неизвестная ошибка'));
+    } finally {
+      setIsRefreshingFromApi(false);
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -238,10 +274,21 @@ export default function AdminBepaidSync() {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            {/* Refresh from API button */}
+            <Button 
+              variant="outline" 
+              onClick={handleRefreshFromBepaidApi} 
+              disabled={isRefreshingFromApi}
+              className="gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefreshingFromApi ? 'animate-spin' : ''}`} />
+              Обновить из bePaid
+            </Button>
+            
             {/* Import button - prominent in header */}
             <Button onClick={() => setImportDialogOpen(true)} className="gap-2">
               <Upload className="h-4 w-4" />
-              Импорт из bePaid
+              Импорт CSV/Excel
             </Button>
             
             {/* Date filter */}
