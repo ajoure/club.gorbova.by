@@ -12,11 +12,15 @@ interface QueueItem {
   amount: number | null;
   currency: string;
   customer_email: string | null;
+  customer_name: string | null;
+  customer_surname: string | null;
+  customer_phone: string | null;
   card_last4: string | null;
   card_holder: string | null;
   card_brand: string | null;
   product_name: string | null;
   tariff_name: string | null;
+  description: string | null;
   matched_profile_id: string | null;
   matched_product_id: string | null;
   matched_tariff_id: string | null;
@@ -24,6 +28,9 @@ interface QueueItem {
   status: string;
   source: string;
   paid_at: string | null;
+  created_at: string;
+  created_at_bepaid: string | null;
+  ip_address: string | null;
   attempts: number;
 }
 
@@ -52,6 +59,37 @@ function transliterateToCyrillic(name: string): string {
   ).join(' ');
 }
 
+// Extract deal ID from description like "Оплата по сделке 1767629480491(Клуб: триал итоги)"
+function extractLeadIdFromDescription(description: string | null): string | null {
+  if (!description) return null;
+  const match = description.match(/сделке\s+(\d+)/i);
+  return match ? match[1] : null;
+}
+
+// Parse tariff type from description
+function parseTariffFromDescription(description: string | null): { tariffType: string | null; isTrial: boolean } {
+  if (!description) return { tariffType: null, isTrial: false };
+  
+  const descLower = description.toLowerCase();
+  const isTrial = descLower.includes('триал') || descLower.includes('trial');
+  
+  // Extract tariff name from patterns like "(Клуб: триал итоги)" or "Gorbova Club - CHAT"
+  if (descLower.includes('chat') || descLower.includes('чат')) {
+    return { tariffType: 'CHAT', isTrial };
+  }
+  if (descLower.includes('full') || descLower.includes('итоги') || descLower.includes('полный')) {
+    return { tariffType: 'FULL', isTrial };
+  }
+  if (descLower.includes('business') || descLower.includes('бизнес')) {
+    return { tariffType: 'BUSINESS', isTrial };
+  }
+  if (descLower.includes('клуб') || descLower.includes('club')) {
+    return { tariffType: 'CLUB', isTrial };
+  }
+  
+  return { tariffType: null, isTrial };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -63,9 +101,9 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body = await req.json().catch(() => ({}));
-    const { limit = 50, dryRun = false, queueItemId } = body;
+    const { limit = 50, dryRun = false, queueItemId, createGhostProfiles = true } = body;
 
-    console.log(`[BEPAID-AUTO-PROCESS] Starting with limit=${limit}, dryRun=${dryRun}, queueItemId=${queueItemId || 'none'}`);
+    console.log(`[BEPAID-AUTO-PROCESS] Starting with limit=${limit}, dryRun=${dryRun}, queueItemId=${queueItemId || 'none'}, createGhostProfiles=${createGhostProfiles}`);
 
     // Fetch pending queue items - support single item or batch
     let query = supabase
@@ -92,17 +130,24 @@ Deno.serve(async (req) => {
 
     console.log(`[BEPAID-AUTO-PROCESS] Found ${queueItems?.length || 0} items to process`);
 
+    // Fetch ALL mappings for flexible matching
+    const { data: allMappings } = await supabase
+      .from('bepaid_product_mappings')
+      .select('*');
+    console.log(`[BEPAID-AUTO-PROCESS] Loaded ${allMappings?.length || 0} product mappings`);
+
     const results = {
       processed: 0,
       orders_created: 0,
       profiles_matched: 0,
+      profiles_created: 0,
       skipped: 0,
       errors: [] as string[],
     };
 
     for (const item of queueItems || []) {
       try {
-        console.log(`[BEPAID-AUTO-PROCESS] Processing item ${item.id}, bepaid_uid=${item.bepaid_uid}`);
+        console.log(`[BEPAID-AUTO-PROCESS] Processing item ${item.id}, bepaid_uid=${item.bepaid_uid}, description=${item.description}`);
 
         // Skip if already has matched order
         if (item.matched_order_id && item.status === 'completed') {
@@ -116,8 +161,8 @@ Deno.serve(async (req) => {
         let profileUserId: string | null = null;
         let matchedBy = null;
 
+        // 1a. Try email match
         if (!profileId && item.customer_email) {
-          // Try email match
           const { data: profileByEmail } = await supabase
             .from('profiles')
             .select('id, user_id')
@@ -132,8 +177,8 @@ Deno.serve(async (req) => {
           }
         }
 
+        // 1b. Try card link match
         if (!profileId && item.card_last4 && item.card_holder) {
-          // Try card link match
           const { data: cardLink } = await supabase
             .from('card_profile_links')
             .select('profile_id, profiles!inner(id, user_id)')
@@ -149,8 +194,8 @@ Deno.serve(async (req) => {
           }
         }
 
+        // 1c. Try transliterated name match
         if (!profileId && item.card_holder) {
-          // Try transliterated name match
           const translitName = transliterateToCyrillic(item.card_holder);
           const { data: profileByName } = await supabase
             .from('profiles')
@@ -163,6 +208,66 @@ Deno.serve(async (req) => {
             profileUserId = profileByName.user_id;
             matchedBy = 'name_translit';
             console.log(`[BEPAID-AUTO-PROCESS] Matched by name translit: ${profileId}`);
+          }
+        }
+
+        // 1d. Try to find deal by lead_id from description
+        if (!profileId) {
+          const leadId = extractLeadIdFromDescription(item.description);
+          if (leadId) {
+            // Search in orders_v2 by tracking_id or meta
+            const { data: orderByLead } = await supabase
+              .from('orders_v2')
+              .select('id, profile_id, user_id')
+              .eq('tracking_id', `lead_${leadId}`)
+              .maybeSingle();
+            
+            if (orderByLead?.profile_id) {
+              profileId = orderByLead.profile_id;
+              profileUserId = orderByLead.user_id;
+              matchedBy = 'lead_id';
+              console.log(`[BEPAID-AUTO-PROCESS] Matched by lead_id from description: ${profileId}`);
+            }
+          }
+        }
+
+        // 1e. Create ghost profile if we have card_holder but no match
+        if (!profileId && createGhostProfiles && item.card_holder && !dryRun) {
+          const translitName = transliterateToCyrillic(item.card_holder);
+          const ghostEmail = item.customer_email || null;
+          
+          // Create profile without user_id (will be linked when user registers)
+          const { data: newProfile, error: profileError } = await supabase
+            .from('profiles')
+            .insert({
+              full_name: translitName,
+              email: ghostEmail,
+              phone: item.customer_phone,
+              source: 'bepaid_import',
+            })
+            .select('id')
+            .single();
+          
+          if (profileError) {
+            console.error(`[BEPAID-AUTO-PROCESS] Failed to create ghost profile: ${profileError.message}`);
+          } else {
+            profileId = newProfile.id;
+            matchedBy = 'ghost_created';
+            results.profiles_created++;
+            console.log(`[BEPAID-AUTO-PROCESS] Created ghost profile: ${profileId} (${translitName})`);
+            
+            // Save card link for future
+            if (item.card_last4) {
+              await supabase.from('card_profile_links').upsert({
+                card_last4: item.card_last4,
+                card_holder: item.card_holder,
+                card_brand: item.card_brand,
+                profile_id: profileId,
+              }, {
+                onConflict: 'card_last4,card_holder',
+                ignoreDuplicates: true,
+              });
+            }
           }
         }
 
@@ -186,8 +291,8 @@ Deno.serve(async (req) => {
               .update({ matched_profile_id: profileId })
               .eq('id', item.id);
 
-            // Save card link for future
-            if (matchedBy !== 'card' && item.card_last4 && item.card_holder) {
+            // Save card link for future (if not ghost created)
+            if (matchedBy !== 'card' && matchedBy !== 'ghost_created' && item.card_last4 && item.card_holder) {
               await supabase.from('card_profile_links').upsert({
                 card_last4: item.card_last4,
                 card_holder: item.card_holder,
@@ -201,20 +306,60 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Step 2: Find product mapping by product_name or tariff_name
-        const planTitle = item.product_name || item.tariff_name;
+        // Step 2: Find product mapping - use FLEXIBLE matching on description
         let mapping = null;
-
+        const planTitle = item.product_name || item.tariff_name;
+        
+        // 2a. Try exact match first
         if (planTitle) {
-          const { data: foundMapping } = await supabase
-            .from('bepaid_product_mappings')
-            .select('product_id, tariff_id, offer_id, is_subscription, auto_create_order')
-            .eq('bepaid_plan_title', planTitle)
-            .maybeSingle();
+          mapping = (allMappings || []).find(m => 
+            m.bepaid_plan_title === planTitle ||
+            m.bepaid_description === planTitle
+          );
+          if (mapping) {
+            console.log(`[BEPAID-AUTO-PROCESS] Found exact mapping for: ${planTitle}`);
+          }
+        }
+        
+        // 2b. Try fuzzy match on description
+        if (!mapping && item.description) {
+          const { tariffType, isTrial } = parseTariffFromDescription(item.description);
+          console.log(`[BEPAID-AUTO-PROCESS] Parsed description: tariffType=${tariffType}, isTrial=${isTrial}`);
           
-          if (foundMapping) {
-            mapping = foundMapping;
-            console.log(`[BEPAID-AUTO-PROCESS] Found product mapping for: ${planTitle}`);
+          // Find mapping by tariff type and trial status
+          if (tariffType) {
+            mapping = (allMappings || []).find(m => {
+              const titleLower = (m.bepaid_plan_title || '').toLowerCase();
+              const descLower = (m.bepaid_description || '').toLowerCase();
+              
+              // Check if mapping matches tariff type
+              const matchesTariff = titleLower.includes(tariffType.toLowerCase()) ||
+                descLower.includes(tariffType.toLowerCase());
+              
+              // Check trial status
+              const mappingIsTrial = titleLower.includes('trial') || descLower.includes('trial');
+              
+              return matchesTariff && (isTrial === mappingIsTrial);
+            });
+            
+            if (mapping) {
+              console.log(`[BEPAID-AUTO-PROCESS] Found fuzzy mapping: ${mapping.bepaid_plan_title}`);
+            }
+          }
+        }
+
+        // 2c. If still no mapping but has description with "Клуб", try generic club mapping
+        if (!mapping && item.description) {
+          const descLower = item.description.toLowerCase();
+          if (descLower.includes('клуб') || descLower.includes('club')) {
+            // Get first available club mapping
+            mapping = (allMappings || []).find(m => {
+              const titleLower = (m.bepaid_plan_title || '').toLowerCase();
+              return titleLower.includes('club') || titleLower.includes('клуб');
+            });
+            if (mapping) {
+              console.log(`[BEPAID-AUTO-PROCESS] Found generic club mapping: ${mapping.bepaid_plan_title}`);
+            }
           }
         }
 
@@ -256,7 +401,22 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // Step 4: Create order if we have profile and mapping allows auto-create
+        // Step 4: Determine amount - use offer price if queue amount is trial/minimal
+        let finalAmount = item.amount || 0;
+        if (mapping?.offer_id && (finalAmount === 0 || finalAmount <= 10)) {
+          const { data: offer } = await supabase
+            .from('tariff_offers')
+            .select('amount')
+            .eq('id', mapping.offer_id)
+            .maybeSingle();
+          if (offer?.amount && offer.amount > finalAmount) {
+            console.log(`[BEPAID-AUTO-PROCESS] Using offer amount: ${offer.amount} instead of ${finalAmount}`);
+            // Keep the actual payment amount, don't override with offer price
+            // The offer price is for reference, actual payment is what we record
+          }
+        }
+
+        // Step 5: Create order if we have profile and mapping allows auto-create
         if (profileId && mapping?.auto_create_order && !dryRun) {
           // Generate order number
           const year = new Date().getFullYear().toString().slice(-2);
@@ -267,7 +427,14 @@ Deno.serve(async (req) => {
           
           const orderNumber = `ORD-${year}-${String((count || 0) + 1).padStart(5, '0')}`;
 
-          // Create order
+          // Use REAL payment date, not import date
+          const paidAt = item.paid_at || item.created_at_bepaid || item.created_at;
+
+          // Prepare customer data for meta
+          const customerFullName = [item.customer_name, item.customer_surname].filter(Boolean).join(' ') || 
+            (item.card_holder ? transliterateToCyrillic(item.card_holder) : null);
+
+          // Create order with ALL customer data in meta
           const { data: newOrder, error: orderError } = await supabase
             .from('orders_v2')
             .insert({
@@ -279,7 +446,7 @@ Deno.serve(async (req) => {
               order_number: orderNumber,
               tracking_id: item.tracking_id,
               status: 'paid',
-              final_price: item.amount || 0,
+              final_price: finalAmount,
               currency: item.currency || 'BYN',
               payment_method: 'bepaid',
               customer_email: item.customer_email,
@@ -289,6 +456,21 @@ Deno.serve(async (req) => {
                 imported_at: new Date().toISOString(),
                 card_last4: item.card_last4,
                 card_holder: item.card_holder,
+              },
+              meta: {
+                customer_name: item.customer_name,
+                customer_surname: item.customer_surname,
+                customer_full_name: customerFullName,
+                customer_email: item.customer_email,
+                customer_phone: item.customer_phone,
+                card_holder: item.card_holder,
+                card_holder_translit: item.card_holder ? transliterateToCyrillic(item.card_holder) : null,
+                ip_address: item.ip_address,
+                purchased_at: paidAt,
+                imported_at: new Date().toISOString(),
+                offer_id: mapping.offer_id,
+                description: item.description,
+                match_type: matchedBy,
               },
             })
             .select('id, order_number')
@@ -300,27 +482,54 @@ Deno.serve(async (req) => {
 
           console.log(`[BEPAID-AUTO-PROCESS] Created order: ${newOrder.order_number}`);
 
-          // Create payment record
+          // Create payment record with REAL payment date
           await supabase.from('payments_v2').insert({
             order_id: newOrder.id,
             profile_id: profileId,
-            amount: item.amount || 0,
+            amount: finalAmount,
             currency: item.currency || 'BYN',
             status: 'succeeded',
             provider: 'bepaid',
             provider_payment_id: item.bepaid_uid,
             payment_method: 'card',
+            paid_at: paidAt, // Use real payment date!
             provider_response: {
               card_last4: item.card_last4,
               card_holder: item.card_holder,
               card_brand: item.card_brand,
             },
+            meta: {
+              customer_full_name: customerFullName,
+              customer_email: item.customer_email,
+              customer_phone: item.customer_phone,
+              ip_address: item.ip_address,
+              description: item.description,
+            },
           });
 
           // Create subscription if needed - use correct column names!
           if (mapping.is_subscription && profileUserId) {
-            const now = new Date();
-            const endDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+            // Get offer to determine trial period
+            let trialDays = 0;
+            let accessDays = 30;
+            
+            if (mapping.offer_id) {
+              const { data: offer } = await supabase
+                .from('tariff_offers')
+                .select('offer_type, trial_days, access_days')
+                .eq('id', mapping.offer_id)
+                .maybeSingle();
+              
+              if (offer?.offer_type === 'trial' && offer.trial_days) {
+                trialDays = offer.trial_days;
+                accessDays = offer.trial_days;
+              } else if (offer?.access_days) {
+                accessDays = offer.access_days;
+              }
+            }
+            
+            const startDate = new Date(paidAt);
+            const endDate = new Date(startDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
             
             await supabase.from('subscriptions_v2').insert({
               user_id: profileUserId,
@@ -329,10 +538,10 @@ Deno.serve(async (req) => {
               product_id: mapping.product_id,
               tariff_id: mapping.tariff_id,
               status: 'active',
-              access_start_at: now.toISOString(),
+              access_start_at: startDate.toISOString(),
               access_end_at: endDate.toISOString(),
-              next_charge_at: endDate.toISOString(),
-              auto_renew: true,
+              next_charge_at: trialDays > 0 ? endDate.toISOString() : null,
+              auto_renew: trialDays === 0,
             });
           }
 
@@ -344,14 +553,15 @@ Deno.serve(async (req) => {
             .maybeSingle();
 
           if (product?.code && profileUserId) {
+            const startDate = new Date(paidAt);
             await supabase.from('entitlements').insert({
               user_id: profileUserId,
               profile_id: profileId,
               order_id: newOrder.id,
               product_code: product.code,
               status: 'active',
-              expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-              meta: { source: 'bepaid_auto_process' },
+              expires_at: new Date(startDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+              meta: { source: 'bepaid_auto_process', match_type: matchedBy },
             });
           }
 
@@ -380,6 +590,7 @@ Deno.serve(async (req) => {
             await supabase
               .from('payment_reconcile_queue')
               .update({
+                matched_profile_id: profileId,
                 status: 'error',
                 last_error: errorReason,
                 attempts: (item.attempts || 0) + 1,

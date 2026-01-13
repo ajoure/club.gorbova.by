@@ -48,11 +48,34 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
     enabled: !!selectedTariffId,
   });
 
-  // Find matching mapping
-  const matchedMapping = mappings.find(m => 
-    m.bepaid_plan_title === item.product_name ||
-    m.bepaid_description === item.product_name
-  );
+  // Find matching mapping - check product_name, description, and fuzzy match
+  const matchedMapping = mappings.find(m => {
+    // Exact match on product_name
+    if (m.bepaid_plan_title === item.product_name || m.bepaid_description === item.product_name) {
+      return true;
+    }
+    // Fuzzy match on description
+    if (item.description) {
+      const descLower = item.description.toLowerCase();
+      const titleLower = (m.bepaid_plan_title || '').toLowerCase();
+      const mappingDescLower = (m.bepaid_description || '').toLowerCase();
+      
+      // Check for tariff type matches
+      if (descLower.includes('триал') || descLower.includes('trial')) {
+        if (titleLower.includes('trial')) return true;
+      }
+      if (descLower.includes('chat') || descLower.includes('чат')) {
+        if (titleLower.includes('chat') || mappingDescLower.includes('chat')) return true;
+      }
+      if (descLower.includes('итоги') || descLower.includes('full')) {
+        if (titleLower.includes('full') || mappingDescLower.includes('full')) return true;
+      }
+      if (descLower.includes('business') || descLower.includes('бизнес')) {
+        if (titleLower.includes('business') || mappingDescLower.includes('business')) return true;
+      }
+    }
+    return false;
+  });
 
   // Auto-select offer based on payment amount
   useEffect(() => {
@@ -128,94 +151,125 @@ export function CreateOrderButton({ item, onSuccess }: BepaidQueueActionsProps) 
             {/* Customer data from bePaid */}
             <div className="bg-muted/50 p-3 rounded-lg space-y-2 text-sm">
               <div className="font-medium text-xs uppercase text-muted-foreground mb-2">Данные из bePaid</div>
-              {(item.customer_name || item.customer_surname || item.card_holder) && (
+              
+              {/* Name from card_holder (always available in file imports) */}
+              {item.card_holder && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Владелец карты:</span>
+                  <span className="font-medium">{item.card_holder}</span>
+                </div>
+              )}
+              
+              {/* Customer name if different from card_holder */}
+              {(item.customer_name || item.customer_surname) && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">ФИО клиента:</span>
                   <span className="font-medium">
-                    {[item.customer_name, item.customer_surname].filter(Boolean).join(" ") || item.card_holder || "—"}
+                    {[item.customer_name, item.customer_surname].filter(Boolean).join(" ")}
                   </span>
                 </div>
               )}
+              
               {item.customer_email && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Email:</span>
                   <span className="font-medium">{item.customer_email}</span>
                 </div>
               )}
+              
               {item.customer_phone && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Телефон:</span>
                   <span className="font-medium">{item.customer_phone}</span>
                 </div>
               )}
+              
+              {item.ip_address && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">IP адрес:</span>
+                  <span className="font-mono text-xs">{item.ip_address}</span>
+                </div>
+              )}
+              
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Дата платежа:</span>
                 <span className="font-medium">
                   {item.paid_at ? new Date(item.paid_at).toLocaleString("ru-RU") : new Date(item.created_at).toLocaleString("ru-RU")}
                 </span>
               </div>
+              
+              {item.description && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Описание:</span>
+                  <span className="font-medium text-xs max-w-[200px] truncate" title={item.description}>
+                    {item.description}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Deal info */}
             <div className="bg-muted/50 p-3 rounded-lg space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Связанный контакт:</span>
-                <span className="font-medium">{item.matched_profile_name}</span>
+                <span className="font-medium">{item.matched_profile_name || "Не связан"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Сумма:</span>
                 <span className="font-medium">{item.amount ? item.amount.toFixed(2) : "0.00"} {item.currency}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Продукт bePaid:</span>
-                <span className="font-medium">{item.product_name || "—"}</span>
+                <span className="text-muted-foreground">Продукт (определён):</span>
+                <span className="font-medium">{item.product_name || item.description?.slice(0, 30) || "—"}</span>
               </div>
-              {matchedMapping && (
+              {matchedMapping ? (
                 <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Найден маппинг:</span>
-                  <Badge variant="default">{matchedMapping.product_name || "Настроен"}</Badge>
+                  <span className="text-muted-foreground">Маппинг:</span>
+                  <Badge variant="default">{matchedMapping.bepaid_plan_title || "Настроен"}</Badge>
+                </div>
+              ) : (
+                <div className="flex justify-between items-center">
+                  <span className="text-muted-foreground">Маппинг:</span>
+                  <Badge variant="outline" className="text-amber-600">Не найден</Badge>
                 </div>
               )}
             </div>
 
-            {!matchedMapping && (
-              <>
-                <div className="space-y-2">
-                  <Label>Продукт в системе</Label>
-                  <Select value={selectedProductId} onValueChange={(v) => { setSelectedProductId(v); setSelectedTariffId(""); setSelectedOfferId(""); }}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Выберите продукт" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Без продукта</SelectItem>
-                      {products?.map((product) => (
-                        <SelectItem key={product.id} value={product.id}>
-                          {product.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+            {/* Always show product/tariff selection for manual override */}
+            <div className="space-y-2">
+              <Label>Продукт в системе {matchedMapping && <span className="text-muted-foreground text-xs">(авто: {matchedMapping.product_name})</span>}</Label>
+              <Select value={selectedProductId} onValueChange={(v) => { setSelectedProductId(v); setSelectedTariffId(""); setSelectedOfferId(""); }}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите продукт" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Без продукта</SelectItem>
+                  {products?.map((product) => (
+                    <SelectItem key={product.id} value={product.id}>
+                      {product.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-                {selectedProductId && selectedProductId !== "__none__" && allTariffs && allTariffs.filter(t => t.product_id === selectedProductId).length > 0 && (
-                  <div className="space-y-2">
-                    <Label>Тариф</Label>
-                    <Select value={selectedTariffId} onValueChange={(v) => { setSelectedTariffId(v); setSelectedOfferId(""); }}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Выберите тариф" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">Без тарифа</SelectItem>
-                        {allTariffs.filter(t => t.product_id === selectedProductId).map((tariff) => (
-                          <SelectItem key={tariff.id} value={tariff.id}>
-                            {tariff.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-              </>
+            {selectedProductId && selectedProductId !== "__none__" && allTariffs && allTariffs.filter(t => t.product_id === selectedProductId).length > 0 && (
+              <div className="space-y-2">
+                <Label>Тариф {matchedMapping?.tariff_name && <span className="text-muted-foreground text-xs">(авто: {matchedMapping.tariff_name})</span>}</Label>
+                <Select value={selectedTariffId} onValueChange={(v) => { setSelectedTariffId(v); setSelectedOfferId(""); }}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите тариф" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Без тарифа</SelectItem>
+                    {allTariffs.filter(t => t.product_id === selectedProductId).map((tariff) => (
+                      <SelectItem key={tariff.id} value={tariff.id}>
+                        {tariff.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             )}
 
             {/* Offer selection - always show if tariff is selected */}
