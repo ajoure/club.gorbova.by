@@ -164,7 +164,7 @@ export default function LibraryLesson() {
         {blocks.length > 0 ? (
           <Card className="mb-6">
             <CardContent className="py-6">
-              <LessonBlockRenderer blocks={blocks} />
+              <LessonBlockRenderer blocks={blocks} lessonId={currentLesson?.id} />
             </CardContent>
           </Card>
         ) : (
