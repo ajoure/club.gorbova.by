@@ -294,9 +294,10 @@ export function EditSubscriptionDialog({
       // Also call the edge function to actually grant access in Telegram
       const { error } = await supabase.functions.invoke("telegram-grant-access", {
         body: {
-          userId: subscription.user_id,
-          clubId: currentClubId,
-          accessUntil: dateRange?.to?.toISOString() || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          user_id: subscription.user_id,
+          club_id: currentClubId,
+          valid_until: dateRange?.to?.toISOString() || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          is_manual: true,
         },
       });
       
@@ -319,8 +320,8 @@ export function EditSubscriptionDialog({
     try {
       const { error } = await supabase.functions.invoke("telegram-revoke-access", {
         body: {
-          userId: subscription.user_id,
-          clubId: currentClubId,
+          user_id: subscription.user_id,
+          club_id: currentClubId,
         },
       });
       
