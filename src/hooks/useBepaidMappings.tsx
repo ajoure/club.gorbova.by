@@ -285,24 +285,33 @@ export function useBepaidQueueActions() {
 
       if (orderError) throw orderError;
 
-      // Create payment
-      const { error: paymentError } = await supabase
+      // Check if payment already exists (prevent duplicates)
+      const { data: existingPayment } = await supabase
         .from("payments_v2")
-        .insert([{
-          order_id: order.id,
-          user_id: profile.user_id || profile.id,
-          amount: amount,
-          currency: queueItem.currency || "BYN",
-          status: "succeeded",
-          provider: "bepaid",
-          provider_payment_id: queueItem.bepaid_uid,
-          card_last4: card.last_4 || null,
-          card_brand: card.brand || null,
-          paid_at: queueItem.created_at,
-          provider_response: payload,
-        }]);
+        .select("id")
+        .eq("provider_payment_id", queueItem.bepaid_uid)
+        .maybeSingle();
 
-      if (paymentError) throw paymentError;
+      if (!existingPayment) {
+        // Create payment only if it doesn't exist
+        const { error: paymentError } = await supabase
+          .from("payments_v2")
+          .insert([{
+            order_id: order.id,
+            user_id: profile.user_id || profile.id,
+            amount: amount,
+            currency: queueItem.currency || "BYN",
+            status: "succeeded",
+            provider: "bepaid",
+            provider_payment_id: queueItem.bepaid_uid,
+            card_last4: card.last_4 || null,
+            card_brand: card.brand || null,
+            paid_at: queueItem.created_at,
+            provider_response: payload,
+          }]);
+
+        if (paymentError) throw paymentError;
+      }
 
       // Create subscription if it's a subscription product
       if (plan.infinite || plan.billing_cycles) {
