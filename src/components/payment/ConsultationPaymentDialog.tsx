@@ -71,12 +71,14 @@ export function ConsultationPaymentDialog({
       }
 
       // Initialize payment via bePaid - it creates order internally
+      // isOneTime: true - consultations are one-time payments, not subscriptions
       const { data, error } = await supabase.functions.invoke("bepaid-create-token", {
         body: {
           productId: tariff.product_id,
           customerEmail: user.email,
           tariffCode: tariffCode,
           description: tariffName,
+          isOneTime: true,
         },
       });
 

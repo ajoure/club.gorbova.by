@@ -19,6 +19,7 @@ interface CreateTokenRequest {
   isTrial?: boolean; // Trial payment flag
   trialDays?: number; // Trial duration in days
   offerId?: string; // Offer ID for virtual card blocking check
+  isOneTime?: boolean; // One-time payment (no subscription/recurring), e.g., consultations
 }
 
 interface ProductInfo {
@@ -94,6 +95,7 @@ Deno.serve(async (req) => {
       isTrial,
       trialDays,
       offerId,
+      isOneTime,
     }: CreateTokenRequest = await req.json();
 
     if (!productId || !customerEmail) {
@@ -635,9 +637,100 @@ Deno.serve(async (req) => {
       },
     };
 
+    const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+
+    // For one-time payments (e.g., consultations), use checkout API instead of subscriptions
+    if (isOneTime) {
+      console.log('Processing one-time payment via checkout API');
+      
+      const checkoutPayload = {
+        checkout: {
+          version: '2.1',
+          transaction_type: 'payment',
+          order: {
+            amount: Math.round(paymentAmount * 100), // Convert to cents
+            currency: productInfo.currency,
+            description: description || productInfo.name,
+            tracking_id: trackingId,
+          },
+          settings: {
+            language: 'ru',
+            return_url: buildReturnUrl(successUrl, 'processing'),
+            cancel_url: buildReturnUrl(failUrl, 'cancelled'),
+            notification_url: `${supabaseUrl}/functions/v1/bepaid-webhook`,
+            auto_return: 3,
+          },
+          customer: {
+            email: emailLower,
+            first_name: customerFirstName || undefined,
+            last_name: customerLastName || undefined,
+            phone: customerPhone || undefined,
+            ip: customerIp,
+          },
+        },
+      };
+
+      console.log('Sending checkout to bePaid:', JSON.stringify(checkoutPayload, null, 2));
+
+      const checkoutResponse = await fetch('https://checkout.bepaid.by/ctp/api/checkouts', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${bepaidAuth}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(checkoutPayload),
+      });
+
+      const checkoutData = await checkoutResponse.json();
+      console.log('bePaid checkout response:', JSON.stringify(checkoutData, null, 2));
+
+      const checkoutToken = checkoutData?.checkout?.token as string | undefined;
+      const checkoutRedirectUrl = checkoutData?.checkout?.redirect_url as string | undefined;
+
+      if (!checkoutResponse.ok || !checkoutToken || !checkoutRedirectUrl) {
+        const errMsg = checkoutData?.message || checkoutData?.errors?.[0]?.message || 'Payment service error';
+        console.error('bePaid checkout API error:', errMsg, checkoutData);
+
+        await supabase
+          .from('orders')
+          .update({ status: 'failed', error_message: errMsg })
+          .eq('id', order.id);
+
+        return new Response(
+          JSON.stringify({ success: false, error: errMsg }),
+          { status: checkoutResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Persist checkout token on our order
+      await supabase
+        .from('orders')
+        .update({
+          bepaid_token: checkoutToken,
+          status: 'processing',
+          meta: {
+            ...(order.meta as Record<string, any> || {}),
+            bepaid_checkout_token: checkoutToken,
+            is_one_time: true,
+          },
+        })
+        .eq('id', order.id);
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          token: checkoutToken,
+          redirectUrl: checkoutRedirectUrl,
+          orderId: order.id,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // For subscriptions/recurring payments
     console.log('Sending subscription to bePaid:', JSON.stringify(subscriptionPayload, null, 2));
 
-    const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
     const bepaidResponse = await fetch('https://api.bepaid.by/subscriptions', {
       method: 'POST',
       headers: {

@@ -4,6 +4,7 @@ import { ProductLandingHeader } from "@/components/landing/ProductLandingHeader"
 import { ProductLandingFooter } from "@/components/landing/ProductLandingFooter";
 import Landing from "@/pages/Landing";
 import CourseAccountant from "@/pages/CourseAccountant";
+import Consultation from "@/pages/Consultation";
 import { Loader2 } from "lucide-react";
 
 export function DomainHomePage() {
@@ -21,9 +22,17 @@ export function DomainHomePage() {
   // Check for course domain
   const isCourseDomain = hostname === "cb.gorbova.by";
   
+  // Check for consultation domain
+  const isConsultationDomain = hostname === "consultation.gorbova.by";
+  
   // Course domain → show course landing
   if (isCourseDomain) {
     return <CourseAccountant />;
+  }
+  
+  // Consultation domain → show consultation landing
+  if (isConsultationDomain) {
+    return <Consultation />;
   }
   
   // Fetch product data for the current domain
