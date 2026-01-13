@@ -572,32 +572,46 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
             tx.import_status = 'error';
             tx.import_error = error.message;
           } else {
-            // Check if we should auto-create order
-            if (autoCreateOrders && tx.matched_profile_id && insertedRecord) {
-              const mapping = mappings.find(m => 
-                m.bepaid_plan_title === tx.description || 
-                m.bepaid_plan_title === tx.card_holder
-              );
-              
-              if (mapping && mapping.auto_create_order && mapping.product_id) {
-                try {
-                  await createOrderFromQueueAsync({
-                    queueItemId: insertedRecord.id,
-                    profileId: tx.matched_profile_id,
-                    productId: mapping.product_id || undefined,
-                    tariffId: mapping.tariff_id || undefined,
-                    offerId: mapping.offer_id || undefined,
-                  });
-                  results.push({ uid: tx.uid, status: 'order_created' });
-                  tx.import_status = 'order_created';
-                  tx.auto_created_order = true;
-                  ordersCreated++;
-                } catch (orderError: any) {
-                  // Order creation failed, but import succeeded
-                  results.push({ uid: tx.uid, status: 'imported' });
-                  tx.import_status = 'imported';
-                  console.error("Auto-create order failed:", orderError);
+              // Check if we should auto-create order
+              if (autoCreateOrders && tx.matched_profile_id && insertedRecord) {
+                // First check if payment already exists (prevent duplicates)
+                const { data: existingPayment } = await supabase
+                  .from('payments_v2')
+                  .select('id')
+                  .eq('provider_payment_id', tx.uid)
+                  .maybeSingle();
+
+                if (existingPayment) {
+                  // Payment already exists, skip order creation
+                  results.push({ uid: tx.uid, status: 'exists' });
+                  tx.import_status = 'exists';
+                  continue;
                 }
+
+                const mapping = mappings.find(m => 
+                  m.bepaid_plan_title === tx.description || 
+                  m.bepaid_plan_title === tx.card_holder
+                );
+                
+                if (mapping && mapping.auto_create_order && mapping.product_id) {
+                  try {
+                    await createOrderFromQueueAsync({
+                      queueItemId: insertedRecord.id,
+                      profileId: tx.matched_profile_id,
+                      productId: mapping.product_id || undefined,
+                      tariffId: mapping.tariff_id || undefined,
+                      offerId: mapping.offer_id || undefined,
+                    });
+                    results.push({ uid: tx.uid, status: 'order_created' });
+                    tx.import_status = 'order_created';
+                    tx.auto_created_order = true;
+                    ordersCreated++;
+                  } catch (orderError: any) {
+                    // Order creation failed, but import succeeded
+                    results.push({ uid: tx.uid, status: 'imported' });
+                    tx.import_status = 'imported';
+                    console.error("Auto-create order failed:", orderError);
+                  }
               } else {
                 results.push({ uid: tx.uid, status: 'imported' });
                 tx.import_status = 'imported';
