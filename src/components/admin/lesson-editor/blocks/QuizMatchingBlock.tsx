@@ -282,7 +282,7 @@ export function QuizMatchingBlock({
     const allCorrect = isSubmitted && correctCount === pairs.length;
 
     return (
-      <div className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
+      <div data-testid="quiz-matching" className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
         <div className="font-medium text-lg">{content.question || "Установите соответствие"}</div>
 
         <DndContext
@@ -345,7 +345,7 @@ export function QuizMatchingBlock({
         </DndContext>
 
         {!isSubmitted ? (
-          <Button onClick={handleSubmit} className="w-full">
+          <Button data-testid="quiz-submit" onClick={handleSubmit} className="w-full">
             Проверить ответ
           </Button>
         ) : (

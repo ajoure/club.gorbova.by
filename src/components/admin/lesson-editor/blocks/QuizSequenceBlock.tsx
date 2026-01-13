@@ -263,7 +263,7 @@ export function QuizSequenceBlock({
     const orderedItems = currentOrder.map(id => items.find(item => item.id === id)).filter(Boolean) as SequenceItem[];
 
     return (
-      <div className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
+      <div data-testid="quiz-sequence" className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
         <div className="font-medium text-lg">{content.question || "Расставьте в правильном порядке"}</div>
 
         <DndContext
@@ -287,7 +287,7 @@ export function QuizSequenceBlock({
         </DndContext>
 
         {!isSubmitted ? (
-          <Button onClick={handleSubmit} className="w-full">
+          <Button data-testid="quiz-submit" onClick={handleSubmit} className="w-full">
             Проверить ответ
           </Button>
         ) : (

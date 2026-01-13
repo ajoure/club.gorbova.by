@@ -67,44 +67,44 @@ test.describe('Quiz Progress E2E with RLS Proof', () => {
     // Step 2: Wait for quiz blocks to load
     await page.waitForSelector('[data-block-type]', { timeout: 10000 });
     
-    // Step 3: Complete each quiz type
+    // Step 3: Complete each quiz type using stable data-testid selectors
     
     // 3.1 Fill-in-the-blank quiz
-    const fillBlankBlock = page.locator('[data-quiz-type="fill_blank"], [data-block-type="quiz_fill_blank"]').first();
-    if (await fillBlankBlock.isVisible()) {
-      const inputs = fillBlankBlock.locator('input[type="text"]');
+    const fillBlankBlock = page.locator('[data-testid="quiz-fill-blank"]').first();
+    if (await fillBlankBlock.isVisible({ timeout: 3000 }).catch(() => false)) {
+      const inputs = fillBlankBlock.locator('[data-testid^="fillblank-input-"]');
       const inputCount = await inputs.count();
       for (let i = 0; i < inputCount; i++) {
         await inputs.nth(i).fill(`Answer${i + 1}`);
       }
-      await fillBlankBlock.locator('button:has-text("Проверить"), button:has-text("Check")').click();
+      await fillBlankBlock.locator('[data-testid="quiz-submit"]').click();
       await page.waitForTimeout(500);
     }
     
     // 3.2 Matching quiz
-    const matchingBlock = page.locator('[data-quiz-type="matching"], [data-block-type="quiz_matching"]').first();
-    if (await matchingBlock.isVisible()) {
-      // Click check button (assuming default state or drag-drop completed)
-      await matchingBlock.locator('button:has-text("Проверить"), button:has-text("Check")').click();
+    const matchingBlock = page.locator('[data-testid="quiz-matching"]').first();
+    if (await matchingBlock.isVisible({ timeout: 3000 }).catch(() => false)) {
+      // Click submit button (items are already positioned for matching)
+      await matchingBlock.locator('[data-testid="quiz-submit"]').click();
       await page.waitForTimeout(500);
     }
     
     // 3.3 Sequence quiz
-    const sequenceBlock = page.locator('[data-quiz-type="sequence"], [data-block-type="quiz_sequence"]').first();
-    if (await sequenceBlock.isVisible()) {
-      await sequenceBlock.locator('button:has-text("Проверить"), button:has-text("Check")').click();
+    const sequenceBlock = page.locator('[data-testid="quiz-sequence"]').first();
+    if (await sequenceBlock.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await sequenceBlock.locator('[data-testid="quiz-submit"]').click();
       await page.waitForTimeout(500);
     }
     
     // 3.4 Hotspot quiz
-    const hotspotBlock = page.locator('[data-quiz-type="hotspot"], [data-block-type="quiz_hotspot"]').first();
-    if (await hotspotBlock.isVisible()) {
-      // Click on image area
-      const image = hotspotBlock.locator('img').first();
-      if (await image.isVisible()) {
-        await image.click({ position: { x: 100, y: 100 } });
+    const hotspotBlock = page.locator('[data-testid="quiz-hotspot"]').first();
+    if (await hotspotBlock.isVisible({ timeout: 3000 }).catch(() => false)) {
+      // Click on hotspot image area
+      const hotspotImage = hotspotBlock.locator('[data-testid="hotspot-image"]');
+      if (await hotspotImage.isVisible()) {
+        await hotspotImage.click({ position: { x: 100, y: 100 } });
       }
-      await hotspotBlock.locator('button:has-text("Проверить"), button:has-text("Check")').click();
+      await hotspotBlock.locator('[data-testid="quiz-submit"]').click();
       await page.waitForTimeout(500);
     }
     

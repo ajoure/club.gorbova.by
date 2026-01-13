@@ -100,19 +100,7 @@ export function useUserProgress(lessonId: string) {
     score: number,
     maxScore: number
   ): Promise<boolean> => {
-    // TEMP DEBUG LOG - Remove after runtime proof
-    console.log('[saveBlockResponse] INPUT:', {
-      userId: user?.id,
-      lessonId,
-      blockId,
-      response,
-      isCorrect,
-      score,
-      maxScore
-    });
-
     if (!user?.id || !lessonId) {
-      console.warn('[saveBlockResponse] ABORT: missing user or lessonId', { userId: user?.id, lessonId });
       return false;
     }
 
@@ -133,16 +121,11 @@ export function useUserProgress(lessonId: string) {
         started_at: existingProgress?.started_at || new Date().toISOString(),
       };
 
-      console.log('[saveBlockResponse] Upserting:', progressData);
-
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from("user_lesson_progress")
         .upsert(progressData as any, {
           onConflict: "user_id,lesson_id,block_id",
         });
-
-      // TEMP DEBUG LOG - Remove after runtime proof
-      console.log('[saveBlockResponse] RESULT:', { data, error });
 
       if (error) throw error;
 

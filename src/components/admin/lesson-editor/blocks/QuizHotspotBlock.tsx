@@ -191,12 +191,13 @@ export function QuizHotspotBlock({
       : { correctCount: 0, matchedAreas: new Set<string>(), isCorrect: false };
 
     return (
-      <div className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
+      <div data-testid="quiz-hotspot" className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
         <div className="font-medium text-lg">{content.question || "Нажмите на правильную область"}</div>
 
         {content.imageUrl && !imageError ? (
           <div 
             ref={imageRef}
+            data-testid="hotspot-image"
             className={cn(
               "relative cursor-crosshair rounded-lg overflow-hidden min-h-[200px]",
               isSubmitted && "cursor-default"
@@ -284,7 +285,7 @@ export function QuizHotspotBlock({
         </div>
 
         {!isSubmitted ? (
-          <Button onClick={handleSubmit} disabled={clicks.length === 0} className="w-full">
+          <Button data-testid="quiz-submit" onClick={handleSubmit} disabled={clicks.length === 0} className="w-full">
             Проверить ответ
           </Button>
         ) : (

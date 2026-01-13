@@ -235,7 +235,11 @@ export function LessonBlockRenderer({ blocks, lessonId }: LessonBlockRendererPro
   return (
     <div className="space-y-6">
       {blocks.map((block) => (
-        <div key={block.id}>
+        <div 
+          key={block.id}
+          data-testid="lesson-block"
+          data-block-type={block.block_type}
+        >
           {renderBlock(block)}
         </div>
       ))}

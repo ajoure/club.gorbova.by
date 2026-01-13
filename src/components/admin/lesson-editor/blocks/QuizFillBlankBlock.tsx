@@ -142,7 +142,7 @@ export function QuizFillBlankBlock({
     const allCorrect = isSubmitted && blanks.every(b => isAnswerCorrect(b, answers[b.id] || ""));
 
     return (
-      <div className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
+      <div data-testid="quiz-fill-blank" className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
         <div className="text-lg leading-relaxed">
           <span>{content.textBefore}</span>
           {blanks.map((blank, index) => (
@@ -169,6 +169,7 @@ export function QuizFillBlankBlock({
                 </Select>
               ) : (
                 <Input
+                  data-testid={`fillblank-input-${blank.id}`}
                   value={answers[blank.id] || ""}
                   onChange={(e) => updateAnswer(blank.id, e.target.value)}
                   disabled={isSubmitted}
@@ -193,6 +194,7 @@ export function QuizFillBlankBlock({
 
         {!isSubmitted ? (
           <Button 
+            data-testid="quiz-submit"
             onClick={handleSubmit} 
             disabled={blanks.some(b => !answers[b.id])}
             className="w-full"
