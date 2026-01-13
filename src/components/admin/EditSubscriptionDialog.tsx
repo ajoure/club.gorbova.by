@@ -44,7 +44,8 @@ import {
   Check,
   X,
   RefreshCw,
-  AlertTriangle
+  Link2,
+  Plus
 } from "lucide-react";
 
 interface EditSubscriptionDialogProps {
@@ -76,6 +77,7 @@ export function EditSubscriptionDialog({
     tariff_id: "",
     offer_id: "",
     comment: "",
+    telegram_club_id: "",
   });
   const [isTelegramLoading, setIsTelegramLoading] = useState(false);
 
@@ -83,7 +85,7 @@ export function EditSubscriptionDialog({
   const { data: products } = useQuery({
     queryKey: ["products-for-edit-sub"],
     queryFn: async () => {
-      const { data } = await supabase.from("products_v2").select("id, name").eq("is_active", true).order("name");
+      const { data } = await supabase.from("products_v2").select("id, name, telegram_club_id").eq("is_active", true).order("name");
       return data || [];
     },
     enabled: open,
@@ -115,20 +117,47 @@ export function EditSubscriptionDialog({
     enabled: !!formData.tariff_id,
   });
 
-  // Load Telegram access state
+  // Load all Telegram clubs for selection
+  const { data: telegramClubs } = useQuery({
+    queryKey: ["telegram-clubs-all"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("telegram_clubs")
+        .select("id, club_name, is_active")
+        .eq("is_active", true)
+        .order("club_name");
+      return data || [];
+    },
+    enabled: open,
+  });
+
+  // Get the product's default telegram club
+  const selectedProduct = products?.find(p => p.id === formData.product_id);
+  const productTelegramClubId = selectedProduct?.telegram_club_id;
+
+  // Load Telegram access state - look up by user AND club from product
   const { data: telegramAccess, refetch: refetchTelegram } = useQuery({
-    queryKey: ["telegram-access-edit", subscription?.user_id],
+    queryKey: ["telegram-access-edit", subscription?.user_id, formData.telegram_club_id || productTelegramClubId],
     queryFn: async () => {
       if (!subscription?.user_id) return null;
+      
+      const clubIdToCheck = formData.telegram_club_id || productTelegramClubId;
+      if (!clubIdToCheck) return null;
+
       const { data } = await supabase
         .from("telegram_access")
-        .select("*, telegram_clubs(name, chat_id, channel_id)")
+        .select("*")
         .eq("user_id", subscription.user_id)
+        .eq("club_id", clubIdToCheck)
         .maybeSingle();
       return data;
     },
-    enabled: !!subscription?.user_id && open,
+    enabled: !!subscription?.user_id && open && !!(formData.telegram_club_id || productTelegramClubId),
   });
+
+  // Get club name
+  const currentClubId = formData.telegram_club_id || productTelegramClubId;
+  const currentClub = telegramClubs?.find(c => c.id === currentClubId);
 
   useEffect(() => {
     if (subscription) {
@@ -138,6 +167,7 @@ export function EditSubscriptionDialog({
         tariff_id: subscription.tariff_id || "",
         offer_id: (subscription.meta as any)?.offer_id || "",
         comment: "",
+        telegram_club_id: (subscription.meta as any)?.telegram_club_id || "",
       });
       setDateRange({
         from: new Date(subscription.access_start_at),
@@ -161,6 +191,7 @@ export function EditSubscriptionDialog({
           meta: {
             ...(subscription.meta as object || {}),
             offer_id: formData.offer_id || undefined,
+            telegram_club_id: formData.telegram_club_id || undefined,
             last_edit_comment: formData.comment || undefined,
             last_edit_at: new Date().toISOString(),
           },
@@ -207,34 +238,72 @@ export function EditSubscriptionDialog({
     },
   });
 
-  // Manual Telegram grant
-  const grantTelegramAccess = async () => {
-    if (!subscription?.user_id || !telegramAccess?.club_id) return;
+  // Create telegram_access record if doesn't exist
+  const createTelegramAccess = async () => {
+    if (!subscription?.user_id || !currentClubId) return;
     
     setIsTelegramLoading(true);
     try {
+      // Create access record
+      const { error } = await supabase.from("telegram_access").insert({
+        user_id: subscription.user_id,
+        club_id: currentClubId,
+        active_until: dateRange?.to?.toISOString() || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        state_chat: "pending",
+        state_channel: "pending",
+      });
+      
+      if (error && !error.message.includes("duplicate")) throw error;
+      
+      await refetchTelegram();
+      toast.success("Telegram доступ создан");
+    } catch (err) {
+      toast.error("Ошибка: " + (err as Error).message);
+    } finally {
+      setIsTelegramLoading(false);
+    }
+  };
+
+  // Manual Telegram grant
+  const grantTelegramAccess = async () => {
+    if (!subscription?.user_id || !currentClubId) return;
+    
+    setIsTelegramLoading(true);
+    try {
+      // If no access record exists, create one first
+      if (!telegramAccess) {
+        await supabase.from("telegram_access").insert({
+          user_id: subscription.user_id,
+          club_id: currentClubId,
+          active_until: dateRange?.to?.toISOString() || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          state_chat: "granted",
+          state_channel: "granted",
+        });
+      } else {
+        // Update existing
+        await supabase
+          .from("telegram_access")
+          .update({ 
+            state_chat: "granted", 
+            state_channel: "granted",
+            active_until: dateRange?.to?.toISOString() || telegramAccess.active_until,
+          })
+          .eq("id", telegramAccess.id);
+      }
+
+      // Also call the edge function to actually grant access in Telegram
       const { error } = await supabase.functions.invoke("telegram-grant-access", {
         body: {
           userId: subscription.user_id,
-          clubId: telegramAccess.club_id,
+          clubId: currentClubId,
           accessUntil: dateRange?.to?.toISOString() || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         },
       });
       
-      if (error) throw error;
-      
-      // Also update DB state directly
-      await supabase
-        .from("telegram_access")
-        .update({ 
-          state_chat: "granted", 
-          state_channel: "granted",
-          active_until: dateRange?.to?.toISOString() || null,
-        })
-        .eq("id", telegramAccess.id);
+      if (error) console.error("Grant function error:", error);
       
       await refetchTelegram();
-      toast.success("Доступ в Telegram восстановлен");
+      toast.success("Доступ в Telegram выдан");
     } catch (err) {
       toast.error("Ошибка выдачи доступа: " + (err as Error).message);
     } finally {
@@ -244,18 +313,18 @@ export function EditSubscriptionDialog({
 
   // Manual Telegram revoke
   const revokeTelegramAccess = async () => {
-    if (!subscription?.user_id || !telegramAccess?.club_id) return;
+    if (!subscription?.user_id || !currentClubId || !telegramAccess) return;
     
     setIsTelegramLoading(true);
     try {
       const { error } = await supabase.functions.invoke("telegram-revoke-access", {
         body: {
           userId: subscription.user_id,
-          clubId: telegramAccess.club_id,
+          clubId: currentClubId,
         },
       });
       
-      if (error) throw error;
+      if (error) console.error("Revoke function error:", error);
       
       await supabase
         .from("telegram_access")
@@ -273,11 +342,8 @@ export function EditSubscriptionDialog({
 
   // Sync Telegram access (re-check and update)
   const syncTelegramAccess = async () => {
-    if (!subscription?.user_id || !telegramAccess?.club_id) return;
-    
     setIsTelegramLoading(true);
     try {
-      // Just refresh from DB
       await refetchTelegram();
       toast.success("Статус Telegram обновлён");
     } catch (err) {
@@ -294,7 +360,7 @@ export function EditSubscriptionDialog({
     : 0;
 
   const currentStatus = STATUS_OPTIONS.find(s => s.value === formData.status);
-  const hasTelegramClub = !!telegramAccess?.club_id;
+  const hasTelegramClub = !!currentClubId;
   const isTelegramGranted = telegramAccess?.state_chat === "granted" || telegramAccess?.state_channel === "granted";
 
   return (
@@ -353,7 +419,7 @@ export function EditSubscriptionDialog({
               </Label>
               <Select 
                 value={formData.product_id} 
-                onValueChange={(v) => setFormData(prev => ({ ...prev, product_id: v, tariff_id: "" }))}
+                onValueChange={(v) => setFormData(prev => ({ ...prev, product_id: v, tariff_id: "", telegram_club_id: "" }))}
               >
                 <SelectTrigger className="h-11 bg-background/50 backdrop-blur-sm border-border/60 hover:border-primary/40 transition-colors">
                   <SelectValue placeholder="Выберите" />
@@ -481,25 +547,65 @@ export function EditSubscriptionDialog({
               Telegram доступ
             </Label>
             
+            {/* Club selector */}
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                <Link2 className="w-3 h-3" />
+                Клуб Telegram
+              </Label>
+              <Select 
+                value={formData.telegram_club_id || productTelegramClubId || ""} 
+                onValueChange={(v) => setFormData(prev => ({ ...prev, telegram_club_id: v === "__default__" ? "" : v }))}
+              >
+                <SelectTrigger className="h-10 bg-background/50 backdrop-blur-sm border-border/60 hover:border-primary/40 transition-colors">
+                  <SelectValue placeholder="Выберите клуб" />
+                </SelectTrigger>
+                <SelectContent>
+                  {productTelegramClubId && (
+                    <SelectItem value="__default__">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-primary" />
+                        По умолчанию (из продукта)
+                      </div>
+                    </SelectItem>
+                  )}
+                  {telegramClubs?.map(club => (
+                    <SelectItem key={club.id} value={club.id}>
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        {club.club_name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             {hasTelegramClub ? (
               <div className="rounded-xl border border-border/60 bg-background/30 backdrop-blur-sm p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Users className="w-4 h-4 text-muted-foreground" />
                     <span className="text-sm font-medium">
-                      {(telegramAccess as any)?.telegram_clubs?.name || "Клуб"}
+                      {currentClub?.club_name || "Клуб"}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    {isTelegramGranted ? (
-                      <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
-                        <Check className="w-3 h-3 mr-1" />
-                        Доступ выдан
-                      </Badge>
+                    {telegramAccess ? (
+                      isTelegramGranted ? (
+                        <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
+                          <Check className="w-3 h-3 mr-1" />
+                          Доступ выдан
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-red-500/10 text-red-600 border-red-500/20">
+                          <X className="w-3 h-3 mr-1" />
+                          Отозван
+                        </Badge>
+                      )
                     ) : (
-                      <Badge className="bg-red-500/10 text-red-600 border-red-500/20">
-                        <X className="w-3 h-3 mr-1" />
-                        Отозван
+                      <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">
+                        Не привязан
                       </Badge>
                     )}
                   </div>
@@ -512,34 +618,53 @@ export function EditSubscriptionDialog({
                 )}
 
                 <div className="flex gap-2 pt-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={grantTelegramAccess}
-                    disabled={isTelegramLoading}
-                    className="flex-1 bg-emerald-500/10 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/20"
-                  >
-                    {isTelegramLoading ? (
-                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                    ) : (
-                      <Check className="w-4 h-4 mr-1" />
-                    )}
-                    Выдать
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={revokeTelegramAccess}
-                    disabled={isTelegramLoading}
-                    className="flex-1 bg-red-500/10 border-red-500/30 text-red-600 hover:bg-red-500/20"
-                  >
-                    {isTelegramLoading ? (
-                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                    ) : (
-                      <X className="w-4 h-4 mr-1" />
-                    )}
-                    Отозвать
-                  </Button>
+                  {!telegramAccess ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={createTelegramAccess}
+                      disabled={isTelegramLoading}
+                      className="flex-1 bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
+                    >
+                      {isTelegramLoading ? (
+                        <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                      ) : (
+                        <Plus className="w-4 h-4 mr-1" />
+                      )}
+                      Привязать
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={grantTelegramAccess}
+                        disabled={isTelegramLoading}
+                        className="flex-1 bg-emerald-500/10 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/20"
+                      >
+                        {isTelegramLoading ? (
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        ) : (
+                          <Check className="w-4 h-4 mr-1" />
+                        )}
+                        Выдать
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={revokeTelegramAccess}
+                        disabled={isTelegramLoading}
+                        className="flex-1 bg-red-500/10 border-red-500/30 text-red-600 hover:bg-red-500/20"
+                      >
+                        {isTelegramLoading ? (
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        ) : (
+                          <X className="w-4 h-4 mr-1" />
+                        )}
+                        Отозвать
+                      </Button>
+                    </>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -552,9 +677,14 @@ export function EditSubscriptionDialog({
                 </div>
               </div>
             ) : (
-              <div className="rounded-xl border border-border/60 bg-muted/30 p-4 flex items-center gap-3 text-muted-foreground">
-                <AlertTriangle className="w-5 h-5 text-amber-500" />
-                <span className="text-sm">Telegram клуб не привязан к подписке</span>
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
+                <div className="flex items-center gap-2 text-amber-600">
+                  <Users className="w-5 h-5" />
+                  <span className="text-sm font-medium">Выберите Telegram клуб выше</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Привяжите клуб к подписке для управления доступом
+                </p>
               </div>
             )}
           </div>
