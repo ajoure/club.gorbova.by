@@ -105,13 +105,17 @@ export default function MnsResponseService() {
       return;
     }
 
+    // Capture current values before state updates
+    const currentInputText = inputText;
+    const isFirstMessage = messages.length === 0;
+    
     // Store original request on first submission
-    if (messages.length === 0) {
-      setOriginalRequest(inputText);
+    if (isFirstMessage) {
+      setOriginalRequest(currentInputText);
     }
 
     // Add user message
-    const userMessage: Message = { role: "user", content: inputText };
+    const userMessage: Message = { role: "user", content: currentInputText };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
     setInputText("");
@@ -126,14 +130,14 @@ export default function MnsResponseService() {
     const imageFile = uploadedFiles.find(f => f.type === "image");
     let imageBase64: string | undefined;
     
-    if (messages.length === 0 && imageFile?.preview) {
+    if (isFirstMessage && imageFile?.preview) {
       imageBase64 = imageFile.preview;
     }
 
     const result = await generateResponse({
-      requestText: messages.length === 0 ? inputText : undefined,
-      imageBase64: messages.length === 0 ? imageBase64 : undefined,
-      conversationHistory: messages.length > 0 ? conversationHistory : undefined,
+      requestText: isFirstMessage ? currentInputText : undefined,
+      imageBase64: isFirstMessage ? imageBase64 : undefined,
+      conversationHistory: !isFirstMessage ? conversationHistory : undefined,
     });
 
     if (result) {
