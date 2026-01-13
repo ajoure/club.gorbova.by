@@ -156,3 +156,9 @@ verify_jwt = false
 
 [functions.cleanup-demo-contacts]
 verify_jwt = false
+
+[functions.bepaid-queue-cron]
+verify_jwt = false
+
+[functions.bepaid-auto-process]
+verify_jwt = false

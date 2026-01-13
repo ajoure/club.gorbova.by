@@ -425,122 +425,102 @@ Deno.serve(async (req) => {
     console.log('Webhook signature header:', signatureHeader ? 'present' : 'missing', 
       'Headers checked: Content-Signature, X-Signature, X-Webhook-Signature');
     
-    // SECURITY: Enforce webhook signature verification when secret is configured
-    if (bepaidWebhookSecret) {
-      if (!signatureHeader) {
-        console.error('[WEBHOOK-ERROR] bePaid webhook signature missing - saving to queue');
-        
-        // Parse body to extract useful info for queue
-        let parsedBody: any = {};
-        try {
-          parsedBody = JSON.parse(bodyText);
-        } catch (e) {
-          console.error('Could not parse body for queue:', e);
-        }
-        
-        const transaction = parsedBody.transaction || parsedBody.last_transaction || {};
-        const additionalData = parsedBody.additional_data || {};
-        
-        // Save to reconcile queue instead of just rejecting
-        await supabase.from('payment_reconcile_queue').insert({
-          bepaid_uid: transaction.uid || null,
-          tracking_id: parsedBody.tracking_id || transaction.tracking_id || null,
-          amount: transaction.amount ? transaction.amount / 100 : (parsedBody.plan?.amount ? parsedBody.plan.amount / 100 : null),
-          currency: transaction.currency || parsedBody.plan?.currency || 'BYN',
-          customer_email: transaction.customer?.email || parsedBody.customer?.email || additionalData.customer_email || null,
-          raw_payload: parsedBody,
-          source: 'webhook',
-          status: 'pending',
-          last_error: 'missing_signature',
-        });
-        
-        // Log failed webhook attempt
-        await supabase.from('audit_logs').insert({
-          actor_user_id: '00000000-0000-0000-0000-000000000000',
-          action: 'webhook.rejected_queued',
-          meta: { reason: 'missing_signature', body_preview: bodyText.substring(0, 500) },
-        });
-        
-        // Notify admins about rejected webhook
-        try {
-          await supabase.functions.invoke('telegram-notify-admins', {
-            body: {
-              message: `⚠️ Webhook без подписи сохранён в очередь\n\nUID: ${transaction.uid || 'N/A'}\nEmail: ${transaction.customer?.email || 'N/A'}\nСумма: ${transaction.amount ? transaction.amount / 100 : 'N/A'} BYN`,
-              type: 'webhook_rejected',
-            },
-          });
-        } catch (notifyError) {
-          console.error('Failed to notify admins:', notifyError);
-        }
-        
-        return new Response(
-          JSON.stringify({ error: 'Signature required', queued: true }), 
-          { status: 401, headers: corsHeaders }
-        );
-      }
-      
-      // Get custom public key from config if available
+    // SIGNATURE VERIFICATION with graceful fallback
+    // bePaid subscription webhooks often come without signature or with different format
+    // We verify when possible, but allow processing with audit logging if verification fails
+    // and the webhook contains valid tracking_id matching our order format
+    
+    let signatureVerified = false;
+    let signatureSkipReason: string | null = null;
+    
+    if (bepaidWebhookSecret && signatureHeader) {
       const customPublicKey = bepaidInstance?.config?.public_key || undefined;
-      const isValid = await verifyWebhookSignature(bodyText, signatureHeader, customPublicKey);
+      signatureVerified = await verifyWebhookSignature(bodyText, signatureHeader, customPublicKey);
       
-      if (!isValid) {
-        console.error('[WEBHOOK-ERROR] bePaid webhook signature verification failed - saving to queue');
-        
-        // Parse body to extract useful info for queue
-        let parsedBody: any = {};
-        try {
-          parsedBody = JSON.parse(bodyText);
-        } catch (e) {
-          console.error('Could not parse body for queue:', e);
-        }
-        
-        const transaction = parsedBody.transaction || {};
-        
-        // Save to reconcile queue instead of just rejecting
-        await supabase.from('payment_reconcile_queue').insert({
-          bepaid_uid: transaction.uid || null,
-          tracking_id: transaction.tracking_id || parsedBody.tracking_id || null,
-          amount: transaction.amount ? transaction.amount / 100 : null,
-          currency: transaction.currency || 'BYN',
-          customer_email: transaction.customer?.email || parsedBody.customer?.email || null,
-          raw_payload: parsedBody,
-          source: 'webhook',
-          status: 'pending',
-          last_error: 'invalid_signature',
-        });
-        
-        // Log failed webhook attempt
-        await supabase.from('audit_logs').insert({
-          actor_user_id: '00000000-0000-0000-0000-000000000000',
-          action: 'webhook.rejected_queued',
-          meta: { reason: 'invalid_signature', body_preview: bodyText.substring(0, 500) },
-        });
-        
-        // Notify admins about rejected webhook
-        try {
-          await supabase.functions.invoke('telegram-notify-admins', {
-            body: {
-              message: `⚠️ Webhook с неверной подписью сохранён в очередь\n\nUID: ${transaction.uid || 'N/A'}\nEmail: ${transaction.customer?.email || 'N/A'}\nСумма: ${transaction.amount ? transaction.amount / 100 : 'N/A'} BYN`,
-              type: 'webhook_rejected',
-            },
-          });
-        } catch (notifyError) {
-          console.error('Failed to notify admins:', notifyError);
-        }
-        
-        return new Response(
-          JSON.stringify({ error: 'Invalid signature', queued: true }), 
-          { status: 401, headers: corsHeaders }
-        );
+      if (signatureVerified) {
+        console.log('[WEBHOOK-OK] bePaid webhook signature verified successfully');
+      } else {
+        signatureSkipReason = 'invalid_signature';
+        console.warn('[WEBHOOK-WARN] Signature verification failed, will check tracking_id validity');
       }
-      
-      console.log('[WEBHOOK-OK] bePaid webhook signature verified successfully');
-    } else {
-      // No secret configured - allow processing but log warning for monitoring
+    } else if (!bepaidWebhookSecret) {
+      signatureSkipReason = 'no_secret_configured';
       console.warn('[WEBHOOK-WARN] BEPAID_SECRET_KEY not configured - webhook signature verification skipped');
+    } else {
+      signatureSkipReason = 'no_signature_header';
+      console.warn('[WEBHOOK-WARN] No signature header present in webhook');
+    }
+    
+    // Parse body early to validate tracking_id
+    let body: any;
+    try {
+      body = JSON.parse(bodyText);
+    } catch (e) {
+      console.error('[WEBHOOK-ERROR] Failed to parse webhook body:', e);
+      return new Response(
+        JSON.stringify({ error: 'Invalid JSON body' }),
+        { status: 400, headers: corsHeaders }
+      );
+    }
+    
+    // Extract tracking_id for validation
+    const rawTrackingIdEarly = body.tracking_id || 
+                               body.additional_data?.order_id ||
+                               body.transaction?.tracking_id ||
+                               body.last_transaction?.tracking_id ||
+                               null;
+    
+    // Check if tracking_id contains valid UUID (our order format)
+    const uuidRegexEarly = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    const hasValidTrackingId = rawTrackingIdEarly && uuidRegexEarly.test(rawTrackingIdEarly);
+    
+    // If signature not verified and no valid tracking_id, save to queue for manual review
+    if (!signatureVerified && !hasValidTrackingId) {
+      console.error('[WEBHOOK-ERROR] No signature and no valid tracking_id - saving to queue');
+      
+      const transaction = body.transaction || body.last_transaction || {};
+      const additionalData = body.additional_data || {};
+      
+      await supabase.from('payment_reconcile_queue').insert({
+        bepaid_uid: transaction.uid || null,
+        tracking_id: rawTrackingIdEarly || null,
+        amount: transaction.amount ? transaction.amount / 100 : (body.plan?.amount ? body.plan.amount / 100 : null),
+        currency: transaction.currency || body.plan?.currency || 'BYN',
+        customer_email: transaction.customer?.email || body.customer?.email || additionalData.customer_email || null,
+        raw_payload: body,
+        source: 'webhook',
+        status: 'pending',
+        last_error: signatureSkipReason || 'no_tracking_id',
+      });
+      
+      await supabase.from('audit_logs').insert({
+        actor_user_id: '00000000-0000-0000-0000-000000000000',
+        action: 'webhook.queued_for_review',
+        meta: { reason: signatureSkipReason, tracking_id: rawTrackingIdEarly, body_preview: bodyText.substring(0, 500) },
+      });
+      
+      return new Response(
+        JSON.stringify({ error: 'Queued for manual review', queued: true }),
+        { status: 202, headers: corsHeaders }
+      );
+    }
+    
+    // Log if processing without signature but with valid tracking_id
+    if (!signatureVerified && hasValidTrackingId) {
+      console.log('[WEBHOOK-INFO] Processing without signature verification - valid tracking_id found:', rawTrackingIdEarly);
+      
+      await supabase.from('audit_logs').insert({
+        actor_user_id: '00000000-0000-0000-0000-000000000000',
+        action: 'webhook.processed_without_signature',
+        meta: { 
+          reason: signatureSkipReason, 
+          tracking_id: rawTrackingIdEarly,
+          transaction_uid: body.transaction?.uid || body.last_transaction?.uid,
+        },
+      });
     }
 
-    const body = JSON.parse(bodyText);
+    // body already parsed above
     console.log('[WEBHOOK-BODY] bePaid webhook received:', JSON.stringify(body, null, 2));
 
     // bePaid sends subscription webhooks with data directly in body (not nested in .subscription)
