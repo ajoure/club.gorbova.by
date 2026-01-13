@@ -99,7 +99,10 @@ export function ProductLandingHeader({
               </Button>
             ) : (
               <Button 
-                onClick={() => navigate("/auth")} 
+                onClick={() => {
+                  const returnUrl = window.location.pathname + window.location.search;
+                  navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
+                }} 
                 variant="outline"
                 className="border-border hover:bg-muted"
               >
@@ -144,7 +147,14 @@ export function ProductLandingHeader({
                     Личный кабинет
                   </Button>
                 ) : (
-                  <Button onClick={() => navigate("/auth")} className="w-full" variant="outline">
+                  <Button 
+                    onClick={() => {
+                      const returnUrl = window.location.pathname + window.location.search;
+                      navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
+                    }} 
+                    className="w-full" 
+                    variant="outline"
+                  >
                     Войти
                   </Button>
                 )

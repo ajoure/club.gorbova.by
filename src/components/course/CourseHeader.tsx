@@ -70,7 +70,8 @@ export function CourseHeader() {
   }, []);
 
   const handleLoginClick = () => {
-    navigate("/auth");
+    const returnUrl = window.location.pathname + window.location.search;
+    navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
   };
 
   const handleDashboardClick = () => {

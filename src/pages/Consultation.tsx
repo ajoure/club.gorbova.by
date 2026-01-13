@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -120,6 +120,7 @@ function TariffCard({ title, price, description, waitTime, isPopular, onSelect }
 
 export default function Consultation() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [selectedTariff, setSelectedTariff] = useState<{
     code: string;
@@ -127,8 +128,25 @@ export default function Consultation() {
     price: number;
   } | null>(null);
 
+  // Restore tariff selection from URL after auth redirect
+  useEffect(() => {
+    const tariffParam = searchParams.get("tariff");
+    if (tariffParam === "CONSULTATION_STANDARD") {
+      setSelectedTariff({ code: "CONSULTATION_STANDARD", name: "Несрочная консультация", price: 500 });
+      setPaymentOpen(true);
+      searchParams.delete("tariff");
+      setSearchParams(searchParams, { replace: true });
+    } else if (tariffParam === "CONSULTATION_URGENT") {
+      setSelectedTariff({ code: "CONSULTATION_URGENT", name: "Срочная консультация", price: 800 });
+      setPaymentOpen(true);
+      searchParams.delete("tariff");
+      setSearchParams(searchParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
   const handleSelectTariff = (code: string, name: string, price: number) => {
     setSelectedTariff({ code, name, price });
+    setSearchParams({ tariff: code });
     setPaymentOpen(true);
   };
 

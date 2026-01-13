@@ -99,7 +99,8 @@ export function LandingPricing() {
         isSubscription: isSubscription || isTrial,
       });
     } else {
-      navigate("/auth?mode=signup");
+      const returnUrl = window.location.pathname + window.location.search;
+      navigate(`/auth?mode=signup&redirectTo=${encodeURIComponent(returnUrl)}`);
     }
   };
 

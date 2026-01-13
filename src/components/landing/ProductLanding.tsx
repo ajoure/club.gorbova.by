@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -138,6 +138,7 @@ function TariffCard({
 
 export function ProductLanding({ data, header, footer, customSections }: ProductLandingProps) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState<{
@@ -149,9 +150,28 @@ export function ProductLanding({ data, header, footer, customSections }: Product
   const { product, tariffs } = data;
   const config = product.landing_config || {};
 
+  // Restore offer selection from URL after auth redirect
+  useEffect(() => {
+    const offerId = searchParams.get("offer");
+    if (offerId && user && tariffs) {
+      for (const tariff of tariffs) {
+        const offer = tariff.offers?.find(o => o.id === offerId);
+        if (offer) {
+          setSelectedOffer({ offer, tariff, productId: product.id });
+          setPaymentOpen(true);
+          // Clear the offer param from URL
+          searchParams.delete("offer");
+          setSearchParams(searchParams, { replace: true });
+          break;
+        }
+      }
+    }
+  }, [searchParams, user, tariffs, product.id, setSearchParams]);
+
   const handleSelectOffer = (offer: TariffOffer, tariff: PublicTariff) => {
     if (!user) {
-      navigate("/auth");
+      const returnUrl = `${window.location.pathname}?offer=${offer.id}`;
+      navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
       return;
     }
     setSelectedOffer({ offer, tariff, productId: product.id });

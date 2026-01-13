@@ -53,7 +53,8 @@ export function ConsultationPaymentDialog({
   const handleCardPayment = async () => {
     if (!user) {
       toast.error("Для оплаты необходимо авторизоваться");
-      navigate("/auth");
+      const returnUrl = window.location.pathname + window.location.search;
+      navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
       return;
     }
 

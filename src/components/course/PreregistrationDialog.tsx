@@ -174,7 +174,8 @@ export function PreregistrationDialog({
 
   const handleLoginRedirect = () => {
     onOpenChange(false);
-    navigate("/auth");
+    const returnUrl = window.location.pathname + window.location.search;
+    navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
   };
 
   const handleClose = () => {
