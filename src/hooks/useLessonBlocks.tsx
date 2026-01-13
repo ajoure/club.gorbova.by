@@ -134,17 +134,103 @@ export interface QuizFillBlankContentData {
   caseSensitive?: boolean;
 }
 
+// Gallery content type (Iteration 1)
+export interface GalleryItem {
+  id: string;
+  url: string;
+  caption?: string;
+}
+
+export interface GalleryContentData {
+  items: GalleryItem[];
+  layout: 'grid' | 'carousel';
+  columns?: number;
+}
+
+// Quiz matching content type (Iteration 2)
+export interface QuizMatchingPair {
+  id: string;
+  left: string;
+  right: string;
+}
+
+export interface QuizMatchingContentData {
+  question: string;
+  pairs: QuizMatchingPair[];
+  explanation?: string;
+  points?: number;
+}
+
+// Quiz sequence content type (Iteration 2)
+export interface QuizSequenceItem {
+  id: string;
+  text: string;
+  correctOrder: number;
+}
+
+export interface QuizSequenceContentData {
+  question: string;
+  items: QuizSequenceItem[];
+  explanation?: string;
+  points?: number;
+}
+
+// Quiz hotspot content type (Iteration 2)
+export interface QuizHotspotArea {
+  id: string;
+  x: number;
+  y: number;
+  radius: number;
+  label?: string;
+}
+
+export interface QuizHotspotContentData {
+  question: string;
+  imageUrl: string;
+  correctAreas: QuizHotspotArea[];
+  allowMultiple?: boolean;
+  tolerance?: number;
+  explanation?: string;
+  points?: number;
+}
+
 export interface BlockSettings {
   alignment?: 'left' | 'center' | 'right';
   padding?: string;
   width?: 'full' | 'wide' | 'narrow';
 }
 
+export type BlockContent = 
+  | HeadingContent 
+  | TextContent 
+  | VideoContent 
+  | AudioContent 
+  | ImageContent 
+  | FileContent 
+  | ButtonContent 
+  | EmbedContent 
+  | AccordionContentData 
+  | TabsContentData 
+  | SpoilerContentData 
+  | CalloutContentData 
+  | QuoteContentData 
+  | TimelineContentData 
+  | StepsContentData 
+  | QuizSingleContentData 
+  | QuizMultipleContentData 
+  | QuizTrueFalseContentData 
+  | QuizFillBlankContentData
+  | GalleryContentData
+  | QuizMatchingContentData
+  | QuizSequenceContentData
+  | QuizHotspotContentData
+  | Record<string, never>;
+
 export interface LessonBlock {
   id: string;
   lesson_id: string;
   block_type: BlockType;
-  content: HeadingContent | TextContent | VideoContent | AudioContent | ImageContent | FileContent | ButtonContent | EmbedContent | AccordionContentData | TabsContentData | SpoilerContentData | CalloutContentData | QuoteContentData | TimelineContentData | StepsContentData | QuizSingleContentData | QuizMultipleContentData | QuizTrueFalseContentData | QuizFillBlankContentData | Record<string, never>;
+  content: BlockContent;
   sort_order: number;
   settings: BlockSettings;
   parent_id?: string | null;

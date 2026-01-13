@@ -152,7 +152,7 @@ export function LessonBlockRenderer({ blocks, lessonId }: LessonBlockRendererPro
             content={block.content as any} 
             onChange={noop} 
             isEditing={false}
-            userAnswer={savedAnswer?.answers}
+            userAnswers={savedAnswer?.answers}
             isSubmitted={isSubmitted}
             onSubmit={(answers) => {
               const content = block.content as any;
