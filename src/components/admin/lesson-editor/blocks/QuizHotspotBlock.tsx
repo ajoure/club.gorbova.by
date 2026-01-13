@@ -61,6 +61,8 @@ export function QuizHotspotBlock({
   
   const [clicks, setClicks] = useState<Array<{ x: number; y: number }>>([]);
   const [localUrl, setLocalUrl] = useState(content.imageUrl || "");
+  const [imageError, setImageError] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLDivElement>(null);
 
   // Restore saved answer
@@ -69,6 +71,12 @@ export function QuizHotspotBlock({
       setClicks(savedAnswer.clicks);
     }
   }, [savedAnswer]);
+
+  // Reset image state when URL changes
+  useEffect(() => {
+    setImageError(false);
+    setImageLoaded(false);
+  }, [content.imageUrl]);
 
   const getClickPosition = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -186,13 +194,14 @@ export function QuizHotspotBlock({
       <div className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
         <div className="font-medium text-lg">{content.question || "Нажмите на правильную область"}</div>
 
-        {content.imageUrl ? (
+        {content.imageUrl && !imageError ? (
           <div 
             ref={imageRef}
             className={cn(
-              "relative cursor-crosshair rounded-lg overflow-hidden",
+              "relative cursor-crosshair rounded-lg overflow-hidden min-h-[200px]",
               isSubmitted && "cursor-default"
             )}
+            style={{ aspectRatio: imageLoaded ? undefined : '4/3' }}
             onClick={handleImageClick}
           >
             <img 
@@ -200,6 +209,8 @@ export function QuizHotspotBlock({
               alt="Hotspot quiz" 
               className="w-full"
               draggable={false}
+              onLoad={() => setImageLoaded(true)}
+              onError={() => setImageError(true)}
             />
             
             {/* Show user clicks */}
@@ -255,8 +266,11 @@ export function QuizHotspotBlock({
             })}
           </div>
         ) : (
-          <div className="flex items-center justify-center h-48 bg-muted rounded-lg">
+          <div className="flex flex-col items-center justify-center h-48 bg-muted rounded-lg gap-2">
             <ImageIcon className="h-12 w-12 text-muted-foreground" />
+            {imageError && (
+              <span className="text-sm text-muted-foreground">Ошибка загрузки изображения</span>
+            )}
           </div>
         )}
 
@@ -345,35 +359,46 @@ export function QuizHotspotBlock({
             </span>
           </Label>
           
-          <div 
-            className="relative cursor-crosshair rounded-lg overflow-hidden border"
-            onClick={handleImageClick}
-          >
-            <img 
-              src={content.imageUrl} 
-              alt="Editor preview" 
-              className="w-full"
-              draggable={false}
-            />
-            
-            {areas.map((area, index) => (
-              <div
-                key={area.id}
-                className="absolute rounded-full border-2 border-primary bg-primary/20"
-                style={{
-                  left: `${area.x}%`,
-                  top: `${area.y}%`,
-                  width: `${area.radius * 2}%`,
-                  height: `${area.radius * 2}%`,
-                  transform: 'translate(-50%, -50%)',
-                }}
-              >
-                <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center">
-                  {index + 1}
+          {imageError ? (
+            <div className="flex flex-col items-center justify-center min-h-[200px] bg-muted rounded-lg border gap-2">
+              <ImageIcon className="h-12 w-12 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Ошибка загрузки изображения</span>
+              <span className="text-xs text-muted-foreground">Проверьте URL: {content.imageUrl}</span>
+            </div>
+          ) : (
+            <div 
+              className="relative cursor-crosshair rounded-lg overflow-hidden border min-h-[200px]"
+              style={{ aspectRatio: imageLoaded ? undefined : '4/3' }}
+              onClick={handleImageClick}
+            >
+              <img 
+                src={content.imageUrl} 
+                alt="Editor preview" 
+                className="w-full"
+                draggable={false}
+                onLoad={() => setImageLoaded(true)}
+                onError={() => setImageError(true)}
+              />
+              
+              {areas.map((area, index) => (
+                <div
+                  key={area.id}
+                  className="absolute rounded-full border-2 border-primary bg-primary/20"
+                  style={{
+                    left: `${area.x}%`,
+                    top: `${area.y}%`,
+                    width: `${area.radius * 2}%`,
+                    height: `${area.radius * 2}%`,
+                    transform: 'translate(-50%, -50%)',
+                  }}
+                >
+                  <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center">
+                    {index + 1}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
