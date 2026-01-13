@@ -232,46 +232,46 @@ serve(async (req) => {
 
     const { requestText, conversationHistory, imageBase64 } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    
+
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    const messages: any[] = [
-      { role: "system", content: SYSTEM_PROMPT },
-    ];
+    const messages: any[] = [{ role: "system", content: SYSTEM_PROMPT }];
 
     // Add conversation history if exists
-    if (conversationHistory && Array.isArray(conversationHistory)) {
+    if (conversationHistory && Array.isArray(conversationHistory) && conversationHistory.length > 0) {
       messages.push(...conversationHistory);
     }
 
-    // Build user message content
+    // Build optional new user message content
+    const trimmedRequestText = typeof requestText === "string" ? requestText.trim() : "";
     const userContent: any[] = [];
 
-    if (requestText) {
-      userContent.push({ type: "text", text: requestText });
+    if (trimmedRequestText) {
+      userContent.push({ type: "text", text: trimmedRequestText });
     }
 
-    if (imageBase64) {
+    if (typeof imageBase64 === "string" && imageBase64.trim()) {
       userContent.push({
         type: "image_url",
-        image_url: {
-          url: imageBase64,
-        },
+        image_url: { url: imageBase64 },
       });
     }
 
-    if (userContent.length === 0) {
+    // If we have new content, append it as the last user message.
+    // Otherwise, rely on the provided conversationHistory (it already includes the latest user message).
+    if (userContent.length > 0) {
+      messages.push({
+        role: "user",
+        content:
+          userContent.length === 1 && userContent[0].type === "text"
+            ? userContent[0].text
+            : userContent,
+      });
+    } else if (!conversationHistory || !Array.isArray(conversationHistory) || conversationHistory.length === 0) {
       throw new Error("No request content provided");
     }
-
-    messages.push({
-      role: "user",
-      content: userContent.length === 1 && userContent[0].type === "text" 
-        ? userContent[0].text 
-        : userContent,
-    });
 
     console.log("Sending request to Lovable AI Gateway...");
 

@@ -57,8 +57,14 @@ export function useMnsDocuments() {
 
       setIsGenerating(true);
       try {
+        const payload = {
+          requestText: typeof requestText === "string" && requestText.trim() ? requestText.trim() : undefined,
+          imageBase64: typeof imageBase64 === "string" && imageBase64.trim() ? imageBase64.trim() : undefined,
+          conversationHistory,
+        };
+
         const { data, error } = await supabase.functions.invoke("mns-response-generator", {
-          body: { requestText, imageBase64, conversationHistory },
+          body: payload,
         });
 
         if (error) throw error;

@@ -19,6 +19,7 @@ import { useNavigate } from "react-router-dom";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { FileDropZone, UploadedFile } from "@/components/mns/FileDropZone";
 import { exportToDocx, exportToPdf } from "@/utils/exportDocument";
+import { extractAllFilesContent } from "@/utils/fileExtractor";
 
 interface Message {
   role: "user" | "assistant";
@@ -96,7 +97,10 @@ export default function MnsResponseService() {
   };
 
   const handleSubmit = useCallback(async () => {
-    if (!inputText.trim() && uploadedFiles.length === 0) {
+    const isFirstMessage = messages.length === 0;
+    const currentInputText = inputText;
+
+    if (!currentInputText.trim() && uploadedFiles.length === 0) {
       toast({
         title: "Ошибка",
         description: "Введите текст запроса или загрузите файл",
@@ -105,51 +109,56 @@ export default function MnsResponseService() {
       return;
     }
 
-    // Capture current values before state updates
-    const currentInputText = inputText;
-    const isFirstMessage = messages.length === 0;
-    
-    // Store original request on first submission
-    if (isFirstMessage) {
-      setOriginalRequest(currentInputText);
+    // Build a robust first-message payload from text + uploaded files
+    let effectiveRequestText = currentInputText.trim();
+    if (isFirstMessage && uploadedFiles.length > 0) {
+      const { textContent } = await extractAllFilesContent(uploadedFiles);
+      const merged = [effectiveRequestText, textContent.trim()].filter(Boolean).join("\n\n");
+      effectiveRequestText = merged;
     }
 
-    // Add user message
-    const userMessage: Message = { role: "user", content: currentInputText };
+    // Store original request on first submission
+    if (isFirstMessage) {
+      setOriginalRequest(effectiveRequestText || currentInputText);
+    }
+
+    // Add user message (avoid empty bubble when user only uploaded files)
+    const userMessageContent =
+      currentInputText.trim() || (isFirstMessage && uploadedFiles.length > 0
+        ? `Загружены файлы: ${uploadedFiles.map((f) => f.file.name).join(", ")}`
+        : currentInputText);
+
+    const userMessage: Message = { role: "user", content: userMessageContent };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
     setInputText("");
 
     // Build conversation history for AI
-    const conversationHistory = newMessages.map(m => ({
+    const conversationHistory = newMessages.map((m) => ({
       role: m.role,
       content: m.content,
     }));
 
     // Get first image for AI if available
-    const imageFile = uploadedFiles.find(f => f.type === "image");
-    let imageBase64: string | undefined;
-    
-    if (isFirstMessage && imageFile?.preview) {
-      imageBase64 = imageFile.preview;
-    }
+    const imageFile = uploadedFiles.find((f) => f.type === "image");
+    const imageBase64 = isFirstMessage ? imageFile?.preview : undefined;
 
     const result = await generateResponse({
-      requestText: isFirstMessage ? currentInputText : undefined,
-      imageBase64: isFirstMessage ? imageBase64 : undefined,
+      requestText: isFirstMessage ? (effectiveRequestText || undefined) : undefined,
+      imageBase64,
       conversationHistory: !isFirstMessage ? conversationHistory : undefined,
     });
 
     if (result) {
       const assistantMessage: Message = { role: "assistant", content: result.responseText };
       setMessages([...newMessages, assistantMessage]);
-      
+
       if (!result.needsClarification) {
         setFinalResponse(result.responseText);
         setRequestType(result.requestType);
       }
     }
-    
+
     // Clear files after first submission
     if (uploadedFiles.length > 0) {
       setUploadedFiles([]);
