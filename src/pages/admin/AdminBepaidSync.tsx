@@ -238,6 +238,12 @@ export default function AdminBepaidSync() {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            {/* Import button - prominent in header */}
+            <Button onClick={() => setImportDialogOpen(true)} className="gap-2">
+              <Upload className="h-4 w-4" />
+              Импорт из bePaid
+            </Button>
+            
             {/* Date filter */}
             <div className="flex items-center gap-2 bg-muted/50 p-2 rounded-lg">
               <Calendar className="h-4 w-4 text-muted-foreground" />
@@ -263,6 +269,18 @@ export default function AdminBepaidSync() {
                 />
               </div>
             </div>
+          </div>
+        </div>
+        
+        {/* API limitation notice */}
+        <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg p-4 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <p className="font-medium text-amber-800 dark:text-amber-200">API bePaid ограничен</p>
+            <p className="text-amber-700 dark:text-amber-300 mt-1">
+              Для загрузки всех платежей скачайте выписку из личного кабинета bePaid (CSV/Excel) и используйте кнопку "Импорт из bePaid".
+              Новые платежи будут поступать автоматически через webhook.
+            </p>
           </div>
         </div>
 
