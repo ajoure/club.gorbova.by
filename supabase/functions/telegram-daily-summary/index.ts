@@ -151,7 +151,7 @@ ${messagesText.slice(0, 15000)}
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
+            model: 'google/gemini-3-flash-preview',
             messages: [
               { role: 'system', content: 'Ты аналитик чатов. Отвечай только валидным JSON без markdown.' },
               { role: 'user', content: aiPrompt },
