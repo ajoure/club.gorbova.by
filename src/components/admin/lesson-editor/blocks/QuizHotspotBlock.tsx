@@ -25,14 +25,11 @@ export interface QuizHotspotContent {
   points?: number;
 }
 
-// Sprint A+B: Extended answer interface
+// Sprint A+B: Unified answer interface (meta stored in DB columns, not in response)
 interface HotspotAnswer {
   clicks: Array<{ x: number; y: number }>;
   is_submitted?: boolean;
   submitted_at?: string;
-  is_correct?: boolean;
-  score?: number;
-  max_score?: number;
 }
 
 interface QuizHotspotBlockProps {
@@ -152,9 +149,6 @@ export function QuizHotspotBlock({
       clicks,
       is_submitted: true,
       submitted_at: new Date().toISOString(),
-      is_correct: isCorrect,
-      score,
-      max_score: maxScore
     };
     
     onSubmit(answer, isCorrect, score, maxScore);

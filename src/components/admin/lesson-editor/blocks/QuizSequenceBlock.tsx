@@ -36,14 +36,11 @@ export interface QuizSequenceContent {
   points?: number;
 }
 
-// Sprint A+B: Extended answer interface
+// Sprint A+B: Unified answer interface (meta stored in DB columns, not in response)
 interface SequenceAnswer {
   order: string[];
   is_submitted?: boolean;
   submitted_at?: string;
-  is_correct?: boolean;
-  score?: number;
-  max_score?: number;
 }
 
 interface QuizSequenceBlockProps {
@@ -204,9 +201,6 @@ export function QuizSequenceBlock({
       order: currentOrder,
       is_submitted: true,
       submitted_at: new Date().toISOString(),
-      is_correct: isCorrect,
-      score,
-      max_score: maxScore
     };
     
     onSubmit(answer, isCorrect, score, maxScore);

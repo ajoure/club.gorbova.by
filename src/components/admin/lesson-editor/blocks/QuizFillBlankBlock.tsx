@@ -24,14 +24,11 @@ export interface QuizFillBlankContent {
   caseSensitive?: boolean;
 }
 
-// Sprint A+B: Extended answer interface with unified format
+// Sprint A+B: Unified answer interface (meta stored in DB columns, not in response)
 interface FillBlankAnswer {
   answers: Record<string, string>; // key = blank.id, value = user answer
   is_submitted?: boolean;
   submitted_at?: string;
-  is_correct?: boolean;
-  score?: number;
-  max_score?: number;
 }
 
 interface QuizFillBlankBlockProps {
@@ -130,9 +127,6 @@ export function QuizFillBlankBlock({
       answers,
       is_submitted: true,
       submitted_at: new Date().toISOString(),
-      is_correct: isCorrect,
-      score,
-      max_score: maxScore
     };
     
     onSubmit(answer, isCorrect, score, maxScore);

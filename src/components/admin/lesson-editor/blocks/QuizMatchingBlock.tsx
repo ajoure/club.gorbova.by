@@ -38,15 +38,12 @@ export interface QuizMatchingContent {
   points?: number;
 }
 
-// Sprint A+B: Extended answer interface with rightOrder
+// Sprint A+B: Unified answer interface (meta stored in DB columns, not in response)
 interface MatchingAnswer {
   matches: Record<string, string>; // pairId -> rightId
   rightOrder: string[]; // order of rightIds
   is_submitted?: boolean;
   submitted_at?: string;
-  is_correct?: boolean;
-  score?: number;
-  max_score?: number;
 }
 
 interface QuizMatchingBlockProps {
@@ -229,9 +226,6 @@ export function QuizMatchingBlock({
       rightOrder: shuffledRightIds,
       is_submitted: true,
       submitted_at: new Date().toISOString(),
-      is_correct: isCorrect,
-      score,
-      max_score: maxScore
     };
     
     onSubmit(answer, isCorrect, score, maxScore);
