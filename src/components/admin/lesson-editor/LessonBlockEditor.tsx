@@ -96,6 +96,10 @@ import { QuizSingleBlock } from "./blocks/QuizSingleBlock";
 import { QuizMultipleBlock } from "./blocks/QuizMultipleBlock";
 import { QuizTrueFalseBlock } from "./blocks/QuizTrueFalseBlock";
 import { QuizFillBlankBlock } from "./blocks/QuizFillBlankBlock";
+import { QuizMatchingBlock } from "./blocks/QuizMatchingBlock";
+import { QuizSequenceBlock } from "./blocks/QuizSequenceBlock";
+import { QuizHotspotBlock } from "./blocks/QuizHotspotBlock";
+import { GalleryBlock } from "./blocks/GalleryBlock";
 
 // Block configuration with categories
 interface BlockConfig {
@@ -164,9 +168,10 @@ const categoryConfig = {
 // Blocks available (Iteration 1 + 2)
 const availableBlocks: BlockType[] = [
   'heading', 'text', 'accordion', 'tabs', 'spoiler', 'callout', 'quote',
-  'video', 'audio', 'image', 'file',
+  'video', 'audio', 'image', 'gallery', 'file',
   'button', 'embed', 'divider', 'timeline', 'steps',
   'quiz_single', 'quiz_multiple', 'quiz_true_false', 'quiz_fill_blank',
+  'quiz_matching', 'quiz_sequence', 'quiz_hotspot',
 ];
 
 function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
@@ -209,6 +214,14 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
       return { question: "", correctAnswer: true, explanation: "", points: 1 };
     case 'quiz_fill_blank':
       return { textBefore: "", blanks: [], explanation: "", points: 1 };
+    case 'quiz_matching':
+      return { question: "", pairs: [], explanation: "", points: 1 };
+    case 'quiz_sequence':
+      return { question: "", items: [], explanation: "", points: 1 };
+    case 'quiz_hotspot':
+      return { question: "", imageUrl: "", correctAreas: [], explanation: "", points: 1 };
+    case 'gallery':
+      return { items: [], layout: 'grid', columns: 3 };
     case 'divider':
     default:
       return {};
@@ -282,6 +295,14 @@ function SortableBlockItem({ block, onUpdate, onDelete }: SortableBlockItemProps
         return <QuizTrueFalseBlock content={block.content as any} onChange={onUpdate} />;
       case 'quiz_fill_blank':
         return <QuizFillBlankBlock content={block.content as any} onChange={onUpdate} />;
+      case 'quiz_matching':
+        return <QuizMatchingBlock content={block.content as any} onChange={onUpdate} />;
+      case 'quiz_sequence':
+        return <QuizSequenceBlock content={block.content as any} onChange={onUpdate} />;
+      case 'quiz_hotspot':
+        return <QuizHotspotBlock content={block.content as any} onChange={onUpdate} />;
+      case 'gallery':
+        return <GalleryBlock content={block.content as any} onChange={onUpdate} />;
       default:
         return (
           <div className="text-center py-8 text-muted-foreground">

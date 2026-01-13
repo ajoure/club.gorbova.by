@@ -1,4 +1,5 @@
 import { LessonBlock } from "@/hooks/useLessonBlocks";
+import { useUserProgress } from "@/hooks/useUserProgress";
 import { HeadingBlock } from "@/components/admin/lesson-editor/blocks/HeadingBlock";
 import { TextBlock } from "@/components/admin/lesson-editor/blocks/TextBlock";
 import { VideoBlock } from "@/components/admin/lesson-editor/blocks/VideoBlock";
@@ -15,18 +16,47 @@ import { CalloutBlock } from "@/components/admin/lesson-editor/blocks/CalloutBlo
 import { TimelineBlock } from "@/components/admin/lesson-editor/blocks/TimelineBlock";
 import { StepsBlock } from "@/components/admin/lesson-editor/blocks/StepsBlock";
 import { QuoteBlock } from "@/components/admin/lesson-editor/blocks/QuoteBlock";
+import { GalleryBlock } from "@/components/admin/lesson-editor/blocks/GalleryBlock";
+import { QuizSingleBlock } from "@/components/admin/lesson-editor/blocks/QuizSingleBlock";
+import { QuizMultipleBlock } from "@/components/admin/lesson-editor/blocks/QuizMultipleBlock";
+import { QuizTrueFalseBlock } from "@/components/admin/lesson-editor/blocks/QuizTrueFalseBlock";
+import { QuizFillBlankBlock } from "@/components/admin/lesson-editor/blocks/QuizFillBlankBlock";
+import { QuizMatchingBlock } from "@/components/admin/lesson-editor/blocks/QuizMatchingBlock";
+import { QuizSequenceBlock } from "@/components/admin/lesson-editor/blocks/QuizSequenceBlock";
+import { QuizHotspotBlock } from "@/components/admin/lesson-editor/blocks/QuizHotspotBlock";
 
 interface LessonBlockRendererProps {
   blocks: LessonBlock[];
+  lessonId?: string;
 }
 
-export function LessonBlockRenderer({ blocks }: LessonBlockRendererProps) {
+export function LessonBlockRenderer({ blocks, lessonId }: LessonBlockRendererProps) {
+  const { progress, saveBlockResponse, resetBlockProgress } = useUserProgress(lessonId || '');
+
   if (!blocks || blocks.length === 0) {
     return null;
   }
 
+  const handleQuizSubmit = async (
+    blockId: string, 
+    answer: Record<string, unknown>, 
+    isCorrect: boolean, 
+    score: number, 
+    maxScore: number
+  ) => {
+    await saveBlockResponse(blockId, answer, isCorrect, score, maxScore);
+  };
+
+  const handleQuizReset = async (blockId: string) => {
+    await resetBlockProgress(blockId);
+  };
+
   const renderBlock = (block: LessonBlock) => {
     const noop = () => {};
+    const blockProgress = progress?.blockProgress[block.id];
+    const savedAnswer = blockProgress?.response as any;
+    const isSubmitted = !!blockProgress?.completed_at;
+    const attempts = blockProgress?.attempts || 0;
     
     switch (block.block_type) {
       case 'heading':
@@ -39,6 +69,8 @@ export function LessonBlockRenderer({ blocks }: LessonBlockRendererProps) {
         return <AudioBlock content={block.content as any} onChange={noop} isEditing={false} />;
       case 'image':
         return <ImageBlock content={block.content as any} onChange={noop} isEditing={false} />;
+      case 'gallery':
+        return <GalleryBlock content={block.content as any} onChange={noop} isEditing={false} />;
       case 'file':
         return <FileBlock content={block.content as any} onChange={noop} isEditing={false} />;
       case 'button':
@@ -61,6 +93,126 @@ export function LessonBlockRenderer({ blocks }: LessonBlockRendererProps) {
         return <TimelineBlock content={block.content as any} onChange={noop} isEditing={false} />;
       case 'steps':
         return <StepsBlock content={block.content as any} onChange={noop} isEditing={false} />;
+      
+      // Quiz blocks with progress integration
+      case 'quiz_single':
+        return (
+          <QuizSingleBlock 
+            content={block.content as any} 
+            onChange={noop} 
+            isEditing={false}
+            userAnswer={savedAnswer?.answer}
+            isSubmitted={isSubmitted}
+            onSubmit={(answerId) => handleQuizSubmit(
+              block.id, 
+              { answer: answerId }, 
+              answerId === (block.content as any).options?.find((o: any) => o.isCorrect)?.id,
+              answerId === (block.content as any).options?.find((o: any) => o.isCorrect)?.id ? ((block.content as any).points || 1) : 0,
+              (block.content as any).points || 1
+            )}
+            onReset={() => handleQuizReset(block.id)}
+          />
+        );
+      case 'quiz_multiple':
+        return (
+          <QuizMultipleBlock 
+            content={block.content as any} 
+            onChange={noop} 
+            isEditing={false}
+            userAnswer={savedAnswer?.answer}
+            isSubmitted={isSubmitted}
+            onSubmit={(answers) => {
+              const content = block.content as any;
+              const correctIds = content.options?.filter((o: any) => o.isCorrect).map((o: any) => o.id) || [];
+              const isCorrect = JSON.stringify([...answers].sort()) === JSON.stringify([...correctIds].sort());
+              handleQuizSubmit(block.id, { answer: answers }, isCorrect, isCorrect ? (content.points || 1) : 0, content.points || 1);
+            }}
+            onReset={() => handleQuizReset(block.id)}
+          />
+        );
+      case 'quiz_true_false':
+        return (
+          <QuizTrueFalseBlock 
+            content={block.content as any} 
+            onChange={noop} 
+            isEditing={false}
+            userAnswer={savedAnswer?.answer}
+            isSubmitted={isSubmitted}
+            onSubmit={(answer) => {
+              const content = block.content as any;
+              const isCorrect = answer === content.correctAnswer;
+              handleQuizSubmit(block.id, { answer }, isCorrect, isCorrect ? (content.points || 1) : 0, content.points || 1);
+            }}
+            onReset={() => handleQuizReset(block.id)}
+          />
+        );
+      case 'quiz_fill_blank':
+        return (
+          <QuizFillBlankBlock 
+            content={block.content as any} 
+            onChange={noop} 
+            isEditing={false}
+            userAnswer={savedAnswer?.answers}
+            isSubmitted={isSubmitted}
+            onSubmit={(answers) => {
+              const content = block.content as any;
+              // Check correctness for fill blank
+              let correctCount = 0;
+              content.blanks?.forEach((blank: any, i: number) => {
+                const userAns = answers[i]?.toLowerCase?.() || '';
+                const correct = blank.correctAnswer?.toLowerCase?.() || '';
+                if (userAns === correct || blank.acceptedVariants?.some((v: string) => v.toLowerCase() === userAns)) {
+                  correctCount++;
+                }
+              });
+              const isCorrect = correctCount === (content.blanks?.length || 0);
+              handleQuizSubmit(block.id, { answers }, isCorrect, correctCount, content.blanks?.length || 1);
+            }}
+            onReset={() => handleQuizReset(block.id)}
+          />
+        );
+      case 'quiz_matching':
+        return (
+          <QuizMatchingBlock 
+            content={block.content as any} 
+            onChange={noop} 
+            isEditing={false}
+            blockId={block.id}
+            savedAnswer={savedAnswer}
+            isSubmitted={isSubmitted}
+            attempts={attempts}
+            onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer, isCorrect, score, maxScore)}
+            onReset={() => handleQuizReset(block.id)}
+          />
+        );
+      case 'quiz_sequence':
+        return (
+          <QuizSequenceBlock 
+            content={block.content as any} 
+            onChange={noop} 
+            isEditing={false}
+            blockId={block.id}
+            savedAnswer={savedAnswer}
+            isSubmitted={isSubmitted}
+            attempts={attempts}
+            onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer, isCorrect, score, maxScore)}
+            onReset={() => handleQuizReset(block.id)}
+          />
+        );
+      case 'quiz_hotspot':
+        return (
+          <QuizHotspotBlock 
+            content={block.content as any} 
+            onChange={noop} 
+            isEditing={false}
+            blockId={block.id}
+            savedAnswer={savedAnswer}
+            isSubmitted={isSubmitted}
+            attempts={attempts}
+            onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer, isCorrect, score, maxScore)}
+            onReset={() => handleQuizReset(block.id)}
+          />
+        );
       default:
         return null;
     }
