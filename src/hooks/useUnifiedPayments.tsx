@@ -48,7 +48,8 @@ export interface UnifiedPayment {
   mapped_tariff_id: string | null;
   mapped_offer_id: string | null;
   product_name: string | null; // Resolved product name
-  tariff_name: string | null; // Tariff/offer name from snapshot
+  tariff_name: string | null; // Tariff name from snapshot
+  offer_name: string | null; // Offer name from snapshot
   
   // Receipt
   receipt_url: string | null;
@@ -178,11 +179,13 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           product_name = purchaseSnapshot.product_name;
         }
         
-        // Extract tariff/offer name from snapshot
+        // Extract tariff name from snapshot
         const tariff_name = purchaseSnapshot?.tariff_name 
-          || purchaseSnapshot?.offer_name 
           || purchaseSnapshot?.plan_title 
           || null;
+        
+        // Extract offer name from snapshot
+        const offer_name = purchaseSnapshot?.offer_name || null;
         
         // Extract UID - MUST be provider_payment_id for proper dedup
         const pUid = p.provider_payment_id;
@@ -223,6 +226,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           mapped_offer_id: null,
           product_name,
           tariff_name,
+          offer_name,
           receipt_url: p.receipt_url,
           refunds_count: refunds.length,
           total_refunded: p.refunded_amount || 0,
@@ -290,6 +294,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             mapped_offer_id: q.matched_offer_id,
             product_name: q.product_name || q.description || null,
             tariff_name: null, // Queue items don't have tariff resolved yet
+            offer_name: null, // Queue items don't have offer resolved yet
             receipt_url: q.receipt_url,
             refunds_count: 0,
             total_refunded: 0,
