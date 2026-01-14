@@ -37,6 +37,8 @@ export default function PaymentsFilters({ filters, setFilters }: PaymentsFilters
             <SelectItem value="payment">Платёж</SelectItem>
             <SelectItem value="subscription">Подписка</SelectItem>
             <SelectItem value="refund">Возврат</SelectItem>
+            <SelectItem value="void">Отмена</SelectItem>
+            <SelectItem value="chargeback">Чарджбек</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -85,8 +87,56 @@ export default function PaymentsFilters({ filters, setFilters }: PaymentsFilters
             <SelectItem value="all">Все</SelectItem>
             <SelectItem value="webhook">Webhook</SelectItem>
             <SelectItem value="api">API</SelectItem>
-            <SelectItem value="file_import">CSV</SelectItem>
-            <SelectItem value="payments_v2">Обработано</SelectItem>
+            <SelectItem value="file_import">CSV импорт</SelectItem>
+            <SelectItem value="processed">Обработано</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      
+      <div className="space-y-1">
+        <Label className="text-xs">Флаги</Label>
+        <Select value={filters.isExternal} onValueChange={(v) => updateFilter("isExternal", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="yes">Внешний</SelectItem>
+            <SelectItem value="no">Не внешний</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      
+      <div className="space-y-1">
+        <Label className="text-xs">Конфликт</Label>
+        <Select value={filters.hasConflict} onValueChange={(v) => updateFilter("hasConflict", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="yes">Есть конфликт</SelectItem>
+            <SelectItem value="no">Нет конфликта</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      
+      <div className="space-y-1">
+        <Label className="text-xs">Возвраты</Label>
+        <Select value={filters.hasRefunds} onValueChange={(v) => updateFilter("hasRefunds", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="yes">С возвратами</SelectItem>
+            <SelectItem value="no">Без возвратов</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      
+      <div className="space-y-1">
+        <Label className="text-xs">Ghost</Label>
+        <Select value={filters.isGhost} onValueChange={(v) => updateFilter("isGhost", v)}>
+          <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="yes">Ghost</SelectItem>
+            <SelectItem value="no">Не Ghost</SelectItem>
           </SelectContent>
         </Select>
       </div>
