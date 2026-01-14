@@ -167,41 +167,46 @@ export default function RecoverPaymentDialog({ onRecovered, trigger }: RecoverPa
         )}
       </DialogTrigger>
       <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Восстановить пропущенный платёж</DialogTitle>
-          <DialogDescription>
+        <DialogHeader className="space-y-1.5 pb-2">
+          <DialogTitle className="text-lg">Восстановить пропущенный платёж</DialogTitle>
+          <DialogDescription className="text-sm">
             Введите UID транзакции bePaid или tracking_id. Достаточно одного поля (приоритет — UID).
           </DialogDescription>
         </DialogHeader>
         
-        <div className="space-y-4">
+        <div className="space-y-4 py-2">
           {/* Input section */}
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <Label htmlFor="uid">UID транзакции (bePaid)</Label>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="uid" className="text-sm font-medium">UID транзакции (bePaid)</Label>
               <Input
                 id="uid"
                 placeholder="faf142e2-..."
                 value={uid}
                 onChange={(e) => setUid(e.target.value)}
                 disabled={isLoading}
-                className={cn(!isUidValid && "border-destructive focus-visible:ring-destructive")}
+                className={cn("h-9", !isUidValid && "border-destructive focus-visible:ring-destructive")}
               />
               {!isUidValid && (
                 <p className="text-xs text-destructive">UID должен быть в формате UUID</p>
               )}
             </div>
             
-            <div className="text-center text-xs text-muted-foreground">или</div>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-border" />
+              <span className="text-xs text-muted-foreground">или</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
             
-            <div className="space-y-2">
-              <Label htmlFor="tracking_id">Tracking ID</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="tracking_id" className="text-sm font-medium">Tracking ID</Label>
               <Input
                 id="tracking_id"
                 placeholder="lead_... / order_..."
                 value={trackingId}
                 onChange={(e) => setTrackingId(e.target.value)}
                 disabled={isLoading}
+                className="h-9"
               />
             </div>
           </div>

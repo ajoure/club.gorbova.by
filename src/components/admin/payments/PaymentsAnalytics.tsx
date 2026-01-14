@@ -365,10 +365,10 @@ export default function PaymentsAnalytics({
           colorClass={netRevenue >= 0 ? "text-sky-600 dark:text-sky-400" : "text-rose-600 dark:text-rose-400"}
           bgColorClass="bg-sky-50/50 dark:bg-sky-950/20"
           borderColorClass="border-sky-500"
-          isClickable={!!onFilterChange}
-          isActive={activeFilter === 'net'}
-          onClick={() => handleFilterClick('net')}
-          tooltip="Gross − Возвраты − Комиссии. Клик для показа компонентов net."
+          isClickable={false}
+          isActive={false}
+          onClick={() => {}}
+          tooltip="Gross − Возвраты − Комиссии. Эта карточка не кликабельна."
         />
       </div>
       

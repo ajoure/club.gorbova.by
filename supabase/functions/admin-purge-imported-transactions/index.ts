@@ -8,7 +8,7 @@ const corsHeaders = {
 interface PurgeRequest {
   date_from?: string;
   date_to?: string;
-  source_filter?: string; // 'csv', 'file_import', etc.
+  source_filter?: string; // 'csv', 'file_import', 'all'
   dry_run?: boolean;
   limit?: number;
 }
@@ -82,32 +82,30 @@ Deno.serve(async (req) => {
     const { 
       date_from,
       date_to,
-      source_filter = 'csv',
+      source_filter = 'all', // Default to 'all' to include both csv and file_import
       dry_run = true,
       limit = 500,
     } = body;
 
-    console.log(`[admin-purge-imported] Starting purge: source=${source_filter}, dry_run=${dry_run}, limit=${limit}`);
+    console.log(`[admin-purge-imported] Starting purge: source=${source_filter}, dry_run=${dry_run}, limit=${limit}, date_from=${date_from}, date_to=${date_to}`);
 
     // Hard limit for safety
     const hardLimit = Math.min(limit, 500);
 
-    // Build query for imported transactions
+    // Determine which sources to include
+    const importSources = source_filter === 'all' 
+      ? ['csv', 'file_import'] 
+      : [source_filter];
+
+    // Build the query
     let query = supabaseAdmin
       .from('payment_reconcile_queue')
       .select('id, bepaid_uid, amount, currency, paid_at, source, is_external, has_conflict, created_at')
-      .in('source', ['csv', 'file_import'])
+      .in('source', importSources)
       .order('created_at', { ascending: false })
       .limit(hardLimit);
 
-    // Apply source filter
-    if (source_filter === 'csv') {
-      query = query.eq('source', 'csv');
-    } else if (source_filter === 'file_import') {
-      query = query.eq('source', 'file_import');
-    }
-
-    // Apply date filters
+    // Apply date filters if provided
     if (date_from) {
       query = query.gte('created_at', `${date_from}T00:00:00Z`);
     }
@@ -146,12 +144,16 @@ Deno.serve(async (req) => {
 
     // Check for conflicts - items that exist in API (payments_v2)
     const uids = importedItems.filter(i => i.bepaid_uid).map(i => i.bepaid_uid);
-    const { data: existingInApi } = await supabaseAdmin
-      .from('payments_v2')
-      .select('provider_payment_id')
-      .in('provider_payment_id', uids);
+    let existingUids = new Set<string>();
+    
+    if (uids.length > 0) {
+      const { data: existingInApi } = await supabaseAdmin
+        .from('payments_v2')
+        .select('provider_payment_id')
+        .in('provider_payment_id', uids);
 
-    const existingUids = new Set((existingInApi || []).map(p => p.provider_payment_id));
+      existingUids = new Set((existingInApi || []).map(p => p.provider_payment_id));
+    }
 
     const report: PurgeReport = {
       total_found: importedItems.length,

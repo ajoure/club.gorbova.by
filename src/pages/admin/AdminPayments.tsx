@@ -100,7 +100,7 @@ export default function AdminPayments() {
   // Apply filters to payments (including dashboard + analytics filters)
   const filteredPayments = useMemo(() => {
     return payments.filter(p => {
-      // Dashboard filter (from clickable cards)
+      // Dashboard filter (from clickable cards) - removed 'attention' filter
       if (dashboardFilter) {
         switch (dashboardFilter) {
           case 'successful':
@@ -114,9 +114,6 @@ export default function AdminPayments() {
             break;
           case 'withDeal':
             if (!p.order_id) return false;
-            break;
-          case 'attention':
-            if (!p.is_external && !p.has_conflict) return false;
             break;
           // 'all' - no filter
         }

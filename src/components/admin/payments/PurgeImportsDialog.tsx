@@ -58,7 +58,7 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
         body: {
           date_from: dateFrom || undefined,
           date_to: dateTo || undefined,
-          source_filter: 'csv',
+          source_filter: 'all', // Include both 'csv' and 'file_import' sources
           dry_run: executeDryRun,
           limit: 500,
         }

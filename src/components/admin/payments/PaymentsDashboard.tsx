@@ -1,9 +1,9 @@
 import { cn } from "@/lib/utils";
-import { Database, CheckCircle, Clock, XCircle, Handshake, AlertTriangle } from "lucide-react";
+import { Database, CheckCircle, Clock, XCircle, Handshake } from "lucide-react";
 import { PaymentsStats } from "@/hooks/useUnifiedPayments";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export type DashboardFilter = 'all' | 'successful' | 'pending' | 'failed' | 'withDeal' | 'attention';
+export type DashboardFilter = 'all' | 'successful' | 'pending' | 'failed' | 'withDeal';
 
 interface PaymentsDashboardProps {
   stats: PaymentsStats;
@@ -33,6 +33,7 @@ function DashboardCard({ title, value, subtitle, icon, colorClass, isActive, onC
         "border border-border/50 hover:border-border",
         "shadow-lg hover:shadow-xl",
         "group cursor-pointer",
+        "min-h-[100px] flex flex-col", // Fixed height for consistency
         isActive && "ring-2 ring-primary ring-offset-2 ring-offset-background scale-[1.02]"
       )}
     >
@@ -45,21 +46,24 @@ function DashboardCard({ title, value, subtitle, icon, colorClass, isActive, onC
         colorClass
       )} />
       
-      <div className="relative flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <div className={cn("flex-shrink-0", colorClass)}>
-              {icon}
-            </div>
-            <span className="text-sm font-medium text-muted-foreground truncate">{title}</span>
+      <div className="relative flex-1 flex flex-col justify-center">
+        {/* Icon + Title */}
+        <div className="flex items-center gap-2 mb-2">
+          <div className={cn("flex-shrink-0", colorClass)}>
+            {icon}
           </div>
-          <div className={cn("text-2xl font-bold tabular-nums", colorClass)}>
-            {value}
-          </div>
-          {subtitle && (
-            <p className="text-xs text-muted-foreground mt-1 truncate">{subtitle}</p>
-          )}
+          <span className="text-sm font-medium text-muted-foreground truncate">{title}</span>
         </div>
+        
+        {/* Value - centered */}
+        <div className={cn("text-2xl font-bold tabular-nums text-center", colorClass)}>
+          {value}
+        </div>
+        
+        {/* Subtitle - centered */}
+        {subtitle && (
+          <p className="text-xs text-muted-foreground mt-1 text-center truncate">{subtitle}</p>
+        )}
       </div>
       
       {/* Active indicator */}
@@ -77,11 +81,11 @@ export default function PaymentsDashboard({ stats, isLoading, activeFilter, onFi
 
   if (isLoading) {
     return (
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
-        {[...Array(6)].map((_, i) => (
-          <div key={i} className="rounded-2xl p-4 backdrop-blur-xl bg-card/60 border border-border/50">
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="rounded-2xl p-4 backdrop-blur-xl bg-card/60 border border-border/50 min-h-[100px]">
             <Skeleton className="h-4 w-20 mb-2" />
-            <Skeleton className="h-8 w-16" />
+            <Skeleton className="h-8 w-16 mx-auto" />
           </div>
         ))}
       </div>
@@ -89,7 +93,7 @@ export default function PaymentsDashboard({ stats, isLoading, activeFilter, onFi
   }
 
   return (
-    <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+    <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
       <DashboardCard
         title="Всего"
         value={stats.total}
@@ -138,16 +142,6 @@ export default function PaymentsDashboard({ stats, isLoading, activeFilter, onFi
         colorClass="text-blue-500"
         isActive={activeFilter === 'withDeal'}
         onClick={() => handleClick('withDeal')}
-      />
-      
-      <DashboardCard
-        title="Внимание"
-        value={stats.external + stats.conflicts}
-        subtitle={`Внеш: ${stats.external} | Конфл: ${stats.conflicts}`}
-        icon={<AlertTriangle className="h-4 w-4" />}
-        colorClass="text-orange-500"
-        isActive={activeFilter === 'attention'}
-        onClick={() => handleClick('attention')}
       />
     </div>
   );
