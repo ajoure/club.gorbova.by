@@ -180,3 +180,6 @@ verify_jwt = false
 
 [functions.bepaid-recover-payment]
 verify_jwt = false
+
+[functions.bepaid-get-receipt]
+verify_jwt = false

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Mail, User, FileText, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake } from "lucide-react";
+import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
@@ -16,6 +16,7 @@ import { LinkContactDialog } from "./LinkContactDialog";
 import { LinkDealDialog } from "./LinkDealDialog";
 import ContactLinkActions from "./ContactLinkActions";
 import PaymentMethodBadge from "./PaymentMethodBadge";
+import ReceiptStatusBadge from "./ReceiptStatusBadge";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import {
@@ -228,22 +229,26 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
     toast.success("UID скопирован");
   };
   
-  const fetchReceipt = async (payment: UnifiedPayment) => {
-    if (!payment.order_id) {
-      toast.error("Нужно сначала связать сделку");
-      return;
-    }
-    
+  // Manual fetch single receipt using the new edge function
+  const handleFetchSingleReceipt = async (payment: UnifiedPayment) => {
     try {
-      const { data, error } = await supabase.functions.invoke('bepaid-get-payment-docs', {
-        body: { order_id: payment.order_id, force_refresh: true }
+      const { data, error } = await supabase.functions.invoke('bepaid-get-receipt', {
+        body: { 
+          payment_id: payment.id,
+          source: payment.rawSource === 'queue' ? 'queue' : 'payments_v2',
+        }
       });
       
       if (error) throw error;
-      if (data?.status === 'failed') throw new Error(data.error);
       
-      toast.success("Чек получен");
-      onRefetch();
+      if (data?.status === 'available') {
+        toast.success("Чек получен");
+        onRefetch();
+      } else if (data?.status === 'unavailable') {
+        toast.warning(`Чек недоступен: ${data.error_code}`);
+      } else {
+        toast.error(`Ошибка: ${data?.message || 'Не удалось получить чек'}`);
+      }
     } catch (e: any) {
       toast.error(`Ошибка: ${e.message}`);
     }
@@ -501,14 +506,16 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
         );
         
       case 'receipt':
-        return payment.receipt_url ? (
-          <Button variant="ghost" size="sm" className="h-6 px-1" asChild>
-            <a href={payment.receipt_url} target="_blank" rel="noopener noreferrer">
-              <FileText className="h-3 w-3" />
-            </a>
-          </Button>
-        ) : (
-          <span className="text-muted-foreground text-xs">—</span>
+        return (
+          <ReceiptStatusBadge
+            receiptUrl={payment.receipt_url}
+            paymentId={payment.id}
+            orderId={payment.order_id}
+            isQueueItem={payment.rawSource === 'queue'}
+            statusNormalized={payment.status_normalized}
+            providerUid={payment.uid}
+            onRefetch={onRefetch}
+          />
         );
         
       case 'flags':
@@ -546,11 +553,9 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
                   Связать сделку
                 </DropdownMenuItem>
               )}
-              <DropdownMenuSeparator />
-              {!payment.receipt_url && payment.order_id && (
-                <DropdownMenuItem onClick={() => fetchReceipt(payment)}>
-                  <FileText className="h-3 w-3 mr-2" />
-                  Получить чек
+              {!payment.receipt_url && (
+                <DropdownMenuItem onClick={() => handleFetchSingleReceipt(payment)}>
+                  Принудительно получить чек
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={() => openInBepaid(payment.uid)}>

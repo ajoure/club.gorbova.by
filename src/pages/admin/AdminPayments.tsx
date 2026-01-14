@@ -26,6 +26,7 @@ import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
 import PaymentsDashboard, { DashboardFilter } from "@/components/admin/payments/PaymentsDashboard";
 import PaymentsAnalytics from "@/components/admin/payments/PaymentsAnalytics";
+import RecoverPaymentDialog from "@/components/admin/payments/RecoverPaymentDialog";
 
 export type PaymentFilters = {
   search: string;
@@ -284,6 +285,9 @@ export default function AdminPayments() {
             </div>
           </div>
           <div className="flex items-center gap-4 flex-wrap">
+            {/* Recover payment button */}
+            <RecoverPaymentDialog onRecovered={refetch} />
+            
             {/* Refresh from API */}
             <Button 
               variant="outline" 
