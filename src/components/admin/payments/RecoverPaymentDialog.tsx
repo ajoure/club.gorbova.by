@@ -92,7 +92,32 @@ export default function RecoverPaymentDialog({ onRecovered, trigger }: RecoverPa
       setResult(data as RecoverResult);
       
       if (data.action === 'created') {
-        toast.success("Платёж добавлен в очередь");
+        toast.success("Платёж добавлен в очередь. Запускаем обработку...");
+        
+        // Auto-trigger processing for the newly created queue item
+        const queueId = data.details?.queue_id;
+        if (queueId) {
+          try {
+            const { data: processResult, error: processError } = await supabase.functions.invoke('bepaid-auto-process', {
+              body: { queueItemId: queueId, dryRun: false }
+            });
+            
+            if (processError) {
+              console.error('Auto-process error:', processError);
+              toast.warning("Добавлено в очередь, но автообработка не удалась. Требуется ручная проверка.");
+            } else if (processResult?.results?.orders_created > 0) {
+              toast.success(`Заказ создан! (${processResult.results.orders_created} записей)`);
+            } else if (processResult?.results?.skipped > 0) {
+              toast.info("Обработано. Проверьте статус записи — возможно, требуется маппинг продукта.");
+            } else {
+              toast.info("Добавлено в очередь обработки.");
+            }
+          } catch (procErr) {
+            console.error('Auto-process call failed:', procErr);
+            // Don't show error - queue item is created, just not auto-processed
+          }
+        }
+        
         onRecovered?.();
       }
     } catch (e: any) {
