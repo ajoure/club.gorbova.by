@@ -45,6 +45,9 @@ import {
   BookOpen,
   AlertTriangle,
   Send,
+  Receipt,
+  Undo2,
+  Download,
 } from "lucide-react";
 import {
   Tooltip,
@@ -74,7 +77,9 @@ export default function AdminOrdersV2() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [gcFilter, setGcFilter] = useState<string>("all");
+  const [receiptFilter, setReceiptFilter] = useState<string>("all");
   const [gcPendingOrderId, setGcPendingOrderId] = useState<string | null>(null);
+  const [fetchingDocsOrderId, setFetchingDocsOrderId] = useState<string | null>(null);
   const { isSuperAdmin } = usePermissions();
   const queryClient = useQueryClient();
 
@@ -134,6 +139,35 @@ export default function AdminOrdersV2() {
     },
   });
 
+  // Mutation for fetching bePaid docs
+  const fetchBepaidDocsMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      setFetchingDocsOrderId(orderId);
+      const { data, error } = await supabase.functions.invoke('bepaid-get-payment-docs', {
+        body: { order_id: orderId, force_refresh: false },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      if (data?.status === 'success') {
+        toast.success('Чек получен');
+      } else if (data?.status === 'skipped') {
+        toast.info('Чек уже загружен');
+      } else {
+        toast.error(data?.error || 'Ошибка');
+      }
+      queryClient.invalidateQueries({ queryKey: ['orders-v2'] });
+      refetch();
+    },
+    onSettled: () => {
+      setFetchingDocsOrderId(null);
+    },
+    onError: (error: any) => {
+      toast.error('Ошибка: ' + error.message);
+    },
+  });
+
   const { data: orders, isLoading, refetch } = useQuery({
     queryKey: ["orders-v2", statusFilter],
     queryFn: async () => {
@@ -143,7 +177,8 @@ export default function AdminOrdersV2() {
           *,
           products_v2(id, name, code),
           tariffs(id, name, code),
-          flows(id, name, code)
+          flows(id, name, code),
+          payments_v2(id, provider, provider_payment_id, receipt_url, refunded_amount, refunds, amount, status)
         `)
         .order("created_at", { ascending: false })
         .limit(100);
@@ -226,6 +261,14 @@ export default function AdminOrdersV2() {
         if (gcErrorType !== "rate_limit") return false;
         if (!gcNextRetryAt || new Date(gcNextRetryAt) > new Date()) return false;
       }
+    }
+    
+    // Receipt filter
+    if (receiptFilter !== "all") {
+      const bepaidPayment = ((order as any).payments_v2 || []).find((p: any) => p.provider === 'bepaid');
+      if (receiptFilter === "has_receipt" && !bepaidPayment?.receipt_url) return false;
+      if (receiptFilter === "no_receipt" && bepaidPayment?.receipt_url) return false;
+      if (receiptFilter === "no_receipt" && !bepaidPayment?.provider_payment_id) return false;
     }
     
     return true;
@@ -336,6 +379,17 @@ export default function AdminOrdersV2() {
               <SelectItem value="not_sent">📤 Не отправлено</SelectItem>
               <SelectItem value="rate_limit">⏳ Rate limit</SelectItem>
               <SelectItem value="retry_ready">🔄 Готов к retry</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={receiptFilter} onValueChange={setReceiptFilter}>
+            <SelectTrigger className="w-[150px]">
+              <Receipt className="h-4 w-4 mr-2" />
+              <SelectValue placeholder="Чек" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все</SelectItem>
+              <SelectItem value="has_receipt">Есть чек</SelectItem>
+              <SelectItem value="no_receipt">Нет чека</SelectItem>
             </SelectContent>
           </Select>
         </div>
