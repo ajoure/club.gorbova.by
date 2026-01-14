@@ -27,6 +27,7 @@ import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActio
 import PaymentsDashboard, { DashboardFilter } from "@/components/admin/payments/PaymentsDashboard";
 import PaymentsAnalytics from "@/components/admin/payments/PaymentsAnalytics";
 import RecoverPaymentDialog from "@/components/admin/payments/RecoverPaymentDialog";
+import ReceiptsSyncButton from "@/components/admin/payments/ReceiptsSyncButton";
 
 export type PaymentFilters = {
   search: string;
@@ -284,7 +285,13 @@ export default function AdminPayments() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Receipts sync button */}
+            <ReceiptsSyncButton 
+              selectedIds={selectedItems.size > 0 ? Array.from(selectedItems) : undefined}
+              onComplete={refetch}
+            />
+            
             {/* Recover payment button */}
             <RecoverPaymentDialog onRecovered={refetch} />
             
