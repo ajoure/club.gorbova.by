@@ -741,15 +741,59 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                         </div>
                       </>
                     )}
-                    {subscription.next_charge_at && (
-                      <>
-                        <Separator />
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-muted-foreground">Следующее списание</span>
-                          <span>{format(new Date(subscription.next_charge_at), "dd.MM.yy")}</span>
-                        </div>
-                      </>
-                    )}
+                    {/* Next charge date with fallback calculation */}
+                    {(() => {
+                      // Check if auto-renewal is active
+                      const isCanceled = subscription.status === 'canceled' || subscription.status === 'expired';
+                      const autoRenewalOff = subscription.auto_renew === false;
+                      
+                      if (isCanceled || autoRenewalOff) {
+                        return (
+                          <>
+                            <Separator />
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-muted-foreground">Списание</span>
+                              <span className="text-xs text-muted-foreground">Автопродление выключено</span>
+                            </div>
+                          </>
+                        );
+                      }
+                      
+                      // Priority: next_charge_at from subscription
+                      if (subscription.next_charge_at) {
+                        return (
+                          <>
+                            <Separator />
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-muted-foreground">Следующее списание</span>
+                              <span>{format(new Date(subscription.next_charge_at), "dd.MM.yy")}</span>
+                            </div>
+                          </>
+                        );
+                      }
+                      
+                      // Fallback: calculate from last payment + billing period
+                      // Default to access_end_at - 3 days (standard billing logic)
+                      if (subscription.access_end_at && subscription.status === 'active') {
+                        const accessEnd = new Date(subscription.access_end_at);
+                        const calculatedChargeDate = new Date(accessEnd.getTime() - 3 * 24 * 60 * 60 * 1000);
+                        
+                        // Only show if in the future
+                        if (calculatedChargeDate > new Date()) {
+                          return (
+                            <>
+                              <Separator />
+                              <div className="flex items-center justify-between">
+                                <span className="text-sm text-muted-foreground">Списание (расчёт)</span>
+                                <span className="text-amber-600">{format(calculatedChargeDate, "dd.MM.yy")}</span>
+                              </div>
+                            </>
+                          );
+                        }
+                      }
+                      
+                      return null;
+                    })()}
                   </div>
                 ) : (
                   <div className="text-center py-4 text-muted-foreground text-sm">
