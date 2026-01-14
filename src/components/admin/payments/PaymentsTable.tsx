@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { CreditCard, Mail, Package, User, FileText, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical } from "lucide-react";
+import { CreditCard, Mail, User, FileText, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
@@ -14,6 +14,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { LinkContactDialog } from "./LinkContactDialog";
 import { LinkDealDialog } from "./LinkDealDialog";
+import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import {
   DndContext,
   closestCenter,
@@ -141,6 +143,13 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
   const [linkDealOpen, setLinkDealOpen] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<UnifiedPayment | null>(null);
   
+  // Detail sheet states (for modal view without navigation)
+  const [dealSheetOpen, setDealSheetOpen] = useState(false);
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
+  const [selectedDeal, setSelectedDeal] = useState<any>(null);
+  const [selectedContact, setSelectedContact] = useState<any>(null);
+  const [selectedDealProfile, setSelectedDealProfile] = useState<any>(null);
+  
   // Column state with localStorage persistence
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -242,6 +251,55 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
     window.open(`https://dashboard.bepaid.by/transactions/${uid}`, '_blank');
   };
 
+  // Open deal sheet (modal, not navigation)
+  const openDealSheet = async (orderId: string, profileId?: string | null) => {
+    try {
+      const { data: deal, error } = await supabase
+        .from("orders_v2")
+        .select("*, profiles(*), subscriptions_v2(*), products_v2(*), tariffs(*)")
+        .eq("id", orderId)
+        .single();
+      
+      if (error) throw error;
+      
+      let profile = deal?.profiles || null;
+      if (!profile && profileId) {
+        const { data: p } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", profileId)
+          .single();
+        profile = p;
+      }
+      
+      setSelectedDeal(deal);
+      setSelectedDealProfile(profile);
+      setDealSheetOpen(true);
+    } catch (e) {
+      console.error("Failed to load deal:", e);
+      toast.error("Не удалось загрузить сделку");
+    }
+  };
+
+  // Open contact sheet (modal, not navigation)
+  const openContactSheet = async (profileId: string) => {
+    try {
+      const { data: contact, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", profileId)
+        .single();
+      
+      if (error) throw error;
+      
+      setSelectedContact(contact);
+      setContactSheetOpen(true);
+    } catch (e) {
+      console.error("Failed to load contact:", e);
+      toast.error("Не удалось загрузить контакт");
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     const variants: Record<string, { variant: "default" | "secondary" | "outline" | "destructive"; label: string }> = {
       successful: { variant: "default", label: "Успешно" },
@@ -330,39 +388,72 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
         );
         
       case 'contact':
-        return payment.profile_id ? (
-          <div className="flex items-center gap-1 text-xs">
-            <User className="h-3 w-3 text-green-500" />
-            <span className="font-medium truncate max-w-[100px]">{payment.profile_name || "Связан"}</span>
-            {payment.is_ghost && <Badge variant="outline" className="text-[10px]">Ghost</Badge>}
-          </div>
-        ) : (
-          <Badge variant="outline" className="text-xs">Не связан</Badge>
-        );
-        
-      case 'deal':
-        if (payment.order_id) {
-          // Compact clickable chip with short order code
-          const shortCode = payment.order_number 
-            ? (payment.order_number.length > 12 
-                ? payment.order_number.substring(0, 10) + '…' 
-                : payment.order_number)
-            : 'Связан';
+        if (payment.profile_id) {
+          // Display name: Фамилия Имя (surname first) with fallback
+          const displayName = payment.profile_name || "Связан";
           return (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-mono cursor-pointer hover:bg-accent border-input bg-transparent"
-                  onClick={() => {
-                    window.open(`/admin/deals?order=${payment.order_id}`, '_blank');
-                  }}
+                  className="flex flex-col items-start gap-0.5 text-xs text-left cursor-pointer hover:underline max-w-[130px]"
+                  onClick={() => openContactSheet(payment.profile_id!)}
                 >
-                  <Package className="h-3 w-3" />
-                  {shortCode}
+                  <div className="flex items-center gap-1">
+                    <User className="h-3 w-3 text-green-500 flex-shrink-0" />
+                    <span className="font-medium truncate">{displayName}</span>
+                    {payment.is_ghost && <Badge variant="outline" className="text-[10px]">Ghost</Badge>}
+                  </div>
+                  {payment.profile_email && (
+                    <span className="text-muted-foreground truncate w-full">{payment.profile_email}</span>
+                  )}
                 </button>
               </TooltipTrigger>
-              <TooltipContent>{payment.order_number || payment.order_id}</TooltipContent>
+              <TooltipContent side="bottom">
+                <div className="text-xs">
+                  <div className="font-medium">{displayName}</div>
+                  {payment.profile_email && <div>{payment.profile_email}</div>}
+                  {payment.profile_phone && <div>{payment.profile_phone}</div>}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          );
+        }
+        return (
+          <div className="flex items-center gap-1">
+            <Badge variant="outline" className="text-xs text-muted-foreground">Не связан</Badge>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-5 w-5 p-0" 
+              onClick={() => openLinkContact(payment)}
+            >
+              <Link2 className="h-3 w-3" />
+            </Button>
+          </div>
+        );
+        
+      case 'deal':
+        if (payment.order_id) {
+          // Show "Связана" text with calm neutral chip, click opens modal
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs cursor-pointer hover:bg-accent border-muted bg-muted/30 text-foreground"
+                  onClick={() => openDealSheet(payment.order_id!, payment.profile_id)}
+                >
+                  <Handshake className="h-3 w-3 text-muted-foreground" />
+                  <span>Связана</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <div className="text-xs">
+                  <div className="font-medium">Сделка: {payment.order_number || payment.order_id}</div>
+                  <div className="text-muted-foreground">Нажмите для просмотра</div>
+                </div>
+              </TooltipContent>
             </Tooltip>
           );
         }
@@ -453,7 +544,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
               )}
               {!payment.order_id && (
                 <DropdownMenuItem onClick={() => openLinkDeal(payment)}>
-                  <Package className="h-3 w-3 mr-2" />
+                  <Handshake className="h-3 w-3" />
                   Связать сделку
                 </DropdownMenuItem>
               )}
@@ -574,6 +665,31 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
             />
           </>
         )}
+        
+        {/* Deal Detail Sheet (modal, stays on /admin/payments) */}
+        <DealDetailSheet
+          deal={selectedDeal}
+          profile={selectedDealProfile}
+          open={dealSheetOpen}
+          onOpenChange={(open) => {
+            setDealSheetOpen(open);
+            if (!open) {
+              onRefetch();
+            }
+          }}
+        />
+        
+        {/* Contact Detail Sheet (modal, stays on /admin/payments) */}
+        <ContactDetailSheet
+          contact={selectedContact}
+          open={contactSheetOpen}
+          onOpenChange={(open) => {
+            setContactSheetOpen(open);
+            if (!open) {
+              onRefetch();
+            }
+          }}
+        />
       </div>
     </TooltipProvider>
   );

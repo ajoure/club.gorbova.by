@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useTrainingModules, TrainingModule, TrainingModuleFormData } from "@/hooks/useTrainingModules";
@@ -64,140 +64,32 @@ const gradientOptions = [
   { value: "from-teal-500 to-cyan-500", label: "Бирюзовый → Голубой" },
 ];
 
-export default function AdminTrainingModules() {
-  const navigate = useNavigate();
-  const { modules, loading, refetch, createModule, updateModule, deleteModule } = useTrainingModules();
-  const [editingModule, setEditingModule] = useState<TrainingModule | null>(null);
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
-  const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<TrainingModuleFormData>({
-    title: "",
-    slug: "",
-    description: "",
-    color_gradient: "from-pink-500 to-fuchsia-600",
-    is_active: true,
-    tariff_ids: [],
-  });
+const generateSlug = (title: string) => {
+  return title
+    .toLowerCase()
+    .replace(/[а-яё]/gi, (char) => {
+      const ru = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя";
+      const en = ["a","b","v","g","d","e","yo","zh","z","i","j","k","l","m","n","o","p","r","s","t","u","f","h","c","ch","sh","sch","","y","","e","yu","ya"];
+      const idx = ru.indexOf(char.toLowerCase());
+      return idx >= 0 ? en[idx] : char;
+    })
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+};
 
-  // Fetch tariffs for access control
-  const { data: tariffs } = useQuery({
-    queryKey: ["tariffs-for-modules"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("tariffs")
-        .select("id, name, product_id, products_v2(name)")
-        .eq("is_active", true)
-        .order("name");
-      if (error) throw error;
-      return data;
-    },
-  });
+// Form content component - MUST be outside main component to prevent focus loss
+interface ModuleFormContentProps {
+  formData: TrainingModuleFormData;
+  setFormData: React.Dispatch<React.SetStateAction<TrainingModuleFormData>>;
+  editingModule: TrainingModule | null;
+  tariffs: any[] | undefined;
+  handleTariffToggle: (tariffId: string) => void;
+}
 
-  // Fetch module access when editing
-  const { data: moduleAccess } = useQuery({
-    queryKey: ["module-access", editingModule?.id],
-    queryFn: async () => {
-      if (!editingModule?.id) return [];
-      const { data, error } = await supabase
-        .from("module_access")
-        .select("tariff_id")
-        .eq("module_id", editingModule.id);
-      if (error) throw error;
-      return data.map(a => a.tariff_id);
-    },
-    enabled: !!editingModule?.id,
-  });
-
-  const resetForm = () => {
-    setFormData({
-      title: "",
-      slug: "",
-      description: "",
-      color_gradient: "from-pink-500 to-fuchsia-600",
-      is_active: true,
-      tariff_ids: [],
-    });
-  };
-
-  const openCreateDialog = () => {
-    resetForm();
-    setIsCreateDialogOpen(true);
-  };
-
-  const openEditDialog = (module: TrainingModule) => {
-    setEditingModule(module);
-    setFormData({
-      title: module.title,
-      slug: module.slug,
-      description: module.description || "",
-      cover_image: module.cover_image || "",
-      color_gradient: module.color_gradient || "from-pink-500 to-fuchsia-600",
-      is_active: module.is_active,
-      tariff_ids: [],
-    });
-  };
-
-  // Update tariff_ids when moduleAccess loads
-  if (moduleAccess && editingModule && formData.tariff_ids?.length === 0 && moduleAccess.length > 0) {
-    setFormData(prev => ({ ...prev, tariff_ids: moduleAccess }));
-  }
-
-  const handleCreate = async () => {
-    if (!formData.title || !formData.slug) return;
-    
-    const success = await createModule(formData);
-    if (success) {
-      setIsCreateDialogOpen(false);
-      resetForm();
-    }
-  };
-
-  const handleUpdate = async () => {
-    if (!editingModule || !formData.title || !formData.slug) return;
-    
-    const success = await updateModule(editingModule.id, formData);
-    if (success) {
-      setEditingModule(null);
-      resetForm();
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!deleteConfirmId) return;
-    
-    const success = await deleteModule(deleteConfirmId);
-    if (success) {
-      setDeleteConfirmId(null);
-    }
-  };
-
-  const handleTariffToggle = (tariffId: string) => {
-    setFormData(prev => ({
-      ...prev,
-      tariff_ids: prev.tariff_ids?.includes(tariffId)
-        ? prev.tariff_ids.filter(id => id !== tariffId)
-        : [...(prev.tariff_ids || []), tariffId],
-    }));
-  };
-
-  const generateSlug = (title: string) => {
-    return title
-      .toLowerCase()
-      .replace(/[а-яё]/gi, (char) => {
-        const ru = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя";
-        const en = ["a","b","v","g","d","e","yo","zh","z","i","j","k","l","m","n","o","p","r","s","t","u","f","h","c","ch","sh","sch","","y","","e","yu","ya"];
-        const idx = ru.indexOf(char.toLowerCase());
-        return idx >= 0 ? en[idx] : char;
-      })
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9-]/g, "")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "");
-  };
-
-  const ModuleFormContent = () => (
+function ModuleFormContent({ formData, setFormData, editingModule, tariffs, handleTariffToggle }: ModuleFormContentProps) {
+  return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">
@@ -206,10 +98,11 @@ export default function AdminTrainingModules() {
             id="title"
             value={formData.title}
             onChange={(e) => {
+              const newTitle = e.target.value;
               setFormData(prev => ({
                 ...prev,
-                title: e.target.value,
-                slug: editingModule ? prev.slug : generateSlug(e.target.value),
+                title: newTitle,
+                slug: editingModule ? prev.slug : generateSlug(newTitle),
               }));
             }}
             placeholder="База знаний"
@@ -306,6 +199,125 @@ export default function AdminTrainingModules() {
       </div>
     </div>
   );
+}
+
+export default function AdminTrainingModules() {
+  const navigate = useNavigate();
+  const { modules, loading, refetch, createModule, updateModule, deleteModule } = useTrainingModules();
+  const [editingModule, setEditingModule] = useState<TrainingModule | null>(null);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<TrainingModuleFormData>({
+    title: "",
+    slug: "",
+    description: "",
+    color_gradient: "from-pink-500 to-fuchsia-600",
+    is_active: true,
+    tariff_ids: [],
+  });
+
+  // Fetch tariffs for access control
+  const { data: tariffs } = useQuery({
+    queryKey: ["tariffs-for-modules"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("tariffs")
+        .select("id, name, product_id, products_v2(name)")
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // Fetch module access when editing
+  const { data: moduleAccess } = useQuery({
+    queryKey: ["module-access", editingModule?.id],
+    queryFn: async () => {
+      if (!editingModule?.id) return [];
+      const { data, error } = await supabase
+        .from("module_access")
+        .select("tariff_id")
+        .eq("module_id", editingModule.id);
+      if (error) throw error;
+      return data.map(a => a.tariff_id);
+    },
+    enabled: !!editingModule?.id,
+  });
+
+  const resetForm = useCallback(() => {
+    setFormData({
+      title: "",
+      slug: "",
+      description: "",
+      color_gradient: "from-pink-500 to-fuchsia-600",
+      is_active: true,
+      tariff_ids: [],
+    });
+  }, []);
+
+  const openCreateDialog = useCallback(() => {
+    resetForm();
+    setIsCreateDialogOpen(true);
+  }, [resetForm]);
+
+  const openEditDialog = useCallback((module: TrainingModule) => {
+    setEditingModule(module);
+    setFormData({
+      title: module.title,
+      slug: module.slug,
+      description: module.description || "",
+      cover_image: module.cover_image || "",
+      color_gradient: module.color_gradient || "from-pink-500 to-fuchsia-600",
+      is_active: module.is_active,
+      tariff_ids: [],
+    });
+  }, []);
+
+  // Update tariff_ids when moduleAccess loads
+  if (moduleAccess && editingModule && formData.tariff_ids?.length === 0 && moduleAccess.length > 0) {
+    setFormData(prev => ({ ...prev, tariff_ids: moduleAccess }));
+  }
+
+  const handleCreate = async () => {
+    if (!formData.title || !formData.slug) return;
+    
+    const success = await createModule(formData);
+    if (success) {
+      setIsCreateDialogOpen(false);
+      resetForm();
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!editingModule || !formData.title || !formData.slug) return;
+    
+    const success = await updateModule(editingModule.id, formData);
+    if (success) {
+      setEditingModule(null);
+      resetForm();
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteConfirmId) return;
+    
+    const success = await deleteModule(deleteConfirmId);
+    if (success) {
+      setDeleteConfirmId(null);
+    }
+  };
+
+  const handleTariffToggle = useCallback((tariffId: string) => {
+    setFormData(prev => ({
+      ...prev,
+      tariff_ids: prev.tariff_ids?.includes(tariffId)
+        ? prev.tariff_ids.filter(id => id !== tariffId)
+        : [...(prev.tariff_ids || []), tariffId],
+    }));
+  }, []);
 
   return (
     <AdminLayout>
@@ -432,7 +444,13 @@ export default function AdminTrainingModules() {
                 Создайте новый раздел базы знаний
               </DialogDescription>
             </DialogHeader>
-            <ModuleFormContent />
+            <ModuleFormContent 
+              formData={formData}
+              setFormData={setFormData}
+              editingModule={null}
+              tariffs={tariffs}
+              handleTariffToggle={handleTariffToggle}
+            />
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                 Отмена
@@ -453,7 +471,13 @@ export default function AdminTrainingModules() {
                 Измените параметры модуля
               </DialogDescription>
             </DialogHeader>
-            <ModuleFormContent />
+            <ModuleFormContent 
+              formData={formData}
+              setFormData={setFormData}
+              editingModule={editingModule}
+              tariffs={tariffs}
+              handleTariffToggle={handleTariffToggle}
+            />
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditingModule(null)}>
                 Отмена
@@ -471,7 +495,7 @@ export default function AdminTrainingModules() {
             <AlertDialogHeader>
               <AlertDialogTitle>Удалить модуль?</AlertDialogTitle>
               <AlertDialogDescription>
-                Это действие нельзя отменить. Все уроки внутри модуля также будут удалены.
+                Модуль и все его уроки будут удалены безвозвратно.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -483,18 +507,15 @@ export default function AdminTrainingModules() {
           </AlertDialogContent>
         </AlertDialog>
 
-        {/* GetCourse Import Dialog */}
+        {/* Import Dialogs */}
         <GetCourseContentImportDialog
           open={isImportDialogOpen}
           onOpenChange={setIsImportDialogOpen}
           onImportComplete={refetch}
         />
-
-        {/* Excel Import Dialog */}
         <ExcelTrainingImportDialog
           open={isExcelImportOpen}
           onOpenChange={setIsExcelImportOpen}
-          onImportComplete={refetch}
         />
       </div>
     </AdminLayout>

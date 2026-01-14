@@ -408,13 +408,13 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
     <div className="space-y-4">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" className="w-full bg-card/50 backdrop-blur-sm border-dashed hover:bg-card/80">
+          <Button variant="outline" className="w-full bg-card/50 border-dashed hover:bg-card/80">
             <Plus className="h-4 w-4 mr-2" />
             Добавить блок
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="center" className="w-64 backdrop-blur-xl bg-background/95">
-          {Object.entries(blocksByCategory).map(([category, types], catIndex) => {
+        <DropdownMenuContent align="center" className="w-64" sideOffset={4}>
+          {Object.entries(blocksByCategory).map(([category, types]) => {
             const catConfig = categoryConfig[category as keyof typeof categoryConfig];
             const CatIcon = catConfig.icon;
             
@@ -427,7 +427,7 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
                     {types.length}
                   </Badge>
                 </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="backdrop-blur-xl bg-background/95">
+                <DropdownMenuSubContent sideOffset={2} alignOffset={-5}>
                   {types.map((type) => {
                     const config = blockTypeConfig[type];
                     const BlockIcon = config.icon;
@@ -435,7 +435,7 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
                       <DropdownMenuItem 
                         key={type} 
                         onClick={() => handleAddBlock(type)}
-                        className="gap-2"
+                        className="gap-2 cursor-pointer"
                       >
                         <BlockIcon className={`h-4 w-4 ${config.color.split(' ')[1]}`} />
                         {config.label}
