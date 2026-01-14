@@ -154,6 +154,19 @@ interface SyncResult {
   error?: string;
 }
 
+// A1: Enhanced sync report interface
+interface SyncReport {
+  found: number;
+  added: number;
+  skipped: number;
+  errors: number;
+  skip_reasons: Record<string, number>;
+  samples: {
+    added: Array<{ uid: string; amount: number; email?: string }>;
+    skipped: Array<{ uid: string; reason: string; amount?: number }>;
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -195,14 +208,17 @@ Deno.serve(async (req) => {
     if (profilesError) throw profilesError;
     console.log(`Loaded ${profiles?.length || 0} profiles for matching`);
 
-    // Get existing payments to avoid duplicates
-    const { data: existingPayments } = await supabase
-      .from('payments_v2')
-      .select('provider_payment_id')
-      .eq('provider', 'bepaid');
+    // Get existing payments to avoid duplicates - from both sources
+    const [existingPayments, existingQueue] = await Promise.all([
+      supabase.from('payments_v2').select('provider_payment_id').eq('provider', 'bepaid'),
+      supabase.from('payment_reconcile_queue').select('bepaid_uid'),
+    ]);
     
-    const existingUids = new Set((existingPayments || []).map(p => p.provider_payment_id));
-    console.log(`Found ${existingUids.size} existing bePaid payments`);
+    const existingUids = new Set([
+      ...(existingPayments.data || []).map(p => p.provider_payment_id),
+      ...(existingQueue.data || []).map(q => q.bepaid_uid),
+    ]);
+    console.log(`Found ${existingUids.size} existing bePaid payments/queue items`);
 
     const results: SyncResult[] = [];
     const stats = {
@@ -214,6 +230,24 @@ Deno.serve(async (req) => {
       skipped_duplicate: 0,
       created: 0,
       errors: 0,
+    };
+
+    // A1: Enhanced sync report
+    const syncReport: SyncReport = {
+      found: 0,
+      added: 0,
+      skipped: 0,
+      errors: 0,
+      skip_reasons: {},
+      samples: { added: [], skipped: [] },
+    };
+
+    const addSkipReason = (reason: string, uid: string, amount?: number) => {
+      syncReport.skip_reasons[reason] = (syncReport.skip_reasons[reason] || 0) + 1;
+      syncReport.skipped++;
+      if (syncReport.samples.skipped.length < 5) {
+        syncReport.samples.skipped.push({ uid, reason, amount });
+      }
     };
 
     // =================================================================
@@ -300,6 +334,7 @@ Deno.serve(async (req) => {
 
     console.log(`Fetched ${allTransactions.length} total transactions from bePaid`);
     stats.total_fetched = allSubscriptions.length + allTransactions.length;
+    syncReport.found = stats.total_fetched;
 
     // =================================================================
     // PART 3: Process Subscriptions
@@ -307,12 +342,17 @@ Deno.serve(async (req) => {
     for (const sub of allSubscriptions) {
       // Get first successful transaction
       const successfulTx = sub.transactions?.find(t => t.status === 'successful');
-      if (!successfulTx) continue;
+      if (!successfulTx) {
+        addSkipReason('no_successful_transaction', sub.id);
+        continue;
+      }
 
       const bepaidUid = successfulTx.uid;
       
+      // A1: Enhanced duplicate check with reason tracking
       if (existingUids.has(bepaidUid)) {
         stats.skipped_duplicate++;
+        addSkipReason('already_exists', bepaidUid, (sub.plan?.amount || 0) / 100);
         results.push({
           bepaid_uid: bepaidUid,
           email: sub.customer?.email || null,
@@ -342,7 +382,7 @@ Deno.serve(async (req) => {
         (sub.plan?.amount || 0) / 100, sub.plan?.currency || 'BYN', 
         bepaidUid, successfulTx.paid_at,
         sub.tracking_id, sub.plan?.title || 'Подписка bePaid',
-        sub, dryRun, existingUids, results, stats
+        sub, dryRun, existingUids, results, stats, syncReport
       );
     }
 
@@ -350,8 +390,10 @@ Deno.serve(async (req) => {
     // PART 4: Process Transactions
     // =================================================================
     for (const tx of allTransactions) {
+      // A1: Enhanced duplicate check
       if (existingUids.has(tx.uid)) {
         stats.skipped_duplicate++;
+        addSkipReason('already_exists', tx.uid, tx.amount / 100);
         results.push({
           bepaid_uid: tx.uid,
           email: tx.customer?.email || null,
@@ -381,18 +423,25 @@ Deno.serve(async (req) => {
         tx.amount / 100, tx.currency,
         tx.uid, tx.paid_at || tx.created_at,
         tx.description || tx.tracking_id, tx.description || 'Платёж bePaid',
-        tx, dryRun, existingUids, results, stats
+        tx, dryRun, existingUids, results, stats, syncReport
       );
     }
 
     console.log('Sync completed:', stats);
+    console.log('Sync report:', syncReport);
+
+    // G2: Guard/STOP - warn if found > 0 but added = 0 and not all skipped as duplicates
+    const potentialMissing = syncReport.found - syncReport.skipped - syncReport.added;
+    if (syncReport.found > 0 && syncReport.added === 0 && potentialMissing > 0) {
+      console.warn(`[GUARD] Found ${syncReport.found} transactions but added 0. Potential missing: ${potentialMissing}`);
+    }
 
     // Log the sync run
     if (!dryRun) {
       await supabase.from("audit_logs").insert({
         action: "bepaid_full_sync",
         actor_user_id: "00000000-0000-0000-0000-000000000000",
-        meta: { stats, dryRun },
+        meta: { stats, syncReport, dryRun },
       });
     }
 
@@ -400,6 +449,8 @@ Deno.serve(async (req) => {
       success: true,
       dryRun,
       stats,
+      // A1: Include detailed sync report
+      syncReport,
       results: results.slice(0, 500), // Limit response size
       total_results: results.length,
     }), {
@@ -432,7 +483,8 @@ async function processPayment(
   dryRun: boolean,
   existingUids: Set<string>,
   results: SyncResult[],
-  stats: any
+  stats: any,
+  syncReport: SyncReport
 ) {
   const cardHolderCyrillic = cardHolder ? transliterateToСyrillic(cardHolder) : null;
   
@@ -498,6 +550,11 @@ async function processPayment(
 
   if (!matchedProfile) {
     stats.not_matched++;
+    syncReport.skip_reasons['no_profile_match'] = (syncReport.skip_reasons['no_profile_match'] || 0) + 1;
+    syncReport.skipped++;
+    if (syncReport.samples.skipped.length < 5) {
+      syncReport.samples.skipped.push({ uid: bepaidUid, reason: 'no_profile_match', amount });
+    }
     results.push(result);
     return;
   }
@@ -505,6 +562,10 @@ async function processPayment(
   if (dryRun) {
     result.action = 'created';
     stats.created++;
+    syncReport.added++;
+    if (syncReport.samples.added.length < 5) {
+      syncReport.samples.added.push({ uid: bepaidUid, amount, email });
+    }
     results.push(result);
     return;
   }

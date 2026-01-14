@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { CreditCard, Mail, User, FileText, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake } from "lucide-react";
+import { Mail, User, FileText, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
@@ -15,6 +15,7 @@ import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings"
 import { LinkContactDialog } from "./LinkContactDialog";
 import { LinkDealDialog } from "./LinkDealDialog";
 import ContactLinkActions from "./ContactLinkActions";
+import PaymentMethodBadge from "./PaymentMethodBadge";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import {
@@ -360,19 +361,16 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
         return <span className="font-medium">{payment.amount} {payment.currency}</span>;
         
       case 'payer':
+        // E1-E4: Use PaymentMethodBadge component
         return (
           <div className="flex flex-col gap-0.5 text-xs">
-            {/* Line 1: Card info */}
-            {payment.card_last4 && (
-              <div className="flex items-center gap-1">
-                <CreditCard className="h-3 w-3 flex-shrink-0" />
-                <span className="font-mono">**** {payment.card_last4}</span>
-                {payment.card_brand && (
-                  <span className="text-muted-foreground">· {payment.card_brand.toUpperCase()}</span>
-                )}
-              </div>
-            )}
-            {/* Line 2: Card holder (from provider_response or card_holder field) */}
+            {/* Line 1: Payment method badge with card/wallet icon */}
+            <PaymentMethodBadge
+              cardBrand={payment.card_brand}
+              cardLast4={payment.card_last4}
+              providerResponse={null}
+            />
+            {/* Line 2: Card holder name */}
             {payment.card_holder ? (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -382,9 +380,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
                 </TooltipTrigger>
                 <TooltipContent side="bottom">{payment.card_holder}</TooltipContent>
               </Tooltip>
-            ) : (
-              <span className="text-muted-foreground">—</span>
-            )}
+            ) : null}
           </div>
         );
         
