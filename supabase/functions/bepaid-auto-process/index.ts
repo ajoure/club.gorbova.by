@@ -665,7 +665,7 @@ Deno.serve(async (req) => {
             }
           }
 
-          // GetCourse sync - call the unified function (best-effort)
+          // GetCourse sync - call the unified function (best-effort, non-blocking)
           if (orderCustomerEmail && mapping.offer_id) {
             try {
               const gcResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/getcourse-grant-access`, {
@@ -676,10 +676,17 @@ Deno.serve(async (req) => {
                 },
                 body: JSON.stringify({ order_id: newOrder.id }),
               });
-              const gcResult = await gcResponse.json();
-              console.log(`[BEPAID-AUTO-PROCESS] GC sync result:`, gcResult);
+              
+              // Parse response but don't fail on non-2xx (GC sync is optional)
+              if (gcResponse.ok) {
+                const gcResult = await gcResponse.json().catch(() => ({}));
+                console.log(`[BEPAID-AUTO-PROCESS] GC sync result:`, gcResult);
+              } else {
+                console.warn(`[BEPAID-AUTO-PROCESS] GC sync returned ${gcResponse.status} - ignoring (best-effort)`);
+              }
             } catch (gcErr) {
-              console.error(`[BEPAID-AUTO-PROCESS] GC sync error:`, gcErr);
+              // GC sync failure should NOT block payment processing
+              console.error(`[BEPAID-AUTO-PROCESS] GC sync error (non-blocking):`, gcErr);
             }
           }
 
