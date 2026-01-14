@@ -55,19 +55,20 @@ Deno.serve(async (req) => {
     const sinceDate = new Date(Date.now() - since_days * 24 * 60 * 60 * 1000).toISOString();
 
     // Fetch eligible orders - simple query, let getcourse-grant-access handle offer resolution
-    // We just need orders that are paid, have email, and not synced successfully
+    // IMPORTANT: Don't filter by customer_email here - getcourse-grant-access can get email from profile
     let query = supabase
       .from('orders_v2')
       .select(`
         id,
         order_number,
         customer_email,
+        profile_id,
         meta,
         gc_next_retry_at
       `)
       .eq('status', 'paid')
       .gte('created_at', sinceDate)
-      .not('customer_email', 'is', null)
+      // Removed: .not('customer_email', 'is', null) - let getcourse-grant-access check profile email
       .order('created_at', { ascending: false })
       .limit(limit * 2); // Fetch more to filter
 
@@ -77,7 +78,7 @@ Deno.serve(async (req) => {
       throw new Error(`Failed to fetch orders: ${ordersError.message}`);
     }
 
-    console.log(`[GC-BACKFILL] Fetched ${orders?.length || 0} paid orders with email`);
+    console.log(`[GC-BACKFILL] Fetched ${orders?.length || 0} paid orders`);
 
     // Filter eligible orders
     const eligibleOrders: any[] = [];
