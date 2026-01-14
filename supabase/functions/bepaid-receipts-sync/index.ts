@@ -283,12 +283,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Process payments_v2 items
+    // Process payments_v2 items - also fetch fee for items without fee info
     if (source === 'all' || source === 'payments_v2') {
+      // Expand query to include items that need receipt_url or fee
       let paymentsQuery = supabaseAdmin
         .from('payments_v2')
         .select('id, provider_payment_id, status, receipt_url, provider_response')
-        .is('receipt_url', null)
         .not('provider_payment_id', 'is', null)
         .limit(effectiveBatchSize);
 
