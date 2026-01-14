@@ -42,6 +42,9 @@ import {
   CheckCircle,
   XCircle,
   ExternalLink,
+  BookOpen,
+  AlertTriangle,
+  Send,
 } from "lucide-react";
 import {
   Tooltip,
@@ -70,6 +73,7 @@ export default function AdminOrdersV2() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [gcFilter, setGcFilter] = useState<string>("all");
   const { isSuperAdmin } = usePermissions();
   const queryClient = useQueryClient();
 
@@ -97,6 +101,31 @@ export default function AdminOrdersV2() {
       toast.error('Ошибка подтверждения оплаты', {
         description: error.message,
       });
+    },
+  });
+
+  // Mutation for GC retry
+  const gcRetryMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      const { data, error } = await supabase.functions.invoke('getcourse-grant-access', {
+        body: { order_id: orderId, force: true },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      if (data?.status === 'success') {
+        toast.success('Отправлено в GetCourse');
+      } else if (data?.status === 'skipped') {
+        toast.warning(`Пропущено: ${data.skipped_reason || data.error}`);
+      } else {
+        toast.error(data?.error || 'Ошибка синхронизации');
+      }
+      queryClient.invalidateQueries({ queryKey: ['orders-v2'] });
+      refetch();
+    },
+    onError: (error: any) => {
+      toast.error('Ошибка GC sync', { description: error.message });
     },
   });
 
@@ -160,16 +189,40 @@ export default function AdminOrdersV2() {
   });
 
   const filteredOrders = orders?.filter((order) => {
-    if (!searchQuery) return true;
-    const query = searchQuery.toLowerCase();
-    const profile = (order as any).profile;
-    return (
-      order.order_number?.toLowerCase().includes(query) ||
-      order.customer_email?.toLowerCase().includes(query) ||
-      order.customer_phone?.includes(query) ||
-      profile?.full_name?.toLowerCase().includes(query) ||
-      order.products_v2?.name?.toLowerCase().includes(query)
-    );
+    // Search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      const profile = (order as any).profile;
+      const matchesSearch = (
+        order.order_number?.toLowerCase().includes(query) ||
+        order.customer_email?.toLowerCase().includes(query) ||
+        order.customer_phone?.includes(query) ||
+        profile?.full_name?.toLowerCase().includes(query) ||
+        order.products_v2?.name?.toLowerCase().includes(query)
+      );
+      if (!matchesSearch) return false;
+    }
+    
+    // GC filter
+    if (gcFilter !== "all") {
+      const gcStatus = (order.meta as any)?.gc_sync_status;
+      const gcErrorType = (order.meta as any)?.gc_sync_error_type;
+      const gcNextRetryAt = order.gc_next_retry_at;
+      
+      if (gcFilter === "success" && gcStatus !== "success") return false;
+      if (gcFilter === "failed" && gcStatus !== "failed") return false;
+      if (gcFilter === "skipped" && gcStatus !== "skipped") return false;
+      if (gcFilter === "not_sent" && gcStatus) return false;
+      if (gcFilter === "rate_limit") {
+        if (gcErrorType !== "rate_limit") return false;
+      }
+      if (gcFilter === "retry_ready") {
+        if (gcErrorType !== "rate_limit") return false;
+        if (!gcNextRetryAt || new Date(gcNextRetryAt) > new Date()) return false;
+      }
+    }
+    
+    return true;
   });
 
   const copyOrderId = (id: string) => {
@@ -262,6 +315,21 @@ export default function AdminOrdersV2() {
               {Object.entries(ORDER_STATUS_LABELS).map(([value, { label }]) => (
                 <SelectItem key={value} value={value}>{label}</SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+          <Select value={gcFilter} onValueChange={setGcFilter}>
+            <SelectTrigger className="w-[180px]">
+              <BookOpen className="h-4 w-4 mr-2" />
+              <SelectValue placeholder="GC статус" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все GC</SelectItem>
+              <SelectItem value="success">✅ Синхронизировано</SelectItem>
+              <SelectItem value="failed">❌ Ошибка</SelectItem>
+              <SelectItem value="skipped">⏭️ Пропущено</SelectItem>
+              <SelectItem value="not_sent">📤 Не отправлено</SelectItem>
+              <SelectItem value="rate_limit">⏳ Rate limit</SelectItem>
+              <SelectItem value="retry_ready">🔄 Готов к retry</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -380,6 +448,18 @@ export default function AdminOrdersV2() {
                                   )}
                                 </TooltipContent>
                               </Tooltip>
+                            ) : (order.meta as any)?.gc_sync_status === 'skipped' ? (
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <AlertTriangle className="h-4 w-4 text-amber-500" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Пропущено</p>
+                                  {(order.meta as any)?.gc_sync_error && (
+                                    <p className="text-xs text-muted-foreground">{(order.meta as any).gc_sync_error}</p>
+                                  )}
+                                </TooltipContent>
+                              </Tooltip>
                             ) : (
                               <span className="text-muted-foreground">—</span>
                             )}
@@ -411,6 +491,17 @@ export default function AdminOrdersV2() {
                                 <CreditCard className="h-4 w-4 mr-2" />
                                 Платежи
                               </DropdownMenuItem>
+                              {/* GC retry option */}
+                              {order.status === 'paid' && (order.meta as any)?.gc_sync_status !== 'success' && (
+                                <DropdownMenuItem 
+                                  onClick={() => gcRetryMutation.mutate(order.id)}
+                                  disabled={gcRetryMutation.isPending}
+                                  className="text-blue-600"
+                                >
+                                  <Send className="h-4 w-4 mr-2" />
+                                  {gcRetryMutation.isPending ? 'Отправка...' : 'Отправить в GetCourse'}
+                                </DropdownMenuItem>
+                              )}
                               {isSuperAdmin() && order.status !== 'paid' && order.status !== 'refunded' && (
                                 <>
                                   <DropdownMenuSeparator />

@@ -22,7 +22,7 @@ interface DryRunResult {
 
 interface GrantAccessResponse {
   ok: boolean;
-  status: 'success' | 'failed' | 'skipped';
+  status: 'success' | 'failed' | 'skipped' | 'dry_run';
   gc_order_id?: string;
   gc_deal_number?: number;
   error?: string;
@@ -228,7 +228,7 @@ Deno.serve(async (req) => {
       if (dry_run) {
         const response: GrantAccessResponse = {
           ok: true,
-          status: 'skipped',
+          status: 'dry_run',
           dry_run: true,
           dry_run_result: {
             eligible: false,
@@ -240,12 +240,14 @@ Deno.serve(async (req) => {
       }
       
       await supabase.from('orders_v2').update({
+        gc_next_retry_at: null, // Clear retry timer on skip
         meta: {
           ...((order.meta as object) || {}),
           gc_sync_status: 'skipped',
           gc_sync_error: 'No customer email',
           gc_sync_error_type: 'no_email',
           gc_synced_at: new Date().toISOString(),
+          gc_next_retry_at: null,
         }
       }).eq('id', order.id);
 
@@ -272,7 +274,7 @@ Deno.serve(async (req) => {
       if (dry_run) {
         const response: GrantAccessResponse = {
           ok: true,
-          status: 'skipped',
+          status: 'dry_run',
           dry_run: true,
           dry_run_result: {
             eligible: false,
@@ -285,12 +287,14 @@ Deno.serve(async (req) => {
       }
       
       await supabase.from('orders_v2').update({
+        gc_next_retry_at: null, // Clear retry timer on skip
         meta: {
           ...((order.meta as object) || {}),
           gc_sync_status: 'skipped',
           gc_sync_error: 'No GetCourse offer configured',
           gc_sync_error_type: 'no_gc_offer',
           gc_synced_at: new Date().toISOString(),
+          gc_next_retry_at: null,
         }
       }).eq('id', order.id);
 
@@ -317,7 +321,7 @@ Deno.serve(async (req) => {
       if (dry_run) {
         const response: GrantAccessResponse = {
           ok: true,
-          status: 'success',
+          status: 'dry_run',
           dry_run: true,
           dry_run_result: {
             eligible: true,
@@ -344,7 +348,7 @@ Deno.serve(async (req) => {
     if (dry_run) {
       const response: GrantAccessResponse = {
         ok: true,
-        status: 'success', // Would be successful if we execute
+        status: 'dry_run', // Clearly indicates this is just a simulation
         dry_run: true,
         dry_run_result: {
           eligible: true,

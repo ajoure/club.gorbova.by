@@ -199,10 +199,8 @@ export function EditSubscriptionDialog({
   const gcNextRetryAt = orderData?.gc_next_retry_at;
   const hasEmail = !!orderData?.customer_email;
 
-  // Check if tariff/offer has GC offer configured
-  const selectedTariff = tariffs?.find(t => t.id === formData.tariff_id);
-  const selectedOffer = tariffOffers?.find(o => o.id === formData.offer_id);
-  const hasGCOffer = !!(selectedOffer?.getcourse_offer_id || selectedTariff?.getcourse_offer_id);
+  // NOTE: We no longer check hasGCOffer on frontend - let getcourse-grant-access decide
+  // This avoids confusion when order.meta.offer_id differs from currently selected tariff/offer
 
   useEffect(() => {
     if (subscription) {
@@ -480,13 +478,9 @@ export function EditSubscriptionDialog({
   const isTelegramGranted = telegramAccess?.state_chat === "granted" || telegramAccess?.state_channel === "granted";
   const hasOrderId = !!subscription?.order_id;
 
-  // GC disabled reasons
+  // GC disabled reasons - only disable if no order (dry-run shows other reasons)
   const gcDisabledReason = !hasOrderId 
     ? "Нет связанного заказа" 
-    : !hasEmail 
-    ? "Нет email — GC не принимает" 
-    : !hasGCOffer 
-    ? "Не настроен оффер GetCourse" 
     : null;
 
   return (
@@ -890,7 +884,7 @@ export function EditSubscriptionDialog({
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => grantGetCourseAccess(gcSyncStatus === 'failed')}
+                            onClick={() => grantGetCourseAccess(gcSyncStatus === 'failed' || gcSyncStatus === 'skipped')}
                             disabled={isGCLoading || !!gcDisabledReason}
                             className="w-full bg-blue-500/10 border-blue-500/30 text-blue-600 hover:bg-blue-500/20"
                           >
@@ -899,7 +893,7 @@ export function EditSubscriptionDialog({
                             ) : (
                               <Send className="w-4 h-4 mr-1" />
                             )}
-                            {gcSyncStatus === 'failed' ? 'Повторить' : 'Отправить'}
+                            {gcSyncStatus === 'failed' || gcSyncStatus === 'skipped' ? 'Повторить' : 'Отправить'}
                           </Button>
                         </span>
                       </TooltipTrigger>
@@ -910,6 +904,28 @@ export function EditSubscriptionDialog({
                       )}
                     </Tooltip>
                   </TooltipProvider>
+
+                  {/* Force resend button (for success cases) */}
+                  {gcSyncStatus === 'success' && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => grantGetCourseAccess(true)}
+                            disabled={isGCLoading}
+                            className="px-3 bg-amber-500/10 border-amber-500/30 text-amber-600 hover:bg-amber-500/20"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Отправить повторно (force)</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
 
                   <TooltipProvider>
                     <Tooltip>
