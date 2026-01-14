@@ -29,6 +29,7 @@ import PaymentsAnalytics, { AnalyticsFilter } from "@/components/admin/payments/
 import RecoverPaymentDialog from "@/components/admin/payments/RecoverPaymentDialog";
 import ReceiptsSyncButton from "@/components/admin/payments/ReceiptsSyncButton";
 import PurgeImportsDialog from "@/components/admin/payments/PurgeImportsDialog";
+import PaymentDiagnosticsDialog from "@/components/admin/payments/PaymentDiagnosticsDialog";
 import ResyncFromApiDialog from "@/components/admin/payments/ResyncFromApiDialog";
 
 export type PaymentFilters = {
@@ -327,6 +328,9 @@ export default function AdminPayments() {
             
             {/* Purge CSV imports */}
             <PurgeImportsDialog onComplete={refetch} />
+            
+            {/* Payment diagnostics */}
+            <PaymentDiagnosticsDialog onComplete={refetch} />
             
             {/* Full resync from API (dry-run/execute) */}
             <ResyncFromApiDialog onComplete={refetch} />

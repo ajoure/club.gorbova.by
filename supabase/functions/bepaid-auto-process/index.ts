@@ -392,7 +392,44 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Step 3: Check if order already exists
+        // Step 3: CRITICAL - Check if payment with this bepaid_uid already exists (PREVENT DUPLICATES)
+        if (item.bepaid_uid) {
+          const { data: existingPayment } = await supabase
+            .from('payments_v2')
+            .select('id, order_id, orders_v2:order_id(order_number)')
+            .eq('provider_payment_id', item.bepaid_uid)
+            .maybeSingle();
+          
+          if (existingPayment) {
+            const existingOrderNumber = (existingPayment as any).orders_v2?.order_number || 'N/A';
+            console.warn(`[BEPAID-AUTO-PROCESS] SKIP: Payment with bepaid_uid=${item.bepaid_uid} already exists (payment_id=${existingPayment.id}, order_id=${existingPayment.order_id}, order_number=${existingOrderNumber})`);
+            
+            if (!dryRun) {
+              await supabase
+                .from('payment_reconcile_queue')
+                .update({ 
+                  matched_order_id: existingPayment.order_id,
+                  status: 'completed',
+                  processed_at: new Date().toISOString(),
+                  last_error: `payment_already_exists: existing_payment_id=${existingPayment.id}, existing_order_id=${existingPayment.order_id}, existing_order_number=${existingOrderNumber}`,
+                })
+                .eq('id', item.id);
+            }
+            
+            results.skipped++;
+            (results as any).skipReasons = (results as any).skipReasons || [];
+            (results as any).skipReasons.push({
+              bepaid_uid: item.bepaid_uid,
+              reason: 'payment_already_exists',
+              existing_payment_id: existingPayment.id,
+              existing_order_id: existingPayment.order_id,
+              existing_order_number: existingOrderNumber,
+            });
+            continue;
+          }
+        }
+
+        // Step 3b: Check if order already exists by tracking_id or bepaid_uid in meta
         let existingOrder = null;
         if (item.tracking_id) {
           const { data } = await supabase

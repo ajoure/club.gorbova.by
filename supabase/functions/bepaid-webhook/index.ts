@@ -2512,9 +2512,46 @@ async function createOrderFromWebhook(
   const amountBYN = transaction.amount / 100;
   const currency = transaction.currency || 'BYN';
   const customerEmail = transaction.customer?.email?.toLowerCase();
+  const transactionUid = transaction.uid;
   
   if (!customerEmail) {
     throw new Error('Customer email is required to create order');
+  }
+  
+  // CRITICAL: Check if payment with this bepaid_uid already exists (PREVENT DUPLICATES)
+  if (transactionUid) {
+    const { data: existingPayment } = await supabase
+      .from('payments_v2')
+      .select('id, order_id, orders_v2:order_id(order_number)')
+      .eq('provider_payment_id', transactionUid)
+      .maybeSingle();
+    
+    if (existingPayment) {
+      const existingOrderNumber = (existingPayment as any).orders_v2?.order_number || 'N/A';
+      console.warn(`[WEBHOOK] SKIP createOrderFromWebhook: Payment with bepaid_uid=${transactionUid} already exists (payment_id=${existingPayment.id}, order_id=${existingPayment.order_id}, order_number=${existingOrderNumber})`);
+      
+      // Log to audit
+      await supabase.from('audit_logs').insert({
+        actor_user_id: '00000000-0000-0000-0000-000000000000',
+        action: 'webhook_duplicate_payment_skipped',
+        meta: {
+          bepaid_uid: transactionUid,
+          existing_payment_id: existingPayment.id,
+          existing_order_id: existingPayment.order_id,
+          existing_order_number: existingOrderNumber,
+          attempted_order_id: orderId,
+        },
+      });
+      
+      // Return the existing order instead of creating duplicate
+      const { data: existingOrder } = await supabase
+        .from('orders_v2')
+        .select('*')
+        .eq('id', existingPayment.order_id)
+        .single();
+      
+      return existingOrder;
+    }
   }
   
   // Find or create user
