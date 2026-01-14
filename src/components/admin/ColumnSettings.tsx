@@ -36,6 +36,7 @@ export interface ColumnConfig {
 interface ColumnSettingsProps {
   columns: ColumnConfig[];
   onChange: (columns: ColumnConfig[]) => void;
+  onReset?: () => void;
 }
 
 interface SortableItemProps {
@@ -90,7 +91,7 @@ function SortableItem({ column, onToggle }: SortableItemProps) {
   );
 }
 
-export function ColumnSettings({ columns, onChange }: ColumnSettingsProps) {
+export function ColumnSettings({ columns, onChange, onReset }: ColumnSettingsProps) {
   const [open, setOpen] = useState(false);
 
   const sensors = useSensors(
@@ -144,8 +145,12 @@ export function ColumnSettings({ columns, onChange }: ColumnSettingsProps) {
             size="sm" 
             className="h-6 px-2 text-xs"
             onClick={() => {
-              const defaultCols = columns.map((c, i) => ({ ...c, visible: true, order: i }));
-              onChange(defaultCols);
+              if (onReset) {
+                onReset();
+              } else {
+                const defaultCols = columns.map((c, i) => ({ ...c, visible: true, order: i }));
+                onChange(defaultCols);
+              }
             }}
           >
             Сброс

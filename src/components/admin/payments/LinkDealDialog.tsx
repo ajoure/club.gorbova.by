@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -119,11 +119,11 @@ export function LinkDealDialog({
   };
 
   // Auto-search on open
-  useState(() => {
-    if (open) {
+  useEffect(() => {
+    if (open && results.length === 0) {
       handleSearch();
     }
-  });
+  }, [open]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

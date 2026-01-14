@@ -429,6 +429,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
           <ColumnSettings 
             columns={columns} 
             onChange={setColumns}
+            onReset={resetColumns}
           />
         </div>
         

@@ -40,8 +40,14 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
     }
 
     // STOP guard: limit 50
-    const limit = Math.min(eligiblePayments.length, 50);
+    const BATCH_LIMIT = 50;
+    const limit = Math.min(eligiblePayments.length, BATCH_LIMIT);
     const toProcess = eligiblePayments.slice(0, limit);
+    
+    // Notify if limit applied
+    if (eligiblePayments.length > BATCH_LIMIT) {
+      toast.info(`Будет обработано ${BATCH_LIMIT} из ${eligiblePayments.length} платежей (лимит)`);
+    }
     
     setIsFetchingReceipts(true);
     setBatchResult(null);
