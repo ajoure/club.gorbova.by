@@ -6,10 +6,14 @@ export interface DateFilter {
   to?: string;
 }
 
+// Source types for UI filtering
+export type PaymentSource = 'webhook' | 'api' | 'file_import' | 'processed';
+
 export interface UnifiedPayment {
   id: string;
   uid: string; // bepaid_uid or provider_payment_id
-  source: 'queue' | 'payments_v2'; // Data source
+  source: PaymentSource; // Data source for filtering
+  rawSource: 'queue' | 'payments_v2'; // Internal data source
   
   // Transaction info
   transaction_type: string | null; // payment, subscription, refund, void, chargeback
@@ -76,6 +80,8 @@ export interface PaymentsStats {
   conflicts: number;
   totalAmount: number;
   totalRefunded: number;
+  pending: number;
+  failed: number;
 }
 
 export function useUnifiedPayments(dateFilter: DateFilter) {
@@ -84,7 +90,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
     queryFn: async () => {
       const fromDate = dateFilter.from || "2026-01-01";
       
-      // Fetch from payment_reconcile_queue (queue items)
+      // Fetch from payment_reconcile_queue (queue items) - NO STATUS FILTER, show all
       let queueQuery = supabase
         .from("payment_reconcile_queue")
         .select(`
@@ -147,8 +153,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       
       const productsMap = new Map((productsResult.data || []).map(p => [p.id, p.name]));
       
-      // Track UIDs from payments_v2 to deduplicate
-      const processedUids = new Set<string>();
+      // Dedup key: provider:uid - ONLY provider_payment_id, not fallback to id
+      const processedKeys = new Set<string>();
       
       // Transform payments_v2 data
       const paymentsData: UnifiedPayment[] = (paymentsResult.data || []).map(p => {
@@ -170,16 +176,22 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           product_name = purchaseSnapshot.product_name;
         }
         
-        // Extract UID
-        const uid = p.provider_payment_id || p.id;
-        processedUids.add(uid);
+        // Extract UID - MUST be provider_payment_id for proper dedup
+        const pUid = p.provider_payment_id;
+        const provider = p.provider || 'bepaid';
+        
+        // Only add to dedup set if we have a real UID
+        if (pUid) {
+          processedKeys.add(`${provider}:${pUid}`);
+        }
         
         return {
           id: p.id,
-          uid,
-          source: 'payments_v2' as const,
+          uid: pUid || p.id,
+          source: 'processed' as PaymentSource,
+          rawSource: 'payments_v2' as const,
           transaction_type: 'payment',
-          status_normalized: p.status,
+          status_normalized: p.status || 'pending',
           amount: p.amount,
           currency: p.currency,
           paid_at: p.paid_at,
@@ -207,32 +219,43 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           total_refunded: p.refunded_amount || 0,
           is_external: false,
           has_conflict: false,
-          provider: p.provider || 'bepaid',
+          provider,
           tracking_id: null,
         };
       });
       
-      // Transform queue data (only items not in payments_v2)
+      // Transform queue data - NO STATUS FILTER, show all (pending/failed/refunded)
       const queueData: UnifiedPayment[] = (queueResult.data || [])
         .filter(q => {
-          // Skip if already processed in payments_v2
-          if (q.bepaid_uid && processedUids.has(q.bepaid_uid)) return false;
+          // Dedup only by provider:uid key
+          const qUid = q.bepaid_uid;
+          const provider = q.provider || 'bepaid';
+          const key = `${provider}:${qUid}`;
           
-          // Only show successful transactions or pending without errors
-          const statusNorm = q.status_normalized as string | null;
-          if (statusNorm === 'successful') return true;
-          if (['processing', 'processed', 'completed'].includes(q.status)) return true;
-          if (q.status === 'pending' && !statusNorm) return true;
-          return false;
+          // Skip if already processed in payments_v2
+          if (qUid && processedKeys.has(key)) return false;
+          
+          return true;
         })
         .map(q => {
           const profile = q.profiles as any;
           const order = q.orders as any;
           
+          // Normalize source for UI filtering
+          let uiSource: PaymentSource = 'webhook';
+          if (q.source === 'api' || q.source === 'api_polling') {
+            uiSource = 'api';
+          } else if (q.source === 'file_import' || q.source === 'csv') {
+            uiSource = 'file_import';
+          } else if (q.source === 'webhook') {
+            uiSource = 'webhook';
+          }
+          
           return {
             id: q.id,
             uid: q.bepaid_uid || q.id,
-            source: 'queue' as const,
+            source: uiSource,
+            rawSource: 'queue' as const,
             transaction_type: q.transaction_type || 'payment',
             status_normalized: q.status_normalized || q.status || 'pending',
             amount: q.amount || 0,
@@ -290,6 +313,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         conflicts: allPayments.filter(p => p.has_conflict).length,
         totalAmount: allPayments.reduce((sum, p) => sum + (p.amount || 0), 0),
         totalRefunded: allPayments.reduce((sum, p) => sum + (p.total_refunded || 0), 0),
+        pending: allPayments.filter(p => p.status_normalized === 'pending').length,
+        failed: allPayments.filter(p => p.status_normalized === 'failed').length,
       };
       
       return { payments: allPayments, stats };
@@ -314,6 +339,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       conflicts: 0,
       totalAmount: 0,
       totalRefunded: 0,
+      pending: 0,
+      failed: 0,
     },
     isLoading,
     error,

@@ -170,12 +170,12 @@ const App = () => (
               <Route path="/admin/training-lessons/:moduleId/edit/:lessonId" element={<ProtectedRoute><AdminLessonBlockEditor /></ProtectedRoute>} />
               <Route path="/admin/bepaid-sync" element={<ProtectedRoute><AdminBepaidSync /></ProtectedRoute>} />
               <Route path="/admin/refunds-v2" element={<ProtectedRoute><AdminRefundsV2 /></ProtectedRoute>} />
+              <Route path="/admin/payments" element={<ProtectedRoute><AdminPayments /></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
               <Route path="/admin/users/duplicates" element={<Navigate to="/admin/contacts/duplicates" replace />} />
               <Route path="/admin/products" element={<Navigate to="/admin/products-v2" replace />} />
-              <Route path="/admin/payments" element={<Navigate to="/admin/integrations/payments" replace />} />
               <Route path="/admin/amocrm" element={<Navigate to="/admin/integrations/crm" replace />} />
               <Route path="/admin/duplicates" element={<Navigate to="/admin/contacts/duplicates" replace />} />
               
