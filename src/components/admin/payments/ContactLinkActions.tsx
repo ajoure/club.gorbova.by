@@ -87,16 +87,18 @@ export default function ContactLinkActions({
 
     setSearching(true);
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, full_name, email, phone, user_id")
-        .or(`full_name.ilike.%${query}%,email.ilike.%${query}%,phone.ilike.%${query}%`)
-        .limit(10);
+      // Use edge function to bypass RLS issues
+      const { data, error } = await supabase.functions.invoke('admin-search-profiles', {
+        body: { query, limit: 20 }
+      });
 
       if (error) throw error;
-      setSearchResults(data || []);
+      if (!data?.success) throw new Error(data?.error || 'Search failed');
+      
+      setSearchResults(data.results || []);
     } catch (err) {
       console.error("Search error:", err);
+      toast.error("Ошибка поиска контактов");
     } finally {
       setSearching(false);
     }
