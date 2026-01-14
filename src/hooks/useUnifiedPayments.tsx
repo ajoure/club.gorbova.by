@@ -105,7 +105,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           matched_profile_id, matched_order_id, matched_product_id, matched_tariff_id, matched_offer_id,
           is_external, has_conflict, provider,
           profiles:matched_profile_id(id, full_name, email, phone, user_id),
-          orders:matched_order_id(id, order_number, status)
+          orders:matched_order_id(id, order_number, status, profile_id, profiles(id, full_name, email, phone, user_id))
         `)
         .eq("is_fee", false)
         .not("bepaid_uid", "is", null)
@@ -124,7 +124,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           amount, currency, status, provider,
           card_last4, card_brand, paid_at, created_at,
           receipt_url, refunds, refunded_amount, provider_response, meta,
-          orders:order_id(id, order_number, status, product_id, purchase_snapshot),
+          orders:order_id(id, order_number, status, product_id, purchase_snapshot, profile_id, profiles(id, full_name, email, phone, user_id)),
           profiles:profile_id(id, full_name, email, phone, user_id)
         `)
         .eq("provider", "bepaid")
@@ -162,7 +162,13 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       // Transform payments_v2 data
       const paymentsData: UnifiedPayment[] = (paymentsResult.data || []).map(p => {
         const order = p.orders as any;
-        const profile = p.profiles as any;
+        const directProfile = p.profiles as any;
+        
+        // A1: Auto-link contact through deal - Priority: payment.profile -> order.profile
+        const orderProfile = order?.profiles as any;
+        const profile = directProfile || orderProfile || null;
+        const effectiveProfileId = p.profile_id || order?.profile_id || null;
+        
         const providerResponse = p.provider_response as any;
         const refunds = (p.refunds || []) as any[];
         
@@ -212,7 +218,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           card_holder,
           card_last4: p.card_last4,
           card_brand: p.card_brand,
-          profile_id: p.profile_id || profile?.id || null,
+          profile_id: effectiveProfileId,
           profile_name: profile?.full_name || null,
           profile_email: profile?.email || null,
           profile_phone: profile?.phone || null,
@@ -251,8 +257,13 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           return true;
         })
         .map(q => {
-          const profile = q.profiles as any;
+          const directProfile = q.profiles as any;
           const order = q.orders as any;
+          
+          // A1: Auto-link contact through deal - Priority: matched_profile -> order.profile
+          const orderProfile = order?.profiles as any;
+          const profile = directProfile || orderProfile || null;
+          const effectiveProfileId = q.matched_profile_id || order?.profile_id || profile?.id || null;
           
           // Normalize source for UI filtering
           let uiSource: PaymentSource = 'webhook';
@@ -280,7 +291,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             card_holder: q.card_holder,
             card_last4: q.card_last4,
             card_brand: q.card_brand,
-            profile_id: q.matched_profile_id || profile?.id || null,
+            profile_id: effectiveProfileId,
             profile_name: profile?.full_name || null,
             profile_email: profile?.email || null,
             profile_phone: profile?.phone || null,
