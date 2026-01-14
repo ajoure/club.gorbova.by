@@ -78,6 +78,7 @@ import {
   ArrowLeft,
   UserX,
   DollarSign,
+  Sparkles,
 } from "lucide-react";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
@@ -459,6 +460,33 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         .eq("status", "active")
         .order("is_default", { ascending: false });
       if (error) throw error;
+      return data;
+    },
+    enabled: !!contact?.user_id,
+  });
+
+  // Fetch trial history for this contact
+  const { data: trialHistory } = useQuery({
+    queryKey: ["contact-trial-history", contact?.user_id],
+    queryFn: async () => {
+      if (!contact?.user_id) return null;
+      
+      // Build array of IDs to search
+      const userIds = [contact.id];
+      if (contact.user_id && contact.user_id !== contact.id) {
+        userIds.push(contact.user_id);
+      }
+      
+      const { data, error } = await supabase
+        .from("subscriptions_v2")
+        .select(`
+          id, is_trial, status, trial_end_at, created_at,
+          products_v2:product_id(id, name, code)
+        `)
+        .in("user_id", userIds)
+        .eq("is_trial", true)
+        .order("created_at", { ascending: false });
+      if (error) return null;
       return data;
     },
     enabled: !!contact?.user_id,
@@ -1292,27 +1320,87 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       {reentryStatus?.was_club_member ? "Бывший участник клуба" : "Статус участия в клубе"}
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-3">
-                    {!reentryStatus?.was_club_member ? (
-                      <div className="text-center py-2">
-                        <p className="text-sm text-muted-foreground mb-3">Не отмечен как бывший участник</p>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full gap-2"
-                          onClick={() => updateReentryMutation.mutate({ action: 'mark_as_former' })}
-                          disabled={updateReentryMutation.isPending}
-                        >
-                          {updateReentryMutation.isPending ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <UserX className="w-4 h-4" />
-                          )}
-                          Пометить как бывшего участника
-                        </Button>
-                      </div>
-                    ) : (
-                      <>
+                  <CardContent className="space-y-4">
+                    {/* Trial Status Section */}
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3" />
+                        Пробный период
+                      </h4>
+                      {trialHistory && trialHistory.length > 0 ? (
+                        <div className="space-y-2">
+                          {trialHistory.map((trial: any) => {
+                            const isActive = trial.status === 'active' && trial.trial_end_at && new Date(trial.trial_end_at) > new Date();
+                            const productName = trial.products_v2?.name || 'Неизвестный продукт';
+                            
+                            return (
+                              <div 
+                                key={trial.id} 
+                                className={cn(
+                                  "p-2 rounded-lg text-sm",
+                                  isActive 
+                                    ? "bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800" 
+                                    : "bg-muted/50"
+                                )}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    {isActive ? (
+                                      <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 shrink-0">
+                                        <Sparkles className="w-3 h-3 mr-1" />
+                                        На триале
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 shrink-0">
+                                        <CheckCircle className="w-3 h-3 mr-1" />
+                                        Использован
+                                      </Badge>
+                                    )}
+                                    <span className="truncate text-muted-foreground">{productName}</span>
+                                  </div>
+                                  <span className="text-xs text-muted-foreground shrink-0">
+                                    {isActive && trial.trial_end_at 
+                                      ? `до ${format(new Date(trial.trial_end_at), "dd.MM.yyyy", { locale: ru })}`
+                                      : format(new Date(trial.created_at), "dd.MM.yyyy", { locale: ru })
+                                    }
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">Триал не использовался</p>
+                      )}
+                    </div>
+
+                    <Separator />
+
+                    {/* Former Member Status Section */}
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                        Членство в клубе
+                      </h4>
+                      {!reentryStatus?.was_club_member ? (
+                        <div className="text-center py-2">
+                          <p className="text-sm text-muted-foreground mb-3">Не отмечен как бывший участник</p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full gap-2"
+                            onClick={() => updateReentryMutation.mutate({ action: 'mark_as_former' })}
+                            disabled={updateReentryMutation.isPending}
+                          >
+                            {updateReentryMutation.isPending ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <UserX className="w-4 h-4" />
+                            )}
+                            Пометить как бывшего участника
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
                     <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 space-y-2">
                       {reentryStatus.club_exit_at && (
                         <div className="flex items-center justify-between text-sm">
@@ -1385,8 +1473,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         Сбросить статус бывшего участника
                       </Button>
                     </div>
-                      </>
-                    )}
+                        </>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               )}

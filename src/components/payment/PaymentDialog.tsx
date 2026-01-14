@@ -14,7 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Info } from "lucide-react";
+import { Loader2, CreditCard, CheckCircle, ShieldCheck, User, KeyRound, MessageCircle, ExternalLink, Mail, Info, AlertTriangle } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
@@ -137,6 +137,7 @@ export function PaymentDialog({
   const [isLoadingCard, setIsLoadingCard] = useState(false);
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [telegramDeepLink, setTelegramDeepLink] = useState<string | null>(null);
+  const [showTrialUsedModal, setShowTrialUsedModal] = useState(false);
   
   // Telegram link hooks
   const { data: telegramStatus, refetch: refetchTelegramStatus, isLoading: isTelegramStatusLoading } = useTelegramLinkStatus();
@@ -151,6 +152,7 @@ export function PaymentDialog({
       setSavedCard(null);
       setIsLoadingCard(false);
       setTelegramDeepLink(null);
+      setShowTrialUsedModal(false);
       if (user && session) {
         // User is authenticated - use their data
         setFormData({
@@ -429,9 +431,7 @@ export function PaymentDialog({
           // Check if the error response contains alreadyUsedTrial flag
           const errorData = data || {};
           if (errorData.alreadyUsedTrial) {
-            toast.warning("Вы уже использовали пробный период для этого продукта", {
-              duration: 8000,
-            });
+            setShowTrialUsedModal(true);
             setStep("ready");
             return;
           }
@@ -448,9 +448,7 @@ export function PaymentDialog({
             window.location.href = data.redirectUrl;
             return;
           } else if (data.alreadyUsedTrial) {
-            toast.warning("Вы уже использовали пробный период для этого продукта", {
-              duration: 8000,
-            });
+            setShowTrialUsedModal(true);
             setStep("ready");
             return;
           } else {
@@ -493,7 +491,7 @@ export function PaymentDialog({
       if (error) {
         // Supabase functions.invoke returns response body in `data` even for non-2xx
         if (data?.alreadyUsedTrial) {
-          toast.warning("Пробный период для этого продукта уже использован");
+          setShowTrialUsedModal(true);
           setStep("ready");
           setIsLoading(false);
           return;
@@ -504,7 +502,7 @@ export function PaymentDialog({
 
       if (!data.success) {
         if (data.alreadyUsedTrial) {
-          toast.warning("Пробный период для этого продукта уже использован");
+          setShowTrialUsedModal(true);
           setStep("ready");
           setIsLoading(false);
           return;
@@ -559,9 +557,7 @@ export function PaymentDialog({
       if (createError || !createData?.success) {
         // Handle already used trial case gracefully
         if (createData?.alreadyUsedTrial) {
-          toast.warning("Пробный период для этого продукта уже использован", {
-            duration: 8000,
-          });
+          setShowTrialUsedModal(true);
           return;
         }
 
@@ -1101,20 +1097,70 @@ export function PaymentDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <CreditCard className="h-5 w-5" />
-            {getStepTitle()}
-          </DialogTitle>
-          <DialogDescription>
-            {productName} — {price}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CreditCard className="h-5 w-5" />
+              {getStepTitle()}
+            </DialogTitle>
+            <DialogDescription>
+              {productName} — {price}
+            </DialogDescription>
+          </DialogHeader>
 
-        {renderStep()}
-      </DialogContent>
-    </Dialog>
+          {renderStep()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Trial Already Used Modal */}
+      <Dialog open={showTrialUsedModal} onOpenChange={setShowTrialUsedModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="h-5 w-5" />
+              Пробный период уже использован
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <p className="text-muted-foreground">
+              Вы уже воспользовались бесплатным пробным периодом для этого продукта.
+            </p>
+            
+            <div className="rounded-lg bg-primary/10 border border-primary/20 p-4 space-y-2">
+              <div className="flex items-center gap-2 text-primary">
+                <CheckCircle className="h-5 w-5" />
+                <span className="font-medium">Продолжите со скидкой!</span>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Оформите полную подписку, чтобы продолжить пользоваться всеми возможностями {productName}.
+              </p>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setShowTrialUsedModal(false)}
+                className="flex-1"
+              >
+                Закрыть
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowTrialUsedModal(false);
+                  // Navigate to product page or stay with current flow (without trial)
+                  // The user can still purchase without trial option from the same dialog
+                }}
+                className="flex-1"
+              >
+                Купить полный тариф
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
