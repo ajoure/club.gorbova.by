@@ -148,7 +148,7 @@ Deno.serve(async (req) => {
 
     // Fetch transaction from bePaid API
     const authString = btoa(`${shopId}:${secretKey}`);
-    const apiUrl = `https://gateway.bepaid.by/v2/transactions/${payment.provider_payment_id}`;
+    const apiUrl = `https://gateway.bepaid.by/transactions/${payment.provider_payment_id}`;
     
     console.log(`Fetching bePaid transaction: ${payment.provider_payment_id}`);
     
