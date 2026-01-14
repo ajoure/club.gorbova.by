@@ -42,6 +42,7 @@ import AdminProductsV2 from "./pages/admin/AdminProductsV2";
 import AdminProductDetailV2 from "./pages/admin/AdminProductDetailV2";
 import AdminOrdersV2 from "./pages/admin/AdminOrdersV2";
 import AdminPaymentsV2 from "./pages/admin/AdminPaymentsV2";
+import AdminPayments from "./pages/admin/AdminPayments";
 import AdminSubscriptionsV2 from "./pages/admin/AdminSubscriptionsV2";
 import AdminSystemAudit from "./pages/admin/AdminSystemAudit";
 import MnsResponseService from "./pages/audits/MnsResponseService";
