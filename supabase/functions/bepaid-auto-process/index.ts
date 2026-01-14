@@ -524,30 +524,30 @@ Deno.serve(async (req) => {
             },
           });
 
+          // Calculate access period (used for both subscription and entitlement)
+          let trialDays = 0;
+          let accessDays = 30;
+          
+          if (mapping.offer_id) {
+            const { data: offer } = await supabase
+              .from('tariff_offers')
+              .select('offer_type, trial_days, access_days')
+              .eq('id', mapping.offer_id)
+              .maybeSingle();
+            
+            if (offer?.offer_type === 'trial' && offer.trial_days) {
+              trialDays = offer.trial_days;
+              accessDays = offer.trial_days;
+            } else if (offer?.access_days) {
+              accessDays = offer.access_days;
+            }
+          }
+          
+          const startDate = new Date(paidAt);
+          const endDate = new Date(startDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
+
           // Create subscription if needed - use correct column names!
           if (mapping.is_subscription && profileUserId) {
-            // Get offer to determine trial period
-            let trialDays = 0;
-            let accessDays = 30;
-            
-            if (mapping.offer_id) {
-              const { data: offer } = await supabase
-                .from('tariff_offers')
-                .select('offer_type, trial_days, access_days')
-                .eq('id', mapping.offer_id)
-                .maybeSingle();
-              
-              if (offer?.offer_type === 'trial' && offer.trial_days) {
-                trialDays = offer.trial_days;
-                accessDays = offer.trial_days;
-              } else if (offer?.access_days) {
-                accessDays = offer.access_days;
-              }
-            }
-            
-            const startDate = new Date(paidAt);
-            const endDate = new Date(startDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
-            
             await supabase.from('subscriptions_v2').insert({
               user_id: profileUserId,
               profile_id: profileId,
@@ -562,7 +562,7 @@ Deno.serve(async (req) => {
             });
           }
 
-          // Create entitlement
+          // Create/Update entitlement with GREATEST(expires_at) + entitlement_orders link
           const { data: product } = await supabase
             .from('products_v2')
             .select('code')
@@ -570,16 +570,84 @@ Deno.serve(async (req) => {
             .maybeSingle();
 
           if (product?.code && profileUserId) {
-            const startDate = new Date(paidAt);
-            await supabase.from('entitlements').insert({
-              user_id: profileUserId,
-              profile_id: profileId,
-              order_id: newOrder.id,
-              product_code: product.code,
-              status: 'active',
-              expires_at: new Date(startDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-              meta: { source: 'bepaid_auto_process', match_type: matchedBy },
-            });
+            const productCode = product.code;
+            
+            // Check if entitlement_orders already has this order
+            const { data: existingEO } = await supabase
+              .from('entitlement_orders')
+              .select('id')
+              .eq('order_id', newOrder.id)
+              .maybeSingle();
+
+            if (!existingEO) {
+              // Check for existing entitlement for this user+product
+              const { data: existingEntitlement } = await supabase
+                .from('entitlements')
+                .select('id, expires_at')
+                .eq('user_id', profileUserId)
+                .eq('product_code', productCode)
+                .maybeSingle();
+
+              let entitlementId: string;
+              const newExpiresAt = endDate.toISOString();
+
+              if (existingEntitlement) {
+                // Update with GREATEST(expires_at)
+                const currentExpires = existingEntitlement.expires_at ? new Date(existingEntitlement.expires_at) : new Date(0);
+                const newExpires = new Date(newExpiresAt);
+                const finalExpires = currentExpires > newExpires ? currentExpires : newExpires;
+
+                await supabase
+                  .from('entitlements')
+                  .update({
+                    expires_at: finalExpires.toISOString(),
+                    status: 'active',
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', existingEntitlement.id);
+
+                entitlementId = existingEntitlement.id;
+                console.log(`[BEPAID-AUTO-PROCESS] Updated entitlement ${entitlementId} expires_at: ${finalExpires.toISOString()}`);
+              } else {
+                // Insert new entitlement
+                const { data: newEntitlement, error: entError } = await supabase
+                  .from('entitlements')
+                  .insert({
+                    user_id: profileUserId,
+                    profile_id: profileId,
+                    order_id: newOrder.id,
+                    product_code: productCode,
+                    status: 'active',
+                    expires_at: newExpiresAt,
+                    meta: { source: 'bepaid_auto_process', match_type: matchedBy },
+                  })
+                  .select('id')
+                  .single();
+
+                if (entError) {
+                  console.error(`[BEPAID-AUTO-PROCESS] Entitlement insert failed:`, entError);
+                  throw new Error(`Entitlement failed: ${entError.message}`);
+                }
+                entitlementId = newEntitlement.id;
+                console.log(`[BEPAID-AUTO-PROCESS] Created entitlement ${entitlementId}`);
+              }
+
+              // Link order → entitlement in entitlement_orders
+              await supabase
+                .from('entitlement_orders')
+                .insert({
+                  order_id: newOrder.id,
+                  entitlement_id: entitlementId,
+                  user_id: profileUserId,
+                  product_code: productCode,
+                  meta: {
+                    source: 'bepaid_auto_process',
+                    match_type: matchedBy,
+                    access_end_at: newExpiresAt,
+                  },
+                });
+              console.log(`[BEPAID-AUTO-PROCESS] Linked order ${newOrder.id} → entitlement ${entitlementId}`);
+            }
           }
 
           // Update queue item

@@ -1167,6 +1167,41 @@ export type Database = {
           },
         ]
       }
+      entitlement_orders: {
+        Row: {
+          created_at: string
+          entitlement_id: string
+          meta: Json
+          order_id: string
+          product_code: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          entitlement_id: string
+          meta?: Json
+          order_id: string
+          product_code: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          entitlement_id?: string
+          meta?: Json
+          order_id?: string
+          product_code?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entitlement_orders_entitlement_id_fkey"
+            columns: ["entitlement_id"]
+            isOneToOne: false
+            referencedRelation: "entitlements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       entitlements: {
         Row: {
           created_at: string

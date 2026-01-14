@@ -974,55 +974,114 @@ Deno.serve(async (req) => {
                 meta: { order_id: orderV2.id, order_number: orderV2.order_number },
               });
             } else {
-              // Idempotency guard: проверяем, есть ли уже entitlement для этого order_id
-              const { data: existingEntitlement } = await supabase
-                .from('entitlements')
-                .select('id')
+              // Idempotency guard: проверяем, есть ли уже запись в entitlement_orders для этого order_id
+              const { data: existingEO } = await supabase
+                .from('entitlement_orders')
+                .select('id, entitlement_id')
                 .eq('order_id', orderV2.id)
                 .maybeSingle();
 
-              if (existingEntitlement) {
-                console.log('[ENTITLEMENT] Already exists for order:', orderV2.id);
+              if (existingEO) {
+                console.log('[ENTITLEMENT_ORDERS] Already linked for order:', orderV2.id);
               } else {
                 // Expires: строго subscriptions_v2.access_end_at
                 const entitlementExpiresAt = accessEndAt.toISOString();
 
-                const { error: entitlementError } = await supabase
+                // Upsert entitlement с GREATEST(expires_at)
+                const { data: existingEntitlement } = await supabase
                   .from('entitlements')
-                  .upsert({
-                    user_id: orderV2.user_id,
-                    profile_id: userProfileCheck.id,
+                  .select('id, expires_at')
+                  .eq('user_id', orderV2.user_id)
+                  .eq('product_code', productCode)
+                  .maybeSingle();
+
+                let entitlementId: string;
+
+                if (existingEntitlement) {
+                  // Update с GREATEST(expires_at)
+                  const currentExpires = existingEntitlement.expires_at ? new Date(existingEntitlement.expires_at) : new Date(0);
+                  const newExpires = new Date(entitlementExpiresAt);
+                  const finalExpires = currentExpires > newExpires ? currentExpires : newExpires;
+
+                  await supabase
+                    .from('entitlements')
+                    .update({
+                      expires_at: finalExpires.toISOString(),
+                      status: 'active',
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', existingEntitlement.id);
+
+                  entitlementId = existingEntitlement.id;
+                  console.log('[ENTITLEMENT] Updated with GREATEST expires_at:', finalExpires.toISOString());
+                } else {
+                  // Insert new entitlement
+                  const { data: newEntitlement, error: entitlementError } = await supabase
+                    .from('entitlements')
+                    .insert({
+                      user_id: orderV2.user_id,
+                      profile_id: userProfileCheck.id,
+                      order_id: orderV2.id, // первый order_id
+                      product_code: productCode,
+                      status: 'active',
+                      expires_at: entitlementExpiresAt,
+                      meta: {
+                        order_number: orderV2.order_number,
+                        product_name: productV2.name,
+                        tariff_name: tariff.name,
+                        bepaid_uid: transactionUid,
+                        source: 'bepaid_webhook_v2',
+                      },
+                    })
+                    .select('id')
+                    .single();
+
+                  if (entitlementError) {
+                    console.error('[ENTITLEMENT] Insert failed:', entitlementError);
+                    await supabase.from('audit_logs').insert({
+                      actor_user_id: orderV2.user_id,
+                      action: 'entitlement_failed_v2',
+                      meta: { order_id: orderV2.id, error: entitlementError.message },
+                    });
+                    throw new Error(`Entitlement creation failed: ${entitlementError.message}`);
+                  }
+
+                  entitlementId = newEntitlement.id;
+                  console.log('[ENTITLEMENT] Created:', entitlementId);
+                }
+
+                // Создаём запись в entitlement_orders (связка order → entitlement)
+                const { error: eoError } = await supabase
+                  .from('entitlement_orders')
+                  .insert({
                     order_id: orderV2.id,
+                    entitlement_id: entitlementId,
+                    user_id: orderV2.user_id,
                     product_code: productCode,
-                    status: 'active',
-                    expires_at: entitlementExpiresAt,
                     meta: {
-                      order_number: orderV2.order_number,
-                      product_name: productV2.name,
-                      tariff_name: tariff.name,
                       bepaid_uid: transactionUid,
-                      source: 'bepaid_webhook_v2',
+                      order_number: orderV2.order_number,
+                      tariff_name: tariff.name,
+                      access_end_at: entitlementExpiresAt,
                     },
-                  }, {
-                    onConflict: 'user_id,product_code',
-                    ignoreDuplicates: false,
                   });
 
-                if (entitlementError) {
-                  console.error('[ENTITLEMENT] Upsert failed:', entitlementError);
-                  await supabase.from('audit_logs').insert({
-                    actor_user_id: orderV2.user_id,
-                    action: 'entitlement_failed_v2',
-                    meta: { order_id: orderV2.id, error: entitlementError.message },
-                  });
+                if (eoError) {
+                  console.error('[ENTITLEMENT_ORDERS] Insert failed:', eoError);
                 } else {
-                  console.log('[ENTITLEMENT] Created/updated for order:', orderV2.id, 'product_code:', productCode);
-                  await supabase.from('audit_logs').insert({
-                    actor_user_id: orderV2.user_id,
-                    action: 'entitlement_created_v2',
-                    meta: { order_id: orderV2.id, product_code: productCode, expires_at: entitlementExpiresAt },
-                  });
+                  console.log('[ENTITLEMENT_ORDERS] Linked order', orderV2.id, '→ entitlement', entitlementId);
                 }
+
+                await supabase.from('audit_logs').insert({
+                  actor_user_id: orderV2.user_id,
+                  action: 'entitlement_created_v2',
+                  meta: { 
+                    order_id: orderV2.id, 
+                    entitlement_id: entitlementId,
+                    product_code: productCode, 
+                    expires_at: entitlementExpiresAt 
+                  },
+                });
               }
             }
 
