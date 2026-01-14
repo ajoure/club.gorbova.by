@@ -46,8 +46,16 @@ import {
   RefreshCw,
   Link2,
   Plus,
-  BookOpen
+  BookOpen,
+  AlertTriangle,
+  Eye
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface EditSubscriptionDialogProps {
   subscription: any | null;
@@ -93,25 +101,30 @@ export function EditSubscriptionDialog({
     enabled: open,
   });
 
-  // Load tariffs for selected product
+  // Load tariffs for selected product (with getcourse_offer_id)
   const { data: tariffs } = useQuery({
     queryKey: ["tariffs-for-edit-sub", formData.product_id],
     queryFn: async () => {
       if (!formData.product_id) return [];
-      const { data } = await supabase.from("tariffs").select("id, name").eq("product_id", formData.product_id).eq("is_active", true).order("name");
+      const { data } = await supabase
+        .from("tariffs")
+        .select("id, name, getcourse_offer_id")
+        .eq("product_id", formData.product_id)
+        .eq("is_active", true)
+        .order("name");
       return data || [];
     },
     enabled: !!formData.product_id,
   });
 
-  // Load ALL offers for selected tariff (including inactive)
+  // Load ALL offers for selected tariff (including inactive, with getcourse_offer_id)
   const { data: tariffOffers } = useQuery({
     queryKey: ["tariff-offers-all-edit", formData.tariff_id],
     queryFn: async () => {
       if (!formData.tariff_id) return [];
       const { data } = await supabase
         .from("tariff_offers")
-        .select("id, offer_type, button_label, amount, is_active")
+        .select("id, offer_type, button_label, amount, is_active, getcourse_offer_id")
         .eq("tariff_id", formData.tariff_id)
         .order("sort_order");
       return data || [];
@@ -157,9 +170,39 @@ export function EditSubscriptionDialog({
     enabled: !!subscription?.user_id && open && !!(formData.telegram_club_id || productTelegramClubId),
   });
 
+  // Get order GC status
+  const { data: orderData, refetch: refetchOrder } = useQuery({
+    queryKey: ["order-gc-status", subscription?.order_id],
+    queryFn: async () => {
+      if (!subscription?.order_id) return null;
+      const { data } = await supabase
+        .from("orders_v2")
+        .select("meta, customer_email, gc_next_retry_at")
+        .eq("id", subscription.order_id)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!subscription?.order_id && open,
+  });
+
   // Get club name
   const currentClubId = formData.telegram_club_id || productTelegramClubId;
   const currentClub = telegramClubs?.find(c => c.id === currentClubId);
+
+  // GC status from order meta
+  const gcSyncStatus = (orderData?.meta as any)?.gc_sync_status;
+  const gcOrderId = (orderData?.meta as any)?.gc_order_id;
+  const gcDealNumber = (orderData?.meta as any)?.gc_deal_number;
+  const gcSyncedAt = (orderData?.meta as any)?.gc_synced_at;
+  const gcSyncError = (orderData?.meta as any)?.gc_sync_error;
+  const gcSyncErrorType = (orderData?.meta as any)?.gc_sync_error_type;
+  const gcNextRetryAt = orderData?.gc_next_retry_at;
+  const hasEmail = !!orderData?.customer_email;
+
+  // Check if tariff/offer has GC offer configured
+  const selectedTariff = tariffs?.find(t => t.id === formData.tariff_id);
+  const selectedOffer = tariffOffers?.find(o => o.id === formData.offer_id);
+  const hasGCOffer = !!(selectedOffer?.getcourse_offer_id || selectedTariff?.getcourse_offer_id);
 
   useEffect(() => {
     if (subscription) {
@@ -356,6 +399,76 @@ export function EditSubscriptionDialog({
     }
   };
 
+  // GetCourse grant access
+  const grantGetCourseAccess = async (force = false) => {
+    if (!subscription?.order_id) return;
+    
+    setIsGCLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("getcourse-grant-access", {
+        body: { order_id: subscription.order_id, force },
+      });
+      
+      if (error) throw error;
+      
+      if (data?.ok) {
+        if (data.status === 'success') {
+          toast.success("Отправлено в GetCourse");
+        } else if (data.status === 'skipped') {
+          toast.warning(`Пропущено: ${data.skipped_reason || data.error}`);
+        } else {
+          toast.error(data.error || "Ошибка синхронизации");
+        }
+      } else {
+        toast.error(data?.error || "Ошибка синхронизации");
+      }
+      
+      await refetchOrder();
+    } catch (err) {
+      toast.error("Ошибка: " + (err as Error).message);
+    } finally {
+      setIsGCLoading(false);
+    }
+  };
+
+  // GetCourse dry-run
+  const dryRunGetCourse = async () => {
+    if (!subscription?.order_id) return;
+    
+    setIsGCLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("getcourse-grant-access", {
+        body: { order_id: subscription.order_id, dry_run: true, force: true },
+      });
+      
+      if (error) throw error;
+      
+      if (data?.dry_run_result) {
+        const result = data.dry_run_result;
+        if (result.eligible) {
+          toast.success(
+            `Готов к отправке: email=${result.resolved_email}, offer_id=${result.resolved_offer_id}, deal_number=${result.deal_number}`,
+            { duration: 5000 }
+          );
+        } else {
+          toast.warning(`Не готов: ${result.reason}`, { duration: 5000 });
+        }
+      }
+    } catch (err) {
+      toast.error("Ошибка: " + (err as Error).message);
+    } finally {
+      setIsGCLoading(false);
+    }
+  };
+
+  // Refresh GC status
+  const refreshGCStatus = async () => {
+    setIsGCLoading(true);
+    await refetchOrder();
+    setIsGCLoading(false);
+    toast.success("Статус GetCourse обновлён");
+  };
+
   if (!subscription) return null;
 
   const days = dateRange?.from && dateRange?.to 
@@ -365,6 +478,16 @@ export function EditSubscriptionDialog({
   const currentStatus = STATUS_OPTIONS.find(s => s.value === formData.status);
   const hasTelegramClub = !!currentClubId;
   const isTelegramGranted = telegramAccess?.state_chat === "granted" || telegramAccess?.state_channel === "granted";
+  const hasOrderId = !!subscription?.order_id;
+
+  // GC disabled reasons
+  const gcDisabledReason = !hasOrderId 
+    ? "Нет связанного заказа" 
+    : !hasEmail 
+    ? "Нет email — GC не принимает" 
+    : !hasGCOffer 
+    ? "Не настроен оффер GetCourse" 
+    : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -687,6 +810,149 @@ export function EditSubscriptionDialog({
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Привяжите клуб к подписке для управления доступом
+                </p>
+              </div>
+            )}
+          </div>
+
+          <Separator className="my-4" />
+
+          {/* GetCourse Access Control */}
+          <div className="space-y-3">
+            <Label className="text-sm font-medium flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-muted-foreground" />
+              GetCourse доступ
+            </Label>
+
+            {hasOrderId ? (
+              <div className="rounded-xl border border-border/60 bg-background/30 backdrop-blur-sm p-4 space-y-3">
+                {/* Status display */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Статус синхронизации</span>
+                  {gcSyncStatus === 'success' ? (
+                    <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
+                      <Check className="w-3 h-3 mr-1" />
+                      Синхронизировано
+                    </Badge>
+                  ) : gcSyncStatus === 'failed' ? (
+                    <Badge className="bg-red-500/10 text-red-600 border-red-500/20">
+                      <X className="w-3 h-3 mr-1" />
+                      Ошибка
+                    </Badge>
+                  ) : gcSyncStatus === 'skipped' ? (
+                    <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">
+                      <AlertTriangle className="w-3 h-3 mr-1" />
+                      Пропущено
+                    </Badge>
+                  ) : (
+                    <Badge className="bg-gray-500/10 text-gray-600 border-gray-500/20">
+                      Не отправлено
+                    </Badge>
+                  )}
+                </div>
+
+                {/* GC details */}
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  {gcOrderId && (
+                    <div>GC Order ID: <span className="font-mono">{gcOrderId}</span></div>
+                  )}
+                  {gcDealNumber && (
+                    <div>Deal Number: <span className="font-mono">{gcDealNumber}</span></div>
+                  )}
+                  {gcSyncedAt && (
+                    <div>Последняя попытка: {format(new Date(gcSyncedAt), "dd.MM.yyyy HH:mm", { locale: ru })}</div>
+                  )}
+                  {gcNextRetryAt && new Date(gcNextRetryAt) > new Date() && (
+                    <div className="text-amber-600">
+                      Повтор доступен с: {format(new Date(gcNextRetryAt), "dd.MM.yyyy HH:mm", { locale: ru })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Error message */}
+                {gcSyncError && (
+                  <div className="text-xs text-red-500 bg-red-500/5 rounded-lg p-2">
+                    <span className="font-medium">Ошибка:</span> {gcSyncError}
+                    {gcSyncErrorType === 'rate_limit' && (
+                      <span className="block mt-1 text-amber-600">
+                        Лимит API GetCourse. Попробуйте через 24 часа.
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div className="flex gap-2 pt-2">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="flex-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => grantGetCourseAccess(gcSyncStatus === 'failed')}
+                            disabled={isGCLoading || !!gcDisabledReason}
+                            className="w-full bg-blue-500/10 border-blue-500/30 text-blue-600 hover:bg-blue-500/20"
+                          >
+                            {isGCLoading ? (
+                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                            ) : (
+                              <Send className="w-4 h-4 mr-1" />
+                            )}
+                            {gcSyncStatus === 'failed' ? 'Повторить' : 'Отправить'}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {gcDisabledReason && (
+                        <TooltipContent>
+                          <p>{gcDisabledReason}</p>
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
+
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={dryRunGetCourse}
+                          disabled={isGCLoading}
+                          className="px-3"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Проверить (dry-run)</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={refreshGCStatus}
+                    disabled={isGCLoading}
+                    className="px-3"
+                  >
+                    <RefreshCw className={cn("w-4 h-4", isGCLoading && "animate-spin")} />
+                  </Button>
+                </div>
+
+                {/* Validation messages */}
+                {gcDisabledReason && (
+                  <p className="text-xs text-amber-600 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    {gcDisabledReason}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                <p className="text-xs text-muted-foreground">
+                  Нет связанного заказа для синхронизации с GetCourse
                 </p>
               </div>
             )}

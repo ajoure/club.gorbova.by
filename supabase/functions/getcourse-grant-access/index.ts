@@ -11,6 +11,15 @@ interface GrantAccessRequest {
   dry_run?: boolean;
 }
 
+interface DryRunResult {
+  eligible: boolean;
+  reason?: string;
+  resolved_email?: string;
+  resolved_offer_id?: number;
+  deal_number?: number;
+  current_status?: string;
+}
+
 interface GrantAccessResponse {
   ok: boolean;
   status: 'success' | 'failed' | 'skipped';
@@ -20,6 +29,7 @@ interface GrantAccessResponse {
   error_type?: 'rate_limit' | 'validation' | 'auth' | 'network' | 'no_email' | 'no_gc_offer' | 'unknown';
   skipped_reason?: string;
   dry_run?: boolean;
+  dry_run_result?: DryRunResult;
 }
 
 // Generate a consistent deal_number from orderNumber for GetCourse updates
@@ -58,9 +68,9 @@ async function sendToGetCourse(
     return { success: false, error: 'API key not configured' };
   }
   
-  if (!offerId) {
-    console.log(`No getcourse_offer_id for tariff: ${tariffCode}, skipping GetCourse sync`);
-    return { success: false, error: `No GetCourse offer ID for tariff: ${tariffCode}` };
+  if (!offerId || offerId <= 0) {
+    console.log(`Invalid getcourse_offer_id: ${offerId} for tariff: ${tariffCode}`);
+    return { success: false, error: `Invalid GetCourse offer ID: ${offerId}` };
   }
   
   try {
@@ -198,32 +208,52 @@ Deno.serve(async (req) => {
 
     // Determine getcourse_offer_id: offer-level > tariff-level
     const tariff = order.tariffs as any;
-    const getcourseOfferId = offer?.getcourse_offer_id || tariff?.getcourse_offer_id;
+    const getcourseOfferIdRaw = offer?.getcourse_offer_id || tariff?.getcourse_offer_id;
+    
+    // Validate offer ID - must be a positive number
+    const getcourseOfferId = Number(getcourseOfferIdRaw);
+    const isValidOfferId = Number.isFinite(getcourseOfferId) && getcourseOfferId > 0;
     
     // Determine customer email: order > profile
     const customerEmail = order.customer_email || profile?.email;
 
-    // Check eligibility
+    // Pre-calculate deal number for dry-run
+    const dealNumber = generateDealNumber(order.order_number);
+    const currentStatus = (order.meta as any)?.gc_sync_status;
+
+    // Check eligibility - no email
     if (!customerEmail) {
       console.log('[GC-GRANT] Skipped: no customer email');
       
-      if (!dry_run) {
-        await supabase.from('orders_v2').update({
-          meta: {
-            ...((order.meta as object) || {}),
-            gc_sync_status: 'skipped',
-            gc_sync_error: 'No customer email',
-            gc_sync_error_type: 'no_email',
-            gc_synced_at: new Date().toISOString(),
-          }
-        }).eq('id', order.id);
-
-        await supabase.from('audit_logs').insert({
-          actor_user_id: order.user_id || '00000000-0000-0000-0000-000000000000',
-          action: 'gc_sync_skipped',
-          meta: { order_id: order.id, reason: 'no_email' },
-        });
+      if (dry_run) {
+        const response: GrantAccessResponse = {
+          ok: true,
+          status: 'skipped',
+          dry_run: true,
+          dry_run_result: {
+            eligible: false,
+            reason: 'no_email',
+            current_status: currentStatus,
+          },
+        };
+        return new Response(JSON.stringify(response), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
+      
+      await supabase.from('orders_v2').update({
+        meta: {
+          ...((order.meta as object) || {}),
+          gc_sync_status: 'skipped',
+          gc_sync_error: 'No customer email',
+          gc_sync_error_type: 'no_email',
+          gc_synced_at: new Date().toISOString(),
+        }
+      }).eq('id', order.id);
+
+      await supabase.from('audit_logs').insert({
+        actor_user_id: order.user_id || '00000000-0000-0000-0000-000000000000',
+        action: 'gc_sync_skipped',
+        meta: { order_id: order.id, reason: 'no_email' },
+      });
 
       const response: GrantAccessResponse = {
         ok: true,
@@ -231,31 +261,44 @@ Deno.serve(async (req) => {
         skipped_reason: 'no_email',
         error: 'No customer email',
         error_type: 'no_email',
-        dry_run,
       };
       return new Response(JSON.stringify(response), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    if (!getcourseOfferId) {
-      console.log('[GC-GRANT] Skipped: no GetCourse offer configured');
+    // Check eligibility - no valid GC offer
+    if (!isValidOfferId) {
+      console.log('[GC-GRANT] Skipped: no valid GetCourse offer configured, raw value:', getcourseOfferIdRaw);
       
-      if (!dry_run) {
-        await supabase.from('orders_v2').update({
-          meta: {
-            ...((order.meta as object) || {}),
-            gc_sync_status: 'skipped',
-            gc_sync_error: 'No GetCourse offer configured',
-            gc_sync_error_type: 'no_gc_offer',
-            gc_synced_at: new Date().toISOString(),
-          }
-        }).eq('id', order.id);
-
-        await supabase.from('audit_logs').insert({
-          actor_user_id: order.user_id || '00000000-0000-0000-0000-000000000000',
-          action: 'gc_sync_skipped',
-          meta: { order_id: order.id, reason: 'no_gc_offer' },
-        });
+      if (dry_run) {
+        const response: GrantAccessResponse = {
+          ok: true,
+          status: 'skipped',
+          dry_run: true,
+          dry_run_result: {
+            eligible: false,
+            reason: 'no_gc_offer',
+            resolved_email: customerEmail,
+            current_status: currentStatus,
+          },
+        };
+        return new Response(JSON.stringify(response), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
+      
+      await supabase.from('orders_v2').update({
+        meta: {
+          ...((order.meta as object) || {}),
+          gc_sync_status: 'skipped',
+          gc_sync_error: 'No GetCourse offer configured',
+          gc_sync_error_type: 'no_gc_offer',
+          gc_synced_at: new Date().toISOString(),
+        }
+      }).eq('id', order.id);
+
+      await supabase.from('audit_logs').insert({
+        actor_user_id: order.user_id || '00000000-0000-0000-0000-000000000000',
+        action: 'gc_sync_skipped',
+        meta: { order_id: order.id, reason: 'no_gc_offer' },
+      });
 
       const response: GrantAccessResponse = {
         ok: true,
@@ -263,34 +306,55 @@ Deno.serve(async (req) => {
         skipped_reason: 'no_gc_offer',
         error: 'No GetCourse offer configured',
         error_type: 'no_gc_offer',
-        dry_run,
       };
       return new Response(JSON.stringify(response), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // Idempotency check
-    const currentStatus = (order.meta as any)?.gc_sync_status;
     if (!force && currentStatus === 'success') {
       console.log('[GC-GRANT] Already synced successfully, skipping (use force=true to retry)');
+      
+      if (dry_run) {
+        const response: GrantAccessResponse = {
+          ok: true,
+          status: 'success',
+          dry_run: true,
+          dry_run_result: {
+            eligible: true,
+            reason: 'already_synced',
+            resolved_email: customerEmail,
+            resolved_offer_id: getcourseOfferId,
+            deal_number: (order.meta as any)?.gc_deal_number,
+            current_status: currentStatus,
+          },
+        };
+        return new Response(JSON.stringify(response), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
       
       const response: GrantAccessResponse = {
         ok: true,
         status: 'success',
         gc_order_id: (order.meta as any)?.gc_order_id,
         gc_deal_number: (order.meta as any)?.gc_deal_number,
-        dry_run,
       };
       return new Response(JSON.stringify(response), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // Dry run - return what would happen
+    // Dry run - return what would happen (eligible)
     if (dry_run) {
       const response: GrantAccessResponse = {
         ok: true,
-        status: 'success',
+        status: 'success', // Would be successful if we execute
         dry_run: true,
+        dry_run_result: {
+          eligible: true,
+          resolved_email: customerEmail,
+          resolved_offer_id: getcourseOfferId,
+          deal_number: dealNumber,
+          current_status: currentStatus,
+        },
       };
-      console.log('[GC-GRANT] Dry run complete');
+      console.log('[GC-GRANT] Dry run complete, eligible');
       return new Response(JSON.stringify(response), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
@@ -314,7 +378,7 @@ Deno.serve(async (req) => {
         firstName: profile?.first_name || null,
         lastName: profile?.last_name || null,
       },
-      parseInt(getcourseOfferId, 10) || 0,
+      getcourseOfferId,
       order.order_number,
       Number(order.final_price) || 0,
       tariff?.code || tariff?.name || 'unknown'
@@ -333,8 +397,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Update order meta with result
+    // Update order meta AND the real column
     await supabase.from('orders_v2').update({
+      gc_next_retry_at: gcResult.success ? null : (nextRetryAt ? new Date(nextRetryAt) : null),
       meta: {
         ...((order.meta as object) || {}),
         gc_sync_status: gcResult.success ? 'success' : 'failed',

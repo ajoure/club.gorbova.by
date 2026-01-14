@@ -28,7 +28,6 @@ interface BackfillResponse {
     customer_email: string;
     gc_status: string | null;
     gc_error: string | null;
-    gc_offer_id: string;
   }>;
 }
 
@@ -55,19 +54,16 @@ Deno.serve(async (req) => {
 
     const sinceDate = new Date(Date.now() - since_days * 24 * 60 * 60 * 1000).toISOString();
 
-    // Fetch eligible orders with all joins in one query
-    const { data: orders, error: ordersError } = await supabase
+    // Fetch eligible orders - simple query, let getcourse-grant-access handle offer resolution
+    // We just need orders that are paid, have email, and not synced successfully
+    let query = supabase
       .from('orders_v2')
       .select(`
         id,
         order_number,
         customer_email,
-        user_id,
-        final_price,
-        customer_phone,
         meta,
-        tariffs!inner(id, name, code, getcourse_offer_id),
-        products_v2!inner(id, name, code)
+        gc_next_retry_at
       `)
       .eq('status', 'paid')
       .gte('created_at', sinceDate)
@@ -75,39 +71,19 @@ Deno.serve(async (req) => {
       .order('created_at', { ascending: false })
       .limit(limit * 2); // Fetch more to filter
 
+    const { data: orders, error: ordersError } = await query;
+
     if (ordersError) {
       throw new Error(`Failed to fetch orders: ${ordersError.message}`);
     }
 
     console.log(`[GC-BACKFILL] Fetched ${orders?.length || 0} paid orders with email`);
 
-    // Filter eligible orders (need GetCourse offer configured)
+    // Filter eligible orders
     const eligibleOrders: any[] = [];
     
     for (const order of orders || []) {
       const meta = order.meta as any || {};
-      const tariff = order.tariffs as any;
-      
-      // Check if has getcourse_offer_id (from tariff or offer)
-      let gcOfferId = tariff?.getcourse_offer_id;
-      
-      // Check offer-level override
-      if (meta.offer_id) {
-        const { data: offer } = await supabase
-          .from('tariff_offers')
-          .select('getcourse_offer_id')
-          .eq('id', meta.offer_id)
-          .maybeSingle();
-        if (offer?.getcourse_offer_id) {
-          gcOfferId = offer.getcourse_offer_id;
-        }
-      }
-      
-      if (!gcOfferId) {
-        console.log(`[GC-BACKFILL] Skipping ${order.order_number}: no GC offer configured`);
-        continue;
-      }
-
       const gcStatus = meta.gc_sync_status || null;
       
       // Skip already successful
@@ -121,17 +97,15 @@ Deno.serve(async (req) => {
       }
 
       if (only_rate_limit_ready) {
-        const nextRetryAt = meta.gc_next_retry_at;
+        // Use the real column for retry check
+        const nextRetryAt = order.gc_next_retry_at;
         if (nextRetryAt && new Date(nextRetryAt) > new Date()) {
           console.log(`[GC-BACKFILL] Skipping ${order.order_number}: rate limit retry not ready until ${nextRetryAt}`);
           continue;
         }
       }
 
-      eligibleOrders.push({
-        ...order,
-        gc_offer_id: gcOfferId,
-      });
+      eligibleOrders.push(order);
 
       if (eligibleOrders.length >= limit) break;
     }
@@ -158,7 +132,6 @@ Deno.serve(async (req) => {
         customer_email: o.customer_email,
         gc_status: (o.meta as any)?.gc_sync_status || null,
         gc_error: (o.meta as any)?.gc_sync_error || null,
-        gc_offer_id: o.gc_offer_id,
       }));
       
       console.log(`[GC-BACKFILL] Dry run complete, ${response.total_eligible} candidates`);
@@ -167,12 +140,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Process each order
+    // Process each order by calling getcourse-grant-access
     for (const order of eligibleOrders) {
       try {
         console.log(`[GC-BACKFILL] Processing ${order.order_number}...`);
         
-        // Call getcourse-grant-access function
+        // Call getcourse-grant-access function - it handles all offer resolution internally
         const gcResponse = await supabase.functions.invoke('getcourse-grant-access', {
           body: { order_id: order.id, force: true },
         });
@@ -193,7 +166,7 @@ Deno.serve(async (req) => {
           console.log(`[GC-BACKFILL] ✓ ${order.order_number} synced`);
         } else if (result?.status === 'skipped') {
           response.skipped++;
-          console.log(`[GC-BACKFILL] ⏭ ${order.order_number} skipped: ${result.skipped_reason}`);
+          console.log(`[GC-BACKFILL] ⏭ ${order.order_number} skipped: ${result.skipped_reason || result.error}`);
         } else {
           response.failed++;
           response.errors.push(`${order.order_number}: ${result?.error || 'Unknown error'}`);

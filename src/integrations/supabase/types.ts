@@ -2448,6 +2448,7 @@ export type Database = {
           discount_percent: number | null
           final_price: number
           flow_id: string | null
+          gc_next_retry_at: string | null
           id: string
           invoice_email: string | null
           invoice_sent_at: string | null
@@ -2479,6 +2480,7 @@ export type Database = {
           discount_percent?: number | null
           final_price: number
           flow_id?: string | null
+          gc_next_retry_at?: string | null
           id?: string
           invoice_email?: string | null
           invoice_sent_at?: string | null
@@ -2510,6 +2512,7 @@ export type Database = {
           discount_percent?: number | null
           final_price?: number
           flow_id?: string | null
+          gc_next_retry_at?: string | null
           id?: string
           invoice_email?: string | null
           invoice_sent_at?: string | null
