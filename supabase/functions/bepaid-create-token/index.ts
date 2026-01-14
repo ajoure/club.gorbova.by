@@ -561,9 +561,32 @@ Deno.serve(async (req) => {
                     || req.headers.get('x-real-ip')
                     || '127.0.0.1';
 
+    // Get tariff display name for deterministic plan titles
+    let tariffDisplayName = 'Standard';
+    if (tariffCode) {
+      const { data: tariffData } = await supabase
+        .from('tariffs')
+        .select('name, code')
+        .eq('code', tariffCode)
+        .eq('product_id', productId)
+        .maybeSingle();
+      tariffDisplayName = tariffData?.name || tariffCode.toUpperCase() || 'Standard';
+    } else if (offerId) {
+      // Get tariff name from offer's tariff
+      const { data: offerData } = await supabase
+        .from('tariff_offers')
+        .select('tariff_id, tariffs(name, code)')
+        .eq('id', offerId)
+        .maybeSingle();
+      const tariffFromOffer = (offerData as any)?.tariffs;
+      tariffDisplayName = tariffFromOffer?.name || tariffFromOffer?.code?.toUpperCase() || 'Standard';
+    }
+    console.log('Tariff display name for plan title:', tariffDisplayName);
+
     // Build subscription plan based on trial or regular payment
+    // Plan title includes tariff for deterministic mapping: "Gorbova Club - CHAT (Trial)"
     const planConfig = isTrial && trialConfig ? {
-      title: `${productInfo.name} (Trial)`,
+      title: `${productInfo.name} - ${tariffDisplayName} (Trial)`,
       currency: productInfo.currency,
       shop_id: Number(shopId),
       plan: {
@@ -577,7 +600,7 @@ Deno.serve(async (req) => {
         interval_unit: 'day',
       },
     } : {
-      title: productInfo.name,
+      title: `${productInfo.name} - ${tariffDisplayName}`,
       currency: productInfo.currency,
       shop_id: Number(shopId),
       plan: {

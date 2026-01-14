@@ -310,7 +310,6 @@ async function createAmoCRMDeal(
   return null;
 }
 
-
 // bePaid public key for webhook signature verification (RSA-SHA256)
 // This is the official bePaid public key for production webhooks
 const BEPAID_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
