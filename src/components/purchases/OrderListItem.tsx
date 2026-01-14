@@ -59,7 +59,8 @@ export function OrderListItem({ order, onDownloadReceipt, onOpenBePaidReceipt }:
   
   const payment = order.payments_v2?.[0];
   const isPaid = order.status === "paid" || payment?.status === "succeeded";
-  const receiptUrl = payment?.provider_response?.transaction?.receipt_url;
+  // Priority: new receipt_url column > fallback to provider_response
+  const receiptUrl = (payment as any)?.receipt_url || payment?.provider_response?.transaction?.receipt_url;
 
   // Fetch the most recent generated document for this order (only one)
   useEffect(() => {

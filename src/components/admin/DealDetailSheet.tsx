@@ -45,6 +45,9 @@ import {
   ExternalLink,
   Pencil,
   Trash2,
+  RefreshCw,
+  Receipt,
+  Undo2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -104,6 +107,32 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const navigate = useNavigate();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [fetchingDocs, setFetchingDocs] = useState(false);
+  
+  // Fetch bePaid docs mutation
+  const fetchBepaidDocsMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      const { data, error } = await supabase.functions.invoke('bepaid-get-payment-docs', {
+        body: { order_id: orderId, force_refresh: true },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      if (data?.status === 'success') {
+        toast.success('Документы получены из bePaid');
+        queryClient.invalidateQueries({ queryKey: ['deal-payments', deal?.id] });
+      } else if (data?.status === 'skipped') {
+        toast.info('Документы уже загружены');
+      } else {
+        toast.error(data?.error || 'Ошибка получения документов');
+      }
+    },
+    onError: (error: any) => {
+      toast.error('Ошибка: ' + error.message);
+    },
+  });
+  
   // Fetch full payments for this deal
   const { data: payments, isLoading: paymentsLoading } = useQuery({
     queryKey: ["deal-payments", deal?.id],
@@ -528,48 +557,140 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                     {payments.map((payment) => {
                       const paymentStatusConfig =
                         PAYMENT_STATUS_CONFIG[payment.status] || { label: payment.status, color: "bg-muted" };
-                      const receiptUrl = (payment as any)?.provider_response?.transaction?.receipt_url as
-                        | string
-                        | undefined;
+                      // Priority: new receipt_url column > fallback to provider_response
+                      const receiptUrl = (payment as any)?.receipt_url || 
+                                        (payment as any)?.provider_response?.transaction?.receipt_url;
+                      const isBepaid = (payment as any)?.provider === 'bepaid';
+                      const refunds = ((payment as any)?.refunds || []) as any[];
+                      const refundedAmount = Number((payment as any)?.refunded_amount) || 0;
 
                       return (
                         <div
                           key={payment.id}
-                          className="flex items-center justify-between gap-3 p-3 rounded-lg bg-muted/50"
+                          className="p-3 rounded-lg bg-muted/50 space-y-3"
                         >
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">
-                                {new Intl.NumberFormat("ru-BY", {
-                                  style: "currency",
-                                  currency: payment.currency,
-                                }).format(Number(payment.amount))}
-                              </span>
-                              <Badge className={cn("text-xs", paymentStatusConfig.color)}>
-                                {paymentStatusConfig.label}
-                              </Badge>
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">
+                                  {new Intl.NumberFormat("ru-BY", {
+                                    style: "currency",
+                                    currency: payment.currency,
+                                  }).format(Number(payment.amount))}
+                                </span>
+                                <Badge className={cn("text-xs", paymentStatusConfig.color)}>
+                                  {paymentStatusConfig.label}
+                                </Badge>
+                                {refundedAmount > 0 && (
+                                  <Badge variant="outline" className="text-xs text-orange-600 border-orange-300">
+                                    <Undo2 className="w-3 h-3 mr-1" />
+                                    -{refundedAmount.toFixed(2)}
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {payment.card_brand && `${payment.card_brand} •••• ${payment.card_last4}`}
+                                {payment.installment_number && ` • Платёж ${payment.installment_number}`}
+                              </div>
                             </div>
-                            <div className="text-xs text-muted-foreground mt-1">
-                              {payment.card_brand && `${payment.card_brand} •••• ${payment.card_last4}`}
-                              {payment.installment_number && ` • Платёж ${payment.installment_number}`}
-                            </div>
-                          </div>
 
-                          <div className="flex flex-col items-end gap-2">
-                            <div className="text-xs text-muted-foreground">
-                              {payment.paid_at
-                                ? format(new Date(payment.paid_at), "dd.MM.yy HH:mm")
-                                : format(new Date(payment.created_at), "dd.MM.yy HH:mm")}
+                            <div className="flex flex-col items-end gap-2">
+                              <div className="text-xs text-muted-foreground">
+                                {payment.paid_at
+                                  ? format(new Date(payment.paid_at), "dd.MM.yy HH:mm")
+                                  : format(new Date(payment.created_at), "dd.MM.yy HH:mm")}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                {receiptUrl ? (
+                                  <Button variant="outline" size="sm" asChild>
+                                    <a href={receiptUrl} target="_blank" rel="noopener noreferrer">
+                                      <Receipt className="w-4 h-4 mr-2" />
+                                      Чек
+                                    </a>
+                                  </Button>
+                                ) : isBepaid && (
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm"
+                                    onClick={() => fetchBepaidDocsMutation.mutate(deal.id)}
+                                    disabled={fetchBepaidDocsMutation.isPending}
+                                  >
+                                    {fetchBepaidDocsMutation.isPending ? (
+                                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                                    ) : (
+                                      <Download className="w-4 h-4 mr-2" />
+                                    )}
+                                    Получить чек
+                                  </Button>
+                                )}
+                              </div>
                             </div>
-                            {receiptUrl && (
-                              <Button variant="outline" size="sm" asChild>
-                                <a href={receiptUrl} target="_blank" rel="noopener noreferrer">
-                                  <Download className="w-4 h-4 mr-2" />
-                                  Чек
-                                </a>
-                              </Button>
-                            )}
                           </div>
+                          
+                          {/* Refunds section */}
+                          {refunds.length > 0 && (
+                            <div className="border-t pt-2 mt-2">
+                              <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
+                                <Undo2 className="w-3 h-3" />
+                                Возвраты ({refunds.length})
+                              </div>
+                              <div className="space-y-1">
+                                {refunds.map((refund: any, idx: number) => (
+                                  <div key={refund.refund_id || idx} className="flex items-center justify-between text-xs bg-orange-500/5 p-2 rounded">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium">
+                                        {refund.amount?.toFixed(2)} {refund.currency || 'BYN'}
+                                      </span>
+                                      <Badge 
+                                        variant="outline" 
+                                        className={cn(
+                                          "text-[10px]",
+                                          refund.status === 'succeeded' && "text-green-600 border-green-300",
+                                          refund.status === 'pending' && "text-amber-600 border-amber-300",
+                                          refund.status === 'failed' && "text-red-600 border-red-300"
+                                        )}
+                                      >
+                                        {refund.status === 'succeeded' ? 'Выполнен' : 
+                                         refund.status === 'pending' ? 'В обработке' : 
+                                         refund.status === 'failed' ? 'Ошибка' : refund.status}
+                                      </Badge>
+                                      {refund.reason && (
+                                        <span className="text-muted-foreground">{refund.reason}</span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-muted-foreground">
+                                        {refund.created_at && format(new Date(refund.created_at), "dd.MM.yy HH:mm")}
+                                      </span>
+                                      {refund.receipt_url && (
+                                        <Button variant="ghost" size="sm" className="h-6 px-2" asChild>
+                                          <a href={refund.receipt_url} target="_blank" rel="noopener noreferrer">
+                                            <Receipt className="w-3 h-3" />
+                                          </a>
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Refresh from bePaid button */}
+                          {isBepaid && payment.status === 'succeeded' && (
+                            <div className="flex justify-end pt-1">
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                className="text-xs h-7"
+                                onClick={() => fetchBepaidDocsMutation.mutate(deal.id)}
+                                disabled={fetchBepaidDocsMutation.isPending}
+                              >
+                                <RefreshCw className={cn("w-3 h-3 mr-1", fetchBepaidDocsMutation.isPending && "animate-spin")} />
+                                Обновить из bePaid
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       );
                     })}

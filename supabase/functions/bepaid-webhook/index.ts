@@ -593,8 +593,14 @@ Deno.serve(async (req) => {
     const paymentMethod = transaction?.payment_method_type || transaction?.payment_method || null;
     const subscriptionId = body.id || subscription?.id || null;
     const subscriptionState = body.state || subscription?.state || null;
+    
+    // Detect if this is a refund transaction
+    const transactionType = transaction?.type || body.type || null;
+    const isRefundTransaction = transactionType === 'refund' || 
+                                body.refund || 
+                                transaction?.refund_reason !== undefined;
 
-    console.log(`Processing bePaid webhook: tracking=${rawTrackingId}, orderId=${orderId}, offerId=${parsedOfferId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}, state=${subscriptionState}`);
+    console.log(`Processing bePaid webhook: tracking=${rawTrackingId}, orderId=${orderId}, offerId=${parsedOfferId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}, state=${subscriptionState}, isRefund=${isRefundTransaction}`);
 
     // ---------------------------------------------------------------------
     // V2 direct-charge support
@@ -722,6 +728,130 @@ Deno.serve(async (req) => {
         card_brand: transaction?.credit_card?.brand || paymentV2.card_brand || null,
         card_last4: transaction?.credit_card?.last_4 || paymentV2.card_last4 || null,
       };
+
+      // =====================================================================
+      // REFUND HANDLING - process refund transactions idempotently
+      // =====================================================================
+      if (isRefundTransaction && transactionUid) {
+        console.log(`Processing refund webhook for payment ${paymentV2.id}, refund UID: ${transactionUid}`);
+        
+        const existingRefunds = (paymentV2.refunds || []) as any[];
+        
+        // Check idempotency - skip if this refund already exists
+        const alreadyExists = existingRefunds.find(r => r.refund_id === transactionUid);
+        
+        if (alreadyExists) {
+          console.log(`Refund ${transactionUid} already recorded, updating status only`);
+          
+          // Update existing refund status if changed
+          const updatedRefunds = existingRefunds.map(r => {
+            if (r.refund_id === transactionUid) {
+              return {
+                ...r,
+                status: transactionStatus === 'successful' ? 'succeeded' : transactionStatus,
+                receipt_url: transaction?.receipt_url || r.receipt_url,
+              };
+            }
+            return r;
+          });
+          
+          const totalRefunded = updatedRefunds
+            .filter(r => r.status === 'succeeded')
+            .reduce((sum, r) => sum + r.amount, 0);
+          
+          await supabase
+            .from('payments_v2')
+            .update({
+              ...basePaymentUpdate,
+              refunds: updatedRefunds,
+              refunded_amount: totalRefunded,
+            })
+            .eq('id', paymentV2.id);
+          
+          await supabase.from('audit_logs').insert({
+            actor_user_id: '00000000-0000-0000-0000-000000000000',
+            action: 'bepaid_refund_ignored_duplicate',
+            meta: { 
+              payment_id: paymentV2.id, 
+              refund_id: transactionUid,
+              order_id: paymentV2.order_id,
+            },
+          });
+          
+          return new Response(
+            JSON.stringify({ ok: true, type: 'refund_duplicate', refund_id: transactionUid }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        
+        // New refund - add to array
+        const refundAmount = (transaction?.amount || 0) / 100;
+        const newRefund = {
+          refund_id: transactionUid,
+          amount: refundAmount,
+          currency: transaction?.currency || 'BYN',
+          status: transactionStatus === 'successful' ? 'succeeded' : transactionStatus,
+          created_at: new Date().toISOString(),
+          receipt_url: transaction?.receipt_url || null,
+          reason: transaction?.message || transaction?.refund_reason || body.refund?.reason || null,
+        };
+        
+        const updatedRefunds = [...existingRefunds, newRefund];
+        const totalRefunded = updatedRefunds
+          .filter(r => r.status === 'succeeded')
+          .reduce((sum, r) => sum + r.amount, 0);
+        
+        const lastRefundAt = updatedRefunds
+          .filter(r => r.status === 'succeeded')
+          .map(r => new Date(r.created_at).getTime())
+          .sort((a, b) => b - a)[0];
+        
+        await supabase
+          .from('payments_v2')
+          .update({
+            ...basePaymentUpdate,
+            refunds: updatedRefunds,
+            refunded_amount: totalRefunded,
+            refunded_at: lastRefundAt ? new Date(lastRefundAt).toISOString() : null,
+          })
+          .eq('id', paymentV2.id);
+        
+        // Check if fully refunded - update order status
+        if (totalRefunded >= Number(paymentV2.amount)) {
+          await supabase
+            .from('orders_v2')
+            .update({ status: 'refunded' })
+            .eq('id', paymentV2.order_id);
+          
+          console.log(`Order ${paymentV2.order_id} fully refunded, status updated`);
+        }
+        
+        // Audit log
+        await supabase.from('audit_logs').insert({
+          actor_user_id: '00000000-0000-0000-0000-000000000000',
+          action: 'bepaid_refund_received',
+          meta: { 
+            payment_id: paymentV2.id, 
+            order_id: paymentV2.order_id,
+            refund: newRefund,
+            total_refunded: totalRefunded,
+            fully_refunded: totalRefunded >= Number(paymentV2.amount),
+          },
+        });
+        
+        console.log(`Refund ${transactionUid} recorded: ${refundAmount} ${newRefund.currency}, total refunded: ${totalRefunded}`);
+        
+        return new Response(
+          JSON.stringify({ 
+            ok: true, 
+            type: 'refund', 
+            refund_id: transactionUid,
+            amount: refundAmount,
+            total_refunded: totalRefunded,
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
 
       if (transactionStatus === 'successful') {
         await supabase

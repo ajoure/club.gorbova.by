@@ -2971,6 +2971,10 @@ export type Database = {
           provider: string | null
           provider_payment_id: string | null
           provider_response: Json | null
+          receipt_url: string | null
+          refunded_amount: number | null
+          refunded_at: string | null
+          refunds: Json | null
           status: Database["public"]["Enums"]["payment_status"]
           updated_at: string
           user_id: string
@@ -2993,6 +2997,10 @@ export type Database = {
           provider?: string | null
           provider_payment_id?: string | null
           provider_response?: Json | null
+          receipt_url?: string | null
+          refunded_amount?: number | null
+          refunded_at?: string | null
+          refunds?: Json | null
           status?: Database["public"]["Enums"]["payment_status"]
           updated_at?: string
           user_id: string
@@ -3015,6 +3023,10 @@ export type Database = {
           provider?: string | null
           provider_payment_id?: string | null
           provider_response?: Json | null
+          receipt_url?: string | null
+          refunded_amount?: number | null
+          refunded_at?: string | null
+          refunds?: Json | null
           status?: Database["public"]["Enums"]["payment_status"]
           updated_at?: string
           user_id?: string
