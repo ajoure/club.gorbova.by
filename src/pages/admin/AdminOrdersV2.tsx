@@ -74,6 +74,7 @@ export default function AdminOrdersV2() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [gcFilter, setGcFilter] = useState<string>("all");
+  const [gcPendingOrderId, setGcPendingOrderId] = useState<string | null>(null);
   const { isSuperAdmin } = usePermissions();
   const queryClient = useQueryClient();
 
@@ -107,6 +108,7 @@ export default function AdminOrdersV2() {
   // Mutation for GC retry
   const gcRetryMutation = useMutation({
     mutationFn: async (orderId: string) => {
+      setGcPendingOrderId(orderId);
       const { data, error } = await supabase.functions.invoke('getcourse-grant-access', {
         body: { order_id: orderId, force: true },
       });
@@ -123,6 +125,9 @@ export default function AdminOrdersV2() {
       }
       queryClient.invalidateQueries({ queryKey: ['orders-v2'] });
       refetch();
+    },
+    onSettled: () => {
+      setGcPendingOrderId(null);
     },
     onError: (error: any) => {
       toast.error('Ошибка GC sync', { description: error.message });
@@ -205,14 +210,15 @@ export default function AdminOrdersV2() {
     
     // GC filter
     if (gcFilter !== "all") {
-      const gcStatus = (order.meta as any)?.gc_sync_status;
-      const gcErrorType = (order.meta as any)?.gc_sync_error_type;
+      const meta = (order.meta as any) ?? {};
+      const gcStatus = meta.gc_sync_status ?? null;
+      const gcErrorType = meta.gc_sync_error_type ?? null;
       const gcNextRetryAt = order.gc_next_retry_at;
       
       if (gcFilter === "success" && gcStatus !== "success") return false;
       if (gcFilter === "failed" && gcStatus !== "failed") return false;
       if (gcFilter === "skipped" && gcStatus !== "skipped") return false;
-      if (gcFilter === "not_sent" && gcStatus) return false;
+      if (gcFilter === "not_sent" && !!gcStatus) return false;
       if (gcFilter === "rate_limit") {
         if (gcErrorType !== "rate_limit") return false;
       }
@@ -492,16 +498,19 @@ export default function AdminOrdersV2() {
                                 Платежи
                               </DropdownMenuItem>
                               {/* GC retry option */}
-                              {order.status === 'paid' && (order.meta as any)?.gc_sync_status !== 'success' && (
-                                <DropdownMenuItem 
-                                  onClick={() => gcRetryMutation.mutate(order.id)}
-                                  disabled={gcRetryMutation.isPending}
-                                  className="text-blue-600"
-                                >
-                                  <Send className="h-4 w-4 mr-2" />
-                                  {gcRetryMutation.isPending ? 'Отправка...' : 'Отправить в GetCourse'}
-                                </DropdownMenuItem>
-                              )}
+                              {order.status === 'paid' && (order.meta as any)?.gc_sync_status !== 'success' && (() => {
+                                const isPendingThis = gcPendingOrderId === order.id && gcRetryMutation.isPending;
+                                return (
+                                  <DropdownMenuItem 
+                                    onClick={() => gcRetryMutation.mutate(order.id)}
+                                    disabled={isPendingThis}
+                                    className="text-blue-600"
+                                  >
+                                    <Send className="h-4 w-4 mr-2" />
+                                    {isPendingThis ? 'Отправка...' : 'Отправить в GetCourse'}
+                                  </DropdownMenuItem>
+                                );
+                              })()}
                               {isSuperAdmin() && order.status !== 'paid' && order.status !== 'refunded' && (
                                 <>
                                   <DropdownMenuSeparator />
