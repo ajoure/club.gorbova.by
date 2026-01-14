@@ -90,6 +90,14 @@ function parseTariffFromDescription(description: string | null): { tariffType: s
   return { tariffType: null, isTrial };
 }
 
+// Extract offer_id from tracking_id format "{order_id}_{offer_id}"
+function extractOfferIdFromTrackingId(trackingId: string | null): string | null {
+  if (!trackingId) return null;
+  const parts = trackingId.split('_');
+  if (parts.length >= 2 && parts[1]?.length === 36) return parts[1];
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -306,12 +314,21 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Step 2: Find product mapping - use FLEXIBLE matching on description
+        // Step 2: Find product mapping - PRIORITY: offer_id > plan_title > fuzzy
         let mapping = null;
         const planTitle = item.product_name || item.tariff_name;
         
-        // 2a. Try exact match first
-        if (planTitle) {
+        // 2a. PRIORITY 1: Extract offer_id from tracking_id
+        const offerIdFromTracking = extractOfferIdFromTrackingId(item.tracking_id);
+        if (offerIdFromTracking) {
+          mapping = (allMappings || []).find(m => m.offer_id === offerIdFromTracking);
+          if (mapping) {
+            console.log(`[BEPAID-AUTO-PROCESS] Matched by offer_id from tracking_id: ${offerIdFromTracking}`);
+          }
+        }
+        
+        // 2b. PRIORITY 2: Try exact match by plan_title (только если offer_id не найден)
+        if (!mapping && planTitle) {
           mapping = (allMappings || []).find(m => 
             m.bepaid_plan_title === planTitle ||
             m.bepaid_description === planTitle
@@ -321,7 +338,7 @@ Deno.serve(async (req) => {
           }
         }
         
-        // 2b. Try fuzzy match on description
+        // 2c. PRIORITY 3: Try fuzzy match on description
         if (!mapping && item.description) {
           const { tariffType, isTrial } = parseTariffFromDescription(item.description);
           console.log(`[BEPAID-AUTO-PROCESS] Parsed description: tariffType=${tariffType}, isTrial=${isTrial}`);

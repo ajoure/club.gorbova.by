@@ -757,7 +757,7 @@ Deno.serve(async (req) => {
           // Fetch product + tariff for access calculation
           const { data: productV2 } = await supabase
             .from('products_v2')
-            .select('id, name, currency, telegram_club_id')
+            .select('id, name, code, currency, telegram_club_id')
             .eq('id', orderV2.product_id)
             .maybeSingle();
 
@@ -955,12 +955,79 @@ Deno.serve(async (req) => {
               }
             }
 
-            // Check if user has Telegram linked BEFORE syncing
-            const { data: userProfile } = await supabase
+            // === ALWAYS CREATE/UPDATE ENTITLEMENT (Variant 1: upsert by user_id, product_code) ===
+            const productCode = productV2.code || `product_${productV2.id}`;
+
+            // Guard: проверяем, что user_id — реальный auth user (есть профиль)
+            const { data: userProfileCheck } = await supabase
               .from('profiles')
-              .select('telegram_user_id, telegram_link_status, phone, first_name, last_name')
+              .select('id, user_id, telegram_user_id, telegram_link_status, phone, first_name, last_name')
               .eq('user_id', orderV2.user_id)
               .maybeSingle();
+
+            if (!userProfileCheck) {
+              // Ghost user_id — не создаём entitlement, помечаем для ручной обработки
+              console.warn('[ENTITLEMENT] Ghost user_id detected, skipping entitlement:', orderV2.user_id);
+              await supabase.from('audit_logs').insert({
+                actor_user_id: orderV2.user_id,
+                action: 'entitlement_skipped_ghost_user',
+                meta: { order_id: orderV2.id, order_number: orderV2.order_number },
+              });
+            } else {
+              // Idempotency guard: проверяем, есть ли уже entitlement для этого order_id
+              const { data: existingEntitlement } = await supabase
+                .from('entitlements')
+                .select('id')
+                .eq('order_id', orderV2.id)
+                .maybeSingle();
+
+              if (existingEntitlement) {
+                console.log('[ENTITLEMENT] Already exists for order:', orderV2.id);
+              } else {
+                // Expires: строго subscriptions_v2.access_end_at
+                const entitlementExpiresAt = accessEndAt.toISOString();
+
+                const { error: entitlementError } = await supabase
+                  .from('entitlements')
+                  .upsert({
+                    user_id: orderV2.user_id,
+                    profile_id: userProfileCheck.id,
+                    order_id: orderV2.id,
+                    product_code: productCode,
+                    status: 'active',
+                    expires_at: entitlementExpiresAt,
+                    meta: {
+                      order_number: orderV2.order_number,
+                      product_name: productV2.name,
+                      tariff_name: tariff.name,
+                      bepaid_uid: transactionUid,
+                      source: 'bepaid_webhook_v2',
+                    },
+                  }, {
+                    onConflict: 'user_id,product_code',
+                    ignoreDuplicates: false,
+                  });
+
+                if (entitlementError) {
+                  console.error('[ENTITLEMENT] Upsert failed:', entitlementError);
+                  await supabase.from('audit_logs').insert({
+                    actor_user_id: orderV2.user_id,
+                    action: 'entitlement_failed_v2',
+                    meta: { order_id: orderV2.id, error: entitlementError.message },
+                  });
+                } else {
+                  console.log('[ENTITLEMENT] Created/updated for order:', orderV2.id, 'product_code:', productCode);
+                  await supabase.from('audit_logs').insert({
+                    actor_user_id: orderV2.user_id,
+                    action: 'entitlement_created_v2',
+                    meta: { order_id: orderV2.id, product_code: productCode, expires_at: entitlementExpiresAt },
+                  });
+                }
+              }
+            }
+
+            // Use the same profile data for Telegram check
+            const userProfile = userProfileCheck;
 
             const hasTelegramLinked = userProfile?.telegram_user_id && userProfile?.telegram_link_status === 'active';
             
