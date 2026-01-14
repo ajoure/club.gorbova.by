@@ -524,7 +524,9 @@ Deno.serve(async (req) => {
       });
       
       await supabase.from('audit_logs').insert({
-        actor_user_id: '00000000-0000-0000-0000-000000000000',
+        actor_user_id: null,
+        actor_type: 'system',
+        actor_label: 'bepaid-webhook',
         action: 'webhook.queued_for_review',
         meta: { reason: signatureSkipReason, tracking_id: rawTrackingIdEarly, body_preview: bodyText.substring(0, 500) },
       });
@@ -540,7 +542,9 @@ Deno.serve(async (req) => {
       console.log('[WEBHOOK-INFO] Processing without signature verification - valid tracking_id found:', rawTrackingIdEarly);
       
       await supabase.from('audit_logs').insert({
-        actor_user_id: '00000000-0000-0000-0000-000000000000',
+        actor_user_id: null,
+        actor_type: 'system',
+        actor_label: 'bepaid-webhook',
         action: 'webhook.processed_without_signature',
         meta: { 
           reason: signatureSkipReason, 
@@ -769,7 +773,9 @@ Deno.serve(async (req) => {
             .eq('id', paymentV2.id);
           
           await supabase.from('audit_logs').insert({
-            actor_user_id: '00000000-0000-0000-0000-000000000000',
+            actor_user_id: null,
+            actor_type: 'system',
+            actor_label: 'bepaid-webhook',
             action: 'bepaid_refund_ignored_duplicate',
             meta: { 
               payment_id: paymentV2.id, 
@@ -828,7 +834,9 @@ Deno.serve(async (req) => {
         
         // Audit log
         await supabase.from('audit_logs').insert({
-          actor_user_id: '00000000-0000-0000-0000-000000000000',
+          actor_user_id: null,
+          actor_type: 'system',
+          actor_label: 'bepaid-webhook',
           action: 'bepaid_refund_received',
           meta: { 
             payment_id: paymentV2.id, 
@@ -2532,14 +2540,15 @@ async function createOrderFromWebhook(
       
       // Log to audit
       await supabase.from('audit_logs').insert({
-        actor_user_id: '00000000-0000-0000-0000-000000000000',
+        actor_user_id: null,
+        actor_type: 'system',
+        actor_label: 'bepaid-webhook',
         action: 'webhook_duplicate_payment_skipped',
         meta: {
           bepaid_uid: transactionUid,
           existing_payment_id: existingPayment.id,
           existing_order_id: existingPayment.order_id,
           existing_order_number: existingOrderNumber,
-          attempted_order_id: orderId,
         },
       });
       

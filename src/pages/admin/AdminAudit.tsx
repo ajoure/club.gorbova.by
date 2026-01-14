@@ -17,7 +17,9 @@ import { Search, Loader2 } from "lucide-react";
 
 interface AuditLog {
   id: string;
-  actor_user_id: string;
+  actor_user_id: string | null;
+  actor_type?: string;
+  actor_label?: string | null;
   action: string;
   target_user_id: string | null;
   meta: unknown;
@@ -45,26 +47,36 @@ export default function AdminAudit() {
         return;
       }
 
-      // Get unique user IDs
+      // Get unique user IDs (only for user-type actors)
       const userIds = new Set<string>();
       logsData?.forEach((log) => {
-        userIds.add(log.actor_user_id);
+        // Only add actor_user_id if it exists and is a user type
+        if (log.actor_user_id && (!log.actor_type || log.actor_type === 'user')) {
+          userIds.add(log.actor_user_id);
+        }
         if (log.target_user_id) userIds.add(log.target_user_id);
       });
 
       // Fetch profiles for these users
-      const { data: profiles } = await supabase
-        .from("profiles")
-        .select("user_id, email")
-        .in("user_id", Array.from(userIds));
+      const { data: profiles } = userIds.size > 0 
+        ? await supabase
+            .from("profiles")
+            .select("user_id, email")
+            .in("user_id", Array.from(userIds))
+        : { data: [] };
 
-      const profileMap = new Map(profiles?.map((p) => [p.user_id, p.email]) || []);
+      const profileMap = new Map<string, string>(
+        (profiles || []).map((p) => [p.user_id, p.email] as [string, string])
+      );
 
-      const enrichedLogs = logsData?.map((log) => ({
+      const enrichedLogs: AuditLog[] = (logsData || []).map((log) => ({
         ...log,
-        actor_email: profileMap.get(log.actor_user_id) || "Unknown",
+        // For system actors, show actor_label or "System"
+        actor_email: log.actor_type === 'system' 
+          ? (log.actor_label || 'System')
+          : (log.actor_user_id ? (profileMap.get(log.actor_user_id) || "Unknown") : "Unknown"),
         target_email: log.target_user_id ? profileMap.get(log.target_user_id) || "Unknown" : null,
-      })) || [];
+      }));
 
       setLogs(enrichedLogs);
     } catch (error) {

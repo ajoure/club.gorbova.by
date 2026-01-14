@@ -228,7 +228,9 @@ ${discrepancies.length > 10 ? `\n...и ещё ${discrepancies.length - 10} за�
 
     // Log the alert
     await supabase.from("audit_logs").insert({
-      actor_user_id: "00000000-0000-0000-0000-000000000000", // System
+      actor_user_id: null,
+      actor_type: 'system',
+      actor_label: 'bepaid-discrepancy-alert',
       action: "bepaid_discrepancy_alert",
       meta: {
         discrepancy_count: discrepancies.length,

@@ -406,8 +406,10 @@ serve(async (req) => {
 
     // Log the reconciliation run
     await supabase.from("audit_logs").insert({
+      actor_user_id: null,
+      actor_type: 'system',
+      actor_label: 'payments-reconcile',
       action: "payments_reconcile_cron",
-      actor_user_id: "00000000-0000-0000-0000-000000000000",
       meta: results,
     });
 

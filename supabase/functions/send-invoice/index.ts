@@ -140,8 +140,10 @@ const handler = async (req: Request): Promise<Response> => {
 
     // Log to audit
     await supabase.from("audit_logs").insert({
+      actor_user_id: null,
+      actor_type: 'system',
+      actor_label: 'send-invoice',
       action: "invoice_sent",
-      actor_user_id: "00000000-0000-0000-0000-000000000000",
       meta: {
         order_id: orderId,
         invoice_number: invoiceNumber,
