@@ -45,7 +45,8 @@ import {
   X,
   RefreshCw,
   Link2,
-  Plus
+  Plus,
+  BookOpen
 } from "lucide-react";
 
 interface EditSubscriptionDialogProps {
@@ -80,6 +81,7 @@ export function EditSubscriptionDialog({
     telegram_club_id: "",
   });
   const [isTelegramLoading, setIsTelegramLoading] = useState(false);
+  const [isGCLoading, setIsGCLoading] = useState(false);
 
   // Load products
   const { data: products } = useQuery({

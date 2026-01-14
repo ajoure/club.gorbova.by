@@ -279,14 +279,26 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Get user_id if we have profile but not user_id yet
+        // Get user_id and email if we have profile but not user_id yet
+        let profileEmail: string | null = null;
         if (profileId && !profileUserId) {
           const { data: profile } = await supabase
             .from('profiles')
-            .select('user_id')
+            .select('user_id, email')
             .eq('id', profileId)
             .maybeSingle();
           profileUserId = profile?.user_id;
+          profileEmail = profile?.email || null;
+        }
+        
+        // Also fetch email even if we already have user_id
+        if (profileId && !profileEmail) {
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('email')
+            .eq('id', profileId)
+            .maybeSingle();
+          profileEmail = profileData?.email || null;
         }
 
         if (profileId && !item.matched_profile_id) {
@@ -451,6 +463,9 @@ Deno.serve(async (req) => {
           const customerFullName = [item.customer_name, item.customer_surname].filter(Boolean).join(' ') || 
             (item.card_holder ? transliterateToCyrillic(item.card_holder) : null);
 
+          // Use profile email as fallback if item doesn't have email
+          const orderCustomerEmail = item.customer_email || profileEmail;
+
           // Create order with ALL customer data in meta
           const { data: newOrder, error: orderError } = await supabase
             .from('orders_v2')
@@ -466,7 +481,7 @@ Deno.serve(async (req) => {
               final_price: finalAmount,
               currency: item.currency || 'BYN',
               payment_method: 'bepaid',
-              customer_email: item.customer_email,
+              customer_email: orderCustomerEmail,
               purchase_snapshot: {
                 bepaid_uid: item.bepaid_uid,
                 source: 'auto_process',
@@ -478,7 +493,7 @@ Deno.serve(async (req) => {
                 customer_name: item.customer_name,
                 customer_surname: item.customer_surname,
                 customer_full_name: customerFullName,
-                customer_email: item.customer_email,
+                customer_email: orderCustomerEmail,
                 customer_phone: item.customer_phone,
                 card_holder: item.card_holder,
                 card_holder_translit: item.card_holder ? transliterateToCyrillic(item.card_holder) : null,
@@ -647,6 +662,24 @@ Deno.serve(async (req) => {
                   },
                 });
               console.log(`[BEPAID-AUTO-PROCESS] Linked order ${newOrder.id} → entitlement ${entitlementId}`);
+            }
+          }
+
+          // GetCourse sync - call the unified function (best-effort)
+          if (orderCustomerEmail && mapping.offer_id) {
+            try {
+              const gcResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/getcourse-grant-access`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                },
+                body: JSON.stringify({ order_id: newOrder.id }),
+              });
+              const gcResult = await gcResponse.json();
+              console.log(`[BEPAID-AUTO-PROCESS] GC sync result:`, gcResult);
+            } catch (gcErr) {
+              console.error(`[BEPAID-AUTO-PROCESS] GC sync error:`, gcErr);
             }
           }
 

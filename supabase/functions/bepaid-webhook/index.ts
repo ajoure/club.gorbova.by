@@ -961,7 +961,7 @@ Deno.serve(async (req) => {
             // Guard: проверяем, что user_id — реальный auth user (есть профиль)
             const { data: userProfileCheck } = await supabase
               .from('profiles')
-              .select('id, user_id, telegram_user_id, telegram_link_status, phone, first_name, last_name')
+              .select('id, user_id, email, telegram_user_id, telegram_link_status, phone, first_name, last_name')
               .eq('user_id', orderV2.user_id)
               .maybeSingle();
 
@@ -1088,52 +1088,112 @@ Deno.serve(async (req) => {
             // Use the same profile data for Telegram check
             const userProfile = userProfileCheck;
 
+            // ===== GetCourse sync - ALWAYS attempt, INDEPENDENT of Telegram =====
+            const getcourseOfferId = offer?.getcourse_offer_id || tariff.getcourse_offer_id;
+            const customerEmail = orderV2.customer_email || userProfile?.email;
+            
+            if (getcourseOfferId && customerEmail) {
+              console.log(`[GC-SYNC] Starting: offer_id=${getcourseOfferId}, email=${customerEmail}`);
+              
+              const gcResult = await sendToGetCourse(
+                {
+                  email: customerEmail,
+                  phone: userProfile?.phone || orderV2.customer_phone || null,
+                  firstName: userProfile?.first_name || null,
+                  lastName: userProfile?.last_name || null,
+                },
+                parseInt(getcourseOfferId, 10) || 0,
+                orderV2.order_number,
+                paymentV2.amount,
+                tariff.code || tariff.name
+              );
+              
+              // Determine error type for rate limit handling
+              let errorType: string | null = null;
+              let nextRetryAt: string | null = null;
+              if (gcResult.error) {
+                const errorLower = gcResult.error.toLowerCase();
+                if (errorLower.includes('лимит') || errorLower.includes('limit')) {
+                  errorType = 'rate_limit';
+                  nextRetryAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+                } else if (errorLower.includes('авторизац') || errorLower.includes('auth')) {
+                  errorType = 'auth';
+                } else {
+                  errorType = 'unknown';
+                }
+              }
+              
+              // Update order meta with GC sync result
+              await supabase.from('orders_v2').update({
+                meta: {
+                  ...((orderV2.meta as object) || {}),
+                  gc_sync_status: gcResult.success ? 'success' : 'failed',
+                  gc_sync_error: gcResult.error || null,
+                  gc_sync_error_type: errorType,
+                  gc_order_id: gcResult.gcOrderId || null,
+                  gc_deal_number: gcResult.gcDealNumber || null,
+                  gc_synced_at: new Date().toISOString(),
+                  gc_retry_count: gcResult.success ? 0 : (((orderV2.meta as any)?.gc_retry_count || 0) + 1),
+                  gc_next_retry_at: gcResult.success ? null : nextRetryAt,
+                }
+              }).eq('id', orderV2.id);
+              
+              // Audit log
+              await supabase.from('audit_logs').insert({
+                actor_user_id: orderV2.user_id,
+                action: gcResult.success ? 'gc_sync_success' : 'gc_sync_failed',
+                meta: { 
+                  order_id: orderV2.id, 
+                  order_number: orderV2.order_number,
+                  gc_offer_id: getcourseOfferId,
+                  gc_order_id: gcResult.gcOrderId,
+                  gc_deal_number: gcResult.gcDealNumber,
+                  error: gcResult.error,
+                  error_type: errorType,
+                },
+              });
+              
+              console.log('[GC-SYNC] Result:', gcResult);
+            } else {
+              // Mark as skipped with reason
+              const skipReason = !customerEmail ? 'no_email' : 'no_gc_offer';
+              await supabase.from('orders_v2').update({
+                meta: { 
+                  ...((orderV2.meta as object) || {}), 
+                  gc_sync_status: 'skipped', 
+                  gc_sync_error: skipReason === 'no_email' 
+                    ? 'No customer email' 
+                    : 'No GetCourse offer configured',
+                  gc_sync_error_type: skipReason,
+                  gc_synced_at: new Date().toISOString(),
+                }
+              }).eq('id', orderV2.id);
+              
+              console.log(`[GC-SYNC] Skipped: ${skipReason}`);
+            }
+
+            // ===== Telegram access - check if linked =====
             const hasTelegramLinked = userProfile?.telegram_user_id && userProfile?.telegram_link_status === 'active';
             
-            if (hasTelegramLinked) {
-              // Telegram linked - sync immediately
-              console.log('Telegram linked, syncing GetCourse and granting access');
+            if (hasTelegramLinked && productV2.telegram_club_id) {
+              // Telegram linked - grant access immediately
+              console.log('[TELEGRAM] Linked, granting access');
               
-              // Telegram access
-              if (productV2.telegram_club_id) {
-                await supabase.functions.invoke('telegram-grant-access', {
-                  body: {
-                    user_id: orderV2.user_id,
-                    duration_days: accessDays,
-                  },
-                });
-              }
-
-              // GetCourse sync - prefer offer-level getcourse_offer_id, fallback to tariff-level
-              const getcourseOfferId = offer?.getcourse_offer_id || tariff.getcourse_offer_id;
-              if (getcourseOfferId && orderV2.customer_email) {
-                console.log(`Syncing to GetCourse: offer_id=${getcourseOfferId}, email=${orderV2.customer_email}`);
-
-                const gcResult = await sendToGetCourse(
-                  {
-                    email: orderV2.customer_email,
-                    phone: userProfile?.phone || orderV2.customer_phone || null,
-                    firstName: userProfile?.first_name || null,
-                    lastName: userProfile?.last_name || null,
-                  },
-                  parseInt(getcourseOfferId, 10) || 0,
-                  orderV2.order_number,
-                  paymentV2.amount,
-                  tariff.code || tariff.name
-                );
-                
-                console.log('GetCourse sync result (V2):', gcResult);
-              }
-            } else {
-              // Telegram NOT linked - defer sync, mark order as pending
-              console.log('Telegram NOT linked, deferring GetCourse sync and access grant');
+              await supabase.functions.invoke('telegram-grant-access', {
+                body: {
+                  user_id: orderV2.user_id,
+                  duration_days: accessDays,
+                },
+              });
+            } else if (productV2.telegram_club_id) {
+              // Telegram NOT linked but product has club - mark pending
+              console.log('[TELEGRAM] NOT linked, marking access pending');
               
               await supabase
                 .from('orders_v2')
                 .update({
                   meta: {
                     ...((orderV2.meta as object) || {}),
-                    gc_sync_pending: true,
                     telegram_access_pending: true,
                     pending_since: new Date().toISOString(),
                   }
@@ -1152,7 +1212,7 @@ Deno.serve(async (req) => {
                 priority: 10,
               });
               
-              console.log('Created pending notification for Telegram linking');
+              console.log('[TELEGRAM] Created pending notification for linking');
             }
 
             // Audit
