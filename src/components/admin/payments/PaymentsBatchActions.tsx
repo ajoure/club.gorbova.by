@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { FileText, X, Loader2, AlertTriangle } from "lucide-react";
+import { FileText, X, Loader2, AlertTriangle, Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { UnifiedPayment } from "@/hooks/useUnifiedPayments";
@@ -18,10 +18,12 @@ interface BatchResult {
   failed: number;
   skipped: number;
   errors: string[];
+  operation: string;
 }
 
 export default function PaymentsBatchActions({ selectedPayments, onSuccess, onClearSelection }: PaymentsBatchActionsProps) {
   const [isFetchingReceipts, setIsFetchingReceipts] = useState(false);
+  const [isAutoLinking, setIsAutoLinking] = useState(false);
   const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
 
   const handleFetchReceipts = async () => {
@@ -99,6 +101,7 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
       failed,
       skipped: skippedNoOrder + skippedHasReceipt + (stopped ? eligiblePayments.length - limit : 0),
       errors: errors.slice(0, 10), // Show first 10 errors
+      operation: 'receipts',
     };
     
     setBatchResult(result);
@@ -109,6 +112,132 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
       onSuccess();
     } else if (failed > 0) {
       toast.error(`Ошибки при получении чеков: ${failed}`);
+    }
+  };
+
+  // Auto-link deals by tracking_id/order_number
+  const handleAutoLinkDeals = async () => {
+    // Filter: need tracking_id (ORD-...) and no order_id yet, only queue items
+    const eligiblePayments = selectedPayments.filter(p => 
+      !p.order_id && 
+      p.rawSource === 'queue' &&
+      p.tracking_id && 
+      p.tracking_id.startsWith('ORD-')
+    );
+    
+    const skippedHasOrder = selectedPayments.filter(p => p.order_id).length;
+    const skippedNoTracking = selectedPayments.filter(p => !p.order_id && (!p.tracking_id || !p.tracking_id.startsWith('ORD-'))).length;
+    
+    if (eligiblePayments.length === 0) {
+      toast.info(
+        `Нет платежей для автосвязывания. Уже связаны: ${skippedHasOrder}, без tracking_id: ${skippedNoTracking}`
+      );
+      return;
+    }
+
+    // STOP guard: limit 100
+    const BATCH_LIMIT = 100;
+    const limit = Math.min(eligiblePayments.length, BATCH_LIMIT);
+    const toProcess = eligiblePayments.slice(0, limit);
+    
+    if (eligiblePayments.length > BATCH_LIMIT) {
+      toast.info(`Будет обработано ${BATCH_LIMIT} из ${eligiblePayments.length} платежей (лимит)`);
+    }
+    
+    setIsAutoLinking(true);
+    setBatchResult(null);
+    
+    let success = 0;
+    let failed = 0;
+    const errors: string[] = [];
+    let stopped = false;
+
+    // Collect all tracking_ids to search for orders
+    const trackingIds = toProcess.map(p => p.tracking_id!);
+    
+    // Fetch orders by order_number matching tracking_ids
+    const { data: orders, error: ordersError } = await supabase
+      .from('orders_v2')
+      .select('id, order_number, profile_id')
+      .in('order_number', trackingIds);
+    
+    if (ordersError) {
+      toast.error(`Ошибка поиска сделок: ${ordersError.message}`);
+      setIsAutoLinking(false);
+      return;
+    }
+    
+    // Create map: order_number -> order
+    const ordersMap = new Map((orders || []).map(o => [o.order_number, o]));
+    
+    for (let i = 0; i < toProcess.length; i++) {
+      const payment = toProcess[i];
+      const order = ordersMap.get(payment.tracking_id!);
+      
+      if (!order) {
+        // No matching order found - skip
+        failed++;
+        errors.push(`${payment.uid.substring(0, 8)}: Сделка ${payment.tracking_id} не найдена`);
+        continue;
+      }
+      
+      try {
+        // Update queue item with matched order (and contact if available)
+        const updateData: Record<string, any> = {
+          matched_order_id: order.id,
+        };
+        
+        // If order has profile_id, also link contact
+        if (order.profile_id) {
+          updateData.matched_profile_id = order.profile_id;
+        }
+        
+        const { error: updateError } = await supabase
+          .from('payment_reconcile_queue')
+          .update(updateData)
+          .eq('id', payment.id);
+        
+        if (updateError) {
+          failed++;
+          errors.push(`${payment.uid.substring(0, 8)}: ${updateError.message}`);
+        } else {
+          success++;
+        }
+        
+        // STOP guard: if error rate > 20% after first 10 requests
+        if (i >= 9 && failed / (i + 1) > 0.2) {
+          stopped = true;
+          toast.error(`Остановлено: слишком много ошибок (${Math.round(failed / (i + 1) * 100)}%)`);
+          break;
+        }
+        
+        // Small delay to avoid overwhelming
+        if (i < toProcess.length - 1 && (i + 1) % 10 === 0) {
+          await new Promise(r => setTimeout(r, 100));
+        }
+      } catch (e: any) {
+        failed++;
+        errors.push(`${payment.uid.substring(0, 8)}: ${e.message}`);
+      }
+    }
+    
+    const result: BatchResult = {
+      total: toProcess.length,
+      success,
+      failed,
+      skipped: skippedHasOrder + skippedNoTracking + (stopped ? eligiblePayments.length - limit : 0),
+      errors: errors.slice(0, 10),
+      operation: 'autolink',
+    };
+    
+    setBatchResult(result);
+    setIsAutoLinking(false);
+    
+    if (success > 0) {
+      toast.success(`Связано сделок: ${success} из ${toProcess.length}`);
+      onSuccess();
+    } else if (failed > 0) {
+      toast.error(`Ошибки при связывании: ${failed}`);
     }
   };
 
@@ -129,8 +258,21 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
           <Button 
             variant="outline" 
             size="sm" 
+            onClick={handleAutoLinkDeals}
+            disabled={isAutoLinking || isFetchingReceipts}
+          >
+            {isAutoLinking ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            ) : (
+              <Link2 className="h-4 w-4 mr-2" />
+            )}
+            Автосвязать сделки
+          </Button>
+          <Button 
+            variant="outline" 
+            size="sm" 
             onClick={handleFetchReceipts}
-            disabled={isFetchingReceipts}
+            disabled={isFetchingReceipts || isAutoLinking}
           >
             {isFetchingReceipts ? (
               <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -146,7 +288,9 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
       {batchResult && (
         <div className="p-3 bg-muted/50 rounded-lg border">
           <div className="flex items-center justify-between mb-2">
-            <span className="font-medium text-sm">Результат операции</span>
+            <span className="font-medium text-sm">
+              Результат: {batchResult.operation === 'receipts' ? 'Получение чеков' : 'Автосвязывание сделок'}
+            </span>
             <Button variant="ghost" size="sm" onClick={closeBatchResult}>
               <X className="h-3 w-3" />
             </Button>

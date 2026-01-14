@@ -303,15 +303,29 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
       case 'payer':
         return (
           <div className="flex flex-col gap-0.5 text-xs">
-            {payment.customer_email && <div className="flex items-center gap-1"><Mail className="h-3 w-3" />{payment.customer_email}</div>}
+            {/* Line 1: Card info */}
             {payment.card_last4 && (
               <div className="flex items-center gap-1">
-                <CreditCard className="h-3 w-3" />
-                *{payment.card_last4}
-                {payment.card_brand && <Badge variant="outline" className="text-[10px] px-1">{payment.card_brand}</Badge>}
+                <CreditCard className="h-3 w-3 flex-shrink-0" />
+                <span className="font-mono">**** {payment.card_last4}</span>
+                {payment.card_brand && (
+                  <span className="text-muted-foreground">· {payment.card_brand.toUpperCase()}</span>
+                )}
               </div>
             )}
-            {payment.card_holder && <span className="text-muted-foreground truncate max-w-[150px]">{payment.card_holder}</span>}
+            {/* Line 2: Card holder (from provider_response or card_holder field) */}
+            {payment.card_holder ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-muted-foreground truncate max-w-[160px] cursor-default">
+                    {payment.card_holder}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{payment.card_holder}</TooltipContent>
+              </Tooltip>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )}
           </div>
         );
         
@@ -327,19 +341,74 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
         );
         
       case 'deal':
-        return payment.order_id ? (
-          <div className="text-xs">
-            <span className="font-medium">{payment.order_number || "Связан"}</span>
-            {payment.order_status && <Badge variant="outline" className="ml-1 text-[10px]">{payment.order_status}</Badge>}
+        if (payment.order_id) {
+          // Compact clickable chip with short order code
+          const shortCode = payment.order_number 
+            ? (payment.order_number.length > 12 
+                ? payment.order_number.substring(0, 10) + '…' 
+                : payment.order_number)
+            : 'Связан';
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge 
+                  variant="outline" 
+                  className="cursor-pointer hover:bg-accent text-xs font-mono"
+                  onClick={() => {
+                    // Navigate to deal (open deal sheet or navigate)
+                    window.open(`/admin/deals?order=${payment.order_id}`, '_blank');
+                  }}
+                >
+                  <Package className="h-3 w-3 mr-1" />
+                  {shortCode}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>{payment.order_number || payment.order_id}</TooltipContent>
+            </Tooltip>
+          );
+        }
+        return (
+          <div className="flex items-center gap-1">
+            <Badge variant="outline" className="text-xs text-muted-foreground">Не связана</Badge>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-5 w-5 p-0" 
+              onClick={() => openLinkDeal(payment)}
+            >
+              <Link2 className="h-3 w-3" />
+            </Button>
           </div>
-        ) : (
-          <Badge variant="outline" className="text-xs">Нет</Badge>
         );
         
       case 'product':
+        const productLabel = payment.product_name || payment.bepaid_product || null;
+        const tariffLabel = payment.tariff_name || null;
+        
+        if (!productLabel && !tariffLabel) {
+          return <span className="text-xs text-muted-foreground">Не определён</span>;
+        }
+        
         return (
-          <div className="text-xs max-w-[120px] truncate">
-            {payment.product_name || payment.bepaid_product || "—"}
+          <div className="flex flex-col gap-0.5 text-xs max-w-[120px]">
+            {/* Line 1: Product name */}
+            {productLabel && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="truncate font-medium cursor-default">{productLabel}</span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{productLabel}</TooltipContent>
+              </Tooltip>
+            )}
+            {/* Line 2: Tariff/Offer name */}
+            {tariffLabel && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="truncate text-muted-foreground cursor-default">{tariffLabel}</span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{tariffLabel}</TooltipContent>
+              </Tooltip>
+            )}
           </div>
         );
         
