@@ -10,7 +10,7 @@ interface AuthContextType {
   role: AppRole;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, firstName: string, lastName: string, phone: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, firstName: string, lastName: string, phone: string) => Promise<{ error: Error | null; data?: any }>;
   signOut: () => Promise<void>;
 }
 
