@@ -24,7 +24,8 @@ import BepaidImportDialog from "@/components/admin/bepaid/BepaidImportDialog";
 import PaymentsTable from "@/components/admin/payments/PaymentsTable";
 import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
-import PaymentsStats from "@/components/admin/payments/PaymentsStats";
+import PaymentsDashboard, { DashboardFilter } from "@/components/admin/payments/PaymentsDashboard";
+import PaymentsAnalytics from "@/components/admin/payments/PaymentsAnalytics";
 
 export type PaymentFilters = {
   search: string;
@@ -70,6 +71,9 @@ export default function AdminPayments() {
   const [filters, setFilters] = useState<PaymentFilters>(defaultFilters);
   const [showFilters, setShowFilters] = useState(false);
   
+  // Dashboard filter (clickable cards)
+  const [dashboardFilter, setDashboardFilter] = useState<DashboardFilter | null>(null);
+  
   // Selection for batch operations
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   
@@ -87,9 +91,31 @@ export default function AdminPayments() {
     refetch 
   } = useUnifiedPayments(dateFilter);
 
-  // Apply filters to payments
+  // Apply filters to payments (including dashboard filter)
   const filteredPayments = useMemo(() => {
     return payments.filter(p => {
+      // Dashboard filter (from clickable cards)
+      if (dashboardFilter) {
+        switch (dashboardFilter) {
+          case 'successful':
+            if (!['successful', 'succeeded'].includes(p.status_normalized)) return false;
+            break;
+          case 'pending':
+            if (p.status_normalized !== 'pending') return false;
+            break;
+          case 'failed':
+            if (p.status_normalized !== 'failed') return false;
+            break;
+          case 'withDeal':
+            if (!p.order_id) return false;
+            break;
+          case 'attention':
+            if (!p.is_external && !p.has_conflict) return false;
+            break;
+          // 'all' - no filter
+        }
+      }
+      
       // Search filter
       if (filters.search) {
         const search = filters.search.toLowerCase();
@@ -146,7 +172,7 @@ export default function AdminPayments() {
       
       return true;
     });
-  }, [payments, filters]);
+  }, [payments, filters, dashboardFilter]);
 
   // Refresh from bePaid API
   const handleRefreshFromApi = async () => {
@@ -303,8 +329,16 @@ export default function AdminPayments() {
           </div>
         </div>
         
-        {/* Stats */}
-        <PaymentsStats stats={stats} isLoading={isLoading} />
+        {/* Dashboard Stats - Glassmorphism clickable cards */}
+        <PaymentsDashboard 
+          stats={stats} 
+          isLoading={isLoading} 
+          activeFilter={dashboardFilter}
+          onFilterChange={setDashboardFilter}
+        />
+        
+        {/* Financial Analytics */}
+        <PaymentsAnalytics payments={filteredPayments} isLoading={isLoading} />
 
         {/* Main content */}
         <Card>
