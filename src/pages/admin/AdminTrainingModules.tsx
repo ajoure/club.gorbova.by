@@ -4,7 +4,7 @@ import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useTrainingModules, TrainingModule, TrainingModuleFormData } from "@/hooks/useTrainingModules";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -43,15 +43,16 @@ import {
   Pencil,
   Trash2,
   BookOpen,
-  GripVertical,
   Eye,
   EyeOff,
-  ExternalLink,
   Download,
   FileSpreadsheet,
 } from "lucide-react";
 import { GetCourseContentImportDialog } from "@/components/admin/GetCourseContentImportDialog";
 import { ExcelTrainingImportDialog } from "@/components/admin/ExcelTrainingImportDialog";
+import TrainingModuleCard from "@/components/admin/trainings/TrainingModuleCard";
+import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings/TrainingSettingsPanel";
+import { cn } from "@/lib/utils";
 
 const gradientOptions = [
   { value: "from-pink-500 to-fuchsia-600", label: "Розовый → Фуксия" },
@@ -209,6 +210,25 @@ export default function AdminTrainingModules() {
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  
+  // E1/E2/E3: View settings with localStorage persistence
+  const [density, setDensity] = useState<ViewDensity>(() => {
+    return (localStorage.getItem('training_modules_density') as ViewDensity) || 'comfortable';
+  });
+  const [showAdvanced, setShowAdvanced] = useState(() => {
+    return localStorage.getItem('training_modules_advanced') === 'true';
+  });
+  
+  const handleDensityChange = (d: ViewDensity) => {
+    setDensity(d);
+    localStorage.setItem('training_modules_density', d);
+  };
+  
+  const handleShowAdvancedChange = (show: boolean) => {
+    setShowAdvanced(show);
+    localStorage.setItem('training_modules_advanced', String(show));
+  };
+  
   const [formData, setFormData] = useState<TrainingModuleFormData>({
     title: "",
     slug: "",
@@ -343,17 +363,33 @@ export default function AdminTrainingModules() {
             </Button>
           </div>
         </div>
+        
+        {/* Settings Panel - E1/E2/E3 */}
+        <TrainingSettingsPanel
+          density={density}
+          onDensityChange={handleDensityChange}
+          showAdvanced={showAdvanced}
+          onShowAdvancedChange={handleShowAdvancedChange}
+        />
 
-        {/* Modules List */}
+        {/* Modules List - iOS Glass Style */}
         {loading ? (
-          <div className="space-y-4">
+          <div className={cn(
+            "grid gap-4 mt-6",
+            density === 'compact' ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2"
+          )}>
             {[1, 2, 3].map(i => (
-              <Skeleton key={i} className="h-24 w-full" />
+              <div key={i} className="rounded-2xl backdrop-blur-xl bg-card/60 border border-border/50 p-5">
+                <Skeleton className="h-5 w-32 mb-3" />
+                <Skeleton className="h-4 w-48 mb-2" />
+                <Skeleton className="h-8 w-24" />
+              </div>
             ))}
           </div>
         ) : modules.length === 0 ? (
-          <Card className="text-center py-12">
-            <CardContent>
+          <div className="mt-6 relative overflow-hidden rounded-2xl backdrop-blur-xl bg-card/60 dark:bg-card/40 border border-border/50 shadow-lg p-12 text-center">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
+            <div className="relative">
               <BookOpen className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
               <h3 className="text-xl font-semibold mb-2">Модули не созданы</h3>
               <p className="text-muted-foreground mb-4">
@@ -363,74 +399,21 @@ export default function AdminTrainingModules() {
                 <Plus className="mr-2 h-4 w-4" />
                 Создать модуль
               </Button>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         ) : (
-          <div className="space-y-4">
+          <div className={cn(
+            "grid gap-4 mt-6",
+            density === 'compact' ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2"
+          )}>
             {modules.map((module) => (
-              <Card key={module.id} className="overflow-hidden">
-                <div className="flex items-stretch">
-                  {/* Color indicator */}
-                  <div className={`w-2 bg-gradient-to-b ${module.color_gradient}`} />
-                  
-                  <div className="flex-1 p-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="font-semibold">{module.title}</h3>
-                          <Badge variant={module.is_active ? "default" : "secondary"}>
-                            {module.is_active ? <Eye className="h-3 w-3 mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
-                            {module.is_active ? "Активен" : "Скрыт"}
-                          </Badge>
-                          <Badge variant="outline">
-                            {module.lesson_count || 0} уроков
-                          </Badge>
-                        </div>
-                        {module.description && (
-                          <p className="text-sm text-muted-foreground line-clamp-1">
-                            {module.description}
-                          </p>
-                        )}
-                        <div className="flex items-center gap-2 mt-2">
-                          <code className="text-xs bg-muted px-2 py-1 rounded">
-                            /library/{module.slug}
-                          </code>
-                          {module.accessible_tariffs && module.accessible_tariffs.length > 0 && (
-                            <span className="text-xs text-muted-foreground">
-                              Тарифы: {module.accessible_tariffs.filter(Boolean).join(", ")}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => navigate(`/admin/training-modules/${module.id}/lessons`)}
-                        >
-                          <BookOpen className="h-4 w-4 mr-1" />
-                          Уроки
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => openEditDialog(module)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setDeleteConfirmId(module.id)}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </Card>
+              <TrainingModuleCard
+                key={module.id}
+                module={module}
+                onEdit={() => openEditDialog(module)}
+                onDelete={() => setDeleteConfirmId(module.id)}
+                onOpenLessons={() => navigate(`/admin/training-modules/${module.id}/lessons`)}
+              />
             ))}
           </div>
         )}

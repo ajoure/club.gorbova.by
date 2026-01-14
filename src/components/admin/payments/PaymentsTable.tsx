@@ -14,6 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { LinkContactDialog } from "./LinkContactDialog";
 import { LinkDealDialog } from "./LinkDealDialog";
+import ContactLinkActions from "./ContactLinkActions";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import {
@@ -422,14 +423,13 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
         return (
           <div className="flex items-center gap-1">
             <Badge variant="outline" className="text-xs text-muted-foreground">Не связан</Badge>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="h-5 w-5 p-0" 
-              onClick={() => openLinkContact(payment)}
-            >
-              <Link2 className="h-3 w-3" />
-            </Button>
+            <ContactLinkActions
+              paymentId={payment.id}
+              orderId={payment.order_id}
+              currentProfileId={payment.profile_id}
+              onLinked={onRefetch}
+              isQueueItem={payment.rawSource === 'queue'}
+            />
           </div>
         );
         
