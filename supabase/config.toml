@@ -165,3 +165,12 @@ verify_jwt = false
 
 [functions.grant-access-for-order]
 verify_jwt = false
+
+[functions.bepaid-get-payment-docs]
+verify_jwt = false
+
+[functions.bepaid-docs-backfill]
+verify_jwt = false
+
+[functions.refunds-recompute-order-status]
+verify_jwt = false
