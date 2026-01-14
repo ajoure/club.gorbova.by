@@ -170,7 +170,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Prepare queue record
+    // Prepare queue record - use raw_payload for the full transaction data
     const queueRecord = {
       bepaid_uid: txUid,
       tracking_id: transaction.tracking_id,
@@ -189,13 +189,13 @@ Deno.serve(async (req) => {
       description: transaction.description,
       product_name: transaction.description,
       paid_at: transaction.paid_at || transaction.created_at,
-      created_at: transaction.created_at,
+      created_at_bepaid: transaction.created_at,
       source: 'api_recover',
       provider: 'bepaid',
       is_fee: false,
       is_external: false,
       has_conflict: false,
-      provider_response: transaction,
+      raw_payload: transaction,
     };
 
     if (dry_run) {
