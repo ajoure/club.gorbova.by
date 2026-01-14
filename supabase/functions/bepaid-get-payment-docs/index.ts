@@ -156,7 +156,6 @@ Deno.serve(async (req) => {
       method: 'GET',
       headers: {
         'Authorization': `Basic ${authString}`,
-        'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
     });
