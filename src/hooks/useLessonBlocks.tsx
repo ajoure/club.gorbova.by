@@ -320,14 +320,25 @@ export function useLessonBlocks(lessonId?: string) {
       if (data.sort_order !== undefined) updateData.sort_order = data.sort_order;
       if (data.settings !== undefined) updateData.settings = data.settings;
 
+      // Optimistic update: update local state immediately to prevent focus loss
+      setBlocks(prev => prev.map(block => 
+        block.id === id 
+          ? { ...block, ...updateData, updated_at: new Date().toISOString() } as LessonBlock
+          : block
+      ));
+
       const { error } = await supabase
         .from("lesson_blocks")
         .update(updateData as any)
         .eq("id", id);
 
-      if (error) throw error;
+      if (error) {
+        // Revert on error
+        await fetchBlocks();
+        throw error;
+      }
       
-      await fetchBlocks();
+      // Don't refetch - use optimistic update to prevent focus loss
       return true;
     } catch (error) {
       console.error("Error updating block:", error);

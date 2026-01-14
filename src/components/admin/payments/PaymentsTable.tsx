@@ -351,17 +351,16 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
           return (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Badge 
-                  variant="outline" 
-                  className="cursor-pointer hover:bg-accent text-xs font-mono"
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-mono cursor-pointer hover:bg-accent border-input bg-transparent"
                   onClick={() => {
-                    // Navigate to deal (open deal sheet or navigate)
                     window.open(`/admin/deals?order=${payment.order_id}`, '_blank');
                   }}
                 >
-                  <Package className="h-3 w-3 mr-1" />
+                  <Package className="h-3 w-3" />
                   {shortCode}
-                </Badge>
+                </button>
               </TooltipTrigger>
               <TooltipContent>{payment.order_number || payment.order_id}</TooltipContent>
             </Tooltip>
@@ -383,7 +382,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
         
       case 'product':
         const productLabel = payment.product_name || payment.bepaid_product || null;
-        const tariffLabel = payment.tariff_name || null;
+        const tariffLabel = payment.tariff_name || payment.offer_name || null;
         
         if (!productLabel && !tariffLabel) {
           return <span className="text-xs text-muted-foreground">Не определён</span>;
