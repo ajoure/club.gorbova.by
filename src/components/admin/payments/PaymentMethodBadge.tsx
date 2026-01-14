@@ -97,15 +97,15 @@ const MethodLabels: Record<PaymentMethodKind, string> = {
 };
 
 // Max widths for different brands to keep them compact and uniform
-// These values are tuned so icons don't "double" or overflow
+// Tuned for single-logo display without doubling
 const BrandMaxWidths: Record<PaymentMethodKind, string> = {
-  visa: 'max-w-[36px]',
-  mastercard: 'max-w-[28px]',
-  belkart: 'max-w-[40px]',
-  apple_pay: 'max-w-[36px]',
-  google_pay: 'max-w-[44px]',
-  samsung_pay: 'max-w-[48px]',
-  erip: 'max-w-[40px]',
+  visa: 'max-w-[32px]',
+  mastercard: 'max-w-[24px]',
+  belkart: 'max-w-[32px]',
+  apple_pay: 'max-w-[32px]',
+  google_pay: 'max-w-[40px]',
+  samsung_pay: 'max-w-[44px]',
+  erip: 'max-w-[36px]',
   unknown: '',
 };
 

@@ -186,3 +186,6 @@ verify_jwt = false
 
 [functions.bepaid-receipts-sync]
 verify_jwt = false
+
+[functions.admin-purge-imported-transactions]
+verify_jwt = false

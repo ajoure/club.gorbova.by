@@ -25,9 +25,10 @@ import PaymentsTable from "@/components/admin/payments/PaymentsTable";
 import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
 import PaymentsDashboard, { DashboardFilter } from "@/components/admin/payments/PaymentsDashboard";
-import PaymentsAnalytics from "@/components/admin/payments/PaymentsAnalytics";
+import PaymentsAnalytics, { AnalyticsFilter } from "@/components/admin/payments/PaymentsAnalytics";
 import RecoverPaymentDialog from "@/components/admin/payments/RecoverPaymentDialog";
 import ReceiptsSyncButton from "@/components/admin/payments/ReceiptsSyncButton";
+import PurgeImportsDialog from "@/components/admin/payments/PurgeImportsDialog";
 
 export type PaymentFilters = {
   search: string;
@@ -76,6 +77,9 @@ export default function AdminPayments() {
   // Dashboard filter (clickable cards)
   const [dashboardFilter, setDashboardFilter] = useState<DashboardFilter | null>(null);
   
+  // Analytics filter (clickable financial summary)
+  const [analyticsFilter, setAnalyticsFilter] = useState<AnalyticsFilter>(null);
+  
   // Selection for batch operations
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   
@@ -93,7 +97,7 @@ export default function AdminPayments() {
     refetch 
   } = useUnifiedPayments(dateFilter);
 
-  // Apply filters to payments (including dashboard filter)
+  // Apply filters to payments (including dashboard + analytics filters)
   const filteredPayments = useMemo(() => {
     return payments.filter(p => {
       // Dashboard filter (from clickable cards)
@@ -115,6 +119,34 @@ export default function AdminPayments() {
             if (!p.is_external && !p.has_conflict) return false;
             break;
           // 'all' - no filter
+        }
+      }
+      
+      // Analytics filter (from clickable financial summary)
+      if (analyticsFilter) {
+        const failedStatuses = ['failed', 'canceled', 'expired', 'declined', 'error'];
+        switch (analyticsFilter) {
+          case 'successful':
+            if (!['successful', 'succeeded'].includes(p.status_normalized)) return false;
+            break;
+          case 'refunded':
+            // Show payments with refunds OR refund transactions
+            if (p.total_refunded <= 0 && p.transaction_type !== 'Возврат средств' && p.transaction_type !== 'refund') return false;
+            break;
+          case 'failed':
+            if (!failedStatuses.includes(p.status_normalized)) return false;
+            break;
+          case 'fees':
+            // Show successful payments (fees are on successful transactions)
+            if (!['successful', 'succeeded'].includes(p.status_normalized)) return false;
+            break;
+          case 'net':
+            // Show successful + refunds (net revenue components)
+            if (!['successful', 'succeeded'].includes(p.status_normalized) && 
+                p.total_refunded <= 0 && 
+                p.transaction_type !== 'Возврат средств' && 
+                p.transaction_type !== 'refund') return false;
+            break;
         }
       }
       
@@ -174,7 +206,7 @@ export default function AdminPayments() {
       
       return true;
     });
-  }, [payments, filters, dashboardFilter]);
+  }, [payments, filters, dashboardFilter, analyticsFilter]);
 
   // Refresh from bePaid API
   const handleRefreshFromApi = async () => {
@@ -295,6 +327,9 @@ export default function AdminPayments() {
             {/* Recover payment button */}
             <RecoverPaymentDialog onRecovered={refetch} />
             
+            {/* Purge CSV imports */}
+            <PurgeImportsDialog onComplete={refetch} />
+            
             {/* Refresh from API */}
             <Button 
               variant="outline" 
@@ -349,7 +384,12 @@ export default function AdminPayments() {
         />
         
         {/* Financial Analytics */}
-        <PaymentsAnalytics payments={filteredPayments} isLoading={isLoading} />
+        <PaymentsAnalytics 
+          payments={filteredPayments} 
+          isLoading={isLoading} 
+          activeFilter={analyticsFilter}
+          onFilterChange={setAnalyticsFilter}
+        />
 
         {/* Main content */}
         <Card>

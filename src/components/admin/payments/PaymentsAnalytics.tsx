@@ -1,11 +1,16 @@
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { TrendingUp, TrendingDown, DollarSign, RotateCcw, Ban } from "lucide-react";
+import { TrendingUp, TrendingDown, DollarSign, RotateCcw, Ban, Percent, Wallet } from "lucide-react";
 import { UnifiedPayment } from "@/hooks/useUnifiedPayments";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+export type AnalyticsFilter = 'successful' | 'refunded' | 'failed' | 'fees' | 'net' | null;
 
 interface PaymentsAnalyticsProps {
   payments: UnifiedPayment[];
   isLoading: boolean;
+  activeFilter?: AnalyticsFilter;
+  onFilterChange?: (filter: AnalyticsFilter) => void;
 }
 
 interface AnalyticCardProps {
@@ -15,9 +20,26 @@ interface AnalyticCardProps {
   icon: React.ReactNode;
   colorClass: string;
   bgColorClass: string;
+  isClickable?: boolean;
+  isActive?: boolean;
+  onClick?: () => void;
+  tooltip?: string;
+  subtitle?: string;
 }
 
-function AnalyticCard({ title, amount, currency, icon, colorClass, bgColorClass }: AnalyticCardProps) {
+function AnalyticCard({ 
+  title, 
+  amount, 
+  currency, 
+  icon, 
+  colorClass, 
+  bgColorClass,
+  isClickable = false,
+  isActive = false,
+  onClick,
+  tooltip,
+  subtitle,
+}: AnalyticCardProps) {
   const formatAmount = (value: number) => {
     return new Intl.NumberFormat('ru-RU', {
       minimumFractionDigits: 2,
@@ -25,12 +47,17 @@ function AnalyticCard({ title, amount, currency, icon, colorClass, bgColorClass 
     }).format(value);
   };
 
-  return (
-    <div className={cn(
-      "relative overflow-hidden rounded-xl p-4",
-      "backdrop-blur-xl border border-border/50",
-      bgColorClass
-    )}>
+  const content = (
+    <div 
+      className={cn(
+        "relative overflow-hidden rounded-xl p-4",
+        "backdrop-blur-xl border border-border/50",
+        bgColorClass,
+        isClickable && "cursor-pointer transition-all hover:scale-[1.02] hover:border-primary/50",
+        isActive && "ring-2 ring-primary ring-offset-2 ring-offset-background"
+      )}
+      onClick={isClickable ? onClick : undefined}
+    >
       <div className="flex items-center gap-3">
         <div className={cn(
           "flex items-center justify-center w-10 h-10 rounded-lg",
@@ -47,19 +74,44 @@ function AnalyticCard({ title, amount, currency, icon, colorClass, bgColorClass 
             </span>
             <span className="text-sm text-muted-foreground">{currency}</span>
           </div>
+          {subtitle && (
+            <p className="text-[10px] text-muted-foreground mt-0.5">{subtitle}</p>
+          )}
         </div>
       </div>
     </div>
   );
+
+  if (tooltip) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {content}
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="text-xs">{tooltip}</p>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return content;
 }
 
-export default function PaymentsAnalytics({ payments, isLoading }: PaymentsAnalyticsProps) {
+export default function PaymentsAnalytics({ 
+  payments, 
+  isLoading,
+  activeFilter,
+  onFilterChange,
+}: PaymentsAnalyticsProps) {
   const analytics = useMemo(() => {
     if (!payments.length) {
       return {
         successful: { BYN: 0, USD: 0, EUR: 0, RUB: 0 },
         refunded: { BYN: 0, USD: 0, EUR: 0, RUB: 0 },
         failed: { BYN: 0, USD: 0, EUR: 0, RUB: 0 },
+        fees: { BYN: 0, USD: 0, EUR: 0, RUB: 0 },
+        feesUnknown: 0,
         primaryCurrency: 'BYN',
       };
     }
@@ -68,6 +120,8 @@ export default function PaymentsAnalytics({ payments, isLoading }: PaymentsAnaly
       successful: { BYN: 0, USD: 0, EUR: 0, RUB: 0 } as Record<string, number>,
       refunded: { BYN: 0, USD: 0, EUR: 0, RUB: 0 } as Record<string, number>,
       failed: { BYN: 0, USD: 0, EUR: 0, RUB: 0 } as Record<string, number>,
+      fees: { BYN: 0, USD: 0, EUR: 0, RUB: 0 } as Record<string, number>,
+      feesUnknown: 0,
     };
 
     const currencyCount: Record<string, number> = {};
@@ -94,6 +148,16 @@ export default function PaymentsAnalytics({ payments, isLoading }: PaymentsAnaly
       if (p.transaction_type === 'Возврат средств' || p.transaction_type === 'refund') {
         result.refunded[currency] = (result.refunded[currency] || 0) + p.amount;
       }
+
+      // Fees - extract from provider_response if available
+      const providerResponse = p.provider_response;
+      if (providerResponse?.transaction?.fee) {
+        const feeAmount = Number(providerResponse.transaction.fee) / 100; // bePaid returns cents
+        result.fees[currency] = (result.fees[currency] || 0) + feeAmount;
+      } else if (['successful', 'succeeded'].includes(p.status_normalized)) {
+        // Count unknown fees for successful payments
+        result.feesUnknown++;
+      }
     });
 
     // Determine primary currency (most common)
@@ -103,10 +167,16 @@ export default function PaymentsAnalytics({ payments, isLoading }: PaymentsAnaly
     return { ...result, primaryCurrency };
   }, [payments]);
 
+  const handleFilterClick = (filter: AnalyticsFilter) => {
+    if (onFilterChange) {
+      onFilterChange(activeFilter === filter ? null : filter);
+    }
+  };
+
   if (isLoading) {
     return (
-      <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
-        {[...Array(3)].map((_, i) => (
+      <div className="grid gap-3 grid-cols-1 md:grid-cols-5">
+        {[...Array(5)].map((_, i) => (
           <div key={i} className="h-20 rounded-xl bg-muted/30 animate-pulse" />
         ))}
       </div>
@@ -114,31 +184,46 @@ export default function PaymentsAnalytics({ payments, isLoading }: PaymentsAnaly
   }
 
   const { primaryCurrency } = analytics;
+  const successfulAmount = analytics.successful[primaryCurrency] || 0;
+  const refundedAmount = analytics.refunded[primaryCurrency] || 0;
+  const feesAmount = analytics.fees[primaryCurrency] || 0;
+  const netRevenue = successfulAmount - refundedAmount - feesAmount;
 
   return (
     <div className="space-y-3">
       <h3 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
         <DollarSign className="h-4 w-4" />
         Финансовая сводка за период
+        {activeFilter && (
+          <span className="text-xs text-primary">• Активен фильтр</span>
+        )}
       </h3>
       
-      <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
+      <div className="grid gap-3 grid-cols-1 md:grid-cols-5">
         <AnalyticCard
           title="Успешные платежи"
-          amount={analytics.successful[primaryCurrency] || 0}
+          amount={successfulAmount}
           currency={primaryCurrency}
           icon={<TrendingUp className="h-5 w-5" />}
           colorClass="text-green-600 dark:text-green-400"
           bgColorClass="bg-green-500/5 dark:bg-green-500/10"
+          isClickable={!!onFilterChange}
+          isActive={activeFilter === 'successful'}
+          onClick={() => handleFilterClick('successful')}
+          tooltip="Клик для фильтрации по успешным платежам"
         />
         
         <AnalyticCard
           title="Возвраты"
-          amount={analytics.refunded[primaryCurrency] || 0}
+          amount={refundedAmount}
           currency={primaryCurrency}
           icon={<RotateCcw className="h-5 w-5" />}
           colorClass="text-amber-600 dark:text-amber-400"
           bgColorClass="bg-amber-500/5 dark:bg-amber-500/10"
+          isClickable={!!onFilterChange}
+          isActive={activeFilter === 'refunded'}
+          onClick={() => handleFilterClick('refunded')}
+          tooltip="Клик для фильтрации по возвратам"
         />
         
         <AnalyticCard
@@ -148,6 +233,39 @@ export default function PaymentsAnalytics({ payments, isLoading }: PaymentsAnaly
           icon={<Ban className="h-5 w-5" />}
           colorClass="text-red-600 dark:text-red-400"
           bgColorClass="bg-red-500/5 dark:bg-red-500/10"
+          isClickable={!!onFilterChange}
+          isActive={activeFilter === 'failed'}
+          onClick={() => handleFilterClick('failed')}
+          tooltip="Клик для фильтрации по ошибочным платежам"
+        />
+
+        <AnalyticCard
+          title="Комиссии"
+          amount={feesAmount}
+          currency={primaryCurrency}
+          icon={<Percent className="h-5 w-5" />}
+          colorClass="text-purple-600 dark:text-purple-400"
+          bgColorClass="bg-purple-500/5 dark:bg-purple-500/10"
+          isClickable={!!onFilterChange}
+          isActive={activeFilter === 'fees'}
+          onClick={() => handleFilterClick('fees')}
+          tooltip={analytics.feesUnknown > 0 
+            ? `Комиссия неизвестна для ${analytics.feesUnknown} платежей` 
+            : "Клик для фильтрации по платежам с известной комиссией"}
+          subtitle={analytics.feesUnknown > 0 ? `Неизвестно: ${analytics.feesUnknown}` : undefined}
+        />
+
+        <AnalyticCard
+          title="Чистая выручка"
+          amount={netRevenue}
+          currency={primaryCurrency}
+          icon={<Wallet className="h-5 w-5" />}
+          colorClass={netRevenue >= 0 ? "text-blue-600 dark:text-blue-400" : "text-red-600 dark:text-red-400"}
+          bgColorClass="bg-blue-500/5 dark:bg-blue-500/10"
+          isClickable={!!onFilterChange}
+          isActive={activeFilter === 'net'}
+          onClick={() => handleFilterClick('net')}
+          tooltip="Успешные минус возвраты и комиссии"
         />
       </div>
       
