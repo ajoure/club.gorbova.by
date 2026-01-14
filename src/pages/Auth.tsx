@@ -323,14 +323,50 @@ export default function Auth() {
         const cleanPhone = phone.replace(/[^\d+]/g, '');
         const signUpResult = await signUp(email, password, firstName.trim(), lastName.trim(), cleanPhone);
         if (signUpResult.error) {
-          if (signUpResult.error.message.includes("already registered")) {
-            // Instead of just showing an error, redirect to account_exists mode
+          const errorMessage = signUpResult.error.message?.toLowerCase() || '';
+          
+          // Log detailed error for debugging
+          console.error("Signup error details:", {
+            message: signUpResult.error.message,
+            name: signUpResult.error.name,
+            raw: signUpResult.error,
+          });
+          
+          if (errorMessage.includes("already registered") || 
+              errorMessage.includes("user already registered")) {
+            // Redirect to account_exists mode for password setup
             setExistingEmail(email);
             setMode("account_exists");
-          } else {
+          } else if (errorMessage.includes("password") && 
+                     (errorMessage.includes("weak") || errorMessage.includes("short") || errorMessage.includes("length"))) {
+            setFieldErrors([{ 
+              field: "password", 
+              message: "Пароль слишком слабый. Используйте минимум 8 символов, цифру и спецсимвол." 
+            }]);
+          } else if (errorMessage.includes("email") && 
+                     (errorMessage.includes("invalid") || errorMessage.includes("format"))) {
+            setFieldErrors([{ 
+              field: "email", 
+              message: "Некорректный формат email" 
+            }]);
+          } else if (errorMessage.includes("rate") || errorMessage.includes("limit") || errorMessage.includes("too many")) {
             toast({
-              title: "Ошибка сервера",
-              description: "Не удалось зарегистрироваться. Попробуйте позже.",
+              title: "Слишком много попыток",
+              description: "Подождите несколько минут и попробуйте снова.",
+              variant: "destructive",
+            });
+          } else if (errorMessage.includes("database") || errorMessage.includes("trigger") || errorMessage.includes("constraint")) {
+            // Database/trigger errors - show user-friendly message
+            toast({
+              title: "Ошибка регистрации",
+              description: "Произошла техническая ошибка. Пожалуйста, попробуйте снова или обратитесь в поддержку.",
+              variant: "destructive",
+            });
+          } else {
+            // Show actual error message for debugging, but user-friendly title
+            toast({
+              title: "Ошибка регистрации",
+              description: signUpResult.error.message || "Не удалось зарегистрироваться. Попробуйте позже.",
               variant: "destructive",
             });
           }

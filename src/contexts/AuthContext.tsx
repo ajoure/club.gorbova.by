@@ -112,7 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUp = async (email: string, password: string, firstName: string, lastName: string, phone: string) => {
     const redirectUrl = `${window.location.origin}/`;
     
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -125,7 +125,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       },
     });
-    return { error };
+    
+    // If email exists but user has no identities (invited user without password)
+    if (data?.user && !data?.session && data?.user?.identities?.length === 0) {
+      return { 
+        error: { message: "User already registered" } as Error,
+        data: null 
+      };
+    }
+    
+    return { error, data };
   };
 
   const signOut = async () => {
