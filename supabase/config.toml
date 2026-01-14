@@ -183,3 +183,6 @@ verify_jwt = false
 
 [functions.bepaid-get-receipt]
 verify_jwt = false
+
+[functions.bepaid-receipts-sync]
+verify_jwt = false
