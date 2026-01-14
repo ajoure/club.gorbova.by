@@ -42,7 +42,7 @@ import AdminProductsV2 from "./pages/admin/AdminProductsV2";
 import AdminProductDetailV2 from "./pages/admin/AdminProductDetailV2";
 import AdminOrdersV2 from "./pages/admin/AdminOrdersV2";
 import AdminPaymentsV2 from "./pages/admin/AdminPaymentsV2";
-import AdminPayments from "./pages/admin/AdminPayments";
+import AdminPaymentsPage from "./pages/admin/AdminPayments";
 import AdminSubscriptionsV2 from "./pages/admin/AdminSubscriptionsV2";
 import AdminSystemAudit from "./pages/admin/AdminSystemAudit";
 import MnsResponseService from "./pages/audits/MnsResponseService";
@@ -171,7 +171,7 @@ const App = () => (
               <Route path="/admin/training-lessons/:moduleId/edit/:lessonId" element={<ProtectedRoute><AdminLessonBlockEditor /></ProtectedRoute>} />
               <Route path="/admin/bepaid-sync" element={<ProtectedRoute><AdminBepaidSync /></ProtectedRoute>} />
               <Route path="/admin/refunds-v2" element={<ProtectedRoute><AdminRefundsV2 /></ProtectedRoute>} />
-              <Route path="/admin/payments" element={<ProtectedRoute><AdminPayments /></ProtectedRoute>} />
+              <Route path="/admin/payments" element={<ProtectedRoute><AdminPaymentsPage /></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
