@@ -65,6 +65,9 @@ export interface UnifiedPayment {
   // Provider
   provider: string;
   tracking_id: string | null;
+  
+  // Raw provider response for payment method detection
+  provider_response?: any;
 }
 
 export interface PaymentsStats {
@@ -240,6 +243,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           has_conflict: false,
           provider,
           tracking_id: null,
+          provider_response: providerResponse,
         };
       });
       
@@ -313,6 +317,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             has_conflict: q.has_conflict || false,
             provider: q.provider || 'bepaid',
             tracking_id: q.tracking_id,
+            provider_response: null, // Queue items don't have full provider response
           };
         });
       

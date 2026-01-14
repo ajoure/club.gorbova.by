@@ -37,13 +37,15 @@ export function detectPaymentMethodKind(
   // Check for wallet payments first (from provider_response)
   const walletType = providerResponse?.transaction?.three_d_secure_verification?.pa_status ||
                      providerResponse?.transaction?.payment_method_type ||
-                     providerResponse?.payment_method_type;
+                     providerResponse?.payment_method_type ||
+                     providerResponse?.transaction?.type;
   
   if (walletType) {
     const lowerWallet = String(walletType).toLowerCase();
-    if (lowerWallet.includes('apple')) return 'apple_pay';
-    if (lowerWallet.includes('google')) return 'google_pay';
-    if (lowerWallet.includes('samsung')) return 'samsung_pay';
+    if (lowerWallet.includes('apple') || lowerWallet.includes('apple_pay')) return 'apple_pay';
+    if (lowerWallet.includes('google') || lowerWallet.includes('google_pay')) return 'google_pay';
+    if (lowerWallet.includes('samsung') || lowerWallet.includes('samsung_pay')) return 'samsung_pay';
+    if (lowerWallet.includes('erip')) return 'erip';
   }
   
   // Check for ERIP
@@ -56,7 +58,16 @@ export function detectPaymentMethodKind(
     const lowerBrand = cardBrand.toLowerCase();
     if (lowerBrand.includes('visa')) return 'visa';
     if (lowerBrand.includes('master') || lowerBrand.includes('mc')) return 'mastercard';
-    if (lowerBrand.includes('belkart') || lowerBrand.includes('belcard')) return 'belkart';
+    if (lowerBrand.includes('belkart') || lowerBrand.includes('belcard') || lowerBrand.includes('белкарт')) return 'belkart';
+  }
+  
+  // Check for additional brand indicators in provider_response
+  const creditCard = providerResponse?.transaction?.credit_card || providerResponse?.credit_card;
+  if (creditCard?.brand) {
+    const brand = String(creditCard.brand).toLowerCase();
+    if (brand.includes('visa')) return 'visa';
+    if (brand.includes('master') || brand.includes('mc')) return 'mastercard';
+    if (brand.includes('belkart') || brand.includes('belcard')) return 'belkart';
   }
   
   return 'unknown';
@@ -85,16 +96,33 @@ const MethodLabels: Record<PaymentMethodKind, string> = {
   unknown: 'Без данных',
 };
 
+// Max widths for different brands to keep them compact and uniform
+const BrandMaxWidths: Record<PaymentMethodKind, string> = {
+  visa: 'max-w-[40px]',
+  mastercard: 'max-w-[32px]',
+  belkart: 'max-w-[48px]',
+  apple_pay: 'max-w-[40px]',
+  google_pay: 'max-w-[48px]',
+  samsung_pay: 'max-w-[56px]',
+  erip: 'max-w-[48px]',
+  unknown: '',
+};
+
 // Brand icon component with fallback
 function BrandIcon({ kind, className }: { kind: PaymentMethodKind; className?: string }) {
   const imageSrc = BrandImages[kind];
+  const maxWidth = BrandMaxWidths[kind];
   
   if (imageSrc) {
     return (
       <img 
         src={imageSrc} 
         alt={MethodLabels[kind]}
-        className={cn("h-4 w-auto object-contain", className)}
+        className={cn(
+          "h-4 w-auto object-contain flex-shrink-0",
+          maxWidth,
+          className
+        )}
         onError={(e) => {
           // Fallback to generic card icon
           e.currentTarget.style.display = 'none';
@@ -104,7 +132,7 @@ function BrandIcon({ kind, className }: { kind: PaymentMethodKind; className?: s
   }
   
   // Fallback for unknown
-  return <CreditCard className={cn("h-4 w-4 text-muted-foreground", className)} />;
+  return <CreditCard className={cn("h-4 w-4 text-muted-foreground flex-shrink-0", className)} />;
 }
 
 export default function PaymentMethodBadge({ 
@@ -122,13 +150,13 @@ export default function PaymentMethodBadge({
       <Tooltip>
         <TooltipTrigger asChild>
           <div className={cn(
-            "flex items-center gap-1.5 px-2 py-0.5 rounded-md",
+            "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md",
             "bg-muted/50 border border-border/50",
-            "max-w-[150px]",
+            "max-w-[130px] h-6",
             className
           )}>
             <BrandIcon kind={methodKind} />
-            <span className="text-xs text-muted-foreground truncate">
+            <span className="text-xs text-muted-foreground truncate leading-none">
               {MethodLabels[methodKind]}
             </span>
           </div>
@@ -148,11 +176,11 @@ export default function PaymentMethodBadge({
     <Tooltip>
       <TooltipTrigger asChild>
         <div className={cn(
-          "flex items-center gap-1.5",
+          "inline-flex items-center gap-1.5 h-5",
           className
         )}>
           <BrandIcon kind={methodKind} />
-          <span className="font-mono text-xs">**** {cardLast4}</span>
+          <span className="font-mono text-xs leading-none">**** {cardLast4}</span>
         </div>
       </TooltipTrigger>
       <TooltipContent>

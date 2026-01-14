@@ -373,7 +373,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
             <PaymentMethodBadge
               cardBrand={payment.card_brand}
               cardLast4={payment.card_last4}
-              providerResponse={null}
+              providerResponse={payment.provider_response}
             />
             {/* Line 2: Card holder name */}
             {payment.card_holder ? (
