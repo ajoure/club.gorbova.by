@@ -2,6 +2,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { TelegramCompactCard } from "@/components/telegram/TelegramCompactCard";
 import { TelegramLinkReminder } from "@/components/telegram/TelegramLinkReminder";
+import { WelcomeOnboardingModal } from "@/components/onboarding/WelcomeOnboardingModal";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { 
@@ -92,6 +93,9 @@ export default function Dashboard() {
 
   return (
     <DashboardLayout>
+      {/* Welcome onboarding modal - shows once for new users */}
+      <WelcomeOnboardingModal />
+      
       <div className="max-w-7xl mx-auto space-y-6 md:space-y-8">
         {/* Welcome section + Telegram card */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
