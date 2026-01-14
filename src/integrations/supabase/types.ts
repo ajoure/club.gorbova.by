@@ -106,6 +106,7 @@ export type Database = {
           notes: string | null
           offer_id: string | null
           product_id: string | null
+          provider: string | null
           tariff_id: string | null
           updated_at: string
         }
@@ -119,6 +120,7 @@ export type Database = {
           notes?: string | null
           offer_id?: string | null
           product_id?: string | null
+          provider?: string | null
           tariff_id?: string | null
           updated_at?: string
         }
@@ -132,6 +134,7 @@ export type Database = {
           notes?: string | null
           offer_id?: string | null
           product_id?: string | null
+          provider?: string | null
           tariff_id?: string | null
           updated_at?: string
         }
@@ -2715,10 +2718,13 @@ export type Database = {
           fee_amount: number | null
           fee_percent: number | null
           fraud_result: string | null
+          has_conflict: boolean | null
           id: string
           ip_address: string | null
+          is_external: boolean | null
           is_fee: boolean | null
           last_error: string | null
+          matched_offer_id: string | null
           matched_order_id: string | null
           matched_product_id: string | null
           matched_profile_id: string | null
@@ -2732,6 +2738,7 @@ export type Database = {
           processed_order_id: string | null
           product_code: string | null
           product_name: string | null
+          provider: string | null
           raw_payload: Json | null
           reason: string | null
           receipt_url: string | null
@@ -2783,10 +2790,13 @@ export type Database = {
           fee_amount?: number | null
           fee_percent?: number | null
           fraud_result?: string | null
+          has_conflict?: boolean | null
           id?: string
           ip_address?: string | null
+          is_external?: boolean | null
           is_fee?: boolean | null
           last_error?: string | null
+          matched_offer_id?: string | null
           matched_order_id?: string | null
           matched_product_id?: string | null
           matched_profile_id?: string | null
@@ -2800,6 +2810,7 @@ export type Database = {
           processed_order_id?: string | null
           product_code?: string | null
           product_name?: string | null
+          provider?: string | null
           raw_payload?: Json | null
           reason?: string | null
           receipt_url?: string | null
@@ -2851,10 +2862,13 @@ export type Database = {
           fee_amount?: number | null
           fee_percent?: number | null
           fraud_result?: string | null
+          has_conflict?: boolean | null
           id?: string
           ip_address?: string | null
+          is_external?: boolean | null
           is_fee?: boolean | null
           last_error?: string | null
+          matched_offer_id?: string | null
           matched_order_id?: string | null
           matched_product_id?: string | null
           matched_profile_id?: string | null
@@ -2868,6 +2882,7 @@ export type Database = {
           processed_order_id?: string | null
           product_code?: string | null
           product_name?: string | null
+          provider?: string | null
           raw_payload?: Json | null
           reason?: string | null
           receipt_url?: string | null
@@ -2888,6 +2903,13 @@ export type Database = {
           valid_until?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "payment_reconcile_queue_matched_offer_id_fkey"
+            columns: ["matched_offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "payment_reconcile_queue_matched_order_id_fkey"
             columns: ["matched_order_id"]
