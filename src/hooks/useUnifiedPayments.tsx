@@ -82,6 +82,7 @@ export interface PaymentsStats {
   totalRefunded: number;
   pending: number;
   failed: number;
+  successful: number;
 }
 
 export function useUnifiedPayments(dateFilter: DateFilter) {
@@ -315,6 +316,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         totalRefunded: allPayments.reduce((sum, p) => sum + (p.total_refunded || 0), 0),
         pending: allPayments.filter(p => p.status_normalized === 'pending').length,
         failed: allPayments.filter(p => p.status_normalized === 'failed').length,
+        successful: allPayments.filter(p => ['successful', 'succeeded'].includes(p.status_normalized)).length,
       };
       
       return { payments: allPayments, stats };
@@ -341,6 +343,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       totalRefunded: 0,
       pending: 0,
       failed: 0,
+      successful: 0,
     },
     isLoading,
     error,

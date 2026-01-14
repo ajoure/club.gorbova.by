@@ -135,8 +135,21 @@ export function ColumnSettings({ columns, onChange }: ColumnSettingsProps) {
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-56 p-2">
-        <div className="text-xs font-medium text-muted-foreground mb-2 px-1">
-          Перетащите для изменения порядка
+        <div className="flex items-center justify-between mb-2 px-1">
+          <span className="text-xs font-medium text-muted-foreground">
+            Перетащите для порядка
+          </span>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-6 px-2 text-xs"
+            onClick={() => {
+              const defaultCols = columns.map((c, i) => ({ ...c, visible: true, order: i }));
+              onChange(defaultCols);
+            }}
+          >
+            Сброс
+          </Button>
         </div>
         <DndContext
           sensors={sensors}

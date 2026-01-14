@@ -466,7 +466,18 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                         <User className="w-4 h-4 text-muted-foreground" />
                       </AvatarFallback>
                     </Avatar>
-                    <span>{profile?.full_name || "—"}</span>
+                    <span>
+                      {profile?.full_name 
+                        || (profile?.name && profile?.surname ? `${profile.name} ${profile.surname}` : null)
+                        || profile?.name
+                        || deal?.meta?.customer_full_name
+                        || deal?.meta?.card_holder
+                        || deal?.customer_email 
+                        || profile?.email 
+                        || deal?.customer_phone 
+                        || profile?.phone 
+                        || "—"}
+                    </span>
                     {(profile?.user_id || deal?.user_id) && <ExternalLink className="w-3 h-3" />}
                   </button>
                 </div>

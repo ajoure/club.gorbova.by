@@ -12,6 +12,8 @@ import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
+import { LinkContactDialog } from "./LinkContactDialog";
+import { LinkDealDialog } from "./LinkDealDialog";
 import {
   DndContext,
   closestCenter,
@@ -134,6 +136,11 @@ function SortableResizableHeader({ column, onResize, children }: SortableResizab
 }
 
 export default function PaymentsTable({ payments, isLoading, selectedItems, onToggleSelectAll, onToggleItem, onRefetch }: PaymentsTableProps) {
+  // Dialog states
+  const [linkContactOpen, setLinkContactOpen] = useState(false);
+  const [linkDealOpen, setLinkDealOpen] = useState(false);
+  const [selectedPayment, setSelectedPayment] = useState<UnifiedPayment | null>(null);
+  
   // Column state with localStorage persistence
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -191,6 +198,17 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
   const resetColumns = () => {
     setColumns(DEFAULT_COLUMNS);
     localStorage.removeItem(STORAGE_KEY);
+  };
+  
+  // Open dialogs
+  const openLinkContact = (payment: UnifiedPayment) => {
+    setSelectedPayment(payment);
+    setLinkContactOpen(true);
+  };
+  
+  const openLinkDeal = (payment: UnifiedPayment) => {
+    setSelectedPayment(payment);
+    setLinkDealOpen(true);
   };
 
   // Actions
@@ -360,13 +378,13 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
                 Копировать UID
               </DropdownMenuItem>
               {!payment.profile_id && (
-                <DropdownMenuItem disabled>
+                <DropdownMenuItem onClick={() => openLinkContact(payment)}>
                   <Link2 className="h-3 w-3 mr-2" />
                   Связать контакт
                 </DropdownMenuItem>
               )}
               {!payment.order_id && (
-                <DropdownMenuItem disabled>
+                <DropdownMenuItem onClick={() => openLinkDeal(payment)}>
                   <Package className="h-3 w-3 mr-2" />
                   Связать сделку
                 </DropdownMenuItem>
@@ -464,6 +482,29 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
             </Table>
           </DndContext>
         </div>
+        
+        {/* Dialogs */}
+        {selectedPayment && (
+          <>
+            <LinkContactDialog
+              open={linkContactOpen}
+              onOpenChange={setLinkContactOpen}
+              paymentId={selectedPayment.id}
+              rawSource={selectedPayment.rawSource}
+              initialEmail={selectedPayment.customer_email}
+              initialPhone={selectedPayment.customer_phone}
+              onSuccess={onRefetch}
+            />
+            <LinkDealDialog
+              open={linkDealOpen}
+              onOpenChange={setLinkDealOpen}
+              paymentId={selectedPayment.id}
+              rawSource={selectedPayment.rawSource}
+              amount={selectedPayment.amount}
+              onSuccess={onRefetch}
+            />
+          </>
+        )}
       </div>
     </TooltipProvider>
   );
