@@ -111,7 +111,8 @@ export default function RecoverPaymentDialog({ onRecovered, trigger }: RecoverPa
   };
   
   // Check if execute is allowed
-  const canExecute = result?.action === 'created' && result?.details?.dry_run;
+  // Check if execute is allowed - action is 'created' means we CAN create it, and we're in dry_run preview mode
+  const canExecute = result?.success && result?.action === 'created' && result?.details?.dry_run === true;
   
   // Parse transaction details for summary card
   const txDetails = result?.details?.record || result?.details?.transaction;
