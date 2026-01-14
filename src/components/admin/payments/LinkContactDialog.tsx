@@ -115,70 +115,20 @@ export function LinkContactDialog({
     setSearchError(null);
     
     try {
-      // Build search filters
-      const normalizedTerm = normalizeSearch(term);
-      const cyrillicTerm = transliterateToCyrillic(term);
-      
-      // Search with multiple patterns
-      // 1. Direct ILIKE search
-      const { data: directResults, error: directError } = await supabase
-        .from("profiles")
-        .select("id, full_name, email, phone")
-        .or(`email.ilike.%${term}%,phone.ilike.%${term}%,full_name.ilike.%${term}%`)
-        .limit(30);
-      
-      if (directError) {
-        // Check if it's an RLS error
-        if (directError.message.includes('permission') || directError.message.includes('policy')) {
-          setSearchError("Недостаточно прав для поиска контактов. Проверьте RLS-политики.");
-          throw directError;
+      // Use edge function to bypass RLS issues
+      const { data, error } = await supabase.functions.invoke('admin-search-profiles', {
+        body: { query: term, limit: 30 }
+      });
+
+      if (error) throw error;
+      if (!data?.success) {
+        if (data?.error?.includes('Forbidden')) {
+          setSearchError("Недостаточно прав для поиска контактов.");
         }
-        throw directError;
+        throw new Error(data?.error || 'Search failed');
       }
       
-      // 2. If searching with Latin, also try Cyrillic transliteration
-      let cyrillicResults: Profile[] = [];
-      if (/[a-zA-Z]/.test(term) && cyrillicTerm !== term.toLowerCase()) {
-        const { data: cyrData } = await supabase
-          .from("profiles")
-          .select("id, full_name, email, phone")
-          .ilike('full_name', `%${cyrillicTerm}%`)
-          .limit(20);
-        
-        cyrillicResults = cyrData || [];
-      }
-      
-      // 3. Merge and deduplicate results
-      const allResults = [...(directResults || []), ...cyrillicResults];
-      const uniqueResults = allResults.reduce((acc, profile) => {
-        if (!acc.find(p => p.id === profile.id)) {
-          acc.push(profile);
-        }
-        return acc;
-      }, [] as Profile[]);
-      
-      // 4. Sort by relevance
-      const sortedResults = uniqueResults.sort((a, b) => {
-        const aName = (a.full_name || '').toLowerCase();
-        const bName = (b.full_name || '').toLowerCase();
-        const searchLower = term.toLowerCase();
-        
-        // Exact match at start is best
-        const aStartsWithName = aName.startsWith(searchLower);
-        const bStartsWithName = bName.startsWith(searchLower);
-        if (aStartsWithName && !bStartsWithName) return -1;
-        if (!aStartsWithName && bStartsWithName) return 1;
-        
-        // Email exact match
-        const aEmailMatch = a.email?.toLowerCase().includes(searchLower);
-        const bEmailMatch = b.email?.toLowerCase().includes(searchLower);
-        if (aEmailMatch && !bEmailMatch) return -1;
-        if (!aEmailMatch && bEmailMatch) return 1;
-        
-        return aName.localeCompare(bName, 'ru');
-      }).slice(0, 20);
-      
-      setResults(sortedResults);
+      setResults(data.results || []);
       setHasSearched(true);
     } catch (e: any) {
       console.error('Search error:', e);
