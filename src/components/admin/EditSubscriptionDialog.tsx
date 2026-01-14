@@ -876,34 +876,37 @@ export function EditSubscriptionDialog({
                 )}
 
                 {/* Action buttons */}
-                <div className="flex gap-2 pt-2">
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="flex-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => grantGetCourseAccess(gcSyncStatus === 'failed' || gcSyncStatus === 'skipped')}
-                            disabled={isGCLoading || !!gcDisabledReason}
-                            className="w-full bg-blue-500/10 border-blue-500/30 text-blue-600 hover:bg-blue-500/20"
-                          >
-                            {isGCLoading ? (
-                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                            ) : (
-                              <Send className="w-4 h-4 mr-1" />
-                            )}
-                            {gcSyncStatus === 'failed' || gcSyncStatus === 'skipped' ? 'Повторить' : 'Отправить'}
-                          </Button>
-                        </span>
-                      </TooltipTrigger>
-                      {gcDisabledReason && (
-                        <TooltipContent>
-                          <p>{gcDisabledReason}</p>
-                        </TooltipContent>
-                      )}
-                    </Tooltip>
-                  </TooltipProvider>
+                {(() => {
+                  const shouldForce = gcSyncStatus === 'failed' || gcSyncStatus === 'skipped';
+                  return (
+                    <div className="flex gap-2 pt-2">
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="flex-1">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => grantGetCourseAccess(shouldForce)}
+                                disabled={isGCLoading || !!gcDisabledReason}
+                                className="w-full bg-blue-500/10 border-blue-500/30 text-blue-600 hover:bg-blue-500/20"
+                              >
+                                {isGCLoading ? (
+                                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                                ) : (
+                                  <Send className="w-4 h-4 mr-1" />
+                                )}
+                                {shouldForce ? 'Повторить' : 'Отправить'}
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          {gcDisabledReason && (
+                            <TooltipContent>
+                              <p>{gcDisabledReason}</p>
+                            </TooltipContent>
+                          )}
+                        </Tooltip>
+                      </TooltipProvider>
 
                   {/* Force resend button (for success cases) */}
                   {gcSyncStatus === 'success' && (
@@ -954,8 +957,10 @@ export function EditSubscriptionDialog({
                     className="px-3"
                   >
                     <RefreshCw className={cn("w-4 h-4", isGCLoading && "animate-spin")} />
-                  </Button>
-                </div>
+                      </Button>
+                    </div>
+                  );
+                })()}
 
                 {/* Validation messages */}
                 {gcDisabledReason && (
