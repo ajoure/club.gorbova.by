@@ -3,7 +3,12 @@ import { cn } from "@/lib/utils";
 import { TrendingUp, DollarSign, RotateCcw, Ban, Percent, Wallet, Filter } from "lucide-react";
 import { UnifiedPayment } from "@/hooks/useUnifiedPayments";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-
+import { 
+  useBepaidFeeRules, 
+  calculateFallbackFee, 
+  detectPaymentChannel, 
+  extractIssuerCountry 
+} from "@/hooks/useBepaidFeeRules";
 export type AnalyticsFilter = 'successful' | 'refunded' | 'failed' | 'fees' | 'net' | null;
 
 // Constants for status classification
@@ -158,8 +163,11 @@ export default function PaymentsAnalytics({
   activeFilter,
   onFilterChange,
 }: PaymentsAnalyticsProps) {
+  // Fetch fee rules from integration settings
+  const { data: feeRules, isLoading: isLoadingRules } = useBepaidFeeRules();
+  
   const analytics = useMemo(() => {
-    if (!payments.length) {
+    if (!payments.length || !feeRules) {
       return {
         successful: { BYN: 0, USD: 0, EUR: 0, RUB: 0 },
         refunded: { BYN: 0, USD: 0, EUR: 0, RUB: 0 },
@@ -167,6 +175,7 @@ export default function PaymentsAnalytics({
         fees: { BYN: 0, USD: 0, EUR: 0, RUB: 0 },
         feesUnknown: 0,
         feesKnown: 0,
+        feesFallback: 0,
         primaryCurrency: 'BYN',
       };
     }
@@ -178,6 +187,7 @@ export default function PaymentsAnalytics({
       fees: { BYN: 0, USD: 0, EUR: 0, RUB: 0 } as Record<string, number>,
       feesUnknown: 0,
       feesKnown: 0,
+      feesFallback: 0,
     };
 
     const currencyCount: Record<string, number> = {};
@@ -192,7 +202,9 @@ export default function PaymentsAnalytics({
       if (SUCCESSFUL_STATUSES.includes(statusNormalized)) {
         result.successful[currency] = (result.successful[currency] || 0) + p.amount;
         
+        // Try to extract fee from provider response
         let feeAmount: number | null = null;
+        let feeSource: 'provider' | 'fallback' | null = null;
         const providerResponse = p.provider_response;
         
         if (providerResponse) {
@@ -202,18 +214,48 @@ export default function PaymentsAnalytics({
             ?? providerResponse.fee
             ?? null;
           
-          if (fee !== null && fee !== undefined) {
-            feeAmount = Number(fee) / 100;
+          if (fee !== null && fee !== undefined && Number(fee) > 0) {
+            feeAmount = Number(fee) / 100; // Convert from cents
+            feeSource = 'provider';
           }
         }
         
-        if (feeAmount === null && (p as any).provider_fee_amount != null) {
+        // Fallback to provider_fee_amount column
+        if (feeAmount === null && (p as any).provider_fee_amount != null && (p as any).provider_fee_amount > 0) {
           feeAmount = (p as any).provider_fee_amount;
+          feeSource = 'provider';
         }
         
+        // Apply fallback calculation if no provider fee found
+        if (feeAmount === null || feeAmount <= 0) {
+          const channel = detectPaymentChannel(
+            (p as any).payment_method,
+            p.transaction_type,
+            providerResponse
+          );
+          const issuerCountry = extractIssuerCountry(providerResponse);
+          
+          const fallbackResult = calculateFallbackFee(
+            p.amount,
+            currency,
+            channel,
+            issuerCountry,
+            feeRules
+          );
+          
+          feeAmount = fallbackResult.fee;
+          feeSource = 'fallback';
+        }
+        
+        // Add fee to totals
         if (feeAmount !== null && !isNaN(feeAmount) && feeAmount > 0) {
           result.fees[currency] = (result.fees[currency] || 0) + feeAmount;
-          result.feesKnown++;
+          
+          if (feeSource === 'provider') {
+            result.feesKnown++;
+          } else if (feeSource === 'fallback') {
+            result.feesFallback++;
+          }
         } else {
           result.feesUnknown++;
         }
@@ -248,7 +290,7 @@ export default function PaymentsAnalytics({
       .sort((a, b) => b[1] - a[1])[0]?.[0] || 'BYN';
 
     return { ...result, primaryCurrency };
-  }, [payments]);
+  }, [payments, feeRules]);
 
   const handleFilterClick = (filter: AnalyticsFilter) => {
     if (onFilterChange) {
@@ -256,7 +298,7 @@ export default function PaymentsAnalytics({
     }
   };
 
-  if (isLoading) {
+  if (isLoading || isLoadingRules) {
     return (
       <div className="space-y-4">
         <div className="h-5 w-48 bg-muted/30 animate-pulse rounded" />
@@ -280,7 +322,34 @@ export default function PaymentsAnalytics({
   const failedAmount = analytics.failed[primaryCurrency] || 0;
   const feesAmount = analytics.fees[primaryCurrency] || 0;
   const netRevenue = successfulAmount - refundedAmount - feesAmount;
-  const showFeesAsDash = analytics.feesKnown === 0;
+  const showFeesAsDash = analytics.feesKnown === 0 && analytics.feesFallback === 0;
+  
+  // Build tooltip for fees card
+  const feesTooltip = (() => {
+    const parts: string[] = [];
+    if (analytics.feesKnown > 0) {
+      parts.push(`Из API: ${analytics.feesKnown}`);
+    }
+    if (analytics.feesFallback > 0) {
+      parts.push(`Расчётные: ${analytics.feesFallback}`);
+    }
+    if (analytics.feesUnknown > 0) {
+      parts.push(`Неизвестно: ${analytics.feesUnknown}`);
+    }
+    return parts.length > 0 ? parts.join(' · ') : "Клик для фильтрации по платежам с комиссией";
+  })();
+  
+  // Build subtitle for fees card
+  const feesSubtitle = (() => {
+    if (analytics.feesFallback > 0 && analytics.feesUnknown === 0) {
+      return `Расчётные: ${analytics.feesFallback}`;
+    }
+    if (analytics.feesUnknown > 0) {
+      return `Неизвестно: ${analytics.feesUnknown}`;
+    }
+    return undefined;
+  })();
+
 
   return (
     <div className="space-y-4">
@@ -353,10 +422,8 @@ export default function PaymentsAnalytics({
           isClickable={!!onFilterChange}
           isActive={activeFilter === 'fees'}
           onClick={() => handleFilterClick('fees')}
-          tooltip={analytics.feesUnknown > 0 
-            ? `Комиссия известна для ${analytics.feesKnown} платежей` 
-            : "Клик для фильтрации по платежам с комиссией"}
-          subtitle={analytics.feesUnknown > 0 ? `Неизвестно: ${analytics.feesUnknown}` : undefined}
+          tooltip={feesTooltip}
+          subtitle={feesSubtitle}
           showDash={showFeesAsDash}
         />
 
