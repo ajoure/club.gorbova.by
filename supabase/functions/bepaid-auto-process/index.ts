@@ -32,6 +32,9 @@ interface QueueItem {
   created_at_bepaid: string | null;
   ip_address: string | null;
   attempts: number;
+  transaction_type: string | null;
+  reference_transaction_uid: string | null;
+  raw_payload: any;
 }
 
 // Transliterate Latin name to Cyrillic for matching
@@ -150,19 +153,170 @@ Deno.serve(async (req) => {
       orders_created: 0,
       profiles_matched: 0,
       profiles_created: 0,
+      refunds_linked: 0,
       skipped: 0,
       errors: [] as string[],
     };
 
     for (const item of queueItems || []) {
       try {
-        console.log(`[BEPAID-AUTO-PROCESS] Processing item ${item.id}, bepaid_uid=${item.bepaid_uid}, description=${item.description}`);
+        console.log(`[BEPAID-AUTO-PROCESS] Processing item ${item.id}, bepaid_uid=${item.bepaid_uid}, transaction_type=${item.transaction_type}, description=${item.description}`);
 
         // Skip if already has matched order or is manually linked
         if (item.matched_order_id || item.status === 'manually_linked' || item.status === 'completed') {
           console.log(`[BEPAID-AUTO-PROCESS] Item already linked/completed (status=${item.status}, matched_order_id=${item.matched_order_id}), skipping`);
           results.skipped++;
           continue;
+        }
+
+        // =====================================================================
+        // REFUND AUTO-LINKING: Find original payment for refund transactions
+        // =====================================================================
+        const isRefundTransaction = item.transaction_type === 'Возврат средств' || 
+                                    item.transaction_type === 'refund';
+        
+        if (isRefundTransaction) {
+          console.log(`[BEPAID-AUTO-PROCESS] Detected refund transaction, attempting to link to original payment`);
+          
+          let originalPayment = null;
+          let linkedBy = null;
+          
+          // Method 1: Try reference_transaction_uid from raw_payload (webhook data)
+          const refUid = item.reference_transaction_uid || 
+                        item.raw_payload?.transaction?.parent_uid ||
+                        item.raw_payload?.parent_uid;
+          
+          if (refUid) {
+            const { data: paymentByRef } = await supabase
+              .from('payments_v2')
+              .select('id, order_id, profile_id, user_id, orders_v2:order_id(order_number, profile_id)')
+              .eq('provider_payment_id', refUid)
+              .maybeSingle();
+            
+            if (paymentByRef) {
+              originalPayment = paymentByRef;
+              linkedBy = 'reference_uid';
+              console.log(`[BEPAID-AUTO-PROCESS] Found original payment by reference_uid: ${refUid}`);
+            }
+          }
+          
+          // Method 2: Try tracking_id match (e.g., lead_XXXXX)
+          if (!originalPayment && item.tracking_id) {
+            // Find original payment in queue or payments_v2 with same tracking_id but payment type
+            const { data: paymentByTracking } = await supabase
+              .from('payments_v2')
+              .select('id, order_id, profile_id, user_id, orders_v2:order_id(order_number, profile_id)')
+              .eq('meta->>tracking_id', item.tracking_id)
+              .maybeSingle();
+            
+            if (paymentByTracking) {
+              originalPayment = paymentByTracking;
+              linkedBy = 'tracking_id';
+              console.log(`[BEPAID-AUTO-PROCESS] Found original payment by tracking_id: ${item.tracking_id}`);
+            }
+            
+            // Also check orders_v2 directly
+            if (!originalPayment) {
+              const { data: orderByTracking } = await supabase
+                .from('orders_v2')
+                .select('id, order_number, profile_id, user_id')
+                .eq('tracking_id', item.tracking_id)
+                .maybeSingle();
+              
+              if (orderByTracking) {
+                // Find payment for this order
+                const { data: paymentForOrder } = await supabase
+                  .from('payments_v2')
+                  .select('id, order_id, profile_id, user_id')
+                  .eq('order_id', orderByTracking.id)
+                  .limit(1)
+                  .maybeSingle();
+                
+                if (paymentForOrder) {
+                  originalPayment = { ...paymentForOrder, orders_v2: orderByTracking };
+                  linkedBy = 'tracking_id_order';
+                  console.log(`[BEPAID-AUTO-PROCESS] Found original order by tracking_id: ${orderByTracking.order_number}`);
+                }
+              }
+            }
+          }
+          
+          // Method 3: Match by email + similar amount + close date
+          if (!originalPayment && item.customer_email && item.amount) {
+            const refundDate = new Date(item.paid_at || item.created_at);
+            const searchFrom = new Date(refundDate);
+            searchFrom.setMonth(searchFrom.getMonth() - 3); // Look back 3 months
+            
+            const { data: paymentsByEmail } = await supabase
+              .from('payments_v2')
+              .select('id, order_id, amount, profile_id, user_id, paid_at, orders_v2:order_id(order_number, profile_id, customer_email)')
+              .eq('status', 'succeeded')
+              .gte('amount', (item.amount || 0) * 0.9)
+              .lte('amount', (item.amount || 0) * 1.1)
+              .gte('paid_at', searchFrom.toISOString())
+              .lte('paid_at', refundDate.toISOString())
+              .limit(10);
+            
+            // Find payment where order email matches
+            if (paymentsByEmail?.length) {
+              const matchingPayment = paymentsByEmail.find(p => 
+                (p.orders_v2 as any)?.customer_email?.toLowerCase() === item.customer_email?.toLowerCase()
+              );
+              
+              if (matchingPayment) {
+                originalPayment = matchingPayment;
+                linkedBy = 'email_amount_date';
+                console.log(`[BEPAID-AUTO-PROCESS] Found original payment by email+amount+date match`);
+              }
+            }
+          }
+          
+          // If we found original payment, link the refund
+          if (originalPayment && !dryRun) {
+            const orderId = originalPayment.order_id;
+            const profileId = originalPayment.profile_id || (originalPayment.orders_v2 as any)?.profile_id;
+            
+            await supabase
+              .from('payment_reconcile_queue')
+              .update({
+                matched_order_id: orderId,
+                matched_profile_id: profileId,
+                reference_transaction_uid: refUid || null,
+                status: 'completed',
+                processed_at: new Date().toISOString(),
+                last_error: null,
+              })
+              .eq('id', item.id);
+            
+            // Log the link
+            await supabase.from('audit_logs').insert({
+              actor_user_id: null,
+              actor_type: 'system',
+              actor_label: 'bepaid-auto-process',
+              action: 'refund_auto_linked',
+              meta: {
+                queue_item_id: item.id,
+                refund_uid: item.bepaid_uid,
+                original_payment_id: originalPayment.id,
+                order_id: orderId,
+                order_number: (originalPayment.orders_v2 as any)?.order_number,
+                linked_by: linkedBy,
+                amount: item.amount,
+              },
+            });
+            
+            results.refunds_linked++;
+            results.processed++;
+            console.log(`[BEPAID-AUTO-PROCESS] Refund ${item.bepaid_uid} linked to order ${(originalPayment.orders_v2 as any)?.order_number || orderId} by ${linkedBy}`);
+            continue;
+          } else if (originalPayment && dryRun) {
+            console.log(`[BEPAID-AUTO-PROCESS] DRY RUN: Would link refund ${item.bepaid_uid} to order ${(originalPayment.orders_v2 as any)?.order_number}`);
+            results.refunds_linked++;
+            results.processed++;
+            continue;
+          } else {
+            console.log(`[BEPAID-AUTO-PROCESS] Could not find original payment for refund ${item.bepaid_uid}, will try standard processing`);
+          }
         }
 
         // Step 1: Find or match profile

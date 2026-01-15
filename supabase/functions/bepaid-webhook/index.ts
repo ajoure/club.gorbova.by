@@ -511,6 +511,10 @@ Deno.serve(async (req) => {
       const transaction = body.transaction || body.last_transaction || {};
       const additionalData = body.additional_data || {};
       
+      // Extract reference/parent UID for refund linking
+      const referenceUid = transaction.parent_uid || body.parent_uid || null;
+      const transactionType = transaction.type || body.type || null;
+      
       await supabase.from('payment_reconcile_queue').insert({
         bepaid_uid: transaction.uid || null,
         tracking_id: rawTrackingIdEarly || null,
@@ -521,6 +525,8 @@ Deno.serve(async (req) => {
         source: 'webhook',
         status: 'pending',
         last_error: signatureSkipReason || 'no_tracking_id',
+        transaction_type: transactionType === 'refund' ? 'Возврат средств' : transactionType,
+        reference_transaction_uid: referenceUid,
       });
       
       await supabase.from('audit_logs').insert({

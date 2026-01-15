@@ -2759,6 +2759,7 @@ export type Database = {
           raw_payload: Json | null
           reason: string | null
           receipt_url: string | null
+          reference_transaction_uid: string | null
           rrn: string | null
           shop_id: string | null
           shop_name: string | null
@@ -2832,6 +2833,7 @@ export type Database = {
           raw_payload?: Json | null
           reason?: string | null
           receipt_url?: string | null
+          reference_transaction_uid?: string | null
           rrn?: string | null
           shop_id?: string | null
           shop_name?: string | null
@@ -2905,6 +2907,7 @@ export type Database = {
           raw_payload?: Json | null
           reason?: string | null
           receipt_url?: string | null
+          reference_transaction_uid?: string | null
           rrn?: string | null
           shop_id?: string | null
           shop_name?: string | null
@@ -3013,6 +3016,7 @@ export type Database = {
           provider_payment_id: string | null
           provider_response: Json | null
           receipt_url: string | null
+          reference_payment_id: string | null
           refunded_amount: number | null
           refunded_at: string | null
           refunds: Json | null
@@ -3039,6 +3043,7 @@ export type Database = {
           provider_payment_id?: string | null
           provider_response?: Json | null
           receipt_url?: string | null
+          reference_payment_id?: string | null
           refunded_amount?: number | null
           refunded_at?: string | null
           refunds?: Json | null
@@ -3065,6 +3070,7 @@ export type Database = {
           provider_payment_id?: string | null
           provider_response?: Json | null
           receipt_url?: string | null
+          reference_payment_id?: string | null
           refunded_amount?: number | null
           refunded_at?: string | null
           refunds?: Json | null
@@ -3085,6 +3091,13 @@ export type Database = {
             columns: ["order_id"]
             isOneToOne: false
             referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_v2_reference_payment_id_fkey"
+            columns: ["reference_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
             referencedColumns: ["id"]
           },
         ]
