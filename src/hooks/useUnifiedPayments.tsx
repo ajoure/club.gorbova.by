@@ -97,6 +97,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       const fromDate = dateFilter.from || "2026-01-01";
       
       // Fetch from payment_reconcile_queue (queue items) - NO STATUS FILTER, show all
+      // IMPORTANT: Filter by paid_at (actual payment date), not created_at (import date)
       let queueQuery = supabase
         .from("payment_reconcile_queue")
         .select(`
@@ -112,14 +113,15 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         `)
         .eq("is_fee", false)
         .not("bepaid_uid", "is", null)
-        .gte("created_at", `${fromDate}T00:00:00Z`)
+        .gte("paid_at", `${fromDate}T00:00:00Z`)
         .order("paid_at", { ascending: false, nullsFirst: false });
       
       if (dateFilter.to) {
-        queueQuery = queueQuery.lte("created_at", `${dateFilter.to}T23:59:59Z`);
+        queueQuery = queueQuery.lte("paid_at", `${dateFilter.to}T23:59:59Z`);
       }
       
       // Fetch from payments_v2 (processed payments)
+      // IMPORTANT: Filter by paid_at (actual payment date), not created_at (import date)
       let paymentsQuery = supabase
         .from("payments_v2")
         .select(`
@@ -131,11 +133,11 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           profiles:profile_id(id, full_name, email, phone, user_id)
         `)
         .eq("provider", "bepaid")
-        .gte("created_at", `${fromDate}T00:00:00Z`)
+        .gte("paid_at", `${fromDate}T00:00:00Z`)
         .order("paid_at", { ascending: false, nullsFirst: false });
       
       if (dateFilter.to) {
-        paymentsQuery = paymentsQuery.lte("created_at", `${dateFilter.to}T23:59:59Z`);
+        paymentsQuery = paymentsQuery.lte("paid_at", `${dateFilter.to}T23:59:59Z`);
       }
       
       const [queueResult, paymentsResult] = await Promise.all([
