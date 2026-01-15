@@ -115,18 +115,22 @@ export default function AdminBepaidSync() {
   };
 
   // Fetch new transactions from bePaid API
-  const handleRefreshFromBepaidApi = async () => {
+  const [syncResult, setSyncResult] = useState<any>(null);
+  const [showSyncResult, setShowSyncResult] = useState(false);
+  
+  const handleRefreshFromBepaidApi = async (forceFullSync = false, windowHours?: number) => {
     setIsRefreshingFromApi(true);
+    setSyncResult(null);
     try {
-      const { data, error } = await supabase.functions.invoke('bepaid-fetch-transactions');
+      const { data, error } = await supabase.functions.invoke('bepaid-fetch-transactions', {
+        body: { forceFullSync, windowHours }
+      });
+      
       if (error) throw error;
       
-      const result = data as { 
-        transactions_fetched?: number; 
-        queued_for_review?: number;
-        new_payments?: number;
-        error?: string;
-      };
+      const result = data as any;
+      setSyncResult(result);
+      setShowSyncResult(true);
       
       if (result.error) {
         toast.error(`Ошибка: ${result.error}`);
@@ -141,9 +145,44 @@ export default function AdminBepaidSync() {
       }
     } catch (e: any) {
       console.error('Error refreshing from bePaid:', e);
+      setSyncResult({ error: e.message || 'Неизвестная ошибка' });
+      setShowSyncResult(true);
       toast.error('Ошибка обновления: ' + (e.message || 'Неизвестная ошибка'));
     } finally {
       setIsRefreshingFromApi(false);
+    }
+  };
+  
+  // Run full sync (fetch + queue processing)
+  const [isRunningFullSync, setIsRunningFullSync] = useState(false);
+  
+  const handleRunFullSync = async () => {
+    setIsRunningFullSync(true);
+    setSyncResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('bepaid-sync-cron');
+      
+      if (error) throw error;
+      
+      setSyncResult(data);
+      setShowSyncResult(true);
+      
+      if (data?.success) {
+        toast.success(`Синхронизация завершена за ${data.duration_ms}мс`);
+      } else {
+        toast.warning('Синхронизация завершена с ошибками');
+      }
+      
+      refetchPayments();
+      refetchQueue();
+      queryClient.invalidateQueries({ queryKey: ["bepaid-stats"] });
+    } catch (e: any) {
+      console.error('Error running full sync:', e);
+      setSyncResult({ error: e.message || 'Неизвестная ошибка' });
+      setShowSyncResult(true);
+      toast.error('Ошибка синхронизации: ' + (e.message || 'Неизвестная ошибка'));
+    } finally {
+      setIsRunningFullSync(false);
     }
   };
 
@@ -274,19 +313,30 @@ export default function AdminBepaidSync() {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            {/* Run full sync button */}
+            <Button 
+              variant="default" 
+              onClick={handleRunFullSync} 
+              disabled={isRunningFullSync || isRefreshingFromApi}
+              className="gap-2"
+            >
+              <Play className={`h-4 w-4 ${isRunningFullSync ? 'animate-pulse' : ''}`} />
+              Run sync now
+            </Button>
+            
             {/* Refresh from API button */}
             <Button 
               variant="outline" 
-              onClick={handleRefreshFromBepaidApi} 
-              disabled={isRefreshingFromApi}
+              onClick={() => handleRefreshFromBepaidApi()} 
+              disabled={isRefreshingFromApi || isRunningFullSync}
               className="gap-2"
             >
               <RefreshCw className={`h-4 w-4 ${isRefreshingFromApi ? 'animate-spin' : ''}`} />
-              Обновить из bePaid
+              Fetch транзакции
             </Button>
             
             {/* Import button - prominent in header */}
-            <Button onClick={() => setImportDialogOpen(true)} className="gap-2">
+            <Button onClick={() => setImportDialogOpen(true)} className="gap-2" variant="outline">
               <Upload className="h-4 w-4" />
               Импорт CSV/Excel
             </Button>
@@ -318,6 +368,30 @@ export default function AdminBepaidSync() {
             </div>
           </div>
         </div>
+        
+        {/* Sync result JSON panel */}
+        {showSyncResult && syncResult && (
+          <Card className="border-primary/50">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  {syncResult.error ? (
+                    <AlertCircle className="h-4 w-4 text-destructive" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  )}
+                  Результат синхронизации
+                </CardTitle>
+                <Button variant="ghost" size="sm" onClick={() => setShowSyncResult(false)}>×</Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <pre className="bg-muted/50 p-3 rounded-lg text-xs overflow-auto max-h-80 font-mono">
+                {JSON.stringify(syncResult, null, 2)}
+              </pre>
+            </CardContent>
+          </Card>
+        )}
         
         {/* API limitation notice */}
         <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg p-4 flex items-start gap-3">

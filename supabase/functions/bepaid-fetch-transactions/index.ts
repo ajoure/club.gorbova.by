@@ -278,13 +278,13 @@ serve(async (req) => {
     // PART 1: Fetch Subscriptions
     // =================================================================
     try {
+      // NOTE: bePaid does not allow Content-Type header for GET requests
       const subsResponse = await fetch(
         `https://api.bepaid.by/subscriptions?shop_id=${shopId}&per_page=${config.sync_page_size}`,
         {
           method: "GET",
           headers: {
             Authorization: `Basic ${auth}`,
-            "Content-Type": "application/json",
             Accept: "application/json",
           },
         }
@@ -358,8 +358,9 @@ serve(async (req) => {
               console.error(`Error creating order from subscription ${sub.id}:`, createErr);
               results.errors++;
               
-              // PATCH 3: Use upsert for queue
+              // PATCH 3: Use upsert for queue with provider
               await supabase.from("payment_reconcile_queue").upsert({
+                provider: "bepaid",
                 bepaid_uid: sub.transactions?.[0]?.uid || `sub_${sub.id}`,
                 tracking_id: sub.tracking_id,
                 amount: sub.plan?.amount ? sub.plan.amount / 100 : null,
@@ -372,12 +373,13 @@ serve(async (req) => {
                 attempts: 1,
                 last_attempt_at: new Date().toISOString(),
                 next_retry_at: new Date(Date.now() + calculateBackoffDelay(1)).toISOString(),
-              }, { onConflict: 'bepaid_uid', ignoreDuplicates: false });
+              }, { onConflict: 'provider,bepaid_uid', ignoreDuplicates: false });
               results.queued_for_review++;
             }
           } else {
-            // PATCH 3: Use upsert
+            // PATCH 3: Use upsert with provider
             await supabase.from("payment_reconcile_queue").upsert({
+              provider: "bepaid",
               bepaid_uid: sub.transactions?.[0]?.uid || `sub_${sub.id}`,
               tracking_id: sub.tracking_id,
               amount: sub.plan?.amount ? sub.plan.amount / 100 : null,
@@ -386,7 +388,7 @@ serve(async (req) => {
               raw_payload: sub,
               source: "subscription_fetch_no_tracking",
               status: "pending",
-            }, { onConflict: 'bepaid_uid', ignoreDuplicates: false });
+            }, { onConflict: 'provider,bepaid_uid', ignoreDuplicates: false });
             results.queued_for_review++;
           }
         }
@@ -413,13 +415,14 @@ serve(async (req) => {
 
       console.log(`Fetching transactions page ${currentPage}...`);
 
+      // NOTE: bePaid does not allow Content-Type header for GET requests
+      // Use api.bepaid.by for transaction list (not gateway.bepaid.by which is for single transaction lookup)
       const txResponse = await fetch(
-        `https://gateway.bepaid.by/transactions?${params.toString()}`,
+        `https://api.bepaid.by/transactions?${params.toString()}`,
         {
           method: "GET",
           headers: {
             Authorization: `Basic ${auth}`,
-            "Content-Type": "application/json",
             Accept: "application/json",
           },
         }
@@ -523,6 +526,7 @@ serve(async (req) => {
           const isRetry = existingQueueItem?.status === 'error';
 
           await supabase.from("payment_reconcile_queue").upsert({
+            provider: "bepaid",
             bepaid_uid: tx.uid,
             tracking_id: tx.tracking_id,
             amount: tx.amount / 100,
@@ -541,7 +545,7 @@ serve(async (req) => {
             next_retry_at: queueStatus === 'error' 
               ? new Date(Date.now() + calculateBackoffDelay(attempts)).toISOString() 
               : null,
-          }, { onConflict: 'bepaid_uid', ignoreDuplicates: false });
+          }, { onConflict: 'provider,bepaid_uid', ignoreDuplicates: false });
 
           results.upserted++;
           if (!existingQueueItem) {
