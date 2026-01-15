@@ -169,47 +169,27 @@ Deno.serve(async (req) => {
       );
     }
 
-    // STOP SAFEGUARD: Check if trying to cancel too many without unsafe flag
-    if (importedItems.length > 1000 && !unsafe_allow_large && !dry_run) {
-      console.log(`[admin-purge-imported] STOP: Attempting to cancel ${importedItems.length} items without unsafe_allow_large flag`);
+    // ONE-CLICK: Auto-process all batches without STOP safeguard
+    // Log warning for large operations but proceed automatically
+    if (importedItems.length > 1000) {
+      console.log(`[admin-purge-imported] Large operation: ${importedItems.length} items will be processed in batches`);
       
-      const report: CancelReport = {
-        total_found: importedItems.length,
-        eligible_for_cancel: 0,
-        with_conflicts: 0,
-        cancelled: 0,
-        examples: [],
-        conflicts: [],
-        total_amount: 0,
-        stop_reason: `STOP_SAFEGUARD: Attempting to cancel ${importedItems.length} items (>1000). Set unsafe_allow_large=true to proceed.`,
-      };
-
-      // Log the blocked attempt
+      // Log the large operation start
       await supabaseAdmin.from('audit_logs').insert({
-        action: 'bepaid_cancel_blocked',
+        action: 'bepaid_cancel_large_started',
         actor_user_id: user.id,
         actor_type: 'system',
-        actor_label: 'bepaid_cleanup_safeguard',
+        actor_label: 'bepaid_cleanup_oneclick',
         meta: {
-          reason: 'STOP_SAFEGUARD',
           items_count: importedItems.length,
           source_filter,
           status_filter,
           date_from,
           date_to,
+          dry_run,
           timestamp: new Date().toISOString(),
         },
       });
-
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          dry_run,
-          stop_reason: report.stop_reason,
-          report 
-        }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
     }
 
     // Check for conflicts - items that exist in API (payments_v2)

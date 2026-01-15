@@ -82,7 +82,7 @@ export default function PaymentsSettingsDropdown({
           )}
         />
         
-        {/* Full resync */}
+        {/* UID-based recovery */}
         <ResyncFromApiDialog 
           onComplete={onComplete}
           renderTrigger={(onClick) => (
@@ -90,8 +90,8 @@ export default function PaymentsSettingsDropdown({
               onClick={(e) => { e.preventDefault(); onClick(); }}
               className="gap-2 cursor-pointer"
             >
-              <Download className="h-4 w-4" />
-              <span>Resync из API</span>
+              <RefreshCcw className="h-4 w-4" />
+              <span>Восстановление по UID</span>
             </DropdownMenuItem>
           )}
         />

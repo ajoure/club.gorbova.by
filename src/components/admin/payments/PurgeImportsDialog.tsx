@@ -53,10 +53,9 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [report, setReport] = useState<CancelReport | null>(null);
-  const [mode, setMode] = useState<'idle' | 'preview' | 'executed' | 'stopped'>('idle');
+  const [mode, setMode] = useState<'idle' | 'preview' | 'executed'>('idle');
   const [dateFrom, setDateFrom] = useState("2026-01-01");
   const [dateTo, setDateTo] = useState("");
-  const [unsafeAllowLarge, setUnsafeAllowLarge] = useState(false);
   
   // Status filter checkboxes
   const [statusFilters, setStatusFilters] = useState<Record<StatusFilter, boolean>>({
@@ -93,19 +92,10 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
           dry_run: executeDryRun,
           limit: 5000,
           batch_size: 500,
-          unsafe_allow_large: unsafeAllowLarge,
         }
       });
 
       if (error) throw error;
-
-      // Check for STOP safeguard
-      if (data?.stop_reason) {
-        setReport(data.report);
-        setMode('stopped');
-        toast.warning("STOP: Требуется подтверждение для большого количества записей");
-        return;
-      }
 
       if (data?.success && data.report) {
         setReport(data.report);
@@ -129,7 +119,6 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
     setOpen(false);
     setReport(null);
     setMode('idle');
-    setUnsafeAllowLarge(false);
   };
 
   const formatAmount = (amount: number) => {
@@ -242,34 +231,19 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
             </div>
           </div>
 
-          {/* STOP safeguard message */}
-          {mode === 'stopped' && report?.stop_reason && (
-            <Alert className="border-red-200 bg-red-50 dark:bg-red-950/20">
-              <ShieldAlert className="h-4 w-4 text-red-600" />
-              <AlertDescription className="text-red-700 dark:text-red-400 text-xs">
-                <strong>STOP SAFEGUARD:</strong> {report.stop_reason}
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {/* Unsafe checkbox for large operations */}
-          {(mode === 'stopped' || (report && report.total_found > 1000)) && (
-            <div className="flex items-center gap-2 p-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20">
-              <Checkbox 
-                id="unsafe-allow-large" 
-                checked={unsafeAllowLarge}
-                onCheckedChange={(checked) => setUnsafeAllowLarge(checked === true)}
-                disabled={isLoading}
-              />
-              <label htmlFor="unsafe-allow-large" className="text-sm cursor-pointer text-amber-800 dark:text-amber-300">
-                Подтверждаю отмену &gt;1000 записей (unsafe_allow_large)
-              </label>
-            </div>
-          )}
-
           {/* Report */}
           {report && (
             <div className="space-y-3">
+              {/* Info about one-click mode */}
+              {report.total_found > 1000 && mode === 'preview' && (
+                <Alert className="border-blue-200 bg-blue-50 dark:bg-blue-950/20">
+                  <Info className="h-4 w-4 text-blue-600" />
+                  <AlertDescription className="text-blue-700 dark:text-blue-400 text-xs">
+                    Найдено {report.total_found} записей. Все будут обработаны автоматически в батчах.
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {/* Summary stats */}
               <div className="grid grid-cols-4 gap-2 text-center">
                 <div className="rounded-lg border p-2">
@@ -375,12 +349,12 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
             </Button>
           )}
           
-          {(mode === 'preview' || mode === 'stopped') && report && report.eligible_for_cancel > 0 && (
+          {mode === 'preview' && report && report.eligible_for_cancel > 0 && (
             <Button
               variant="default"
               className="bg-amber-600 hover:bg-amber-700"
               onClick={() => handleCancel(false)}
-              disabled={isLoading || (report.total_found > 1000 && !unsafeAllowLarge)}
+              disabled={isLoading}
             >
               {isLoading ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
