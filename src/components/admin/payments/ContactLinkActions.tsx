@@ -253,7 +253,7 @@ export default function ContactLinkActions({
             </TabsList>
 
             <TabsContent value="search" className="mt-4">
-              <Command className="rounded-lg border">
+              <Command className="rounded-lg border" shouldFilter={false}>
                 <CommandInput
                   placeholder="Поиск по имени, email, телефону..."
                   value={searchQuery}
