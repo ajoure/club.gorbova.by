@@ -60,6 +60,11 @@ export function LinkDealDialog({
   const handleSearch = async () => {
     setLoading(true);
     try {
+      const searchTerm = search.trim();
+      
+      // Check if search looks like a UUID
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(searchTerm);
+      
       let query = supabase
         .from("orders_v2")
         .select(`
@@ -68,19 +73,25 @@ export function LinkDealDialog({
           product:products_v2(name)
         `)
         .order("created_at", { ascending: false })
-        .limit(30);
+        .limit(50);
       
-      if (search.trim()) {
-        query = query.or(`order_number.ilike.%${search}%`);
+      if (searchTerm) {
+        if (isUUID) {
+          // Search by exact ID match
+          query = query.eq("id", searchTerm);
+        } else {
+          // Search by order_number pattern
+          query = query.or(`order_number.ilike.%${searchTerm}%`);
+        }
       }
       
       // For refunds, filter by paid status and similar amount
       if (isRefund) {
         query = query.eq("status", "paid");
-        if (amount && !search.trim()) {
+        if (amount && !searchTerm) {
           query = query.gte("final_price", amount * 0.8).lte("final_price", amount * 1.2);
         }
-      } else if (amount && !search.trim()) {
+      } else if (amount && !searchTerm) {
         // Optionally filter by similar amount for regular payments
         query = query.gte("final_price", amount * 0.9).lte("final_price", amount * 1.1);
       }
@@ -219,7 +230,7 @@ export function LinkDealDialog({
               </p>
             )}
             
-            <ScrollArea className="h-[300px] border rounded-md">
+            <ScrollArea className="h-[350px] border rounded-md overflow-auto">
               {results.length === 0 ? (
                 <div className="p-4 text-center text-muted-foreground text-sm">
                   {loading ? (

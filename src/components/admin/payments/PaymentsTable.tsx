@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake, UserMinus } from "lucide-react";
+import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake, UserMinus, Unlink } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
@@ -15,6 +15,7 @@ import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings"
 import { LinkContactDialog } from "./LinkContactDialog";
 import { UnlinkContactDialog } from "./UnlinkContactDialog";
 import { LinkDealDialog } from "./LinkDealDialog";
+import { UnlinkDealDialog } from "./UnlinkDealDialog";
 import ContactLinkActions from "./ContactLinkActions";
 import PaymentMethodBadge from "./PaymentMethodBadge";
 import ReceiptStatusBadge from "./ReceiptStatusBadge";
@@ -146,6 +147,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
   const [linkContactOpen, setLinkContactOpen] = useState(false);
   const [unlinkContactOpen, setUnlinkContactOpen] = useState(false);
   const [linkDealOpen, setLinkDealOpen] = useState(false);
+  const [unlinkDealOpen, setUnlinkDealOpen] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<UnifiedPayment | null>(null);
   
   // Detail sheet states (for modal view without navigation)
@@ -599,6 +601,21 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
                   Связать сделку
                 </DropdownMenuItem>
               )}
+              {payment.order_id && (
+                <>
+                  <DropdownMenuItem onClick={() => {
+                    setSelectedPayment(payment);
+                    setUnlinkDealOpen(true);
+                  }}>
+                    <Unlink className="h-3 w-3 mr-2" />
+                    Отвязать сделку
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => openLinkDeal(payment)}>
+                    <Handshake className="h-3 w-3 mr-2" />
+                    Пересвязать сделку
+                  </DropdownMenuItem>
+                </>
+              )}
               {!payment.receipt_url && (
                 <DropdownMenuItem onClick={() => handleFetchSingleReceipt(payment)}>
                   Принудительно получить чек
@@ -728,6 +745,15 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
               paidAt={selectedPayment.paid_at || undefined}
               profileId={selectedPayment.profile_id}
               transactionType={selectedPayment.transaction_type || undefined}
+              onSuccess={onRefetch}
+            />
+            <UnlinkDealDialog
+              open={unlinkDealOpen}
+              onOpenChange={setUnlinkDealOpen}
+              paymentId={selectedPayment.id}
+              rawSource={selectedPayment.rawSource}
+              orderId={selectedPayment.order_id}
+              orderNumber={selectedPayment.order_number}
               onSuccess={onRefetch}
             />
           </>

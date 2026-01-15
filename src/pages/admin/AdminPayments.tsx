@@ -153,7 +153,7 @@ export default function AdminPayments() {
         }
       }
 
-      // Search filter
+      // Search filter - include linked profile data
       if (filters.search) {
         const search = filters.search.toLowerCase();
         const matchSearch = 
@@ -162,7 +162,11 @@ export default function AdminPayments() {
           p.customer_phone?.toLowerCase().includes(search) ||
           p.card_holder?.toLowerCase().includes(search) ||
           p.card_last4?.includes(search) ||
-          p.order_number?.toLowerCase().includes(search);
+          p.order_number?.toLowerCase().includes(search) ||
+          // Also search by linked profile data
+          p.profile_name?.toLowerCase().includes(search) ||
+          p.profile_email?.toLowerCase().includes(search) ||
+          p.profile_phone?.toLowerCase().includes(search);
         if (!matchSearch) return false;
       }
 
