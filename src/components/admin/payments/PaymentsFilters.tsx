@@ -30,14 +30,15 @@ export default function PaymentsFilters({ filters, setFilters }: PaymentsFilters
       </div>
       
       <div className="space-y-1">
-        <Label className="text-xs">Тип транзакции</Label>
+        <Label className="text-xs">Тип операции</Label>
         <Select value={filters.type} onValueChange={(v) => updateFilter("type", v)}>
           <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все</SelectItem>
-            <SelectItem value="payment">Платёж</SelectItem>
-            <SelectItem value="Возврат средств">Возврат</SelectItem>
+            <SelectItem value="payment">Оплата</SelectItem>
+            <SelectItem value="refund">Возврат</SelectItem>
             <SelectItem value="subscription">Подписка</SelectItem>
+            <SelectItem value="authorization">Авторизация</SelectItem>
             <SelectItem value="void">Отмена</SelectItem>
             <SelectItem value="chargeback">Чарджбек</SelectItem>
           </SelectContent>

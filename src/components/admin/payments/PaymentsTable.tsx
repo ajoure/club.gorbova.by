@@ -364,17 +364,41 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
           </Tooltip>
         );
         
-      case 'type':
-        const isRefund = payment.transaction_type === 'Возврат средств' || payment.transaction_type === 'refund';
+      case 'type': {
+        const normalizeType = (raw: string | null | undefined) => {
+          const v = (raw || '').toLowerCase().trim();
+          if (!v) return 'payment';
+          if (['refund', 'refunded', 'возврат средств', 'возврат'].includes(v)) return 'refund';
+          if (['payment', 'оплата', 'платеж', 'платёж'].includes(v)) return 'payment';
+          if (['subscription', 'подписка'].includes(v)) return 'subscription';
+          if (['authorization', 'auth', 'авторизация'].includes(v)) return 'authorization';
+          if (['void', 'canceled', 'cancelled', 'отмена'].includes(v)) return 'void';
+          if (['chargeback', 'чарджбек'].includes(v)) return 'chargeback';
+          return v;
+        };
+
+        const typeKey = normalizeType(payment.transaction_type);
+        const labels: Record<string, string> = {
+          payment: 'Оплата',
+          refund: 'Возврат',
+          subscription: 'Подписка',
+          authorization: 'Авторизация',
+          void: 'Отмена',
+          chargeback: 'Чарджбек',
+        };
+
+        const isRefund = typeKey === 'refund';
+        const label = labels[typeKey] || (payment.transaction_type || 'Оплата');
+
         return (
           <Badge 
             variant={isRefund ? "secondary" : "outline"} 
             className={`text-xs ${isRefund ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" : ""}`}
           >
-            {isRefund ? "Возврат" : (payment.transaction_type || "payment")}
+            {label}
           </Badge>
         );
-        
+      }
       case 'status':
         return getStatusBadge(payment.status_normalized);
         
