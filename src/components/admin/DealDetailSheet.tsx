@@ -48,10 +48,13 @@ import {
   RefreshCw,
   Receipt,
   Undo2,
+  Search,
+  Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { EditDealDialog } from "./EditDealDialog";
+import { LinkPaymentDialog } from "./payments/LinkPaymentDialog";
 
 interface DealDetailSheetProps {
   deal: any | null;
@@ -108,6 +111,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [fetchingDocs, setFetchingDocs] = useState(false);
+  const [linkPaymentDialogOpen, setLinkPaymentDialogOpen] = useState(false);
   
   // Fetch bePaid docs mutation
   const fetchBepaidDocsMutation = useMutation({
@@ -548,10 +552,20 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
             {/* Payments */}
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
-                  <CreditCard className="w-4 h-4" />
-                  Оплаты
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                    <CreditCard className="w-4 h-4" />
+                    Оплаты {payments?.length ? `(${payments.length})` : ""}
+                  </CardTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLinkPaymentDialogOpen(true)}
+                  >
+                    <Search className="w-3 h-3 mr-1" />
+                    Привязать платёж
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 {paymentsLoading ? (
@@ -896,6 +910,24 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      
+      {/* Link Payment Dialog */}
+      <LinkPaymentDialog
+        open={linkPaymentDialogOpen}
+        onOpenChange={setLinkPaymentDialogOpen}
+        orderId={deal.id}
+        orderNumber={deal.order_number}
+        orderAmount={deal.final_price}
+        orderCurrency={deal.currency}
+        profileId={deal.profile_id}
+        userId={deal.user_id}
+        existingPaymentsCount={payments?.length || 0}
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ["deal-payments", deal.id] });
+          queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+          setLinkPaymentDialogOpen(false);
+        }}
+      />
     </Sheet>
   );
 }

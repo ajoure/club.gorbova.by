@@ -2740,6 +2740,7 @@ export type Database = {
           is_external: boolean | null
           is_fee: boolean | null
           last_error: string | null
+          linked_at: string | null
           matched_offer_id: string | null
           matched_order_id: string | null
           matched_product_id: string | null
@@ -2812,6 +2813,7 @@ export type Database = {
           is_external?: boolean | null
           is_fee?: boolean | null
           last_error?: string | null
+          linked_at?: string | null
           matched_offer_id?: string | null
           matched_order_id?: string | null
           matched_product_id?: string | null
@@ -2884,6 +2886,7 @@ export type Database = {
           is_external?: boolean | null
           is_fee?: boolean | null
           last_error?: string | null
+          linked_at?: string | null
           matched_offer_id?: string | null
           matched_order_id?: string | null
           matched_product_id?: string | null
