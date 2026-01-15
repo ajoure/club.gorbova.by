@@ -15,7 +15,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   User,
-  Mail,
   ShieldCheck,
   ShieldX,
   Clock,
@@ -152,31 +151,6 @@ export function ConsentDetailSheet({ profile, open, onOpenChange }: ConsentDetai
                   )}
                 </div>
 
-                <Separator />
-
-                {/* Marketing */}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium">Маркетинговые рассылки</p>
-                      <p className="text-xs text-muted-foreground">
-                        {profile.marketing_consent ? "Пользователь разрешил рассылки" : "Рассылки отключены"}
-                      </p>
-                    </div>
-                  </div>
-                  {profile.marketing_consent ? (
-                    <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 shrink-0">
-                      <CheckCircle className="h-3 w-3 mr-1" />
-                      Да
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="shrink-0">
-                      <XCircle className="h-3 w-3 mr-1" />
-                      Нет
-                    </Badge>
-                  )}
-                </div>
               </CardContent>
             </Card>
 

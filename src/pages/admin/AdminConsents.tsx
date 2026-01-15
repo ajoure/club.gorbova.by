@@ -30,7 +30,6 @@ import {
   Users,
   ShieldCheck,
   ShieldX,
-  Mail,
   CheckCircle,
   XCircle,
 } from "lucide-react";
@@ -74,7 +73,6 @@ export default function AdminConsents() {
     total: profiles?.length || 0,
     withConsent: profiles?.filter(p => p.consent_version).length || 0,
     withoutConsent: profiles?.filter(p => !p.consent_version).length || 0,
-    marketingEnabled: profiles?.filter(p => p.marketing_consent).length || 0,
   };
 
   // Filter profiles
@@ -100,14 +98,13 @@ export default function AdminConsents() {
   const handleExport = () => {
     if (!filteredProfiles.length) return;
     
-    const headers = ["Имя", "Email", "Политика", "Версия", "Дата согласия", "Маркетинг"];
+    const headers = ["Имя", "Email", "Политика", "Версия", "Дата согласия"];
     const rows = filteredProfiles.map(p => [
       p.full_name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || "—",
       p.email || "—",
       p.consent_version ? "Да" : "Нет",
       p.consent_version || "—",
       p.consent_given_at ? format(new Date(p.consent_given_at), "dd.MM.yyyy HH:mm:ss") : "—",
-      p.marketing_consent ? "Да" : "Нет",
     ]);
 
     const csvContent = [headers, ...rows]
@@ -168,15 +165,6 @@ export default function AdminConsents() {
             <div className="text-2xl font-bold text-red-600">{stats.withoutConsent}</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Маркетинг</CardTitle>
-            <Mail className="h-4 w-4 text-blue-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{stats.marketingEnabled}</div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Filters */}
@@ -223,14 +211,13 @@ export default function AdminConsents() {
                     <TableHead>Имя</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Политика</TableHead>
-                    <TableHead>Маркетинг</TableHead>
                     <TableHead>Дата согласия</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredProfiles.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
                         Пользователи не найдены
                       </TableCell>
                     </TableRow>
@@ -264,16 +251,6 @@ export default function AdminConsents() {
                               <XCircle className="h-3 w-3 mr-1" />
                               Нет
                             </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {profile.marketing_consent ? (
-                            <Badge variant="secondary" className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-                              <Mail className="h-3 w-3 mr-1" />
-                              Да
-                            </Badge>
-                          ) : (
-                            <span className="text-muted-foreground text-sm">Нет</span>
                           )}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">

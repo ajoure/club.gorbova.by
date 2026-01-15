@@ -2317,31 +2317,6 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                     )}
                   </div>
 
-                  <Separator />
-
-                  {/* Marketing */}
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
-                      <div>
-                        <p className="text-sm font-medium">Маркетинговые рассылки</p>
-                        <p className="text-xs text-muted-foreground">
-                          {profileConsent?.marketing_consent ? "Пользователь разрешил рассылки" : "Рассылки отключены"}
-                        </p>
-                      </div>
-                    </div>
-                    {profileConsent?.marketing_consent ? (
-                      <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 shrink-0">
-                        <CheckCircle className="h-3 w-3 mr-1" />
-                        Да
-                      </Badge>
-                    ) : (
-                      <Badge variant="secondary" className="shrink-0">
-                        <XCircle className="h-3 w-3 mr-1" />
-                        Нет
-                      </Badge>
-                    )}
-                  </div>
                 </CardContent>
               </Card>
 

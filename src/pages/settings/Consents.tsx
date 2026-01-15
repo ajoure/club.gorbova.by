@@ -1,10 +1,7 @@
-import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useConsent } from "@/hooks/useConsent";
-import { Switch } from "@/components/ui/switch";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { Shield, ShieldCheck, ShieldX, Mail, ExternalLink, History, Loader2, Info } from "lucide-react";
-import { toast } from "sonner";
+import { ShieldCheck, ShieldX, ExternalLink, History, Loader2, Info } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
@@ -14,32 +11,14 @@ export default function ConsentsSettings() {
     profileConsent,
     consentHistory,
     isLoading,
-    updateMarketingConsent,
   } = useConsent();
-  const [isUpdatingMarketing, setIsUpdatingMarketing] = useState(false);
 
   const hasPrivacyConsent = !!profileConsent?.consent_version;
-  const hasMarketingConsent = profileConsent?.marketing_consent ?? false;
-
-  const handleMarketingToggle = async (checked: boolean) => {
-    setIsUpdatingMarketing(true);
-    try {
-      await updateMarketingConsent.mutateAsync({ granted: checked });
-      toast.success(checked ? "Подписка на рассылку активирована" : "Подписка на рассылку отключена");
-    } catch (error) {
-      console.error("Error updating marketing consent:", error);
-      toast.error("Ошибка при обновлении настроек");
-    } finally {
-      setIsUpdatingMarketing(false);
-    }
-  };
 
   const formatConsentType = (type: string) => {
     switch (type) {
       case "privacy_policy":
         return "Политика конфиденциальности";
-      case "marketing":
-        return "Маркетинговые рассылки";
       default:
         return type;
     }
@@ -124,6 +103,15 @@ export default function ConsentsSettings() {
                   <ExternalLink className="h-4 w-4" />
                   Политика конфиденциальности
                 </a>
+                <a
+                  href="/consent"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline ml-4"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Согласие на обработку ПД
+                </a>
               </div>
 
               {/* Info about revocation */}
@@ -142,34 +130,6 @@ export default function ConsentsSettings() {
                       </a>
                     </p>
                   </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </GlassCard>
-
-        {/* Marketing Consent */}
-        <GlassCard className="p-6">
-          <div className="flex items-start gap-4">
-            <div className={`p-3 rounded-xl shrink-0 ${hasMarketingConsent ? "bg-primary/10" : "bg-muted"}`}>
-              <Mail className={`h-6 w-6 ${hasMarketingConsent ? "text-primary" : "text-muted-foreground"}`} />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="font-semibold text-lg">Маркетинговые рассылки</h2>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Получать новости и специальные предложения
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {isUpdatingMarketing && <Loader2 className="h-4 w-4 animate-spin" />}
-                  <Switch
-                    id="marketing-consent"
-                    checked={hasMarketingConsent}
-                    onCheckedChange={handleMarketingToggle}
-                    disabled={isUpdatingMarketing}
-                  />
                 </div>
               </div>
             </div>
