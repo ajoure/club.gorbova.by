@@ -119,10 +119,10 @@ Deno.serve(async (req) => {
       ? ['csv', 'file_import'] 
       : [source_filter];
 
-    // Build the query
+    // Build the query (note: table has no 'meta' column)
     let query = supabaseAdmin
       .from('payment_reconcile_queue')
-      .select('id, bepaid_uid, amount, currency, paid_at, source, is_external, has_conflict, created_at, status, meta')
+      .select('id, bepaid_uid, amount, currency, paid_at, source, is_external, has_conflict, created_at, status, last_error')
       .in('source', importSources)
       .order('created_at', { ascending: false })
       .limit(hardLimit);
@@ -285,38 +285,27 @@ Deno.serve(async (req) => {
         const batch = batches[i];
         console.log(`[admin-purge-imported] Processing batch ${i + 1}/${batches.length} (${batch.length} items)`);
         
-        // SOFT-CANCEL: Update status to 'cancelled' with metadata
-        // If 'cancelled' is not a valid enum value, use 'error' with cancel metadata
+        // SOFT-CANCEL: Update status to 'cancelled' with info in last_error
+        // If 'cancelled' is not a valid enum value, use 'error' with cancel info
+        const cancelInfo = `CANCELLED_BY_ADMIN|${cancelTimestamp}|${user.id}|file_import_cleanup`;
         const { error: updateError } = await supabaseAdmin
           .from('payment_reconcile_queue')
           .update({ 
             status: 'cancelled', // If enum doesn't have 'cancelled', will fallback
-            last_error: 'CANCELLED_BY_ADMIN: file_import cleanup',
-            meta: {
-              cancelled_at: cancelTimestamp,
-              cancelled_by: user.id,
-              cancelled_reason: 'file_import_cleanup',
-              original_source: 'file_import',
-            },
+            last_error: cancelInfo,
           })
           .in('id', batch);
 
         if (updateError) {
           // Try fallback to 'error' status if 'cancelled' is not valid enum
           console.log(`[admin-purge-imported] 'cancelled' status failed, trying 'error' fallback:`, updateError.message);
+          const fallbackInfo = `SOFT_CANCELLED|${cancelTimestamp}|${user.id}|file_import_cleanup`;
           
           const { error: fallbackError } = await supabaseAdmin
             .from('payment_reconcile_queue')
             .update({ 
               status: 'error',
-              last_error: 'CANCELLED_BY_ADMIN: file_import cleanup',
-              meta: {
-                cancelled_at: cancelTimestamp,
-                cancelled_by: user.id,
-                cancelled_reason: 'file_import_cleanup',
-                original_source: 'file_import',
-                soft_cancelled: true, // Mark as soft-cancelled for filtering
-              },
+              last_error: fallbackInfo,
             })
             .in('id', batch);
 

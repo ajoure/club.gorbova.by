@@ -64,7 +64,7 @@ serve(async (req) => {
     // - next_retry_at is null OR <= now (ready for retry)
     let query = supabase
       .from("payment_reconcile_queue")
-      .select("id, bepaid_uid, customer_email, amount, currency, attempts, status, next_retry_at, last_error, source, meta")
+      .select("id, bepaid_uid, customer_email, amount, currency, attempts, status, next_retry_at, last_error, source, created_at")
       .in("status", ["pending", "error"])
       .lt("attempts", maxAttempts)
       .or(`next_retry_at.is.null,next_retry_at.lte.${now}`);
@@ -93,12 +93,13 @@ serve(async (req) => {
       );
     }
 
-    // Filter out soft-cancelled items
+    // Filter out soft-cancelled items (identified by last_error prefix)
     let filteredItems = allPendingItems;
     if (excludeCancelled) {
       filteredItems = allPendingItems.filter(item => {
-        const meta = item.meta as Record<string, unknown> | null;
-        return !(meta?.soft_cancelled === true);
+        // Exclude items with SOFT_CANCELLED or CANCELLED_BY_ADMIN in last_error
+        const lastError = item.last_error || '';
+        return !lastError.startsWith('SOFT_CANCELLED') && !lastError.startsWith('CANCELLED_BY_ADMIN');
       });
     }
 
