@@ -136,7 +136,6 @@ Deno.serve(async (req) => {
         created_at,
         profile_id,
         meta,
-        bepaid_uid,
         profiles:profile_id(full_name, email)
       `)
       .eq('status', 'paid')
@@ -153,7 +152,7 @@ Deno.serve(async (req) => {
     // Build a map of bepaid_uid -> orders for duplicate detection
     const bepaidUidToOrders = new Map<string, any[]>();
     for (const order of paidOrders || []) {
-      const bepaidUid = order.meta?.bepaid_uid || order.bepaid_uid;
+      const bepaidUid = order.meta?.bepaid_uid;
       if (bepaidUid) {
         if (!bepaidUidToOrders.has(bepaidUid)) {
           bepaidUidToOrders.set(bepaidUid, []);
@@ -209,7 +208,7 @@ Deno.serve(async (req) => {
 
     // Process remaining orders for other issues
     for (const order of paidOrders || []) {
-      const bepaidUid = order.meta?.bepaid_uid || order.bepaid_uid;
+      const bepaidUid = order.meta?.bepaid_uid;
       
       // Skip if already processed as duplicate
       if (bepaidUid && bepaidUidToOrders.get(bepaidUid)?.length! > 1) {
