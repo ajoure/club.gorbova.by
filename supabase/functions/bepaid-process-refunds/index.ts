@@ -150,10 +150,11 @@ serve(async (req) => {
       }
 
       // EXECUTE: Create payment record
+      // FIXED: Use 'refunded' status (valid enum: pending, processing, succeeded, failed, refunded, canceled)
       const paymentInsert: any = {
         amount: -(item.amount || 0), // Negative for refund
         currency: item.currency || "BYN",
-        status: "successful",
+        status: "refunded", // Correct enum value for refund transactions
         provider: "bepaid",
         provider_payment_id: item.bepaid_uid,
         provider_response: item.raw_payload,

@@ -3080,7 +3080,7 @@ export type Database = {
           installment_number: number | null
           is_recurring: boolean | null
           meta: Json | null
-          order_id: string
+          order_id: string | null
           paid_at: string | null
           payment_token: string | null
           profile_id: string | null
@@ -3094,7 +3094,7 @@ export type Database = {
           refunds: Json | null
           status: Database["public"]["Enums"]["payment_status"]
           updated_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           amount: number
@@ -3107,7 +3107,7 @@ export type Database = {
           installment_number?: number | null
           is_recurring?: boolean | null
           meta?: Json | null
-          order_id: string
+          order_id?: string | null
           paid_at?: string | null
           payment_token?: string | null
           profile_id?: string | null
@@ -3121,7 +3121,7 @@ export type Database = {
           refunds?: Json | null
           status?: Database["public"]["Enums"]["payment_status"]
           updated_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           amount?: number
@@ -3134,7 +3134,7 @@ export type Database = {
           installment_number?: number | null
           is_recurring?: boolean | null
           meta?: Json | null
-          order_id?: string
+          order_id?: string | null
           paid_at?: string | null
           payment_token?: string | null
           profile_id?: string | null
@@ -3148,7 +3148,7 @@ export type Database = {
           refunds?: Json | null
           status?: Database["public"]["Enums"]["payment_status"]
           updated_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: [
           {
