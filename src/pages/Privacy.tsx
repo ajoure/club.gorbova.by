@@ -95,77 +95,60 @@ export default function Privacy() {
                   Оператору — ЗАО «АЖУР инкам», в лице Директора управляющей организации 
                   Коврижкина Алексея Игоревича, действующего на основании Устава, в соответствии 
                   со статьей 5 Закона Республики Беларусь от 07.05.2021 № 99-З «О защите 
-                  персональных данных», согласие на обработку персональных данных.
+                  персональных данных», согласие на обработку следующих персональных данных:
                 </p>
+
+                <Separator className="my-4" />
+
+                {/* 1. При создании учётной записи */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <UserPlus className="h-5 w-5 text-primary" />
+                    <h3 className="font-medium text-foreground">1. При создании учётной записи:</h3>
+                  </div>
+                  <ul className="list-disc list-inside space-y-1 ml-7">
+                    <li>Фамилия, имя, отчество</li>
+                    <li>Пол</li>
+                    <li>Возраст</li>
+                    <li>Дата и год рождения</li>
+                    <li>Телефон</li>
+                    <li>Адрес электронной почты (e-mail)</li>
+                    <li>Адрес проживания</li>
+                    <li>Ссылка на аккаунты в социальных сетях</li>
+                    <li>Банковские реквизиты, заполняемые при оплате услуг</li>
+                    <li>Изображение Пользователя</li>
+                    <li>Видеозапись с изображением Пользователя</li>
+                  </ul>
+                </div>
+
+                <Separator className="my-4" />
+
+                {/* 2. При осуществлении рекламной деятельности */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Megaphone className="h-5 w-5 text-primary" />
+                    <h3 className="font-medium text-foreground">2. При осуществлении рекламной деятельности:</h3>
+                  </div>
+                  <ul className="list-disc list-inside space-y-1 ml-7">
+                    <li>Фамилия, имя, отчество</li>
+                    <li>Пол</li>
+                    <li>Возраст</li>
+                    <li>Дата и год рождения</li>
+                    <li>Телефон</li>
+                    <li>Адрес электронной почты (e-mail)</li>
+                    <li>Адрес проживания</li>
+                    <li>Ссылка на аккаунты в социальных сетях</li>
+                    <li>Банковские реквизиты, заполняемые при оплате услуг</li>
+                    <li>Данные документа, удостоверяющего личность</li>
+                  </ul>
+                </div>
+
+                <Separator className="my-4" />
+
                 <p>
                   Согласие на обработку персональных данных является конкретным, предметным, 
                   информированным, сознательным и однозначным.
                 </p>
-              </div>
-            </div>
-          </div>
-        </GlassCard>
-
-        {/* Персональные данные для создания учётной записи */}
-        <GlassCard className="p-6 mb-6">
-          <div className="flex items-start gap-4">
-            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-              <UserPlus className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold mb-4">
-                1. Создание учётной записи
-              </h2>
-              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
-                <p>
-                  Если Пользователь дал согласие на создание учётной записи, Оператор обрабатывает 
-                  следующие персональные данные:
-                </p>
-                <ul className="list-disc list-inside space-y-1 ml-2">
-                  <li>Фамилия, имя, отчество</li>
-                  <li>Пол</li>
-                  <li>Возраст</li>
-                  <li>Дата и год рождения</li>
-                  <li>Телефон</li>
-                  <li>Адрес электронной почты (e-mail)</li>
-                  <li>Адрес проживания</li>
-                  <li>Ссылка на аккаунты в социальных сетях</li>
-                  <li>Банковские реквизиты, заполняемые при оплате услуг</li>
-                  <li>Изображение Пользователя</li>
-                  <li>Видеозапись с изображением Пользователя</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </GlassCard>
-
-        {/* Персональные данные для рекламной деятельности */}
-        <GlassCard className="p-6 mb-6">
-          <div className="flex items-start gap-4">
-            <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-              <Megaphone className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold mb-4">
-                2. Осуществление рекламной деятельности
-              </h2>
-              <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
-                <p>
-                  С согласия Пользователя, для осуществления рекламной деятельности Оператор 
-                  обрабатывает следующие персональные данные:
-                </p>
-                <ul className="list-disc list-inside space-y-1 ml-2">
-                  <li>Фамилия, имя, отчество</li>
-                  <li>Пол</li>
-                  <li>Возраст</li>
-                  <li>Дата и год рождения</li>
-                  <li>Телефон</li>
-                  <li>Адрес электронной почты (e-mail)</li>
-                  <li>Адрес проживания</li>
-                  <li>Ссылка на аккаунты в социальных сетях</li>
-                  <li>Банковские реквизиты, заполняемые при оплате услуг</li>
-                  <li>Данные документа, удостоверяющего личность</li>
-                </ul>
               </div>
             </div>
           </div>
