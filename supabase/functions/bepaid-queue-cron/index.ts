@@ -36,8 +36,9 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const maxAttempts = body.maxAttempts || 5;
     const batchSize = body.batchSize || 20;
+    const excludeFileImport = body.excludeFileImport !== false; // Default: exclude file_import
 
-    console.log(`[bepaid-queue-cron] Starting queue processing, batch size: ${batchSize}, max attempts: ${maxAttempts}`);
+    console.log(`[bepaid-queue-cron] Starting queue processing, batch size: ${batchSize}, max attempts: ${maxAttempts}, excludeFileImport: ${excludeFileImport}`);
 
     const now = new Date().toISOString();
 
@@ -46,12 +47,22 @@ serve(async (req) => {
     // - status is pending or error
     // - attempts < maxAttempts
     // - next_retry_at is null OR <= now (ready for retry)
-    const { data: pendingItems, error: fetchError } = await supabase
+    // PATCH: Prioritize webhook source, exclude file_import by default
+    let query = supabase
       .from("payment_reconcile_queue")
-      .select("id, bepaid_uid, customer_email, amount, currency, attempts, status, next_retry_at, last_error")
+      .select("id, bepaid_uid, customer_email, amount, currency, attempts, status, next_retry_at, last_error, source")
       .in("status", ["pending", "error"])
       .lt("attempts", maxAttempts)
-      .or(`next_retry_at.is.null,next_retry_at.lte.${now}`)
+      .or(`next_retry_at.is.null,next_retry_at.lte.${now}`);
+    
+    // Exclude file_import by default - these need manual cleanup
+    if (excludeFileImport) {
+      query = query.neq("source", "file_import");
+    }
+    
+    // Order by source (webhook first) then by created_at
+    const { data: pendingItems, error: fetchError } = await query
+      .order("source", { ascending: false }) // 'webhook' > 'csv' > 'file_import' alphabetically reversed
       .order("created_at", { ascending: true })
       .limit(batchSize);
 
@@ -75,12 +86,13 @@ serve(async (req) => {
       failed: 0,
       skipped: 0,
       retried: 0,
+      webhook_processed: 0,
       errors: [] as string[],
     };
 
     for (const item of pendingItems) {
       try {
-        console.log(`[bepaid-queue-cron] Processing item ${item.id}, bepaid_uid=${item.bepaid_uid}, attempts=${item.attempts}`);
+        console.log(`[bepaid-queue-cron] Processing item ${item.id}, source=${item.source}, bepaid_uid=${item.bepaid_uid}, attempts=${item.attempts}`);
         
         // Update item to processing status
         await supabase
@@ -137,6 +149,7 @@ serve(async (req) => {
             })
             .eq("id", item.id);
           results.success++;
+          if (item.source === 'webhook') results.webhook_processed++;
         } else {
           // No orders created but no error - might need retry
           const newAttempts = (item.attempts || 0) + 1;

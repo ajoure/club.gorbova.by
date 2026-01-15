@@ -9,8 +9,10 @@ interface PurgeRequest {
   date_from?: string;
   date_to?: string;
   source_filter?: string; // 'csv', 'file_import', 'all'
+  status_filter?: string[]; // ['pending', 'error', 'processing']
   dry_run?: boolean;
   limit?: number;
+  batch_size?: number;
 }
 
 interface PurgeResult {
@@ -83,14 +85,17 @@ Deno.serve(async (req) => {
       date_from,
       date_to,
       source_filter = 'all', // Default to 'all' to include both csv and file_import
+      status_filter = ['pending', 'error', 'processing'], // Default: stuck statuses
       dry_run = true,
-      limit = 500,
+      limit = 5000, // Increased for mass cleanup
+      batch_size = 500,
     } = body;
 
-    console.log(`[admin-purge-imported] Starting purge: source=${source_filter}, dry_run=${dry_run}, limit=${limit}, date_from=${date_from}, date_to=${date_to}`);
+    console.log(`[admin-purge-imported] Starting purge: source=${source_filter}, statuses=${status_filter?.join(',')}, dry_run=${dry_run}, limit=${limit}, date_from=${date_from}, date_to=${date_to}`);
 
-    // Hard limit for safety
-    const hardLimit = Math.min(limit, 500);
+    // Hard limit for safety - increased to 5000 for mass cleanup
+    const hardLimit = Math.min(limit, 5000);
+    const batchLimit = Math.min(batch_size, 1000);
 
     // Determine which sources to include
     const importSources = source_filter === 'all' 
@@ -100,10 +105,15 @@ Deno.serve(async (req) => {
     // Build the query
     let query = supabaseAdmin
       .from('payment_reconcile_queue')
-      .select('id, bepaid_uid, amount, currency, paid_at, source, is_external, has_conflict, created_at')
+      .select('id, bepaid_uid, amount, currency, paid_at, source, is_external, has_conflict, created_at, status')
       .in('source', importSources)
       .order('created_at', { ascending: false })
       .limit(hardLimit);
+
+    // Apply status filter (for targeting stuck items)
+    if (status_filter && status_filter.length > 0) {
+      query = query.in('status', status_filter);
+    }
 
     // Apply date filters if provided
     if (date_from) {
@@ -196,39 +206,88 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Execute deletion if not dry run
+    // Execute deletion if not dry run - use batching for large sets
     if (!dry_run && toDelete.length > 0) {
-      const { error: deleteError } = await supabaseAdmin
-        .from('payment_reconcile_queue')
-        .delete()
-        .in('id', toDelete);
+      let deletedCount = 0;
+      const batches: string[][] = [];
+      
+      // Split into batches
+      for (let i = 0; i < toDelete.length; i += batchLimit) {
+        batches.push(toDelete.slice(i, i + batchLimit));
+      }
+      
+      console.log(`[admin-purge-imported] Deleting ${toDelete.length} items in ${batches.length} batches`);
+      
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        console.log(`[admin-purge-imported] Processing batch ${i + 1}/${batches.length} (${batch.length} items)`);
+        
+        const { error: deleteError } = await supabaseAdmin
+          .from('payment_reconcile_queue')
+          .delete()
+          .in('id', batch);
 
-      if (deleteError) {
-        console.error('[admin-purge-imported] Delete error:', deleteError);
-        return new Response(
-          JSON.stringify({ success: false, message: deleteError.message }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        if (deleteError) {
+          console.error(`[admin-purge-imported] Delete error in batch ${i + 1}:`, deleteError);
+          // Continue with other batches, log the error
+          report.deleted = deletedCount;
+          
+          // Write partial audit log
+          await supabaseAdmin.from('audit_logs').insert({
+            action: 'purge_imported_transactions_partial',
+            actor_user_id: user.id,
+            actor_type: 'user',
+            actor_label: 'admin_purge',
+            meta: {
+              dry_run: false,
+              source_filter,
+              status_filter,
+              date_from,
+              date_to,
+              batch_failed: i + 1,
+              total_batches: batches.length,
+              deleted_so_far: deletedCount,
+              error: deleteError.message,
+            },
+          });
+          
+          return new Response(
+            JSON.stringify({ 
+              success: false, 
+              message: `Batch ${i + 1} failed: ${deleteError.message}`,
+              partial_deleted: deletedCount,
+            }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        
+        deletedCount += batch.length;
       }
 
-      report.deleted = toDelete.length;
+      report.deleted = deletedCount;
+      console.log(`[admin-purge-imported] Successfully deleted ${deletedCount} items`);
     }
 
-    // Write audit log
+    // Write audit log with enhanced data
     await supabaseAdmin.from('audit_logs').insert({
       action: 'purge_imported_transactions',
       actor_user_id: user.id,
+      actor_type: 'user',
+      actor_label: 'admin_purge',
       meta: {
         dry_run,
         source_filter,
+        status_filter,
         date_from,
         date_to,
         limit: hardLimit,
+        batch_size: batchLimit,
         total_found: report.total_found,
         eligible_for_deletion: report.eligible_for_deletion,
         with_conflicts: report.with_conflicts,
         deleted: report.deleted,
         total_amount: report.total_amount,
+        timestamp: new Date().toISOString(),
       },
     });
 

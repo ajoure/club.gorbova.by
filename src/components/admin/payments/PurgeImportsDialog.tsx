@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Trash2, AlertTriangle, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { Trash2, AlertTriangle, CheckCircle, XCircle, Loader2, Info } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
@@ -17,6 +17,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface PurgeImportsDialogProps {
   onComplete?: () => void;
@@ -44,24 +45,51 @@ interface PurgeReport {
   total_amount: number;
 }
 
+type StatusFilter = 'pending' | 'error' | 'processing';
+
 export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeImportsDialogProps) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [report, setReport] = useState<PurgeReport | null>(null);
   const [mode, setMode] = useState<'idle' | 'preview' | 'executed'>('idle');
-  const [dateFrom, setDateFrom] = useState("");
+  const [dateFrom, setDateFrom] = useState("2026-01-01");
   const [dateTo, setDateTo] = useState("");
+  
+  // Status filter checkboxes
+  const [statusFilters, setStatusFilters] = useState<Record<StatusFilter, boolean>>({
+    pending: true,
+    error: true,
+    processing: true,
+  });
+
+  const toggleStatus = (status: StatusFilter) => {
+    setStatusFilters(prev => ({ ...prev, [status]: !prev[status] }));
+  };
+
+  const getSelectedStatuses = (): string[] => {
+    return Object.entries(statusFilters)
+      .filter(([_, checked]) => checked)
+      .map(([status]) => status);
+  };
 
   const handlePurge = async (executeDryRun: boolean) => {
+    const selectedStatuses = getSelectedStatuses();
+    if (selectedStatuses.length === 0) {
+      toast.error("Выберите хотя бы один статус");
+      return;
+    }
+
     setIsLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke('admin-purge-imported-transactions', {
         body: {
           date_from: dateFrom || undefined,
           date_to: dateTo || undefined,
-          source_filter: 'all', // Include both 'csv' and 'file_import' sources
+          source_filter: 'file_import', // Target specifically file_import
+          status_filter: selectedStatuses,
           dry_run: executeDryRun,
-          limit: 500,
+          limit: 5000, // Increased for mass cleanup
+          batch_size: 500,
         }
       });
 
@@ -98,6 +126,8 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
     }).format(amount);
   };
 
+  const selectedCount = getSelectedStatuses().length;
+
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); else setOpen(o); }}>
       {renderTrigger ? (
@@ -106,7 +136,7 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
         <DialogTrigger asChild>
           <Button variant="outline" size="sm" className="gap-2 text-destructive hover:text-destructive">
             <Trash2 className="h-4 w-4" />
-            Удалить CSV-импорт
+            Удалить file_import
           </Button>
         </DialogTrigger>
       )}
@@ -115,14 +145,22 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-amber-500" />
-            Удаление импортированных транзакций
+            Очистка зависших file_import
           </DialogTitle>
           <DialogDescription>
-            Удаляет транзакции, загруженные через CSV-импорт. Сначала выполните Dry-run для предпросмотра.
+            Удаляет записи из очереди с source='file_import'. Не затрагивает orders, payments, subscriptions.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Warning about what this does */}
+          <Alert className="border-blue-200 bg-blue-50 dark:bg-blue-950/20">
+            <Info className="h-4 w-4 text-blue-600" />
+            <AlertDescription className="text-blue-700 dark:text-blue-400 text-xs">
+              Очищает только очередь payment_reconcile_queue. Безопасно для данных заказов и платежей.
+            </AlertDescription>
+          </Alert>
+
           {/* Date filters */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
@@ -146,6 +184,47 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
                 className="h-8"
                 disabled={isLoading}
               />
+            </div>
+          </div>
+
+          {/* Status filter checkboxes */}
+          <div className="space-y-2">
+            <Label className="text-xs">Статусы для очистки</Label>
+            <div className="flex flex-wrap gap-4">
+              <div className="flex items-center gap-2">
+                <Checkbox 
+                  id="status-pending" 
+                  checked={statusFilters.pending}
+                  onCheckedChange={() => toggleStatus('pending')}
+                  disabled={isLoading}
+                />
+                <label htmlFor="status-pending" className="text-sm cursor-pointer">
+                  pending
+                  <Badge variant="secondary" className="ml-1 text-[10px]">застрявшие</Badge>
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox 
+                  id="status-error" 
+                  checked={statusFilters.error}
+                  onCheckedChange={() => toggleStatus('error')}
+                  disabled={isLoading}
+                />
+                <label htmlFor="status-error" className="text-sm cursor-pointer">
+                  error
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox 
+                  id="status-processing" 
+                  checked={statusFilters.processing}
+                  onCheckedChange={() => toggleStatus('processing')}
+                  disabled={isLoading}
+                />
+                <label htmlFor="status-processing" className="text-sm cursor-pointer">
+                  processing
+                </label>
+              </div>
             </div>
           </div>
 
@@ -252,7 +331,7 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
             <Button
               variant="secondary"
               onClick={() => handlePurge(true)}
-              disabled={isLoading}
+              disabled={isLoading || selectedCount === 0}
             >
               {isLoading && mode !== 'preview' ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
