@@ -2463,6 +2463,7 @@ export type Database = {
           invoice_sent_at: string | null
           is_trial: boolean
           meta: Json | null
+          offer_id: string | null
           order_number: string
           paid_amount: number | null
           payer_type: string | null
@@ -2495,6 +2496,7 @@ export type Database = {
           invoice_sent_at?: string | null
           is_trial?: boolean
           meta?: Json | null
+          offer_id?: string | null
           order_number: string
           paid_amount?: number | null
           payer_type?: string | null
@@ -2527,6 +2529,7 @@ export type Database = {
           invoice_sent_at?: string | null
           is_trial?: boolean
           meta?: Json | null
+          offer_id?: string | null
           order_number?: string
           paid_amount?: number | null
           payer_type?: string | null
@@ -2548,6 +2551,13 @@ export type Database = {
             columns: ["flow_id"]
             isOneToOne: false
             referencedRelation: "flows"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_v2_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
             referencedColumns: ["id"]
           },
           {
