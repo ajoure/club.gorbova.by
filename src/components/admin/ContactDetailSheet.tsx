@@ -79,7 +79,9 @@ import {
   UserX,
   DollarSign,
   Sparkles,
+  Ghost,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
@@ -170,6 +172,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [isFetchingPhoto, setIsFetchingPhoto] = useState(false);
   const [activeTab, setActiveTab] = useState("profile");
+  const [createDealOnly, setCreateDealOnly] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Reset scroll position when tab changes
@@ -669,10 +672,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   // Grant new access - performs all the same actions as a regular purchase
   const handleGrantNewAccess = async () => {
-    if (!contact?.user_id) {
-      toast.error("У контакта нет привязанного аккаунта. Создайте аккаунт или подождите регистрации.");
+    const isGhostContact = !contact?.user_id;
+    
+    // For ghost contacts, require "deal only" mode
+    if (isGhostContact && !createDealOnly) {
+      toast.error("Для Ghost-контакта включите режим 'Только сделка (без доступа)'");
       return;
     }
+    
     if (!grantProductId || !grantTariffId) {
       toast.error("Выберите продукт и тариф");
       return;
@@ -698,10 +705,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       ]);
 
       // 1. Create order_v2 (like bepaid-webhook does)
+      // For ghost contacts, use profile.id as user_id, for regular - use user_id
+      const orderUserId = isGhostContact ? contact.id : contact.user_id;
       const orderNumber = `GIFT-${now.getFullYear().toString().slice(-2)}-${Date.now().toString(36).toUpperCase()}`;
       const { data: orderV2, error: orderError } = await supabase.from("orders_v2").insert({
         order_number: orderNumber,
-        user_id: contact.user_id,
+        user_id: orderUserId,
+        profile_id: contact.id,
         product_id: grantProductId,
         tariff_id: grantTariffId,
         customer_email: contact.email,
@@ -712,13 +722,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         status: "paid",
         is_trial: false,
         meta: { 
-          source: "admin_grant", 
+          source: createDealOnly ? "admin_deal_only" : "admin_grant", 
           granted_by: currentUser?.id,
           granted_by_email: currentUser?.email,
           comment: grantComment || null,
           access_start: accessStart.toISOString(),
           access_end: accessEnd.toISOString(),
           offer_id: grantOfferId && grantOfferId !== "__none__" ? grantOfferId : undefined,
+          is_ghost: isGhostContact,
+          deal_only: createDealOnly,
         },
       }).select().single();
 
@@ -727,133 +739,136 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       // 2. Create payment_v2 as gift/admin (for history and reports)
       await supabase.from("payments_v2").insert({
         order_id: orderV2.id,
-        user_id: contact.user_id,
+        user_id: orderUserId,
         amount: 0,
         currency: "BYN",
         status: "succeeded",
         provider: "admin",
         paid_at: now.toISOString(),
-        meta: { source: "admin_grant", granted_by: currentUser?.id },
+        meta: { source: createDealOnly ? "admin_deal_only" : "admin_grant", granted_by: currentUser?.id },
       });
 
-      // 3. Check for existing active subscription and extend or create new
-      const { data: existingSub } = await supabase
-        .from("subscriptions_v2")
-        .select("id, access_end_at")
-        .eq("user_id", contact.user_id)
-        .eq("product_id", grantProductId)
-        .eq("tariff_id", grantTariffId)
-        .in("status", ["active", "trial"])
-        .is("canceled_at", null)
-        .gte("access_end_at", now.toISOString())
-        .order("access_end_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      let subscriptionId: string;
-      if (existingSub) {
-        // Extend existing subscription to use the later date
-        const currentEnd = new Date(existingSub.access_end_at);
-        const newEnd = accessEnd > currentEnd ? accessEnd : new Date(currentEnd.getTime() + grantDays * 24 * 60 * 60 * 1000);
-        await supabase.from("subscriptions_v2").update({
-          access_end_at: newEnd.toISOString(),
-          order_id: orderV2.id,
-        }).eq("id", existingSub.id);
-        subscriptionId = existingSub.id;
-      } else {
-        // Create new subscription with custom dates
-        const { data: newSub, error: subError } = await supabase.from("subscriptions_v2").insert({
-          user_id: contact.user_id,
-          order_id: orderV2.id,
-          product_id: grantProductId,
-          tariff_id: grantTariffId,
-          status: "active",
-          is_trial: false,
-          access_start_at: accessStart.toISOString(),
-          access_end_at: accessEnd.toISOString(),
-        }).select().single();
-        if (subError) throw subError;
-        subscriptionId = newSub.id;
-      }
-
-      // Track sync results
+      // Skip subscription, entitlements, and integrations for "deal only" mode
+      let subscriptionId: string | null = null;
       const syncResults: Record<string, { success: boolean; error?: string }> = {};
 
-      // 4. Create telegram_access_grants and grant access if product has club
-      if (product?.telegram_club_id) {
-        try {
-          // Create access grant record
-          await supabase.from("telegram_access_grants").insert({
-            user_id: contact.user_id,
-            club_id: product.telegram_club_id,
-            source: "admin_grant",
-            source_id: orderV2.id,
-            start_at: accessStart.toISOString(),
-            end_at: accessEnd.toISOString(),
+      if (!createDealOnly && !isGhostContact) {
+        // 3. Check for existing active subscription and extend or create new
+        const { data: existingSub } = await supabase
+          .from("subscriptions_v2")
+          .select("id, access_end_at")
+          .eq("user_id", contact.user_id!)
+          .eq("product_id", grantProductId)
+          .eq("tariff_id", grantTariffId)
+          .in("status", ["active", "trial"])
+          .is("canceled_at", null)
+          .gte("access_end_at", now.toISOString())
+          .order("access_end_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (existingSub) {
+          // Extend existing subscription to use the later date
+          const currentEnd = new Date(existingSub.access_end_at);
+          const newEnd = accessEnd > currentEnd ? accessEnd : new Date(currentEnd.getTime() + grantDays * 24 * 60 * 60 * 1000);
+          await supabase.from("subscriptions_v2").update({
+            access_end_at: newEnd.toISOString(),
+            order_id: orderV2.id,
+          }).eq("id", existingSub.id);
+          subscriptionId = existingSub.id;
+        } else {
+          // Create new subscription with custom dates
+          const { data: newSub, error: subError } = await supabase.from("subscriptions_v2").insert({
+            user_id: contact.user_id!,
+            order_id: orderV2.id,
+            product_id: grantProductId,
+            tariff_id: grantTariffId,
             status: "active",
-            meta: {
-              product_id: grantProductId,
-              tariff_id: grantTariffId,
-              granted_by: currentUser?.id,
-              granted_by_email: currentUser?.email,
-              comment: grantComment || null,
-            },
-          });
+            is_trial: false,
+            access_start_at: accessStart.toISOString(),
+            access_end_at: accessEnd.toISOString(),
+          }).select().single();
+          if (subError) throw subError;
+          subscriptionId = newSub.id;
+        }
 
-          // Grant Telegram access via edge function
-          const { error: tgError } = await supabase.functions.invoke("telegram-grant-access", {
-            body: {
-              user_id: contact.user_id,
+        // 4. Create telegram_access_grants and grant access if product has club
+        if (product?.telegram_club_id) {
+          try {
+            // Create access grant record
+            await supabase.from("telegram_access_grants").insert({
+              user_id: contact.user_id!,
               club_id: product.telegram_club_id,
-              duration_days: grantDays,
               source: "admin_grant",
-            },
-          });
-          
-          syncResults.telegram = { success: !tgError, error: tgError?.message };
-        } catch (err) {
-          syncResults.telegram = { success: false, error: (err as Error).message };
-        }
-      }
+              source_id: orderV2.id,
+              start_at: accessStart.toISOString(),
+              end_at: accessEnd.toISOString(),
+              status: "active",
+              meta: {
+                product_id: grantProductId,
+                tariff_id: grantTariffId,
+                granted_by: currentUser?.id,
+                granted_by_email: currentUser?.email,
+                comment: grantComment || null,
+              },
+            });
 
-      // 5. Sync to GetCourse using the created order (so gc_deal_number is saved for future revoke/cancel)
-      const gcOfferId = tariff?.getcourse_offer_id || tariff?.getcourse_offer_code;
-      if (gcOfferId) {
-        try {
-          const { data: gcResult, error: gcError } = await supabase.functions.invoke("test-getcourse-sync", {
-            body: {
-              orderId: orderV2.id,
-              // Fallbacks (function will prefer order/tariff data when orderId is provided)
-              email: contact.email,
-              offerId: typeof gcOfferId === "string" ? parseInt(gcOfferId) : gcOfferId,
-              tariffCode: tariff?.code || "admin_grant",
-            },
-          });
-
-          if (gcError) {
-            syncResults.getcourse = { success: false, error: gcError.message };
-          } else if (gcResult?.getcourse?.success) {
-            syncResults.getcourse = { success: true };
-          } else {
-            syncResults.getcourse = { success: false, error: gcResult?.getcourse?.error || "Unknown error" };
+            // Grant Telegram access via edge function
+            const { error: tgError } = await supabase.functions.invoke("telegram-grant-access", {
+              body: {
+                user_id: contact.user_id,
+                club_id: product.telegram_club_id,
+                duration_days: grantDays,
+                source: "admin_grant",
+              },
+            });
+            
+            syncResults.telegram = { success: !tgError, error: tgError?.message };
+          } catch (err) {
+            syncResults.telegram = { success: false, error: (err as Error).message };
           }
-        } catch (err) {
-          syncResults.getcourse = { success: false, error: (err as Error).message };
         }
-      }
 
-      // Update subscription meta with sync results
-      if (Object.keys(syncResults).length > 0) {
-        await supabase.from("subscriptions_v2").update({
-          meta: { sync_results: syncResults, synced_at: now.toISOString() },
-        }).eq("id", subscriptionId);
+        // 5. Sync to GetCourse using the created order (so gc_deal_number is saved for future revoke/cancel)
+        const gcOfferId = tariff?.getcourse_offer_id || tariff?.getcourse_offer_code;
+        if (gcOfferId) {
+          try {
+            const { data: gcResult, error: gcError } = await supabase.functions.invoke("test-getcourse-sync", {
+              body: {
+                orderId: orderV2.id,
+                // Fallbacks (function will prefer order/tariff data when orderId is provided)
+                email: contact.email,
+                offerId: typeof gcOfferId === "string" ? parseInt(gcOfferId) : gcOfferId,
+                tariffCode: tariff?.code || "admin_grant",
+              },
+            });
+
+            if (gcError) {
+              syncResults.getcourse = { success: false, error: gcError.message };
+            } else if (gcResult?.getcourse?.success) {
+              syncResults.getcourse = { success: true };
+            } else {
+              syncResults.getcourse = { success: false, error: gcResult?.getcourse?.error || "Unknown error" };
+            }
+          } catch (err) {
+            syncResults.getcourse = { success: false, error: (err as Error).message };
+          }
+        }
+
+        // Update subscription meta with sync results
+        if (subscriptionId && Object.keys(syncResults).length > 0) {
+          await supabase.from("subscriptions_v2").update({
+            meta: { sync_results: syncResults, synced_at: now.toISOString() },
+          }).eq("id", subscriptionId);
+        }
       }
 
       // 6. Log action with full details
+      const dateStr = `${format(accessStart, "dd.MM.yy")} — ${format(accessEnd, "dd.MM.yy")}`;
       await supabase.from("audit_logs").insert({
         actor_user_id: currentUser?.id,
-        action: "admin.grant_access",
-        target_user_id: contact.user_id,
+        action: createDealOnly ? "admin.create_deal_only" : "admin.grant_access",
+        target_user_id: isGhostContact ? null : contact.user_id,
         meta: { 
           product_id: grantProductId,
           product_name: product?.name,
@@ -866,26 +881,38 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           order_id: orderV2.id,
           order_number: orderNumber,
           subscription_id: subscriptionId,
-          extended_existing: !!existingSub,
+          profile_id: contact.id,
+          is_ghost: isGhostContact,
+          deal_only: createDealOnly,
           getcourse_offer_code: tariff?.getcourse_offer_code,
           telegram_club_id: product?.telegram_club_id,
           sync_results: syncResults,
         },
       });
 
-      // 7. Notify super admins via Telegram about the new GIFT order
-      const dateStr = `${format(accessStart, "dd.MM.yy")} — ${format(accessEnd, "dd.MM.yy")}`;
+      // 7. Notify super admins via Telegram about the new order
       try {
-        const giftMessage = `🎁 Выдан доступ\n\n` +
-          `👤 <b>Клиент:</b> ${formatContactName(contact)}\n` +
-          `📧 Email: ${contact.email || 'Не указан'}\n` +
-          `📱 Телефон: ${contact.phone || 'Не указан'}\n` +
-          (contact.telegram_username ? `💬 Telegram: @${contact.telegram_username}\n` : '') +
-          `\n📦 <b>Продукт:</b> ${product?.name || 'Не указан'}\n` +
-          `📋 Тариф: ${tariff?.name || 'Не указан'}\n` +
-          `📅 Период: ${dateStr}\n` +
-          `🆔 Заказ: ${orderNumber}\n` +
-          `👨‍💼 Выдал: ${currentUser?.email || 'Неизвестно'}`;
+        const giftMessage = createDealOnly 
+          ? `📝 Создана сделка (без доступа)\n\n` +
+            `👤 <b>Клиент:</b> ${formatContactName(contact)}${isGhostContact ? ' 👻' : ''}\n` +
+            `📧 Email: ${contact.email || 'Не указан'}\n` +
+            `📱 Телефон: ${contact.phone || 'Не указан'}\n` +
+            (contact.telegram_username ? `💬 Telegram: @${contact.telegram_username}\n` : '') +
+            `\n📦 <b>Продукт:</b> ${product?.name || 'Не указан'}\n` +
+            `📋 Тариф: ${tariff?.name || 'Не указан'}\n` +
+            `📅 Период: ${dateStr}\n` +
+            `🆔 Заказ: ${orderNumber}\n` +
+            `👨‍💼 Создал: ${currentUser?.email || 'Неизвестно'}`
+          : `🎁 Выдан доступ\n\n` +
+            `👤 <b>Клиент:</b> ${formatContactName(contact)}\n` +
+            `📧 Email: ${contact.email || 'Не указан'}\n` +
+            `📱 Телефон: ${contact.phone || 'Не указан'}\n` +
+            (contact.telegram_username ? `💬 Telegram: @${contact.telegram_username}\n` : '') +
+            `\n📦 <b>Продукт:</b> ${product?.name || 'Не указан'}\n` +
+            `📋 Тариф: ${tariff?.name || 'Не указан'}\n` +
+            `📅 Период: ${dateStr}\n` +
+            `🆔 Заказ: ${orderNumber}\n` +
+            `👨‍💼 Выдал: ${currentUser?.email || 'Неизвестно'}`;
 
         supabase.functions.invoke("telegram-notify-admins", {
           body: { message: giftMessage },
@@ -894,11 +921,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         console.error("Error preparing admin notification:", notifyErr);
       }
 
-      toast.success(existingSub 
-        ? `Доступ продлён (${dateStr})` 
-        : `Доступ выдан (${dateStr})`
+      toast.success(createDealOnly 
+        ? `Сделка создана (${dateStr})` 
+        : subscriptionId 
+          ? `Доступ выдан (${dateStr})` 
+          : `Доступ продлён (${dateStr})`
       );
-      queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.user_id] });
+      queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.id] });
       refetchSubs();
       setGrantProductId("");
       setGrantTariffId("");
@@ -1011,15 +1040,28 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 <p className="text-xs sm:text-sm text-muted-foreground truncate">{contact.email}</p>
               </div>
             </div>
-            <Badge variant={contact.status === "active" ? "default" : "secondary"} className="flex-shrink-0 text-xs mt-1">
-              {contact.status === "active" ? (
-                <><CheckCircle className="w-3 h-3 mr-1" />Активен</>
-              ) : contact.status === "blocked" ? (
-                <><Ban className="w-3 h-3 mr-1" />Заблокирован</>
-              ) : (
-                <><XCircle className="w-3 h-3 mr-1" />{contact.status}</>
+            <div className="flex items-center gap-1.5 flex-shrink-0 mt-1">
+              {!contact.user_id && (
+                <Badge variant="outline" className="text-xs gap-1">
+                  <Ghost className="w-3 h-3" />
+                  Ghost
+                </Badge>
               )}
-            </Badge>
+              <Badge 
+                variant={!contact.user_id ? "secondary" : contact.status === "active" ? "default" : "secondary"} 
+                className="text-xs"
+              >
+                {!contact.user_id ? (
+                  <><Ban className="w-3 h-3 mr-1" />Заблокирован</>
+                ) : contact.status === "active" ? (
+                  <><CheckCircle className="w-3 h-3 mr-1" />Активен</>
+                ) : contact.status === "blocked" ? (
+                  <><Ban className="w-3 h-3 mr-1" />Заблокирован</>
+                ) : (
+                  <><XCircle className="w-3 h-3 mr-1" />{contact.status}</>
+                )}
+              </Badge>
+            </div>
           </div>
           <div className="flex items-center gap-2 mt-2">
             {returnTo && (
@@ -1784,13 +1826,33 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                     />
                   </div>
 
+                  {/* Deal only option for ghost contacts */}
+                  {!contact.user_id && (
+                    <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                      <Checkbox 
+                        id="dealOnly" 
+                        checked={createDealOnly} 
+                        onCheckedChange={(checked) => setCreateDealOnly(checked === true)}
+                        className="mt-0.5"
+                      />
+                      <div className="space-y-1">
+                        <Label htmlFor="dealOnly" className="text-sm cursor-pointer font-medium">
+                          Только сделка (без доступа)
+                        </Label>
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                          Для Ghost-контактов выдача доступа невозможна. Будет создана только сделка для учёта.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   <Button
                     onClick={handleGrantNewAccess}
-                    disabled={isProcessing || !grantProductId || !grantTariffId || !grantDateRange?.from || !grantDateRange?.to}
+                    disabled={isProcessing || !grantProductId || !grantTariffId || !grantDateRange?.from || !grantDateRange?.to || (!contact.user_id && !createDealOnly)}
                     className="gap-1 h-10 sm:h-9 w-full"
                   >
                     <Plus className="w-4 h-4" />
-                    Выдать доступ
+                    {createDealOnly ? "Создать сделку" : "Выдать доступ"}
                   </Button>
                 </CardContent>
               </Card>

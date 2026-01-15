@@ -75,6 +75,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
     next_charge_at: null as Date | null,
     auto_renew: false,
     profile_id: "" as string | null,
+    user_id: "" as string | null,
   });
   const [showContactSearch, setShowContactSearch] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
@@ -161,6 +162,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         next_charge_at: subscription?.next_charge_at ? new Date(subscription.next_charge_at) : null,
         auto_renew: subscription?.auto_renew ?? false,
         profile_id: deal.profile_id || profile?.id || null,
+        user_id: deal.user_id || profile?.user_id || null,
       });
       setShowContactSearch(false);
       setContactSearch("");
@@ -186,6 +188,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
           tariff_id: formData.tariff_id || null,
           offer_id: formData.offer_id || null,
           profile_id: formData.profile_id || null,
+          user_id: formData.user_id || deal.user_id,
         })
         .eq("id", deal.id);
       
@@ -717,12 +720,16 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                           key={p.id}
                           type="button"
                           onClick={() => {
-                            setFormData(prev => ({ ...prev, profile_id: p.id }));
+                            setFormData(prev => ({ 
+                              ...prev, 
+                              profile_id: p.id,
+                              user_id: p.user_id || null 
+                            }));
                             setShowContactSearch(false);
                           }}
                           className={cn(
                             "w-full p-2 rounded-lg text-left transition-colors flex items-center gap-2",
-                            formData.profile_id === p.id 
+                            formData.profile_id === p.id
                               ? "bg-primary/10 border border-primary" 
                               : "hover:bg-muted"
                           )}
@@ -760,7 +767,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setFormData(prev => ({ ...prev, profile_id: null }))}
+                    onClick={() => setFormData(prev => ({ ...prev, profile_id: null, user_id: null }))}
                     className="w-full gap-1"
                   >
                     <X className="w-3 h-3" />
