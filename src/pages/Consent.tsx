@@ -144,8 +144,56 @@ export default function Consent() {
                 <Separator className="my-4" />
 
                 <p>
-                  Согласие на обработку персональных данных является конкретным, предметным, 
-                  информированным, сознательным и однозначным.
+                  Настоящее согласие является конкретным, предметным, информированным, сознательным и однозначным.
+                </p>
+
+                <p>
+                  Я принимаю условия Политики конфиденциальности Оператора, размещенной в сети Интернет по адресу:{" "}
+                  <a href="https://gorbova.by" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                    https://gorbova.by/
+                  </a>,{" "}
+                  <a href="https://gorbova.pro" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                    https://gorbova.pro/
+                  </a>,{" "}
+                  <a href="https://gorbova.getcourse.ru" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                    https://gorbova.getcourse.ru/
+                  </a>, включая все домены, субдомены и страницы, их содержимое, а также интернет-сервисы и 
+                  программное обеспечение, предлагаемые Оператором к использованию на этих Сайтах, и подтверждаю, 
+                  что ознакомлен или ознакомлена с ней на момент предоставления настоящего Согласия.
+                </p>
+
+                <p>
+                  Я соглашаюсь с тем, что считаюсь давшим (-ей) согласие на обработку персональных данных, 
+                  разрешенных субъектом персональных данных для распространения, внесенных в поля формы, 
+                  в момент проставления символа в чек-боксе (в поле для ввода) в сети Интернет по адресу:{" "}
+                  <a href="https://gorbova.by" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                    https://gorbova.by/
+                  </a>,{" "}
+                  <a href="https://gorbova.pro" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                    https://gorbova.pro/
+                  </a>,{" "}
+                  <a href="https://gorbova.getcourse.ru" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                    https://gorbova.getcourse.ru/
+                  </a>{" "}
+                  рядом с текстом вида: «Я даю согласие на обработку персональных данных, разрешенных субъектом 
+                  персональных данных для распространения, в соответствии с условиями политики конфиденциальности» 
+                  или иным аналогичным текстом, при условии, что Субъекту персональных данных в каждом месте 
+                  сбора персональных данных предоставлена возможность ознакомиться с полным текстом настоящей Политики.
+                </p>
+
+                <Separator className="my-4" />
+
+                <p>
+                  Настоящее согласие действует со дня его предоставления Оператору до дня получения Оператором 
+                  от Пользователя требования, которое должно включать в себя фамилию, имя, отчество (при наличии), 
+                  контактную информацию (номер телефона, адрес электронной почты или почтовый адрес) субъекта 
+                  персональных данных, а также перечень персональных данных, обработка которых подлежит прекращению.
+                </p>
+
+                <p>
+                  Действие согласия субъекта персональных данных на обработку персональных данных, разрешенных 
+                  субъектом персональных данных для распространения, прекращается с момента поступления Оператору 
+                  такого требования.
                 </p>
               </div>
             </div>
@@ -220,15 +268,6 @@ export default function Consent() {
                     <FileText className="h-4 w-4" />
                     Политика конфиденциальности
                   </Link>
-                  <a 
-                    href="https://gorbova.getcourse.ru/politika" 
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-muted text-foreground hover:bg-muted/80 transition-colors"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                    Политика на GetCourse
-                  </a>
                 </div>
               </div>
             </div>

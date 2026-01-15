@@ -277,10 +277,15 @@ export function PreregistrationDialog({
                 }
               />
               <Label htmlFor="consent" className="text-sm text-muted-foreground leading-tight">
-                Я согласен(а) на обработку персональных данных в соответствии с{" "}
-                <a href="/privacy" className="text-primary hover:underline" target="_blank">
-                  политикой конфиденциальности
-                </a>
+                Я согласен(а) с{" "}
+                <a href="/privacy" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                  Политикой конфиденциальности
+                </a>{" "}
+                и даю{" "}
+                <a href="/consent" className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+                  согласие
+                </a>{" "}
+                на обработку персональных данных
               </Label>
             </div>
 
