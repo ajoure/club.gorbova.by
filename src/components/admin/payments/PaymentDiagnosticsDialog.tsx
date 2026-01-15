@@ -73,9 +73,10 @@ const DIAGNOSIS_CONFIG = {
 
 interface PaymentDiagnosticsDialogProps {
   onComplete?: () => void;
+  renderTrigger?: (onClick: () => void) => React.ReactNode;
 }
 
-export default function PaymentDiagnosticsDialog({ onComplete }: PaymentDiagnosticsDialogProps) {
+export default function PaymentDiagnosticsDialog({ onComplete, renderTrigger }: PaymentDiagnosticsDialogProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<DiagnosticSummary | null>(null);
@@ -139,12 +140,16 @@ export default function PaymentDiagnosticsDialog({ onComplete }: PaymentDiagnost
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" className="gap-2">
-          <AlertTriangle className="h-4 w-4" />
-          Диагностика потерь
-        </Button>
-      </DialogTrigger>
+      {renderTrigger ? (
+        <span onClick={() => setOpen(true)}>{renderTrigger(() => setOpen(true))}</span>
+      ) : (
+        <DialogTrigger asChild>
+          <Button variant="outline" className="gap-2">
+            <AlertTriangle className="h-4 w-4" />
+            Диагностика потерь
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="max-w-5xl max-h-[90vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

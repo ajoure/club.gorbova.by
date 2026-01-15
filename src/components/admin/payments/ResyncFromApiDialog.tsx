@@ -14,6 +14,7 @@ import { format, subDays } from "date-fns";
 interface ResyncFromApiDialogProps {
   onComplete?: () => void;
   trigger?: React.ReactNode;
+  renderTrigger?: (onClick: () => void) => React.ReactNode;
 }
 
 interface SyncReport {
@@ -45,7 +46,7 @@ interface SyncResult {
   message?: string;
 }
 
-export default function ResyncFromApiDialog({ onComplete, trigger }: ResyncFromApiDialogProps) {
+export default function ResyncFromApiDialog({ onComplete, trigger, renderTrigger }: ResyncFromApiDialogProps) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [mode, setMode] = useState<'idle' | 'preview' | 'executed'>('idle');
@@ -109,14 +110,18 @@ export default function ResyncFromApiDialog({ onComplete, trigger }: ResyncFromA
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); else setOpen(o); }}>
-      <DialogTrigger asChild>
-        {trigger || (
-          <Button variant="outline" size="sm" className="gap-2">
-            <Download className="h-4 w-4" />
-            Resync из API
-          </Button>
-        )}
-      </DialogTrigger>
+      {renderTrigger ? (
+        <span onClick={() => setOpen(true)}>{renderTrigger(() => setOpen(true))}</span>
+      ) : (
+        <DialogTrigger asChild>
+          {trigger || (
+            <Button variant="outline" size="sm" className="gap-2">
+              <Download className="h-4 w-4" />
+              Resync из API
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       
       <DialogContent className="max-w-lg">
         <DialogHeader>

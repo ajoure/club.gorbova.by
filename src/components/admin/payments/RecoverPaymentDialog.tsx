@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 interface RecoverPaymentDialogProps {
   onRecovered?: () => void;
   trigger?: React.ReactNode;
+  renderTrigger?: (onClick: () => void) => React.ReactNode;
 }
 
 interface RecoverResult {
@@ -24,7 +25,7 @@ interface RecoverResult {
   details?: any;
 }
 
-export default function RecoverPaymentDialog({ onRecovered, trigger }: RecoverPaymentDialogProps) {
+export default function RecoverPaymentDialog({ onRecovered, trigger, renderTrigger }: RecoverPaymentDialogProps) {
   const [open, setOpen] = useState(false);
   const [uid, setUid] = useState("");
   const [trackingId, setTrackingId] = useState("");
@@ -183,14 +184,18 @@ export default function RecoverPaymentDialog({ onRecovered, trigger }: RecoverPa
   
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); else setOpen(o); }}>
-      <DialogTrigger asChild>
-        {trigger || (
-          <Button variant="outline" size="sm">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Восстановить платёж
-          </Button>
-        )}
-      </DialogTrigger>
+      {renderTrigger ? (
+        <span onClick={() => setOpen(true)}>{renderTrigger(() => setOpen(true))}</span>
+      ) : (
+        <DialogTrigger asChild>
+          {trigger || (
+            <Button variant="outline" size="sm">
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Восстановить платёж
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="max-w-md">
         <DialogHeader className="space-y-1.5 pb-2">
           <DialogTitle className="text-lg">Восстановить пропущенный платёж</DialogTitle>

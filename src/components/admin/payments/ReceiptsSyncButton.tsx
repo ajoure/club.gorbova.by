@@ -17,6 +17,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 interface ReceiptsSyncButtonProps {
   selectedIds?: string[];
   onComplete?: () => void;
+  renderTrigger?: (onClick: () => void, isLoading: boolean) => React.ReactNode;
 }
 
 interface SyncResult {
@@ -37,7 +38,7 @@ interface SyncReport {
   results: SyncResult[];
 }
 
-export default function ReceiptsSyncButton({ selectedIds, onComplete }: ReceiptsSyncButtonProps) {
+export default function ReceiptsSyncButton({ selectedIds, onComplete, renderTrigger }: ReceiptsSyncButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [report, setReport] = useState<SyncReport | null>(null);
@@ -111,20 +112,24 @@ export default function ReceiptsSyncButton({ selectedIds, onComplete }: Receipts
 
   return (
     <>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={handleSync}
-        disabled={isLoading}
-        className="gap-2"
-      >
-        {isLoading ? (
-          <RefreshCw className="h-4 w-4 animate-spin" />
-        ) : (
-          <FileText className="h-4 w-4" />
-        )}
-        {selectedIds?.length ? `Получить чеки (${selectedIds.length})` : "Получить чеки"}
-      </Button>
+      {renderTrigger ? (
+        renderTrigger(handleSync, isLoading)
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleSync}
+          disabled={isLoading}
+          className="gap-2"
+        >
+          {isLoading ? (
+            <RefreshCw className="h-4 w-4 animate-spin" />
+          ) : (
+            <FileText className="h-4 w-4" />
+          )}
+          {selectedIds?.length ? `Получить чеки (${selectedIds.length})` : "Получить чеки"}
+        </Button>
+      )}
 
       <Dialog open={showReport} onOpenChange={setShowReport}>
         <DialogContent className="max-w-lg">

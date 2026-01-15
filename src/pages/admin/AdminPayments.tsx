@@ -3,20 +3,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
-  RefreshCw, Download, CreditCard, Mail, 
-  AlertCircle, Clock, Database, Phone, Package, AlertTriangle, Link2, Calendar, 
-  Upload, ArrowLeft, ExternalLink, FileText, RotateCcw, Search, Filter, X
+  Download, Upload, ArrowLeft, Search, Filter, X
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { format } from "date-fns";
-import { ru } from "date-fns/locale";
+import { format, startOfMonth, endOfMonth } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useUnifiedPayments, UnifiedPayment, DateFilter } from "@/hooks/useUnifiedPayments";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -26,11 +19,8 @@ import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
 import PaymentsDashboard, { DashboardFilter } from "@/components/admin/payments/PaymentsDashboard";
 import PaymentsAnalytics, { AnalyticsFilter } from "@/components/admin/payments/PaymentsAnalytics";
-import RecoverPaymentDialog from "@/components/admin/payments/RecoverPaymentDialog";
-import ReceiptsSyncButton from "@/components/admin/payments/ReceiptsSyncButton";
-import PurgeImportsDialog from "@/components/admin/payments/PurgeImportsDialog";
-import PaymentDiagnosticsDialog from "@/components/admin/payments/PaymentDiagnosticsDialog";
-import ResyncFromApiDialog from "@/components/admin/payments/ResyncFromApiDialog";
+import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
+import PaymentsSettingsDropdown from "@/components/admin/payments/PaymentsSettingsDropdown";
 
 export type PaymentFilters = {
   search: string;
@@ -66,10 +56,11 @@ export default function AdminPayments() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   
-  // Date filter - default from start of year
+  // Date filter - default to current month
+  const now = new Date();
   const [dateFilter, setDateFilter] = useState<DateFilter>({
-    from: "2026-01-01",
-    to: undefined,
+    from: format(startOfMonth(now), 'yyyy-MM-dd'),
+    to: format(endOfMonth(now), 'yyyy-MM-dd'),
   });
   
   // Filters
@@ -316,67 +307,29 @@ export default function AdminPayments() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Receipts sync button */}
-            <ReceiptsSyncButton 
-              selectedIds={selectedItems.size > 0 ? Array.from(selectedItems) : undefined}
-              onComplete={refetch}
+          <div className="flex items-center gap-2">
+            {/* Period selector */}
+            <DatePeriodSelector 
+              value={dateFilter} 
+              onChange={setDateFilter} 
             />
             
-            {/* Recover payment button */}
-            <RecoverPaymentDialog onRecovered={refetch} />
-            
-            {/* Purge CSV imports */}
-            <PurgeImportsDialog onComplete={refetch} />
-            
-            {/* Payment diagnostics */}
-            <PaymentDiagnosticsDialog onComplete={refetch} />
-            
-            {/* Full resync from API (dry-run/execute) */}
-            <ResyncFromApiDialog onComplete={refetch} />
-            
-            {/* Quick refresh from API */}
-            <Button 
-              variant="outline" 
-              onClick={handleRefreshFromApi} 
-              disabled={isRefreshingFromApi}
-              className="gap-2"
-            >
-              <RefreshCw className={`h-4 w-4 ${isRefreshingFromApi ? 'animate-spin' : ''}`} />
-              Обновить из bePaid
-            </Button>
-            
             {/* Import button */}
-            <Button onClick={() => setImportDialogOpen(true)} className="gap-2">
+            <Button 
+              onClick={() => setImportDialogOpen(true)} 
+              className="gap-2 h-9"
+            >
               <Upload className="h-4 w-4" />
-              Импорт CSV
+              <span className="hidden sm:inline">Импорт</span>
             </Button>
             
-            {/* Date filter */}
-            <div className="flex items-center gap-2 bg-muted/50 p-2 rounded-lg">
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-              <div className="flex items-center gap-2">
-                <Label htmlFor="date-from" className="text-sm text-muted-foreground whitespace-nowrap">С:</Label>
-                <Input
-                  id="date-from"
-                  type="date"
-                  value={dateFilter.from}
-                  onChange={(e) => setDateFilter(prev => ({ ...prev, from: e.target.value }))}
-                  className="h-8 w-36"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <Label htmlFor="date-to" className="text-sm text-muted-foreground whitespace-nowrap">По:</Label>
-                <Input
-                  id="date-to"
-                  type="date"
-                  value={dateFilter.to || ""}
-                  onChange={(e) => setDateFilter(prev => ({ ...prev, to: e.target.value || undefined }))}
-                  className="h-8 w-36"
-                  placeholder="Сегодня"
-                />
-              </div>
-            </div>
+            {/* Settings dropdown */}
+            <PaymentsSettingsDropdown 
+              selectedIds={selectedItems.size > 0 ? Array.from(selectedItems) : undefined}
+              onRefreshFromApi={handleRefreshFromApi}
+              isRefreshingFromApi={isRefreshingFromApi}
+              onComplete={refetch}
+            />
           </div>
         </div>
         

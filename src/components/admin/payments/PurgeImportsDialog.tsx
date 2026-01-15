@@ -20,6 +20,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface PurgeImportsDialogProps {
   onComplete?: () => void;
+  renderTrigger?: (onClick: () => void) => React.ReactNode;
 }
 
 interface PurgeResult {
@@ -43,7 +44,7 @@ interface PurgeReport {
   total_amount: number;
 }
 
-export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogProps) {
+export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeImportsDialogProps) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [report, setReport] = useState<PurgeReport | null>(null);
@@ -99,12 +100,16 @@ export default function PurgeImportsDialog({ onComplete }: PurgeImportsDialogPro
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); else setOpen(o); }}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2 text-destructive hover:text-destructive">
-          <Trash2 className="h-4 w-4" />
-          Удалить CSV-импорт
-        </Button>
-      </DialogTrigger>
+      {renderTrigger ? (
+        <span onClick={() => setOpen(true)}>{renderTrigger(() => setOpen(true))}</span>
+      ) : (
+        <DialogTrigger asChild>
+          <Button variant="outline" size="sm" className="gap-2 text-destructive hover:text-destructive">
+            <Trash2 className="h-4 w-4" />
+            Удалить CSV-импорт
+          </Button>
+        </DialogTrigger>
+      )}
       
       <DialogContent className="max-w-lg">
         <DialogHeader>
