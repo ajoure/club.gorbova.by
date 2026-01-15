@@ -9,11 +9,14 @@ const corsHeaders = {
 /**
  * bepaid-fetch-transactions
  * 
- * Multi-level payment reconciliation:
- * 1. Fetch transactions from bePaid API
- * 2. Fetch subscriptions from bePaid API (catches direct subscription payments)
- * 3. Parse tracking_id to extract order_id and offer_id
- * 4. Create missing orders for orphan subscriptions
+ * PATCH 1: Configurable sync window with watermark
+ * PATCH 3: Proper deduplication with upsert
+ * 
+ * Config options (in integration_instances.config):
+ * - sync_window_hours: default 168 (7 days)
+ * - sync_overlap_hours: default 48
+ * - sync_page_size: default 100
+ * - sync_max_pages: default 10
  */
 
 interface BepaidTransaction {
@@ -75,15 +78,26 @@ interface ParsedTrackingId {
   isValid: boolean;
 }
 
+interface SyncConfig {
+  sync_window_hours: number;
+  sync_overlap_hours: number;
+  sync_page_size: number;
+  sync_max_pages: number;
+}
+
+const DEFAULT_CONFIG: SyncConfig = {
+  sync_window_hours: 168, // 7 days
+  sync_overlap_hours: 48,
+  sync_page_size: 100,
+  sync_max_pages: 10,
+};
+
 function parseTrackingId(trackingId?: string): ParsedTrackingId {
   if (!trackingId) {
     return { orderId: null, offerId: null, isValid: false };
   }
 
-  // Format: {order_id}_{offer_id} where both are UUIDs
   const parts = trackingId.split("_");
-  
-  // UUID regex
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   
   if (parts.length === 2 && uuidRegex.test(parts[0])) {
@@ -94,7 +108,6 @@ function parseTrackingId(trackingId?: string): ParsedTrackingId {
     };
   }
   
-  // Single UUID (old format - just order_id)
   if (parts.length === 1 && uuidRegex.test(parts[0])) {
     return { orderId: parts[0], offerId: null, isValid: true };
   }
@@ -102,7 +115,6 @@ function parseTrackingId(trackingId?: string): ParsedTrackingId {
   return { orderId: null, offerId: null, isValid: false };
 }
 
-// Normalize bePaid transaction status
 function normalizeTransactionStatus(status: string): string {
   switch (status?.toLowerCase()) {
     case 'successful':
@@ -126,7 +138,6 @@ function normalizeTransactionStatus(status: string): string {
   }
 }
 
-// Determine transaction type (payment, refund, etc.)
 function determineTransactionType(tx: BepaidTransaction): string {
   const rawPayload = tx as any;
   if (rawPayload.type === 'refund' || rawPayload.refund_reason) {
@@ -136,6 +147,14 @@ function determineTransactionType(tx: BepaidTransaction): string {
     return 'Авторизация';
   }
   return 'Оплата';
+}
+
+// Calculate backoff delay for retry
+function calculateBackoffDelay(attempts: number): number {
+  // Exponential backoff: 5min, 15min, 45min, 2h, 6h
+  const delays = [5, 15, 45, 120, 360];
+  const idx = Math.min(attempts, delays.length - 1);
+  return delays[idx] * 60 * 1000; // Return in milliseconds
 }
 
 serve(async (req) => {
@@ -148,19 +167,38 @@ serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
   );
 
+  // Parse request body for override options
+  const body = await req.json().catch(() => ({}));
+  const forceFullSync = body.forceFullSync === true;
+  const customWindowHours = body.windowHours;
+
   console.info("Starting bePaid transactions & subscriptions fetch...");
+  console.info(`Options: forceFullSync=${forceFullSync}, customWindowHours=${customWindowHours}`);
+
+  // Create sync log entry
+  const { data: syncLog } = await supabase
+    .from("bepaid_sync_logs")
+    .insert({
+      sync_type: "fetch_transactions",
+      status: "running",
+    })
+    .select()
+    .single();
+
+  const syncLogId = syncLog?.id;
 
   try {
-    // Get bePaid credentials
+    // Get bePaid credentials and config
     const { data: bepaidInstance } = await supabase
       .from("integration_instances")
-      .select("config")
+      .select("id, config, last_successful_sync_at")
       .eq("provider", "bepaid")
       .in("status", ["active", "connected"])
       .single();
 
     if (!bepaidInstance?.config) {
       console.error("No active bePaid integration found");
+      await updateSyncLog(supabase, syncLogId, { status: "failed", error_message: "No bePaid integration" });
       return new Response(JSON.stringify({ error: "No bePaid integration" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -168,22 +206,59 @@ serve(async (req) => {
     }
 
     const shopId = bepaidInstance.config.shop_id;
-    // Get secret from integration config (primary) or fallback to env
     const secretKey = bepaidInstance.config.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
 
     if (!shopId || !secretKey) {
-      console.error("Missing bePaid credentials - shop_id:", !!shopId, "secret_key:", !!secretKey);
+      console.error("Missing bePaid credentials");
+      await updateSyncLog(supabase, syncLogId, { status: "failed", error_message: "Missing credentials" });
       return new Response(JSON.stringify({ error: "Missing credentials" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    
-    console.log("Using bePaid credentials from:", bepaidInstance.config.secret_key ? "integration_instances" : "env");
+
+    // PATCH 1: Get sync config with watermark logic
+    const config: SyncConfig = {
+      sync_window_hours: bepaidInstance.config.sync_window_hours || DEFAULT_CONFIG.sync_window_hours,
+      sync_overlap_hours: bepaidInstance.config.sync_overlap_hours || DEFAULT_CONFIG.sync_overlap_hours,
+      sync_page_size: bepaidInstance.config.sync_page_size || DEFAULT_CONFIG.sync_page_size,
+      sync_max_pages: bepaidInstance.config.sync_max_pages || DEFAULT_CONFIG.sync_max_pages,
+    };
+
+    // Override with custom window if provided
+    if (customWindowHours) {
+      config.sync_window_hours = customWindowHours;
+    }
+
+    // Calculate date range using watermark
+    const now = new Date();
+    let fromDate: Date;
+
+    if (forceFullSync) {
+      // Force full sync: go back sync_window_hours
+      fromDate = new Date(now.getTime() - config.sync_window_hours * 60 * 60 * 1000);
+    } else if (bepaidInstance.last_successful_sync_at) {
+      // Use watermark with overlap
+      const watermark = new Date(bepaidInstance.last_successful_sync_at);
+      fromDate = new Date(watermark.getTime() - config.sync_overlap_hours * 60 * 60 * 1000);
+    } else {
+      // No watermark - use default window
+      fromDate = new Date(now.getTime() - config.sync_window_hours * 60 * 60 * 1000);
+    }
+
+    const toDate = now;
+
+    console.log(`Sync config: window=${config.sync_window_hours}h, overlap=${config.sync_overlap_hours}h`);
+    console.log(`Date range: from=${fromDate.toISOString()} to=${toDate.toISOString()}`);
+    console.log(`Shop ID: ${shopId}`);
+
+    await updateSyncLog(supabase, syncLogId, {
+      shop_id: String(shopId),
+      from_date: fromDate.toISOString(),
+      to_date: toDate.toISOString(),
+    });
 
     const auth = btoa(`${shopId}:${secretKey}`);
-    const fromDate = new Date(Date.now() - 48 * 60 * 60 * 1000);
-    const toDate = new Date();
 
     const results = {
       transactions_fetched: 0,
@@ -192,16 +267,19 @@ serve(async (req) => {
       payments_matched: 0,
       queued_for_review: 0,
       already_exists: 0,
+      upserted: 0,
       errors: 0,
+      pages_fetched: 0,
+      sample_uids: [] as string[],
       details: [] as any[],
     };
 
     // =================================================================
-    // PART 1: Fetch Subscriptions (catches direct subscription payments)
+    // PART 1: Fetch Subscriptions
     // =================================================================
     try {
       const subsResponse = await fetch(
-        `https://api.bepaid.by/subscriptions?shop_id=${shopId}&per_page=100`,
+        `https://api.bepaid.by/subscriptions?shop_id=${shopId}&per_page=${config.sync_page_size}`,
         {
           method: "GET",
           headers: {
@@ -219,7 +297,6 @@ serve(async (req) => {
         console.info(`Fetched ${subscriptions.length} subscriptions from bePaid`);
 
         for (const sub of subscriptions) {
-          // Only process active/trial subscriptions from recent period
           if (!["active", "trial", "past_due"].includes(sub.state)) continue;
 
           const createdAt = new Date(sub.created_at);
@@ -227,7 +304,6 @@ serve(async (req) => {
 
           const parsed = parseTrackingId(sub.tracking_id);
           
-          // Check if order exists
           if (parsed.orderId) {
             const { data: existingOrder } = await supabase
               .from("orders_v2")
@@ -236,7 +312,6 @@ serve(async (req) => {
               .maybeSingle();
 
             if (existingOrder) {
-              // Order exists - update bepaid_subscription_id if missing
               if (!existingOrder.bepaid_subscription_id) {
                 await supabase
                   .from("orders_v2")
@@ -247,9 +322,7 @@ serve(async (req) => {
               continue;
             }
 
-            // ORDER NOT FOUND - this is the Людмила case!
-            // Create missing order from subscription data
-            console.warn(`Orphan subscription found! tracking_id=${sub.tracking_id}, subscription_id=${sub.id}`);
+            console.warn(`Orphan subscription found! tracking_id=${sub.tracking_id}`);
 
             try {
               const createdOrder = await createOrderFromSubscription(
@@ -270,7 +343,6 @@ serve(async (req) => {
                   amount: sub.plan?.amount ? sub.plan.amount / 100 : null,
                 });
 
-                // Notify admins immediately
                 await supabase.functions.invoke("telegram-notify-admins", {
                   body: {
                     message: `🔧 Создан пропущенный заказ!\n\n` +
@@ -286,24 +358,27 @@ serve(async (req) => {
               console.error(`Error creating order from subscription ${sub.id}:`, createErr);
               results.errors++;
               
-              // Queue for manual review
-              await supabase.from("payment_reconcile_queue").insert({
-                bepaid_uid: sub.transactions?.[0]?.uid || null,
+              // PATCH 3: Use upsert for queue
+              await supabase.from("payment_reconcile_queue").upsert({
+                bepaid_uid: sub.transactions?.[0]?.uid || `sub_${sub.id}`,
                 tracking_id: sub.tracking_id,
                 amount: sub.plan?.amount ? sub.plan.amount / 100 : null,
                 currency: sub.plan?.currency || "BYN",
                 customer_email: sub.customer?.email,
                 raw_payload: sub,
                 source: "subscription_fetch",
-                status: "pending",
+                status: "error",
                 last_error: String(createErr),
-              });
+                attempts: 1,
+                last_attempt_at: new Date().toISOString(),
+                next_retry_at: new Date(Date.now() + calculateBackoffDelay(1)).toISOString(),
+              }, { onConflict: 'bepaid_uid', ignoreDuplicates: false });
               results.queued_for_review++;
             }
           } else {
-            // No valid tracking_id - queue for review
-            await supabase.from("payment_reconcile_queue").insert({
-              bepaid_uid: sub.transactions?.[0]?.uid || null,
+            // PATCH 3: Use upsert
+            await supabase.from("payment_reconcile_queue").upsert({
+              bepaid_uid: sub.transactions?.[0]?.uid || `sub_${sub.id}`,
               tracking_id: sub.tracking_id,
               amount: sub.plan?.amount ? sub.plan.amount / 100 : null,
               currency: sub.plan?.currency || "BYN",
@@ -311,7 +386,7 @@ serve(async (req) => {
               raw_payload: sub,
               source: "subscription_fetch_no_tracking",
               status: "pending",
-            });
+            }, { onConflict: 'bepaid_uid', ignoreDuplicates: false });
             results.queued_for_review++;
           }
         }
@@ -323,35 +398,57 @@ serve(async (req) => {
     }
 
     // =================================================================
-    // PART 2: Fetch Transactions (for direct payments not via subscriptions)
-    // Fetches ALL statuses, not just successful ones
+    // PART 2: Fetch Transactions with pagination
     // =================================================================
-    const params = new URLSearchParams({
-      created_at_from: fromDate.toISOString(),
-      created_at_to: toDate.toISOString(),
-      per_page: "100",
-      // Removed status: "successful" - now fetching ALL transactions
-    });
+    let currentPage = 1;
+    let hasMorePages = true;
 
-    const txResponse = await fetch(
-      `https://gateway.bepaid.by/transactions?${params.toString()}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${auth}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
+    while (hasMorePages && currentPage <= config.sync_max_pages) {
+      const params = new URLSearchParams({
+        created_at_from: fromDate.toISOString(),
+        created_at_to: toDate.toISOString(),
+        per_page: String(config.sync_page_size),
+        page: String(currentPage),
+      });
+
+      console.log(`Fetching transactions page ${currentPage}...`);
+
+      const txResponse = await fetch(
+        `https://gateway.bepaid.by/transactions?${params.toString()}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+        }
+      );
+
+      if (!txResponse.ok) {
+        console.error(`Failed to fetch transactions page ${currentPage}:`, await txResponse.text());
+        break;
       }
-    );
 
-    if (txResponse.ok) {
       const txData = await txResponse.json();
       const transactions: BepaidTransaction[] = txData.transactions || [];
-      results.transactions_fetched = transactions.length;
-      console.info(`Fetched ${transactions.length} transactions from bePaid`);
+      
+      results.pages_fetched++;
+      results.transactions_fetched += transactions.length;
+      
+      console.info(`Page ${currentPage}: fetched ${transactions.length} transactions`);
 
-      // Get existing payments
+      if (transactions.length === 0) {
+        hasMorePages = false;
+        break;
+      }
+
+      // Collect sample UIDs for logging
+      if (results.sample_uids.length < 5) {
+        results.sample_uids.push(...transactions.slice(0, 5 - results.sample_uids.length).map(t => t.uid));
+      }
+
+      // Get existing payments in batch
       const bepaidUids = transactions.map((t) => t.uid);
       const { data: existingPayments } = await supabase
         .from("payments_v2")
@@ -362,25 +459,20 @@ serve(async (req) => {
         (existingPayments || []).map((p) => p.provider_payment_id)
       );
 
-      // Get queued items
-      const { data: queuedItems } = await supabase
-        .from("payment_reconcile_queue")
-        .select("bepaid_uid")
-        .in("bepaid_uid", bepaidUids)
-        .in("status", ["pending", "processing", "completed"]);
-
-      const queuedUids = new Set((queuedItems || []).map((q) => q.bepaid_uid));
-
       for (const tx of transactions) {
-        if (existingUids.has(tx.uid) || queuedUids.has(tx.uid)) {
+        const parsed = parseTrackingId(tx.tracking_id);
+        const normalizedStatus = normalizeTransactionStatus(tx.status);
+        const transactionType = determineTransactionType(tx);
+
+        // If already in payments_v2, skip
+        if (existingUids.has(tx.uid)) {
           results.already_exists++;
           continue;
         }
 
-        const parsed = parseTrackingId(tx.tracking_id);
         let order = null;
 
-        // Try to find order by parsed order_id
+        // Try to find order by tracking_id
         if (parsed.orderId) {
           const { data: orderById } = await supabase
             .from("orders_v2")
@@ -391,8 +483,8 @@ serve(async (req) => {
           order = orderById;
         }
 
-        // Fallback: try by email + amount
-        if (!order && tx.customer?.email) {
+        // Fallback: try by email + amount for pending orders
+        if (!order && tx.customer?.email && tx.status === 'successful') {
           const amountBYN = tx.amount / 100;
           const { data: orderByEmail } = await supabase
             .from("orders_v2")
@@ -408,11 +500,8 @@ serve(async (req) => {
           order = orderByEmail;
         }
 
-        // Normalize transaction status for storage
-        const normalizedStatus = normalizeTransactionStatus(tx.status);
-        const transactionType = determineTransactionType(tx);
-        
         if (order && tx.status === 'successful') {
+          // Process successful transaction directly
           await processTransaction(supabase, order, tx);
           results.payments_matched++;
           results.details.push({
@@ -421,7 +510,18 @@ serve(async (req) => {
             order_number: order.order_number,
           });
         } else {
-          // Queue for review - ALL transactions (including failed, declined, refunds)
+          // PATCH 3: Always upsert to queue - handles ALL statuses
+          // Check if item exists with error status for retry logic
+          const { data: existingQueueItem } = await supabase
+            .from("payment_reconcile_queue")
+            .select("id, status, attempts")
+            .eq("bepaid_uid", tx.uid)
+            .maybeSingle();
+
+          const queueStatus = tx.status === 'successful' ? "pending" : "error";
+          const attempts = existingQueueItem?.attempts || 0;
+          const isRetry = existingQueueItem?.status === 'error';
+
           await supabase.from("payment_reconcile_queue").upsert({
             bepaid_uid: tx.uid,
             tracking_id: tx.tracking_id,
@@ -430,30 +530,84 @@ serve(async (req) => {
             customer_email: tx.customer?.email,
             raw_payload: tx,
             source: "transaction_fetch",
-            status: tx.status === 'successful' ? "pending" : "error",
+            status: queueStatus,
             status_normalized: normalizedStatus,
             transaction_type: transactionType,
             paid_at: tx.paid_at || tx.created_at,
             last_error: tx.status !== 'successful' ? `Transaction status: ${tx.status}` : null,
+            // Retry logic fields
+            attempts: isRetry ? attempts + 1 : attempts,
+            last_attempt_at: isRetry ? new Date().toISOString() : null,
+            next_retry_at: queueStatus === 'error' 
+              ? new Date(Date.now() + calculateBackoffDelay(attempts)).toISOString() 
+              : null,
           }, { onConflict: 'bepaid_uid', ignoreDuplicates: false });
-          results.queued_for_review++;
+
+          results.upserted++;
+          if (!existingQueueItem) {
+            results.queued_for_review++;
+          }
         }
+      }
+
+      // Check if we need more pages
+      if (transactions.length < config.sync_page_size) {
+        hasMorePages = false;
+      } else {
+        currentPage++;
       }
     }
 
     console.info("bePaid fetch completed:", results);
 
-    // Log the fetch run
+    // Update watermark only on full success
+    if (results.errors === 0) {
+      await supabase
+        .from("integration_instances")
+        .update({ last_successful_sync_at: toDate.toISOString() })
+        .eq("id", bepaidInstance.id);
+      
+      console.log(`Updated watermark to ${toDate.toISOString()}`);
+    } else {
+      console.warn(`Skipping watermark update due to ${results.errors} errors`);
+    }
+
+    // Update sync log
+    await updateSyncLog(supabase, syncLogId, {
+      status: "completed",
+      completed_at: new Date().toISOString(),
+      pages_fetched: results.pages_fetched,
+      transactions_fetched: results.transactions_fetched,
+      subscriptions_fetched: results.subscriptions_fetched,
+      already_exists: results.already_exists,
+      queued: results.queued_for_review,
+      processed: results.payments_matched,
+      errors: results.errors,
+      sample_uids: results.sample_uids,
+      meta: { config, force_full_sync: forceFullSync },
+    });
+
+    // Log to audit_logs
     await supabase.from("audit_logs").insert({
       actor_user_id: null,
       actor_type: 'system',
       actor_label: 'bepaid-fetch-transactions',
       action: "bepaid_fetch_transactions_cron",
-      meta: results,
+      meta: {
+        shop_id: shopId,
+        from: fromDate.toISOString(),
+        to: toDate.toISOString(),
+        pages: results.pages_fetched,
+        fetched: results.transactions_fetched,
+        enqueued: results.queued_for_review,
+        already_exists: results.already_exists,
+        errors: results.errors,
+        sample_uids: results.sample_uids,
+      },
     });
 
     // Notify admins if issues found
-    if (results.orphan_orders_created > 0 || results.queued_for_review > 0) {
+    if (results.orphan_orders_created > 0 || results.errors > 0) {
       await notifyAdmins(supabase, results);
     }
 
@@ -462,12 +616,25 @@ serve(async (req) => {
     });
   } catch (error) {
     console.error("bePaid fetch error:", error);
+    await updateSyncLog(supabase, syncLogId, {
+      status: "failed",
+      error_message: String(error),
+      completed_at: new Date().toISOString(),
+    });
     return new Response(JSON.stringify({ error: String(error) }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
+
+async function updateSyncLog(supabase: any, syncLogId: string | null, updates: any) {
+  if (!syncLogId) return;
+  await supabase
+    .from("bepaid_sync_logs")
+    .update(updates)
+    .eq("id", syncLogId);
+}
 
 async function createOrderFromSubscription(
   supabase: any,
@@ -478,7 +645,6 @@ async function createOrderFromSubscription(
   const now = new Date();
   const amountBYN = subscription.plan?.amount ? subscription.plan.amount / 100 : 0;
   
-  // Try to find user by email
   let userId: string | null = null;
   if (subscription.customer?.email) {
     const { data: profile } = await supabase
@@ -490,7 +656,6 @@ async function createOrderFromSubscription(
     userId = profile?.user_id || null;
   }
 
-  // Get offer details if offerId provided
   let productId: string | null = null;
   let tariffId: string | null = null;
   let flowId: string | null = null;
@@ -518,7 +683,6 @@ async function createOrderFromSubscription(
     }
   }
 
-  // Generate order number
   const yearPart = now.getFullYear().toString().slice(-2);
   const { count } = await supabase
     .from("orders_v2")
@@ -528,11 +692,10 @@ async function createOrderFromSubscription(
   const seqPart = ((count || 0) + 1).toString().padStart(5, "0");
   const orderNumber = `ORD-${yearPart}-${seqPart}`;
 
-  // Create order
   const { data: order, error } = await supabase
     .from("orders_v2")
     .insert({
-      id: orderId, // Use the UUID from tracking_id
+      id: orderId,
       order_number: orderNumber,
       user_id: userId,
       product_id: productId,
@@ -561,7 +724,6 @@ async function createOrderFromSubscription(
 
   if (error) throw error;
 
-  // Create payment record from first transaction
   const firstTx = subscription.transactions?.find(t => t.status === "successful");
   if (firstTx) {
     await supabase.from("payments_v2").insert({
@@ -578,9 +740,7 @@ async function createOrderFromSubscription(
     });
   }
 
-  // Create subscription if user and product known
   if (userId && productId) {
-    // Get access duration
     let accessEndAt = new Date();
     accessEndAt.setMonth(accessEndAt.getMonth() + 1);
 
@@ -613,7 +773,6 @@ async function createOrderFromSubscription(
       },
     });
 
-    // Create entitlement
     const { data: product } = await supabase
       .from("products_v2")
       .select("code")
@@ -621,8 +780,6 @@ async function createOrderFromSubscription(
       .single();
 
     if (product?.code) {
-      // Dual-write: user_id + profile_id + order_id
-      // Resolve profile_id from userId
       const { data: profileData } = await supabase
         .from("profiles")
         .select("id")
@@ -644,7 +801,6 @@ async function createOrderFromSubscription(
       );
     }
 
-    // Grant Telegram access
     try {
       await supabase.functions.invoke("telegram-grant-access", {
         body: { userId, productId },
@@ -653,9 +809,7 @@ async function createOrderFromSubscription(
       console.error("Error granting Telegram access:", e);
     }
 
-    // Save card token if available
     if (subscription.credit_card?.token) {
-      // Check if token already exists
       const { data: existingMethod } = await supabase
         .from("payment_methods")
         .select("id")
@@ -690,7 +844,6 @@ async function processTransaction(
   const now = new Date();
   const amountBYN = transaction.amount / 100;
 
-  // Create payment record
   await supabase.from("payments_v2").insert({
     order_id: order.id,
     amount: amountBYN,
@@ -704,7 +857,6 @@ async function processTransaction(
     provider_response: transaction,
   });
 
-  // Update order
   await supabase
     .from("orders_v2")
     .update({
@@ -719,7 +871,6 @@ async function processTransaction(
     })
     .eq("id", order.id);
 
-  // Create subscription if needed
   if (order.user_id && order.product_id) {
     const { data: existingSub } = await supabase
       .from("subscriptions_v2")
@@ -756,7 +907,6 @@ async function processTransaction(
         meta: { source: "bepaid_fetch", bepaid_uid: transaction.uid },
       });
 
-      // Create entitlement
       const { data: product } = await supabase
         .from("products_v2")
         .select("code")
@@ -764,7 +914,6 @@ async function processTransaction(
         .single();
 
       if (product?.code) {
-        // Dual-write: user_id + profile_id + order_id
         const profileId = order.profile_id || null;
         await supabase.from("entitlements").upsert(
           {
@@ -780,7 +929,6 @@ async function processTransaction(
         );
       }
 
-      // Grant Telegram access
       try {
         await supabase.functions.invoke("telegram-grant-access", {
           body: { userId: order.user_id, productId: order.product_id },
@@ -797,6 +945,7 @@ async function notifyAdmins(supabase: any, results: any) {
     let message = `🔍 bePaid Reconciliation Report\n\n`;
     message += `📊 Транзакций: ${results.transactions_fetched}\n`;
     message += `📊 Подписок: ${results.subscriptions_fetched}\n`;
+    message += `📄 Страниц: ${results.pages_fetched}\n`;
     
     if (results.orphan_orders_created > 0) {
       message += `\n⚠️ Создано пропущенных заказов: ${results.orphan_orders_created}\n`;
