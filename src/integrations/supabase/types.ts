@@ -168,6 +168,72 @@ export type Database = {
           },
         ]
       }
+      bepaid_sync_logs: {
+        Row: {
+          already_exists: number | null
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          errors: number | null
+          from_date: string | null
+          id: string
+          meta: Json | null
+          pages_fetched: number | null
+          processed: number | null
+          queued: number | null
+          sample_uids: string[] | null
+          shop_id: string | null
+          started_at: string
+          status: string | null
+          subscriptions_fetched: number | null
+          sync_type: string
+          to_date: string | null
+          transactions_fetched: number | null
+        }
+        Insert: {
+          already_exists?: number | null
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          errors?: number | null
+          from_date?: string | null
+          id?: string
+          meta?: Json | null
+          pages_fetched?: number | null
+          processed?: number | null
+          queued?: number | null
+          sample_uids?: string[] | null
+          shop_id?: string | null
+          started_at?: string
+          status?: string | null
+          subscriptions_fetched?: number | null
+          sync_type?: string
+          to_date?: string | null
+          transactions_fetched?: number | null
+        }
+        Update: {
+          already_exists?: number | null
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          errors?: number | null
+          from_date?: string | null
+          id?: string
+          meta?: Json | null
+          pages_fetched?: number | null
+          processed?: number | null
+          queued?: number | null
+          sample_uids?: string[] | null
+          shop_id?: string | null
+          started_at?: string
+          status?: string | null
+          subscriptions_fetched?: number | null
+          sync_type?: string
+          to_date?: string | null
+          transactions_fetched?: number | null
+        }
+        Relationships: []
+      }
       card_profile_links: {
         Row: {
           card_brand: string | null
@@ -1959,6 +2025,7 @@ export type Database = {
           id: string
           is_default: boolean
           last_check_at: string | null
+          last_successful_sync_at: string | null
           provider: string
           status: string
           updated_at: string
@@ -1972,6 +2039,7 @@ export type Database = {
           id?: string
           is_default?: boolean
           last_check_at?: string | null
+          last_successful_sync_at?: string | null
           provider: string
           status?: string
           updated_at?: string
@@ -1985,6 +2053,7 @@ export type Database = {
           id?: string
           is_default?: boolean
           last_check_at?: string | null
+          last_successful_sync_at?: string | null
           provider?: string
           status?: string
           updated_at?: string
@@ -2739,6 +2808,7 @@ export type Database = {
           ip_address: string | null
           is_external: boolean | null
           is_fee: boolean | null
+          last_attempt_at: string | null
           last_error: string | null
           linked_at: string | null
           matched_offer_id: string | null
@@ -2813,6 +2883,7 @@ export type Database = {
           ip_address?: string | null
           is_external?: boolean | null
           is_fee?: boolean | null
+          last_attempt_at?: string | null
           last_error?: string | null
           linked_at?: string | null
           matched_offer_id?: string | null
@@ -2887,6 +2958,7 @@ export type Database = {
           ip_address?: string | null
           is_external?: boolean | null
           is_fee?: boolean | null
+          last_attempt_at?: string | null
           last_error?: string | null
           linked_at?: string | null
           matched_offer_id?: string | null

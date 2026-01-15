@@ -189,3 +189,6 @@ verify_jwt = false
 
 [functions.admin-purge-imported-transactions]
 verify_jwt = false
+
+[functions.bepaid-sync-cron]
+verify_jwt = false
