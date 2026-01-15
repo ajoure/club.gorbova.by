@@ -122,9 +122,10 @@ Deno.serve(async (req) => {
       // Process single item by ID
       query = query.eq('id', queueItemId);
     } else {
-      // Process batch of pending items
+      // Process batch of pending items - skip manually_linked and those with matched_order_id
       query = query
         .in('status', ['pending', 'error'])
+        .is('matched_order_id', null) // Skip already linked payments
         .lt('attempts', 5)
         .order('created_at', { ascending: true })
         .limit(limit);
@@ -157,9 +158,9 @@ Deno.serve(async (req) => {
       try {
         console.log(`[BEPAID-AUTO-PROCESS] Processing item ${item.id}, bepaid_uid=${item.bepaid_uid}, description=${item.description}`);
 
-        // Skip if already has matched order
-        if (item.matched_order_id && item.status === 'completed') {
-          console.log(`[BEPAID-AUTO-PROCESS] Item already completed with order, skipping`);
+        // Skip if already has matched order or is manually linked
+        if (item.matched_order_id || item.status === 'manually_linked' || item.status === 'completed') {
+          console.log(`[BEPAID-AUTO-PROCESS] Item already linked/completed (status=${item.status}, matched_order_id=${item.matched_order_id}), skipping`);
           results.skipped++;
           continue;
         }

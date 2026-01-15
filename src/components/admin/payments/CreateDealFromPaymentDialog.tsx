@@ -203,10 +203,17 @@ export function CreateDealFromPaymentDialog({
     }
 
     const isGhostContact = !selectedContact.user_id;
+    const isExpired = dateRange.to < new Date();
     
     // Ghost contacts cannot have access granted
     if (isGhostContact && grantAccess) {
       toast.error("Ghost-контактам нельзя выдать доступ. Снимите галочку 'Выдать доступ'");
+      return;
+    }
+
+    // Expired deals cannot have access granted
+    if (isExpired && grantAccess) {
+      toast.error("Срок доступа истёк. Нельзя выдать доступ по истёкшей сделке");
       return;
     }
 
@@ -559,7 +566,7 @@ export function CreateDealFromPaymentDialog({
           </div>
 
           {/* Grant Access Checkbox */}
-          {selectedContact && selectedContact.user_id && (
+          {selectedContact && selectedContact.user_id && dateRange?.to && new Date(dateRange.to) >= new Date() && (
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="grantAccess"
@@ -576,6 +583,13 @@ export function CreateDealFromPaymentDialog({
             <div className="text-sm text-muted-foreground bg-amber-50 dark:bg-amber-900/20 p-3 rounded-lg border border-amber-200 dark:border-amber-800">
               <Ghost className="inline h-4 w-4 mr-1" />
               Ghost-контакт — только сделка, без выдачи доступа
+            </div>
+          )}
+
+          {/* Expired warning */}
+          {dateRange?.to && new Date(dateRange.to) < new Date() && (
+            <div className="text-sm text-orange-600 bg-orange-50 dark:bg-orange-900/20 p-3 rounded-lg border border-orange-200 dark:border-orange-800">
+              ⚠️ Срок доступа истёк. Сделка будет создана только для истории (статус "Оплачен", но без выдачи доступа).
             </div>
           )}
         </div>
