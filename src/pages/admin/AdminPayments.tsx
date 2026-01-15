@@ -92,6 +92,18 @@ export default function AdminPayments() {
 
   // Apply filters to payments (including dashboard + analytics filters)
   const filteredPayments = useMemo(() => {
+    const normalizeType = (raw: string | null | undefined) => {
+      const v = (raw || '').toLowerCase().trim();
+      if (!v) return 'payment';
+      if (['refund', 'refunded', 'возврат средств', 'возврат'].includes(v)) return 'refund';
+      if (['payment', 'оплата', 'платеж', 'платёж'].includes(v)) return 'payment';
+      if (['subscription', 'подписка'].includes(v)) return 'subscription';
+      if (['authorization', 'auth', 'авторизация'].includes(v)) return 'authorization';
+      if (['void', 'canceled', 'cancelled', 'отмена'].includes(v)) return 'void';
+      if (['chargeback', 'чарджбек'].includes(v)) return 'chargeback';
+      return v; // fallback
+    };
+
     return payments.filter(p => {
       // Dashboard filter (from clickable cards) - removed 'attention' filter
       if (dashboardFilter) {
@@ -111,7 +123,7 @@ export default function AdminPayments() {
           // 'all' - no filter
         }
       }
-      
+
       // Analytics filter (from clickable financial summary)
       if (analyticsFilter) {
         const failedStatuses = ['failed', 'canceled', 'expired', 'declined', 'error'];
@@ -119,10 +131,12 @@ export default function AdminPayments() {
           case 'successful':
             if (!['successful', 'succeeded'].includes(p.status_normalized)) return false;
             break;
-          case 'refunded':
+          case 'refunded': {
+            const isRefundTx = normalizeType(p.transaction_type) === 'refund';
             // Show payments with refunds OR refund transactions
-            if (p.total_refunded <= 0 && p.transaction_type !== 'Возврат средств' && p.transaction_type !== 'refund') return false;
+            if (p.total_refunded <= 0 && !isRefundTx) return false;
             break;
+          }
           case 'failed':
             if (!failedStatuses.includes(p.status_normalized)) return false;
             break;
@@ -130,16 +144,15 @@ export default function AdminPayments() {
             // Show successful payments (fees are on successful transactions)
             if (!['successful', 'succeeded'].includes(p.status_normalized)) return false;
             break;
-          case 'net':
+          case 'net': {
+            const isRefundTx = normalizeType(p.transaction_type) === 'refund';
             // Show successful + refunds (net revenue components)
-            if (!['successful', 'succeeded'].includes(p.status_normalized) && 
-                p.total_refunded <= 0 && 
-                p.transaction_type !== 'Возврат средств' && 
-                p.transaction_type !== 'refund') return false;
+            if (!['successful', 'succeeded'].includes(p.status_normalized) && p.total_refunded <= 0 && !isRefundTx) return false;
             break;
+          }
         }
       }
-      
+
       // Search filter
       if (filters.search) {
         const search = filters.search.toLowerCase();
@@ -152,13 +165,13 @@ export default function AdminPayments() {
           p.order_number?.toLowerCase().includes(search);
         if (!matchSearch) return false;
       }
-      
+
       // Status filter with combo option for successful + refunds
       if (filters.status !== "all") {
         if (filters.status === "successful_and_refunds") {
           // Show successful payments AND refund transactions
           const isSuccessful = ['successful', 'succeeded'].includes(p.status_normalized);
-          const isRefundType = ['Возврат средств', 'refund'].includes(p.transaction_type || '');
+          const isRefundType = normalizeType(p.transaction_type) === 'refund';
           if (!isSuccessful && !isRefundType) return false;
         } else if (filters.status === "failed") {
           // Show all failed statuses (failed, declined, expired, error, canceled)
@@ -168,45 +181,45 @@ export default function AdminPayments() {
           return false;
         }
       }
-      
-      // Type filter
-      if (filters.type !== "all" && p.transaction_type !== filters.type) return false;
-      
+
+      // Type filter (normalize english/russian variants)
+      if (filters.type !== "all" && normalizeType(p.transaction_type) !== filters.type) return false;
+
       // Has contact filter
       if (filters.hasContact === "yes" && !p.profile_id) return false;
       if (filters.hasContact === "no" && p.profile_id) return false;
-      
+
       // Has deal filter
       if (filters.hasDeal === "yes" && !p.order_id) return false;
       if (filters.hasDeal === "no" && p.order_id) return false;
-      
+
       // Has mapping filter
       if (filters.hasMapping === "yes" && !p.mapped_product_id) return false;
       if (filters.hasMapping === "no" && p.mapped_product_id) return false;
-      
+
       // Has receipt filter
       if (filters.hasReceipt === "yes" && !p.receipt_url) return false;
       if (filters.hasReceipt === "no" && p.receipt_url) return false;
-      
+
       // Has refunds filter
       if (filters.hasRefunds === "yes" && (!p.refunds_count || p.refunds_count === 0)) return false;
       if (filters.hasRefunds === "no" && p.refunds_count && p.refunds_count > 0) return false;
-      
+
       // Is external filter
       if (filters.isExternal === "yes" && !p.is_external) return false;
       if (filters.isExternal === "no" && p.is_external) return false;
-      
+
       // Is ghost filter
       if (filters.isGhost === "yes" && !p.is_ghost) return false;
       if (filters.isGhost === "no" && p.is_ghost) return false;
-      
+
       // Has conflict filter
       if (filters.hasConflict === "yes" && !p.has_conflict) return false;
       if (filters.hasConflict === "no" && p.has_conflict) return false;
-      
+
       // Source filter
       if (filters.source !== "all" && p.source !== filters.source) return false;
-      
+
       return true;
     });
   }, [payments, filters, dashboardFilter, analyticsFilter]);
