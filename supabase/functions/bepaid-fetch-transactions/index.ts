@@ -406,17 +406,19 @@ serve(async (req) => {
     let hasMorePages = true;
 
     while (hasMorePages && currentPage <= config.sync_max_pages) {
+      // Use gateway.bepaid.by/transactions with query params (same as subscriptions endpoint pattern)
       const params = new URLSearchParams({
-        created_at_from: fromDate.toISOString(),
-        created_at_to: toDate.toISOString(),
+        shop_id: String(shopId),
+        created_at_gteq: fromDate.toISOString(),
+        created_at_lteq: toDate.toISOString(),
         per_page: String(config.sync_page_size),
         page: String(currentPage),
       });
 
       console.log(`Fetching transactions page ${currentPage}...`);
+      console.info(`Query params: ${params.toString()}`);
 
-      // NOTE: bePaid does not allow Content-Type header for GET requests
-      // Use api.bepaid.by for transaction list (not gateway.bepaid.by which is for single transaction lookup)
+      // bePaid transactions endpoint - same pattern as subscriptions
       const txResponse = await fetch(
         `https://api.bepaid.by/transactions?${params.toString()}`,
         {
@@ -429,12 +431,14 @@ serve(async (req) => {
       );
 
       if (!txResponse.ok) {
-        console.error(`Failed to fetch transactions page ${currentPage}:`, await txResponse.text());
+        const errorText = await txResponse.text();
+        console.error(`Failed to fetch transactions page ${currentPage}: ${txResponse.status} ${errorText}`);
         break;
       }
 
       const txData = await txResponse.json();
-      const transactions: BepaidTransaction[] = txData.transactions || [];
+      // Reports API returns transactions in 'transactions' array
+      const transactions: BepaidTransaction[] = txData.transactions || txData.report?.transactions || [];
       
       results.pages_fetched++;
       results.transactions_fetched += transactions.length;
