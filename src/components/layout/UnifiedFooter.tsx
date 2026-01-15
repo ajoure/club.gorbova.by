@@ -132,6 +132,9 @@ export function UnifiedFooter({
               <Link to="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">
                 Политика конфиденциальности
               </Link>
+              <Link to="/consent" className="text-muted-foreground hover:text-foreground transition-colors">
+                Согласие на обработку данных
+              </Link>
             </nav>
           </div>
         </div>

@@ -274,7 +274,17 @@ export default function Contacts() {
                     }
                   />
                   <Label htmlFor="consent" className="text-sm text-muted-foreground leading-relaxed cursor-pointer">
-                    Согласен(на) на обработку персональных данных <span className="text-destructive">*</span>
+                    Согласен(на) на{" "}
+                    <a 
+                      href="/consent" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      обработку персональных данных
+                    </a>{" "}
+                    <span className="text-destructive">*</span>
                   </Label>
                 </div>
 
