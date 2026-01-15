@@ -22,6 +22,7 @@ import BalanceWheel from "./pages/tools/BalanceWheel";
 import OrderPayment from "./pages/OrderPayment";
 import Offer from "./pages/Offer";
 import Privacy from "./pages/Privacy";
+import Consent from "./pages/Consent";
 import Contacts from "./pages/Contacts";
 import NotFound from "./pages/NotFound";
 import { AdminLayout } from "./components/layout/AdminLayout";
@@ -97,6 +98,7 @@ const App = () => (
               <Route path="/offer" element={<Offer />} />
               <Route path="/pay" element={<Pay />} />
               <Route path="/privacy" element={<Privacy />} />
+              <Route path="/consent" element={<Consent />} />
               <Route path="/contacts" element={<Contacts />} />
               <Route path="/help" element={<Help />} />
               <Route path="/consultation" element={<Consultation />} />

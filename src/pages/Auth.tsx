@@ -823,7 +823,16 @@ export default function Auth() {
                       >
                         Политикой конфиденциальности
                       </a>{" "}
-                      и даю согласие на обработку персональных данных
+                      и даю{" "}
+                      <a 
+                        href="/consent" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >
+                        согласие
+                      </a>{" "}
+                      на обработку персональных данных
                     </Label>
                   </div>
                 )}
