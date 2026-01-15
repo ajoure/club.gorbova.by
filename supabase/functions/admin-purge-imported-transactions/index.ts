@@ -5,7 +5,20 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-interface PurgeRequest {
+/**
+ * SOFT-CANCEL for file_import queue items
+ * 
+ * CRITICAL: This function does NOT delete records.
+ * It updates status to 'cancelled' (or 'error' with cancel metadata if enum doesn't allow 'cancelled')
+ * 
+ * Safety features:
+ * - STOP safeguards: batch limits, unsafe check
+ * - Audit logs with system actor
+ * - Conflict detection (items in payments_v2)
+ * - Idempotent: safe to run multiple times
+ */
+
+interface CancelRequest {
   date_from?: string;
   date_to?: string;
   source_filter?: string; // 'csv', 'file_import', 'all'
@@ -13,27 +26,30 @@ interface PurgeRequest {
   dry_run?: boolean;
   limit?: number;
   batch_size?: number;
+  unsafe_allow_large?: boolean; // Must be true if cancelling > 1000 items
 }
 
-interface PurgeResult {
+interface CancelResult {
   id: string;
   bepaid_uid: string | null;
   amount: number;
   currency: string;
   paid_at: string | null;
   source: string;
+  status: string;
   has_conflict: boolean;
   conflict_reason?: string;
 }
 
-interface PurgeReport {
+interface CancelReport {
   total_found: number;
-  eligible_for_deletion: number;
+  eligible_for_cancel: number;
   with_conflicts: number;
-  deleted: number;
-  examples: PurgeResult[];
-  conflicts: PurgeResult[];
+  cancelled: number;
+  examples: CancelResult[];
+  conflicts: CancelResult[];
   total_amount: number;
+  stop_reason?: string;
 }
 
 Deno.serve(async (req) => {
@@ -80,20 +96,21 @@ Deno.serve(async (req) => {
       );
     }
 
-    const body: PurgeRequest = await req.json();
+    const body: CancelRequest = await req.json();
     const { 
       date_from,
       date_to,
-      source_filter = 'all', // Default to 'all' to include both csv and file_import
-      status_filter = ['pending', 'error', 'processing'], // Default: stuck statuses
+      source_filter = 'file_import', // Default to file_import only
+      status_filter = ['pending', 'error', 'processing'],
       dry_run = true,
-      limit = 5000, // Increased for mass cleanup
+      limit = 5000,
       batch_size = 500,
+      unsafe_allow_large = false,
     } = body;
 
-    console.log(`[admin-purge-imported] Starting purge: source=${source_filter}, statuses=${status_filter?.join(',')}, dry_run=${dry_run}, limit=${limit}, date_from=${date_from}, date_to=${date_to}`);
+    console.log(`[admin-purge-imported] Starting SOFT-CANCEL: source=${source_filter}, statuses=${status_filter?.join(',')}, dry_run=${dry_run}, limit=${limit}, date_from=${date_from}, date_to=${date_to}`);
 
-    // Hard limit for safety - increased to 5000 for mass cleanup
+    // Hard limit for safety
     const hardLimit = Math.min(limit, 5000);
     const batchLimit = Math.min(batch_size, 1000);
 
@@ -105,7 +122,7 @@ Deno.serve(async (req) => {
     // Build the query
     let query = supabaseAdmin
       .from('payment_reconcile_queue')
-      .select('id, bepaid_uid, amount, currency, paid_at, source, is_external, has_conflict, created_at, status')
+      .select('id, bepaid_uid, amount, currency, paid_at, source, is_external, has_conflict, created_at, status, meta')
       .in('source', importSources)
       .order('created_at', { ascending: false })
       .limit(hardLimit);
@@ -140,15 +157,58 @@ Deno.serve(async (req) => {
           dry_run,
           report: {
             total_found: 0,
-            eligible_for_deletion: 0,
+            eligible_for_cancel: 0,
             with_conflicts: 0,
-            deleted: 0,
+            cancelled: 0,
             examples: [],
             conflicts: [],
             total_amount: 0,
           }
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // STOP SAFEGUARD: Check if trying to cancel too many without unsafe flag
+    if (importedItems.length > 1000 && !unsafe_allow_large && !dry_run) {
+      console.log(`[admin-purge-imported] STOP: Attempting to cancel ${importedItems.length} items without unsafe_allow_large flag`);
+      
+      const report: CancelReport = {
+        total_found: importedItems.length,
+        eligible_for_cancel: 0,
+        with_conflicts: 0,
+        cancelled: 0,
+        examples: [],
+        conflicts: [],
+        total_amount: 0,
+        stop_reason: `STOP_SAFEGUARD: Attempting to cancel ${importedItems.length} items (>1000). Set unsafe_allow_large=true to proceed.`,
+      };
+
+      // Log the blocked attempt
+      await supabaseAdmin.from('audit_logs').insert({
+        action: 'bepaid_cancel_blocked',
+        actor_user_id: user.id,
+        actor_type: 'system',
+        actor_label: 'bepaid_cleanup_safeguard',
+        meta: {
+          reason: 'STOP_SAFEGUARD',
+          items_count: importedItems.length,
+          source_filter,
+          status_filter,
+          date_from,
+          date_to,
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          dry_run,
+          stop_reason: report.stop_reason,
+          report 
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -165,28 +225,29 @@ Deno.serve(async (req) => {
       existingUids = new Set((existingInApi || []).map(p => p.provider_payment_id));
     }
 
-    const report: PurgeReport = {
+    const report: CancelReport = {
       total_found: importedItems.length,
-      eligible_for_deletion: 0,
+      eligible_for_cancel: 0,
       with_conflicts: 0,
-      deleted: 0,
+      cancelled: 0,
       examples: [],
       conflicts: [],
       total_amount: 0,
     };
 
-    const toDelete: string[] = [];
+    const toCancel: string[] = [];
 
     for (const item of importedItems) {
       const hasApiConflict = item.bepaid_uid && existingUids.has(item.bepaid_uid);
       
-      const result: PurgeResult = {
+      const result: CancelResult = {
         id: item.id,
         bepaid_uid: item.bepaid_uid,
         amount: item.amount,
         currency: item.currency,
         paid_at: item.paid_at,
         source: item.source,
+        status: item.status,
         has_conflict: hasApiConflict || item.has_conflict,
         conflict_reason: hasApiConflict ? 'EXISTS_IN_API' : undefined,
       };
@@ -197,83 +258,116 @@ Deno.serve(async (req) => {
           report.conflicts.push(result);
         }
       } else {
-        report.eligible_for_deletion++;
+        report.eligible_for_cancel++;
         report.total_amount += item.amount || 0;
-        toDelete.push(item.id);
+        toCancel.push(item.id);
         if (report.examples.length < 10) {
           report.examples.push(result);
         }
       }
     }
 
-    // Execute deletion if not dry run - use batching for large sets
-    if (!dry_run && toDelete.length > 0) {
-      let deletedCount = 0;
+    // Execute SOFT-CANCEL if not dry run - use batching for large sets
+    // CRITICAL: We UPDATE status, NOT DELETE!
+    if (!dry_run && toCancel.length > 0) {
+      let cancelledCount = 0;
       const batches: string[][] = [];
+      const cancelTimestamp = new Date().toISOString();
       
       // Split into batches
-      for (let i = 0; i < toDelete.length; i += batchLimit) {
-        batches.push(toDelete.slice(i, i + batchLimit));
+      for (let i = 0; i < toCancel.length; i += batchLimit) {
+        batches.push(toCancel.slice(i, i + batchLimit));
       }
       
-      console.log(`[admin-purge-imported] Deleting ${toDelete.length} items in ${batches.length} batches`);
+      console.log(`[admin-purge-imported] SOFT-CANCELLING ${toCancel.length} items in ${batches.length} batches`);
       
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
         console.log(`[admin-purge-imported] Processing batch ${i + 1}/${batches.length} (${batch.length} items)`);
         
-        const { error: deleteError } = await supabaseAdmin
+        // SOFT-CANCEL: Update status to 'cancelled' with metadata
+        // If 'cancelled' is not a valid enum value, use 'error' with cancel metadata
+        const { error: updateError } = await supabaseAdmin
           .from('payment_reconcile_queue')
-          .delete()
+          .update({ 
+            status: 'cancelled', // If enum doesn't have 'cancelled', will fallback
+            last_error: 'CANCELLED_BY_ADMIN: file_import cleanup',
+            meta: {
+              cancelled_at: cancelTimestamp,
+              cancelled_by: user.id,
+              cancelled_reason: 'file_import_cleanup',
+              original_source: 'file_import',
+            },
+          })
           .in('id', batch);
 
-        if (deleteError) {
-          console.error(`[admin-purge-imported] Delete error in batch ${i + 1}:`, deleteError);
-          // Continue with other batches, log the error
-          report.deleted = deletedCount;
+        if (updateError) {
+          // Try fallback to 'error' status if 'cancelled' is not valid enum
+          console.log(`[admin-purge-imported] 'cancelled' status failed, trying 'error' fallback:`, updateError.message);
           
-          // Write partial audit log
-          await supabaseAdmin.from('audit_logs').insert({
-            action: 'purge_imported_transactions_partial',
-            actor_user_id: user.id,
-            actor_type: 'user',
-            actor_label: 'admin_purge',
-            meta: {
-              dry_run: false,
-              source_filter,
-              status_filter,
-              date_from,
-              date_to,
-              batch_failed: i + 1,
-              total_batches: batches.length,
-              deleted_so_far: deletedCount,
-              error: deleteError.message,
-            },
-          });
-          
-          return new Response(
-            JSON.stringify({ 
-              success: false, 
-              message: `Batch ${i + 1} failed: ${deleteError.message}`,
-              partial_deleted: deletedCount,
-            }),
-            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
+          const { error: fallbackError } = await supabaseAdmin
+            .from('payment_reconcile_queue')
+            .update({ 
+              status: 'error',
+              last_error: 'CANCELLED_BY_ADMIN: file_import cleanup',
+              meta: {
+                cancelled_at: cancelTimestamp,
+                cancelled_by: user.id,
+                cancelled_reason: 'file_import_cleanup',
+                original_source: 'file_import',
+                soft_cancelled: true, // Mark as soft-cancelled for filtering
+              },
+            })
+            .in('id', batch);
+
+          if (fallbackError) {
+            console.error(`[admin-purge-imported] Fallback error in batch ${i + 1}:`, fallbackError);
+            report.cancelled = cancelledCount;
+            
+            // Write partial audit log
+            await supabaseAdmin.from('audit_logs').insert({
+              action: 'bepaid_cancel_partial',
+              actor_user_id: null, // System actor
+              actor_type: 'system',
+              actor_label: 'bepaid_cleanup',
+              meta: {
+                dry_run: false,
+                source_filter,
+                status_filter,
+                date_from,
+                date_to,
+                batch_failed: i + 1,
+                total_batches: batches.length,
+                cancelled_so_far: cancelledCount,
+                error: fallbackError.message,
+                initiated_by: user.id,
+              },
+            });
+            
+            return new Response(
+              JSON.stringify({ 
+                success: false, 
+                message: `Batch ${i + 1} failed: ${fallbackError.message}`,
+                partial_cancelled: cancelledCount,
+              }),
+              { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
         }
         
-        deletedCount += batch.length;
+        cancelledCount += batch.length;
       }
 
-      report.deleted = deletedCount;
-      console.log(`[admin-purge-imported] Successfully deleted ${deletedCount} items`);
+      report.cancelled = cancelledCount;
+      console.log(`[admin-purge-imported] Successfully soft-cancelled ${cancelledCount} items`);
     }
 
-    // Write audit log with enhanced data
+    // Write audit log with system actor
     await supabaseAdmin.from('audit_logs').insert({
-      action: 'purge_imported_transactions',
-      actor_user_id: user.id,
-      actor_type: 'user',
-      actor_label: 'admin_purge',
+      action: dry_run ? 'bepaid_cancel_preview' : 'bepaid_cancel_executed',
+      actor_user_id: null, // System actor for the operation itself
+      actor_type: 'system',
+      actor_label: 'bepaid_cleanup',
       meta: {
         dry_run,
         source_filter,
@@ -282,16 +376,18 @@ Deno.serve(async (req) => {
         date_to,
         limit: hardLimit,
         batch_size: batchLimit,
+        unsafe_allow_large,
         total_found: report.total_found,
-        eligible_for_deletion: report.eligible_for_deletion,
+        eligible_for_cancel: report.eligible_for_cancel,
         with_conflicts: report.with_conflicts,
-        deleted: report.deleted,
+        cancelled: report.cancelled,
         total_amount: report.total_amount,
+        initiated_by: user.id,
         timestamp: new Date().toISOString(),
       },
     });
 
-    console.log(`[admin-purge-imported] Complete: found=${report.total_found}, eligible=${report.eligible_for_deletion}, conflicts=${report.with_conflicts}, deleted=${report.deleted}`);
+    console.log(`[admin-purge-imported] Complete: found=${report.total_found}, eligible=${report.eligible_for_cancel}, conflicts=${report.with_conflicts}, cancelled=${report.cancelled}`);
 
     return new Response(
       JSON.stringify({ 

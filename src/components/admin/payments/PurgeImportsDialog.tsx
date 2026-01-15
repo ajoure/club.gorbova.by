@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Trash2, AlertTriangle, CheckCircle, XCircle, Loader2, Info } from "lucide-react";
+import { Ban, AlertTriangle, CheckCircle, XCircle, Loader2, Info, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
@@ -24,25 +24,27 @@ interface PurgeImportsDialogProps {
   renderTrigger?: (onClick: () => void) => React.ReactNode;
 }
 
-interface PurgeResult {
+interface CancelResult {
   id: string;
   bepaid_uid: string | null;
   amount: number;
   currency: string;
   paid_at: string | null;
   source: string;
+  status: string;
   has_conflict: boolean;
   conflict_reason?: string;
 }
 
-interface PurgeReport {
+interface CancelReport {
   total_found: number;
-  eligible_for_deletion: number;
+  eligible_for_cancel: number;
   with_conflicts: number;
-  deleted: number;
-  examples: PurgeResult[];
-  conflicts: PurgeResult[];
+  cancelled: number;
+  examples: CancelResult[];
+  conflicts: CancelResult[];
   total_amount: number;
+  stop_reason?: string;
 }
 
 type StatusFilter = 'pending' | 'error' | 'processing';
@@ -50,10 +52,11 @@ type StatusFilter = 'pending' | 'error' | 'processing';
 export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeImportsDialogProps) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [report, setReport] = useState<PurgeReport | null>(null);
-  const [mode, setMode] = useState<'idle' | 'preview' | 'executed'>('idle');
+  const [report, setReport] = useState<CancelReport | null>(null);
+  const [mode, setMode] = useState<'idle' | 'preview' | 'executed' | 'stopped'>('idle');
   const [dateFrom, setDateFrom] = useState("2026-01-01");
   const [dateTo, setDateTo] = useState("");
+  const [unsafeAllowLarge, setUnsafeAllowLarge] = useState(false);
   
   // Status filter checkboxes
   const [statusFilters, setStatusFilters] = useState<Record<StatusFilter, boolean>>({
@@ -72,7 +75,7 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
       .map(([status]) => status);
   };
 
-  const handlePurge = async (executeDryRun: boolean) => {
+  const handleCancel = async (executeDryRun: boolean) => {
     const selectedStatuses = getSelectedStatuses();
     if (selectedStatuses.length === 0) {
       toast.error("Выберите хотя бы один статус");
@@ -85,22 +88,31 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
         body: {
           date_from: dateFrom || undefined,
           date_to: dateTo || undefined,
-          source_filter: 'file_import', // Target specifically file_import
+          source_filter: 'file_import',
           status_filter: selectedStatuses,
           dry_run: executeDryRun,
-          limit: 5000, // Increased for mass cleanup
+          limit: 5000,
           batch_size: 500,
+          unsafe_allow_large: unsafeAllowLarge,
         }
       });
 
       if (error) throw error;
 
+      // Check for STOP safeguard
+      if (data?.stop_reason) {
+        setReport(data.report);
+        setMode('stopped');
+        toast.warning("STOP: Требуется подтверждение для большого количества записей");
+        return;
+      }
+
       if (data?.success && data.report) {
         setReport(data.report);
         setMode(executeDryRun ? 'preview' : 'executed');
         
-        if (!executeDryRun && data.report.deleted > 0) {
-          toast.success(`Удалено ${data.report.deleted} записей`);
+        if (!executeDryRun && data.report.cancelled > 0) {
+          toast.success(`Отменено (soft-cancel) ${data.report.cancelled} записей`);
           onComplete?.();
         }
       } else {
@@ -117,6 +129,7 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
     setOpen(false);
     setReport(null);
     setMode('idle');
+    setUnsafeAllowLarge(false);
   };
 
   const formatAmount = (amount: number) => {
@@ -134,9 +147,9 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
         <span onClick={() => setOpen(true)}>{renderTrigger(() => setOpen(true))}</span>
       ) : (
         <DialogTrigger asChild>
-          <Button variant="outline" size="sm" className="gap-2 text-destructive hover:text-destructive">
-            <Trash2 className="h-4 w-4" />
-            Удалить file_import
+          <Button variant="outline" size="sm" className="gap-2 text-amber-600 hover:text-amber-700">
+            <Ban className="h-4 w-4" />
+            Отменить file_import
           </Button>
         </DialogTrigger>
       )}
@@ -145,19 +158,20 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-amber-500" />
-            Очистка зависших file_import
+            Soft-Cancel зависших file_import
           </DialogTitle>
           <DialogDescription>
-            Удаляет записи из очереди с source='file_import'. Не затрагивает orders, payments, subscriptions.
+            Помечает записи как 'cancelled' (статус). Записи НЕ удаляются из базы.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Warning about what this does */}
+          {/* Info about soft-cancel */}
           <Alert className="border-blue-200 bg-blue-50 dark:bg-blue-950/20">
             <Info className="h-4 w-4 text-blue-600" />
             <AlertDescription className="text-blue-700 dark:text-blue-400 text-xs">
-              Очищает только очередь payment_reconcile_queue. Безопасно для данных заказов и платежей.
+              <strong>Soft-Cancel:</strong> Записи получат статус 'cancelled' и не будут обрабатываться cron-ом. 
+              Данные остаются в базе для аудита. Orders, payments, subscriptions не затрагиваются.
             </AlertDescription>
           </Alert>
 
@@ -189,7 +203,7 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
 
           {/* Status filter checkboxes */}
           <div className="space-y-2">
-            <Label className="text-xs">Статусы для очистки</Label>
+            <Label className="text-xs">Статусы для отмены</Label>
             <div className="flex flex-wrap gap-4">
               <div className="flex items-center gap-2">
                 <Checkbox 
@@ -228,6 +242,31 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
             </div>
           </div>
 
+          {/* STOP safeguard message */}
+          {mode === 'stopped' && report?.stop_reason && (
+            <Alert className="border-red-200 bg-red-50 dark:bg-red-950/20">
+              <ShieldAlert className="h-4 w-4 text-red-600" />
+              <AlertDescription className="text-red-700 dark:text-red-400 text-xs">
+                <strong>STOP SAFEGUARD:</strong> {report.stop_reason}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {/* Unsafe checkbox for large operations */}
+          {(mode === 'stopped' || (report && report.total_found > 1000)) && (
+            <div className="flex items-center gap-2 p-3 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20">
+              <Checkbox 
+                id="unsafe-allow-large" 
+                checked={unsafeAllowLarge}
+                onCheckedChange={(checked) => setUnsafeAllowLarge(checked === true)}
+                disabled={isLoading}
+              />
+              <label htmlFor="unsafe-allow-large" className="text-sm cursor-pointer text-amber-800 dark:text-amber-300">
+                Подтверждаю отмену &gt;1000 записей (unsafe_allow_large)
+              </label>
+            </div>
+          )}
+
           {/* Report */}
           {report && (
             <div className="space-y-3">
@@ -237,32 +276,32 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
                   <div className="text-lg font-semibold">{report.total_found}</div>
                   <div className="text-xs text-muted-foreground">Найдено</div>
                 </div>
-                <div className="rounded-lg border p-2 bg-green-50 dark:bg-green-950/20">
-                  <div className="text-lg font-semibold text-green-600">{report.eligible_for_deletion}</div>
-                  <div className="text-xs text-muted-foreground">К удалению</div>
-                </div>
                 <div className="rounded-lg border p-2 bg-amber-50 dark:bg-amber-950/20">
-                  <div className="text-lg font-semibold text-amber-600">{report.with_conflicts}</div>
+                  <div className="text-lg font-semibold text-amber-600">{report.eligible_for_cancel}</div>
+                  <div className="text-xs text-muted-foreground">К отмене</div>
+                </div>
+                <div className="rounded-lg border p-2 bg-blue-50 dark:bg-blue-950/20">
+                  <div className="text-lg font-semibold text-blue-600">{report.with_conflicts}</div>
                   <div className="text-xs text-muted-foreground">Конфликты</div>
                 </div>
-                <div className={`rounded-lg border p-2 ${mode === 'executed' && report.deleted > 0 ? 'bg-red-50 dark:bg-red-950/20' : ''}`}>
-                  <div className={`text-lg font-semibold ${mode === 'executed' && report.deleted > 0 ? 'text-red-600' : ''}`}>
-                    {report.deleted}
+                <div className={`rounded-lg border p-2 ${mode === 'executed' && report.cancelled > 0 ? 'bg-green-50 dark:bg-green-950/20' : ''}`}>
+                  <div className={`text-lg font-semibold ${mode === 'executed' && report.cancelled > 0 ? 'text-green-600' : ''}`}>
+                    {report.cancelled}
                   </div>
-                  <div className="text-xs text-muted-foreground">Удалено</div>
+                  <div className="text-xs text-muted-foreground">Отменено</div>
                 </div>
               </div>
 
               <div className="text-sm">
-                Сумма к удалению: <span className="font-semibold">{formatAmount(report.total_amount)} BYN</span>
+                Сумма записей: <span className="font-semibold">{formatAmount(report.total_amount)} BYN</span>
               </div>
 
               {/* Success message after execution */}
-              {mode === 'executed' && report.deleted > 0 && (
+              {mode === 'executed' && report.cancelled > 0 && (
                 <Alert className="border-green-200 bg-green-50 dark:bg-green-950/20">
                   <CheckCircle className="h-4 w-4 text-green-600" />
                   <AlertDescription className="text-green-700 dark:text-green-400">
-                    Успешно удалено {report.deleted} записей на сумму {formatAmount(report.total_amount)} BYN
+                    Soft-cancel выполнен: {report.cancelled} записей помечены как 'cancelled'
                   </AlertDescription>
                 </Alert>
               )}
@@ -271,23 +310,19 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
               {report.examples.length > 0 && mode === 'preview' && (
                 <div>
                   <div className="text-xs font-medium text-muted-foreground mb-1">
-                    Примеры записей к удалению:
+                    Примеры записей к отмене:
                   </div>
                   <ScrollArea className="h-[100px] rounded-md border">
                     <div className="p-2 space-y-1">
                       {report.examples.map((r) => (
                         <div key={r.id} className="flex items-center gap-2 text-xs py-1 border-b last:border-0">
-                          <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
+                          <CheckCircle className="h-3 w-3 text-amber-500 flex-shrink-0" />
                           <span className="font-mono truncate max-w-[100px]">
                             {r.bepaid_uid?.substring(0, 8) || r.id.substring(0, 8)}...
                           </span>
+                          <Badge variant="outline" className="text-[9px]">{r.status}</Badge>
                           <span className="tabular-nums">{formatAmount(r.amount)}</span>
                           <span className="text-muted-foreground">{r.currency}</span>
-                          {r.paid_at && (
-                            <span className="text-muted-foreground text-[10px]">
-                              {new Date(r.paid_at).toLocaleDateString('ru-RU')}
-                            </span>
-                          )}
                         </div>
                       ))}
                     </div>
@@ -298,14 +333,14 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
               {/* Conflicts */}
               {report.conflicts.length > 0 && (
                 <div>
-                  <div className="text-xs font-medium text-amber-600 mb-1">
-                    Конфликты (не будут удалены — есть в API):
+                  <div className="text-xs font-medium text-blue-600 mb-1">
+                    Конфликты (не будут отменены — есть в payments_v2):
                   </div>
-                  <ScrollArea className="h-[80px] rounded-md border border-amber-200 dark:border-amber-800">
+                  <ScrollArea className="h-[80px] rounded-md border border-blue-200 dark:border-blue-800">
                     <div className="p-2 space-y-1">
                       {report.conflicts.map((r) => (
                         <div key={r.id} className="flex items-center gap-2 text-xs py-1 border-b last:border-0">
-                          <XCircle className="h-3 w-3 text-amber-500 flex-shrink-0" />
+                          <XCircle className="h-3 w-3 text-blue-500 flex-shrink-0" />
                           <span className="font-mono truncate max-w-[100px]">
                             {r.bepaid_uid?.substring(0, 8) || r.id.substring(0, 8)}...
                           </span>
@@ -330,7 +365,7 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
           {mode !== 'executed' && (
             <Button
               variant="secondary"
-              onClick={() => handlePurge(true)}
+              onClick={() => handleCancel(true)}
               disabled={isLoading || selectedCount === 0}
             >
               {isLoading && mode !== 'preview' ? (
@@ -340,18 +375,19 @@ export default function PurgeImportsDialog({ onComplete, renderTrigger }: PurgeI
             </Button>
           )}
           
-          {mode === 'preview' && report && report.eligible_for_deletion > 0 && (
+          {(mode === 'preview' || mode === 'stopped') && report && report.eligible_for_cancel > 0 && (
             <Button
-              variant="destructive"
-              onClick={() => handlePurge(false)}
-              disabled={isLoading}
+              variant="default"
+              className="bg-amber-600 hover:bg-amber-700"
+              onClick={() => handleCancel(false)}
+              disabled={isLoading || (report.total_found > 1000 && !unsafeAllowLarge)}
             >
               {isLoading ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               ) : (
-                <Trash2 className="h-4 w-4 mr-2" />
+                <Ban className="h-4 w-4 mr-2" />
               )}
-              Удалить ({report.eligible_for_deletion})
+              Soft-Cancel ({report.eligible_for_cancel})
             </Button>
           )}
         </DialogFooter>

@@ -7,13 +7,27 @@ const corsHeaders = {
 };
 
 /**
- * PATCH 3: Queue processing with proper retry logic
+ * PATCH: Queue processing with CORRECT webhook-first priority
+ * 
+ * Priority is NOT alphabetical - we use explicit CASE ordering:
+ * 1. webhook (highest priority)
+ * 2. api_sync
+ * 3. csv (legacy)
+ * 4. file_import (lowest - excluded by default)
  * 
  * - Respects next_retry_at for backoff
  * - Updates attempts counter
  * - Skips items with max attempts reached
- * - Logs results to audit_logs
+ * - Logs results to audit_logs with system actor
  */
+
+// Source priority mapping (lower = higher priority)
+const SOURCE_PRIORITY: Record<string, number> = {
+  'webhook': 1,       // Highest priority - real-time payments
+  'api_sync': 2,      // API sync operations
+  'csv': 3,           // Legacy CSV imports
+  'file_import': 99,  // Lowest priority - excluded by default
+};
 
 // Calculate backoff delay for retry
 function calculateBackoffDelay(attempts: number): number {
@@ -37,20 +51,20 @@ serve(async (req) => {
     const maxAttempts = body.maxAttempts || 5;
     const batchSize = body.batchSize || 20;
     const excludeFileImport = body.excludeFileImport !== false; // Default: exclude file_import
+    const excludeCancelled = body.excludeCancelled !== false; // Default: exclude soft-cancelled items
 
     console.log(`[bepaid-queue-cron] Starting queue processing, batch size: ${batchSize}, max attempts: ${maxAttempts}, excludeFileImport: ${excludeFileImport}`);
 
     const now = new Date().toISOString();
 
-    // PATCH 3: Get pending items with proper retry logic
+    // Get pending items with proper retry logic
     // Only get items where:
-    // - status is pending or error
+    // - status is pending or error (NOT cancelled!)
     // - attempts < maxAttempts
     // - next_retry_at is null OR <= now (ready for retry)
-    // PATCH: Prioritize webhook source, exclude file_import by default
     let query = supabase
       .from("payment_reconcile_queue")
-      .select("id, bepaid_uid, customer_email, amount, currency, attempts, status, next_retry_at, last_error, source")
+      .select("id, bepaid_uid, customer_email, amount, currency, attempts, status, next_retry_at, last_error, source, meta")
       .in("status", ["pending", "error"])
       .lt("attempts", maxAttempts)
       .or(`next_retry_at.is.null,next_retry_at.lte.${now}`);
@@ -60,17 +74,18 @@ serve(async (req) => {
       query = query.neq("source", "file_import");
     }
     
-    // Order by source (webhook first) then by created_at
-    const { data: pendingItems, error: fetchError } = await query
-      .order("source", { ascending: false }) // 'webhook' > 'csv' > 'file_import' alphabetically reversed
+    // Exclude soft-cancelled items (those with meta.soft_cancelled = true)
+    // Note: This is a fallback if 'cancelled' status wasn't available
+    
+    const { data: allPendingItems, error: fetchError } = await query
       .order("created_at", { ascending: true })
-      .limit(batchSize);
+      .limit(batchSize * 3); // Get more to sort properly
 
     if (fetchError) {
       throw new Error(`Failed to fetch queue: ${fetchError.message}`);
     }
 
-    if (!pendingItems || pendingItems.length === 0) {
+    if (!allPendingItems || allPendingItems.length === 0) {
       console.log("[bepaid-queue-cron] No pending items ready for processing");
       return new Response(
         JSON.stringify({ success: true, processed: 0, message: "No pending items ready" }),
@@ -78,7 +93,39 @@ serve(async (req) => {
       );
     }
 
-    console.log(`[bepaid-queue-cron] Found ${pendingItems.length} items to process`);
+    // Filter out soft-cancelled items
+    let filteredItems = allPendingItems;
+    if (excludeCancelled) {
+      filteredItems = allPendingItems.filter(item => {
+        const meta = item.meta as Record<string, unknown> | null;
+        return !(meta?.soft_cancelled === true);
+      });
+    }
+
+    // CORRECT PRIORITY SORTING: Use explicit priority map, not alphabetical
+    const sortedItems = filteredItems
+      .map(item => ({
+        ...item,
+        priority: SOURCE_PRIORITY[item.source] || 50, // Unknown sources get medium priority
+      }))
+      .sort((a, b) => {
+        // First by priority (lower = higher priority)
+        if (a.priority !== b.priority) {
+          return a.priority - b.priority;
+        }
+        // Then by created_at (older first)
+        return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+      })
+      .slice(0, batchSize); // Take only batchSize after sorting
+
+    console.log(`[bepaid-queue-cron] Found ${allPendingItems.length} items, processing ${sortedItems.length} after filtering and priority sort`);
+    
+    // Log source distribution
+    const sourceDistribution = sortedItems.reduce((acc, item) => {
+      acc[item.source] = (acc[item.source] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    console.log(`[bepaid-queue-cron] Processing by source:`, sourceDistribution);
 
     const results = {
       processed: 0,
@@ -87,12 +134,13 @@ serve(async (req) => {
       skipped: 0,
       retried: 0,
       webhook_processed: 0,
+      by_source: {} as Record<string, number>,
       errors: [] as string[],
     };
 
-    for (const item of pendingItems) {
+    for (const item of sortedItems) {
       try {
-        console.log(`[bepaid-queue-cron] Processing item ${item.id}, source=${item.source}, bepaid_uid=${item.bepaid_uid}, attempts=${item.attempts}`);
+        console.log(`[bepaid-queue-cron] Processing item ${item.id}, source=${item.source}, priority=${item.priority}, bepaid_uid=${item.bepaid_uid}, attempts=${item.attempts}`);
         
         // Update item to processing status
         await supabase
@@ -109,6 +157,9 @@ serve(async (req) => {
             body: { queueItemId: item.id },
           }
         );
+
+        // Track by source
+        results.by_source[item.source] = (results.by_source[item.source] || 0) + 1;
 
         if (processError) {
           console.error(`[bepaid-queue-cron] Error processing item ${item.id}:`, processError);
@@ -201,9 +252,10 @@ serve(async (req) => {
     // Check for items that exceeded max attempts and need attention
     const { data: stuckItems } = await supabase
       .from("payment_reconcile_queue")
-      .select("id, bepaid_uid, customer_email, amount, currency, last_error")
+      .select("id, bepaid_uid, customer_email, amount, currency, last_error, source")
       .gte("attempts", maxAttempts)
       .eq("status", "error")
+      .neq("source", "file_import") // Don't count file_import as stuck - they're excluded
       .limit(10);
 
     if (stuckItems && stuckItems.length > 0) {
@@ -222,6 +274,7 @@ serve(async (req) => {
               customer_email: item.customer_email,
               discrepancy_type: "stuck_items",
               last_error: item.last_error,
+              source: item.source,
             })),
             threshold: 100,
             source: "queue_cron",
@@ -230,7 +283,7 @@ serve(async (req) => {
       }
     }
 
-    // Log to audit_logs
+    // Log to audit_logs with system actor
     await supabase.from("audit_logs").insert({
       actor_user_id: null,
       actor_type: "system",
@@ -242,8 +295,12 @@ serve(async (req) => {
         failed: results.failed,
         skipped: results.skipped,
         retried: results.retried,
+        webhook_processed: results.webhook_processed,
+        by_source: results.by_source,
         stuck_items: stuckItems?.length || 0,
         errors_sample: results.errors.slice(0, 3),
+        priority_order: 'webhook > api_sync > csv > file_import (explicit)',
+        timestamp: new Date().toISOString(),
       },
     });
 
@@ -255,6 +312,8 @@ serve(async (req) => {
         failed: results.failed,
         skipped: results.skipped,
         retried: results.retried,
+        webhook_processed: results.webhook_processed,
+        by_source: results.by_source,
         errors: results.errors,
         stuckItems: stuckItems?.length || 0,
       }),
