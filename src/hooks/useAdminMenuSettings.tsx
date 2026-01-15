@@ -85,9 +85,8 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "preregistrations", label: "Предзаписи", path: "/admin/preregistrations", icon: "ClipboardList", order: 5, permission: "users.view" },
       { id: "broadcasts", label: "Рассылки", path: "/admin/broadcasts", icon: "Send", order: 6, permission: "users.view" },
       { id: "integrations", label: "Интеграции", path: "/admin/integrations/crm", icon: "Plug", order: 7, permission: "entitlements.view" },
-      { id: "bepaid-sync", label: "Синхр. bePaid", path: "/admin/bepaid-sync", icon: "RefreshCw", order: 8, permission: "entitlements.view" },
-      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 9, permission: "entitlements.view" },
-      { id: "refunds", label: "Возвраты", path: "/admin/refunds-v2", icon: "Undo2", order: 10, permission: "entitlements.view" },
+      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 8, permission: "entitlements.view" },
+      { id: "refunds", label: "Возвраты", path: "/admin/refunds-v2", icon: "Undo2", order: 9, permission: "entitlements.view" },
     ],
   },
   {

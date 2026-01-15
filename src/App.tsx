@@ -72,7 +72,7 @@ import LibraryLesson from "./pages/LibraryLesson";
 import AdminTrainingModules from "./pages/admin/AdminTrainingModules";
 import AdminTrainingLessons from "./pages/admin/AdminTrainingLessons";
 import AdminLessonBlockEditor from "./pages/admin/AdminLessonBlockEditor";
-import AdminBepaidSync from "./pages/admin/AdminBepaidSync";
+// AdminBepaidSync removed - redirecting to /admin/payments
 import AdminRefundsV2 from "./pages/admin/AdminRefundsV2";
 
 const queryClient = new QueryClient();
@@ -171,7 +171,7 @@ const App = () => (
               <Route path="/admin/training-modules" element={<ProtectedRoute><AdminTrainingModules /></ProtectedRoute>} />
               <Route path="/admin/training-modules/:moduleId/lessons" element={<ProtectedRoute><AdminTrainingLessons /></ProtectedRoute>} />
               <Route path="/admin/training-lessons/:moduleId/edit/:lessonId" element={<ProtectedRoute><AdminLessonBlockEditor /></ProtectedRoute>} />
-              <Route path="/admin/bepaid-sync" element={<ProtectedRoute><AdminBepaidSync /></ProtectedRoute>} />
+              <Route path="/admin/bepaid-sync" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/refunds-v2" element={<ProtectedRoute><AdminRefundsV2 /></ProtectedRoute>} />
               <Route path="/admin/payments" element={<ProtectedRoute><AdminPaymentsPage /></ProtectedRoute>} />
               

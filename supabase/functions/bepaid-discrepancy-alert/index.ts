@@ -157,7 +157,7 @@ serve(async (req) => {
     <pre>${discrepancyDetails}</pre>
   </div>
   
-  <a href="${siteUrl}/admin/bepaid-sync" class="button">Открыть сверку bePaid</a>
+  <a href="${siteUrl}/admin/payments" class="button">Открыть платежи</a>
   
   <p style="margin-top: 24px; color: #6b7280; font-size: 12px;">
     Источник: ${source}<br>
@@ -177,7 +177,7 @@ serve(async (req) => {
 ${discrepancyDetails}
 
 ${discrepancies.length > 10 ? `\n...и ещё ${discrepancies.length - 10} записей\n` : ""}
-🔗 [Открыть сверку](${siteUrl}/admin/bepaid-sync)
+🔗 [Открыть платежи](${siteUrl}/admin/payments)
     `.trim();
 
     let emailsSent = 0;

@@ -97,7 +97,7 @@ export default function AdminRefundsV2() {
         `)
         .eq("provider", "bepaid")
         .not("provider_payment_id", "is", null)
-        .order("created_at", { ascending: false })
+        .order("paid_at", { ascending: false, nullsFirst: false })
         .limit(200);
 
       // Filter by refund status
@@ -584,7 +584,7 @@ export default function AdminRefundsV2() {
                         <TableCell>
                           <div className="flex items-center gap-1 text-sm text-muted-foreground">
                             <Clock className="h-3 w-3" />
-                            {format(new Date(payment.created_at), "dd.MM.yy", { locale: ru })}
+                            {format(new Date(payment.paid_at || payment.created_at), "dd.MM.yy", { locale: ru })}
                           </div>
                         </TableCell>
                         <TableCell className="text-right">

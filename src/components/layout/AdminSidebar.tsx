@@ -107,8 +107,8 @@ export function AdminSidebar() {
   const getBadge = (item: MenuItem): { count: number; show: boolean } => {
     if (item.badge === "unread") return { count: totalUnread, show: totalUnread > 0 };
     if (item.badge === "duplicates") return { count: duplicateCount || 0, show: (duplicateCount || 0) > 0 };
-    // Show badge for bepaid sync page when there are unmapped products
-    if (item.path === "/admin/bepaid-sync" && unmappedProductsCount > 0) {
+    // Show badge for payments page when there are unmapped products
+    if (item.path === "/admin/payments" && unmappedProductsCount > 0) {
       return { count: unmappedProductsCount, show: true };
     }
     return { count: 0, show: false };
