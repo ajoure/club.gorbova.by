@@ -26,17 +26,18 @@ export function WelcomeOnboardingModal() {
 
   const isTelegramLinked = telegramStatus?.status === "active" || !!telegramStatus?.telegram_username;
 
-  // PATCH 13: Fetch onboarding state from DB
+  // PATCH 13: Fetch onboarding state from DB - use user_id not id!
   const { data: onboardingState, isLoading: stateLoading } = useQuery({
     queryKey: ["onboarding-state", user?.id],
     queryFn: async () => {
       if (!user?.id) return null;
       
+      // CRITICAL FIX: profiles.user_id = auth.uid, NOT profiles.id
       const { data, error } = await supabase
         .from("profiles")
         .select("onboarding_dismissed_at, onboarding_completed_at")
-        .eq("id", user.id)
-        .single();
+        .eq("user_id", user.id)
+        .maybeSingle();
       
       if (error) {
         console.warn("Failed to fetch onboarding state:", error);
@@ -85,10 +86,11 @@ export function WelcomeOnboardingModal() {
         ? { onboarding_completed_at: new Date().toISOString() }
         : { onboarding_dismissed_at: new Date().toISOString() };
       
+      // CRITICAL FIX: Use user_id (auth.uid), not profiles.id
       const { error } = await supabase
         .from("profiles")
         .update(updates)
-        .eq("id", user.id);
+        .eq("user_id", user.id);
       
       if (error) throw error;
     },
