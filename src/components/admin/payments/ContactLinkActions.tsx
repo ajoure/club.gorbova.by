@@ -225,59 +225,87 @@ export default function ContactLinkActions({
         variant="outline"
         size="sm"
         onClick={() => setOpen(true)}
-        className="gap-1.5"
+        className="gap-1.5 text-xs h-8"
       >
-        <UserPlus className="h-3.5 w-3.5" />
+        <UserPlus className="h-3 w-3" />
         {currentProfileId ? "Пересвязать" : "Привязать"}
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Привязка контакта</DialogTitle>
-            <DialogDescription>
-              Выберите существующий контакт или создайте новый (ghost)
+        <DialogContent className="max-w-md p-0 gap-0 overflow-hidden bg-background/80 backdrop-blur-xl border-border/50 shadow-2xl">
+          <DialogHeader className="px-6 pt-6 pb-4">
+            <DialogTitle className="text-lg font-semibold">Привязка контакта</DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground">
+              Выберите существующий контакт или создайте новый
             </DialogDescription>
           </DialogHeader>
 
           <Tabs defaultValue="search" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="search" className="gap-1.5">
-                <Search className="h-4 w-4" />
-                Найти
-              </TabsTrigger>
-              <TabsTrigger value="ghost" className="gap-1.5">
-                <Ghost className="h-4 w-4" />
-                Создать ghost
-              </TabsTrigger>
-            </TabsList>
+            <div className="px-6">
+              <TabsList className="grid w-full grid-cols-2 h-10 p-1 bg-muted/50 backdrop-blur-sm">
+                <TabsTrigger 
+                  value="search" 
+                  className="gap-2 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all"
+                >
+                  <Search className="h-4 w-4" />
+                  Найти
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="ghost" 
+                  className="gap-2 text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm transition-all"
+                >
+                  <Ghost className="h-4 w-4" />
+                  Создать ghost
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
-            <TabsContent value="search" className="mt-4">
-              <Command className="rounded-lg border" shouldFilter={false}>
-                <CommandInput
-                  placeholder="Поиск по имени, email, телефону..."
-                  value={searchQuery}
-                  onValueChange={handleSearch}
-                />
-                <CommandList>
-                  <CommandEmpty>
-                    {searching ? "Поиск..." : searchQuery.length < 2 ? "Введите минимум 2 символа" : "Не найдено"}
+            <TabsContent value="search" className="mt-0 focus-visible:ring-0">
+              <Command className="bg-transparent" shouldFilter={false}>
+                <div className="px-6 py-3">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <CommandInput
+                      placeholder="Имя, email или телефон..."
+                      value={searchQuery}
+                      onValueChange={handleSearch}
+                      className="pl-9 h-10 bg-muted/30 border-0 rounded-lg focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                </div>
+                <CommandList className="max-h-[280px] px-3 pb-3">
+                  <CommandEmpty className="py-8 text-center text-sm text-muted-foreground">
+                    {searching ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                        Поиск...
+                      </span>
+                    ) : searchQuery.length < 2 ? (
+                      "Введите минимум 2 символа"
+                    ) : (
+                      "Не найдено"
+                    )}
                   </CommandEmpty>
-                  <CommandGroup>
+                  <CommandGroup className="p-0">
                     {searchResults.map((profile) => (
                       <CommandItem
                         key={profile.id}
                         onSelect={() => linkExistingContact(profile.id)}
-                        className="flex items-center justify-between"
+                        className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors hover:bg-primary/5 data-[selected=true]:bg-primary/10 mb-1"
                       >
-                        <div>
-                          <p className="font-medium">
+                        <div className="h-9 w-9 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center flex-shrink-0">
+                          <span className="text-sm font-medium text-primary">
+                            {(profile.full_name || "?")[0].toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate flex items-center gap-1.5">
                             {profile.full_name || "Без имени"}
                             {!profile.user_id && (
-                              <Ghost className="h-3 w-3 inline ml-1 text-muted-foreground" />
+                              <Ghost className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                             )}
                           </p>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-xs text-muted-foreground truncate">
                             {profile.email || profile.phone || "—"}
                           </p>
                         </div>
@@ -288,77 +316,89 @@ export default function ContactLinkActions({
               </Command>
             </TabsContent>
 
-            <TabsContent value="ghost" className="mt-4 space-y-4">
-              <p className="text-sm text-muted-foreground">
+            <TabsContent value="ghost" className="mt-0 px-6 pb-6 space-y-4 focus-visible:ring-0">
+              <p className="text-xs text-muted-foreground bg-muted/30 rounded-lg p-3">
                 Ghost-контакт будет автоматически объединён при регистрации пользователя с тем же email/телефоном
               </p>
               
               <div className="space-y-3">
                 <div className="space-y-1.5">
-                  <Label htmlFor="ghost-name">Имя *</Label>
+                  <Label htmlFor="ghost-name" className="text-xs font-medium">Имя *</Label>
                   <Input
                     id="ghost-name"
                     value={ghostName}
                     onChange={(e) => setGhostName(e.target.value)}
                     placeholder="Иванов Иван"
+                    className="h-10 bg-muted/30 border-0 focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
                 
                 <div className="space-y-1.5">
-                  <Label htmlFor="ghost-email">Email</Label>
+                  <Label htmlFor="ghost-email" className="text-xs font-medium">Email</Label>
                   <Input
                     id="ghost-email"
                     type="email"
                     value={ghostEmail}
                     onChange={(e) => setGhostEmail(e.target.value)}
                     placeholder="ivan@example.com"
+                    className="h-10 bg-muted/30 border-0 focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
                 
                 <div className="space-y-1.5">
-                  <Label htmlFor="ghost-phone">Телефон</Label>
+                  <Label htmlFor="ghost-phone" className="text-xs font-medium">Телефон</Label>
                   <Input
                     id="ghost-phone"
                     value={ghostPhone}
                     onChange={(e) => setGhostPhone(e.target.value)}
                     placeholder="+375..."
+                    className="h-10 bg-muted/30 border-0 focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
               </div>
 
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setOpen(false)}>
+              <div className="flex gap-2 pt-2">
+                <Button 
+                  variant="ghost" 
+                  onClick={() => setOpen(false)}
+                  className="flex-1 h-10"
+                >
                   Отмена
                 </Button>
                 <Button
                   onClick={() => createGhostContact(false)}
                   disabled={loading || !ghostName.trim()}
-                  className="gap-1.5"
+                  className="flex-1 h-10 gap-2"
                 >
                   <Ghost className="h-4 w-4" />
-                  Создать и привязать
+                  Создать
                 </Button>
-              </DialogFooter>
+              </div>
             </TabsContent>
           </Tabs>
         </DialogContent>
       </Dialog>
 
-      {/* B3: Conflict confirmation dialog */}
+      {/* Conflict confirmation dialog */}
       <AlertDialog open={!!conflictData} onOpenChange={(open) => !open && setConflictData(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent className="bg-background/80 backdrop-blur-xl border-border/50">
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              <div className="h-10 w-10 rounded-full bg-amber-500/10 flex items-center justify-center">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+              </div>
               Конфликт привязки
             </AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogDescription className="text-sm">
               {conflictData?.message}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={handleForceOverride} className="bg-amber-600 hover:bg-amber-700">
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel className="h-10">Отмена</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleForceOverride} 
+              className="h-10 bg-amber-600 hover:bg-amber-700"
+            >
               Перезаписать
             </AlertDialogAction>
           </AlertDialogFooter>
