@@ -39,7 +39,7 @@ export type PaymentFilters = {
 
 const defaultFilters: PaymentFilters = {
   search: "",
-  status: "all",
+  status: "successful_and_refunds", // Default: show successful + refunds
   type: "all",
   hasContact: "all",
   hasDeal: "all",
@@ -153,8 +153,17 @@ export default function AdminPayments() {
         if (!matchSearch) return false;
       }
       
-      // Status filter
-      if (filters.status !== "all" && p.status_normalized !== filters.status) return false;
+      // Status filter with combo option for successful + refunds
+      if (filters.status !== "all") {
+        if (filters.status === "successful_and_refunds") {
+          // Show successful payments AND refund transactions
+          const isSuccessful = ['successful', 'succeeded'].includes(p.status_normalized);
+          const isRefundType = ['Возврат средств', 'refund'].includes(p.transaction_type || '');
+          if (!isSuccessful && !isRefundType) return false;
+        } else if (filters.status !== p.status_normalized) {
+          return false;
+        }
+      }
       
       // Type filter
       if (filters.type !== "all" && p.transaction_type !== filters.type) return false;

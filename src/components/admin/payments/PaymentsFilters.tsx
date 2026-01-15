@@ -20,23 +20,23 @@ export default function PaymentsFilters({ filters, setFilters }: PaymentsFilters
           <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все</SelectItem>
-            <SelectItem value="successful">Успешно</SelectItem>
+            <SelectItem value="successful_and_refunds">Успешные + возвраты</SelectItem>
+            <SelectItem value="successful">Только успешные</SelectItem>
             <SelectItem value="pending">Ожидает</SelectItem>
             <SelectItem value="failed">Ошибка</SelectItem>
-            <SelectItem value="refunded">Возврат</SelectItem>
           </SelectContent>
         </Select>
       </div>
       
       <div className="space-y-1">
-        <Label className="text-xs">Тип</Label>
+        <Label className="text-xs">Тип транзакции</Label>
         <Select value={filters.type} onValueChange={(v) => updateFilter("type", v)}>
           <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все</SelectItem>
             <SelectItem value="payment">Платёж</SelectItem>
+            <SelectItem value="Возврат средств">Возврат</SelectItem>
             <SelectItem value="subscription">Подписка</SelectItem>
-            <SelectItem value="refund">Возврат</SelectItem>
             <SelectItem value="void">Отмена</SelectItem>
             <SelectItem value="chargeback">Чарджбек</SelectItem>
           </SelectContent>

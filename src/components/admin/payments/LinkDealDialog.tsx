@@ -33,6 +33,7 @@ interface LinkDealDialogProps {
   currency?: string;
   paidAt?: string;
   profileId?: string | null;
+  transactionType?: string; // For detecting refunds
   onSuccess: () => void;
 }
 
@@ -45,8 +46,10 @@ export function LinkDealDialog({
   currency,
   paidAt,
   profileId,
+  transactionType,
   onSuccess 
 }: LinkDealDialogProps) {
+  const isRefund = transactionType === 'Возврат средств' || transactionType === 'refund';
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
@@ -71,8 +74,14 @@ export function LinkDealDialog({
         query = query.or(`order_number.ilike.%${search}%`);
       }
       
-      // Optionally filter by similar amount
-      if (amount && !search.trim()) {
+      // For refunds, filter by paid status and similar amount
+      if (isRefund) {
+        query = query.eq("status", "paid");
+        if (amount && !search.trim()) {
+          query = query.gte("final_price", amount * 0.8).lte("final_price", amount * 1.2);
+        }
+      } else if (amount && !search.trim()) {
+        // Optionally filter by similar amount for regular payments
         query = query.gte("final_price", amount * 0.9).lte("final_price", amount * 1.1);
       }
       
@@ -178,8 +187,13 @@ export function LinkDealDialog({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Package className="h-5 w-5" />
-              Связать сделку
+              {isRefund ? "Связать возврат со сделкой" : "Связать сделку"}
             </DialogTitle>
+            {isRefund && (
+              <p className="text-sm text-purple-600 dark:text-purple-400 mt-1">
+                Вы привязываете возврат. Будут найдены оплаченные сделки с похожей суммой.
+              </p>
+            )}
           </DialogHeader>
           
           <div className="space-y-4 py-4">

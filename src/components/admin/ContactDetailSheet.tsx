@@ -2141,7 +2141,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   const isPaid = deal.status === "paid";
                   const payments = (deal as any).payments_v2 as any[] | undefined;
                   const successfulPayment = payments?.find((p: any) => p.status === "succeeded");
-                  const receiptUrl = successfulPayment?.provider_response?.transaction?.receipt_url as string | undefined;
+                  // Fix: Check receipt_url column first, then nested provider_response
+                  const receiptUrl = (successfulPayment as any)?.receipt_url 
+                    || successfulPayment?.provider_response?.transaction?.receipt_url as string | undefined;
                   
                   return (
                     <Card 

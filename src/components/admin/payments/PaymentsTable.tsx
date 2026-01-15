@@ -364,7 +364,15 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
         );
         
       case 'type':
-        return <Badge variant="outline" className="text-xs">{payment.transaction_type || "payment"}</Badge>;
+        const isRefund = payment.transaction_type === 'Возврат средств' || payment.transaction_type === 'refund';
+        return (
+          <Badge 
+            variant={isRefund ? "secondary" : "outline"} 
+            className={`text-xs ${isRefund ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" : ""}`}
+          >
+            {isRefund ? "Возврат" : (payment.transaction_type || "payment")}
+          </Badge>
+        );
         
       case 'status':
         return getStatusBadge(payment.status_normalized);
@@ -694,6 +702,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
               currency={selectedPayment.currency}
               paidAt={selectedPayment.paid_at || undefined}
               profileId={selectedPayment.profile_id}
+              transactionType={selectedPayment.transaction_type || undefined}
               onSuccess={onRefetch}
             />
           </>
