@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { 
-  Download, Upload, ArrowLeft, Search, Filter, X
+  Download, Upload, ArrowLeft, Search, Filter, X, RefreshCw, Loader2
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -81,6 +81,9 @@ export default function AdminPayments() {
   
   // Refresh from API state
   const [isRefreshingFromApi, setIsRefreshingFromApi] = useState(false);
+  
+  // bePaid resync state
+  const [isSyncing, setIsSyncing] = useState(false);
   
   // Fetch unified payment data
   const { 
@@ -263,6 +266,50 @@ export default function AdminPayments() {
       setIsRefreshingFromApi(false);
     }
   };
+  
+  // Sync with bePaid (UID-based resync)
+  const handleBepaidSync = async () => {
+    setIsSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('bepaid-uid-resync', {
+        body: {
+          fromDate: dateFilter.from || '2024-01-01',
+          toDate: dateFilter.to || format(new Date(), 'yyyy-MM-dd'),
+          dryRun: false,
+          unsafeAllowLarge: true,
+        }
+      });
+      
+      if (error) throw error;
+      
+      const result = data as {
+        success?: boolean;
+        stats?: {
+          total_candidates?: number;
+          processed?: number;
+          updated?: number;
+          created?: number;
+          fetch_errors?: number;
+        };
+        stop_reason?: string;
+        error?: string;
+      };
+      
+      if (!result.success && result.stop_reason) {
+        toast.error(result.stop_reason);
+      } else if (result.stats) {
+        toast.success(
+          `Синхронизация завершена: ${result.stats.updated || 0} обновлено, ${result.stats.created || 0} создано`
+        );
+        refetch();
+      }
+    } catch (e: any) {
+      console.error('Error syncing with bePaid:', e);
+      toast.error('Ошибка синхронизации: ' + (e.message || 'Неизвестная ошибка'));
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // Export to CSV
   const handleExport = () => {
@@ -348,6 +395,21 @@ export default function AdminPayments() {
               value={dateFilter} 
               onChange={setDateFilter} 
             />
+            
+            {/* Sync with bePaid */}
+            <Button
+              variant="outline"
+              onClick={handleBepaidSync}
+              disabled={isSyncing}
+              className="gap-2 h-9"
+            >
+              {isSyncing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              <span className="hidden sm:inline">Синхронизировать</span>
+            </Button>
             
             {/* Import button */}
             <Button 

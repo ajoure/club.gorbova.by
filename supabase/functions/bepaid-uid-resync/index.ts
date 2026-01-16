@@ -41,6 +41,8 @@ interface ResyncResult {
       orders: number;
       queue_webhook: number;
       queue_api_recover: number;
+      queue_file_import: number;
+      queue_manual: number;
       payments_incomplete: number;
     };
     processed: number;
@@ -195,6 +197,8 @@ Deno.serve(async (req) => {
           orders: 0,
           queue_webhook: 0,
           queue_api_recover: 0,
+          queue_file_import: 0,
+          queue_manual: 0,
           payments_incomplete: 0,
         },
         processed: 0,
@@ -236,7 +240,7 @@ Deno.serve(async (req) => {
     const { data: queueItems, error: queueError } = await supabaseAdmin
       .from('payment_reconcile_queue')
       .select('bepaid_uid, source, status')
-      .in('source', ['webhook', 'api_recover'])
+      .in('source', ['webhook', 'api_recover', 'file_import', 'manual'])
       .not('status', 'in', '("cancelled","completed")')
       .not('bepaid_uid', 'is', null)
       .gte('created_at', `${fromDate}T00:00:00Z`)
@@ -267,9 +271,13 @@ Deno.serve(async (req) => {
     // Count sources
     const webhookItems = (queueItems || []).filter(q => q.source === 'webhook');
     const apiRecoverItems = (queueItems || []).filter(q => q.source === 'api_recover');
+    const fileImportItems = (queueItems || []).filter(q => q.source === 'file_import');
+    const manualItems = (queueItems || []).filter(q => q.source === 'manual');
     
     result.stats.sources.queue_webhook = webhookItems.length;
     result.stats.sources.queue_api_recover = apiRecoverItems.length;
+    result.stats.sources.queue_file_import = fileImportItems.length;
+    result.stats.sources.queue_manual = manualItems.length;
     result.stats.sources.payments_incomplete = (incompletePayments || []).length;
 
     // Step 4: Deduplicate UIDs from all sources
