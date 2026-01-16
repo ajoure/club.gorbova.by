@@ -77,7 +77,7 @@ serve(async (req) => {
       .from("payment_reconcile_queue")
       .select("*")
       .or("transaction_type.eq.Возврат средств,transaction_type.ilike.%refund%")
-      .in("status", ["pending", "error"])
+      .in("status", ["pending", "error", "cancelled"])
       .order("created_at", { ascending: true })
       .limit(maxItems);
 
