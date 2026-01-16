@@ -3,6 +3,7 @@ import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import PaymentMethodBadge from "@/components/admin/payments/PaymentMethodBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -253,19 +254,11 @@ export default function AdminPaymentsV2() {
                           }).format(Number(payment.amount))}
                         </TableCell>
                         <TableCell>
-                          {payment.card_last4 ? (
-                            <div className="flex items-center gap-2">
-                              <span className="text-muted-foreground">****</span>
-                              <span className="font-mono">{payment.card_last4}</span>
-                              {payment.card_brand && (
-                                <Badge variant="outline" className="text-xs">
-                                  {payment.card_brand}
-                                </Badge>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
+                          <PaymentMethodBadge 
+                            cardBrand={payment.card_brand}
+                            cardLast4={payment.card_last4}
+                            providerResponse={payment.provider_response}
+                          />
                         </TableCell>
                         <TableCell>
                           <div className={cn("flex items-center gap-2", statusConfig.className)}>
