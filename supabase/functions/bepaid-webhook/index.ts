@@ -810,6 +810,8 @@ Deno.serve(async (req) => {
         error_message: transaction?.message || null,
         card_brand: transaction?.credit_card?.brand || paymentV2.card_brand || null,
         card_last4: transaction?.credit_card?.last_4 || paymentV2.card_last4 || null,
+        // Save receipt_url from webhook if available
+        receipt_url: transaction?.receipt_url || paymentV2.receipt_url || null,
       };
 
       // =====================================================================

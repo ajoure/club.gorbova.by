@@ -330,8 +330,22 @@ Deno.serve(async (req) => {
               paid_at: new Date().toISOString(),
               provider_payment_id: txUid,
               provider_response: chargeResult,
+              receipt_url: chargeResult.transaction?.receipt_url || null,
             })
             .eq('id', payment.id);
+
+          // Schedule receipt fetch in background
+          fetch(
+            `${Deno.env.get('SUPABASE_URL')}/functions/v1/bepaid-fetch-receipt`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+              },
+              body: JSON.stringify({ payment_id: payment.id }),
+            }
+          ).catch((e) => console.warn(`Receipt fetch failed:`, e));
 
           // Update installment
           await supabase

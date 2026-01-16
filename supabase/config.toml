@@ -201,3 +201,9 @@ verify_jwt = false
 
 [functions.generate-affirmation]
 verify_jwt = false
+
+[functions.bepaid-fetch-receipt]
+verify_jwt = false
+
+[functions.bepaid-receipts-cron]
+verify_jwt = false
