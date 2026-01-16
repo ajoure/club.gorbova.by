@@ -253,7 +253,7 @@ export default function PaymentSecurityTab() {
           </CardHeader>
           <CardContent>
             <div className="text-lg font-bold">
-              {auditResult
+              {auditResult?.run_at && !isNaN(new Date(auditResult.run_at).getTime())
                 ? format(new Date(auditResult.run_at), "dd.MM HH:mm", { locale: ru })
                 : "—"}
             </div>
