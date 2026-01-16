@@ -162,6 +162,32 @@ export default function AdminDeals() {
     return { total, paid, pending, revenue };
   }, [deals]);
 
+  // Subscription Health stats
+  const { data: healthStats } = useQuery({
+    queryKey: ["subscription-health-stats"],
+    queryFn: async () => {
+      const now = new Date();
+      const in72h = new Date(now.getTime() + 72 * 60 * 60 * 1000);
+      
+      const { data } = await supabase
+        .from("subscriptions_v2")
+        .select("status, payment_method_id, access_end_at")
+        .in("status", ["active", "trial"]);
+      
+      const activeWithoutCard = data?.filter(
+        s => s.status === "active" && !s.payment_method_id
+      ).length || 0;
+      
+      const trialsExpiring72h = data?.filter(s => {
+        if (s.status !== "trial" || s.payment_method_id) return false;
+        const endAt = new Date(s.access_end_at);
+        return endAt <= in72h;
+      }).length || 0;
+      
+      return { activeWithoutCard, trialsExpiring72h };
+    },
+  });
+
 
   // Get field value for sorting/filtering
   const getDealFieldValue = useCallback((deal: any, fieldKey: string): any => {
@@ -518,6 +544,60 @@ export default function AdminDeals() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Subscription Health Widget */}
+      {healthStats && (healthStats.activeWithoutCard > 0 || healthStats.trialsExpiring72h > 0) && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card className="border-amber-500/50 bg-amber-500/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-amber-600 flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />
+                Под угрозой (Активные)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-amber-600">
+                {healthStats.activeWithoutCard}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Активные подписки без привязанной карты
+              </p>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="mt-3 w-full"
+                onClick={() => navigate("/admin/subscriptions-v2?filter=active_no_card")}
+              >
+                Показать пользователей
+              </Button>
+            </CardContent>
+          </Card>
+          <Card className="border-red-500/50 bg-red-500/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-red-600 flex items-center gap-2">
+                <XCircle className="h-4 w-4" />
+                Срочно (72ч)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-red-600">
+                {healthStats.trialsExpiring72h}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Триалы без карты истекут в ближ. 3 дня
+              </p>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="mt-3 w-full"
+                onClick={() => navigate("/admin/subscriptions-v2?filter=trial_no_card")}
+              >
+                Показать триалы
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-col gap-4">

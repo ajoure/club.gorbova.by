@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useMemo, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +33,7 @@ import {
   Calendar,
   CreditCard,
   Settings,
+  Send,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -40,6 +41,7 @@ import { format, formatDistanceToNow, isBefore } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { SubscriptionActionsSheet } from "@/components/admin/SubscriptionActionsSheet";
+import { toast } from "sonner";
 
 const SUBSCRIPTION_STATUS_CONFIG: Record<string, { label: string; icon: typeof CheckCircle; className: string }> = {
   active: { label: "Активна", icon: CheckCircle, className: "text-green-600" },
@@ -53,9 +55,22 @@ const SUBSCRIPTION_STATUS_CONFIG: Record<string, { label: string; icon: typeof C
 
 export default function AdminSubscriptionsV2() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
+  const [sendingRecovery, setSendingRecovery] = useState(false);
+
+  // Read filter from URL params
+  useEffect(() => {
+    const filterParam = searchParams.get("filter");
+    if (filterParam && (filterParam === "active_no_card" || filterParam === "trial_no_card")) {
+      setStatusFilter(filterParam);
+      // Clear the URL param after reading
+      searchParams.delete("filter");
+      setSearchParams(searchParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const { data: subscriptions, isLoading, refetch } = useQuery({
     queryKey: ["subscriptions-v2", statusFilter],
@@ -69,9 +84,14 @@ export default function AdminSubscriptionsV2() {
           flows(id, name)
         `)
         .order("created_at", { ascending: false })
-        .limit(100);
+        .limit(500);
 
-      if (statusFilter !== "all") {
+      // Handle special filters
+      if (statusFilter === "active_no_card") {
+        query = query.eq("status", "active").is("payment_method_id", null);
+      } else if (statusFilter === "trial_no_card") {
+        query = query.eq("status", "trial").is("payment_method_id", null);
+      } else if (statusFilter !== "all") {
         query = query.eq("status", statusFilter as "active" | "trial" | "past_due" | "canceled" | "expired");
       }
 
@@ -101,7 +121,7 @@ export default function AdminSubscriptionsV2() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("subscriptions_v2")
-        .select("status, is_trial");
+        .select("status, is_trial, payment_method_id");
       
       if (error) throw error;
       
@@ -109,10 +129,37 @@ export default function AdminSubscriptionsV2() {
       const active = data?.filter((s) => s.status === "active").length || 0;
       const trial = data?.filter((s) => s.status === "trial" || s.is_trial).length || 0;
       const pastDue = data?.filter((s) => s.status === "past_due").length || 0;
+      
+      // Health metrics
+      const activeWithoutCard = data?.filter(
+        s => s.status === "active" && !s.payment_method_id
+      ).length || 0;
+      const trialsWithoutCard = data?.filter(
+        s => s.status === "trial" && !s.payment_method_id
+      ).length || 0;
 
-      return { total, active, trial, pastDue };
+      return { total, active, trial, pastDue, activeWithoutCard, trialsWithoutCard };
     },
   });
+
+  // Send recovery notifications
+  const handleSendRecoveryPush = async () => {
+    setSendingRecovery(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('send-recovery-notifications', {
+        body: { filter: 'active_without_card' }
+      });
+      
+      if (error) throw error;
+      toast.success(`Отправлено уведомлений: Telegram ${data?.telegram_sent || 0}, Email ${data?.email_sent || 0}`);
+      refetch();
+    } catch (err) {
+      console.error('Recovery push error:', err);
+      toast.error('Ошибка отправки уведомлений');
+    } finally {
+      setSendingRecovery(false);
+    }
+  };
 
   const filteredSubscriptions = subscriptions?.filter((sub) => {
     if (!searchQuery) return true;
@@ -201,17 +248,38 @@ export default function AdminSubscriptionsV2() {
             />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-[200px]">
               <Filter className="h-4 w-4 mr-2" />
               <SelectValue placeholder="Статус" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Все статусы</SelectItem>
+              <SelectItem value="active_no_card" className="text-amber-600">
+                🚨 Активные без карты ({stats?.activeWithoutCard || 0})
+              </SelectItem>
+              <SelectItem value="trial_no_card" className="text-blue-600">
+                ⚠️ Триалы без карты ({stats?.trialsWithoutCard || 0})
+              </SelectItem>
               {Object.entries(SUBSCRIPTION_STATUS_CONFIG).map(([value, { label }]) => (
                 <SelectItem key={value} value={value}>{label}</SelectItem>
               ))}
             </SelectContent>
           </Select>
+          {(statusFilter === "active_no_card" || statusFilter === "trial_no_card") && (
+            <Button
+              variant="outline"
+              onClick={handleSendRecoveryPush}
+              disabled={sendingRecovery}
+              className="shrink-0"
+            >
+              {sendingRecovery ? (
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4 mr-2" />
+              )}
+              Отправить напоминание о цене
+            </Button>
+          )}
         </div>
 
         {/* Subscriptions table */}

@@ -61,6 +61,10 @@ async function sendTelegramReminder(
 
     let message = '';
     const priceInfo = hasCard ? `\n💳 *Сумма к списанию:* ${formatCurrency(amount, currency)}` : '';
+    const ctaUrl = hasCard 
+      ? 'https://club.gorbova.by/purchases' 
+      : 'https://club.gorbova.by/settings/payment-methods';
+    const ctaText = hasCard ? 'Управление подпиской' : 'Привязать карту и сохранить цену';
     
     if (daysLeft === 7) {
       message = `📅 *Напоминание о подписке*
@@ -73,11 +77,12 @@ ${userName}, ваша подписка заканчивается через н�
 
 ${hasCard 
   ? '✅ У вас привязана карта, подписка продлится автоматически.' 
-  : '⚠️ Чтобы продлить доступ, привяжите карту или оплатите вручную.'}
+  : '⚠️ Чтобы продлить доступ, привяжите карту.'}
 
-🔗 [Управление подпиской](https://club.gorbova.by/purchases)`;
+🔗 [${ctaText}](${ctaUrl})`;
     } else if (daysLeft === 3) {
-      message = `⏰ *Подписка заканчивается через 3 дня*
+      if (hasCard) {
+        message = `⏰ *Подписка заканчивается через 3 дня*
 
 ${userName}, осталось 3 дня до окончания вашей подписки.
 
@@ -85,13 +90,25 @@ ${userName}, осталось 3 дня до окончания вашей под
 🎯 *Тариф:* ${tariffName}
 📆 *Дата окончания:* ${formattedDate}${priceInfo}
 
-${hasCard 
-  ? '💳 Через 3 дня с вашей карты будет списана оплата за продление.' 
-  : '⚠️ Привяжите карту, чтобы не потерять доступ.'}
+💳 Через 3 дня с вашей карты будет списана оплата за продление.
 
-🔗 [Управление подпиской](https://club.gorbova.by/purchases)`;
+🔗 [${ctaText}](${ctaUrl})`;
+      } else {
+        message = `⏰ *Через 3 дня подписка может прерваться*
+
+${userName}, для продолжения нужна привязанная карта.
+
+📦 *${productName}* / ${tariffName}
+📆 Доступ до: ${formattedDate}
+
+⚠️ *Важно:* Сейчас за вами закреплена старая (выгодная) цена. 
+Если подписка прервется, повторный вход будет по новым, более высоким тарифам.
+
+🔗 [${ctaText}](${ctaUrl})`;
+      }
     } else if (daysLeft === 1) {
-      message = `🔔 *Завтра заканчивается подписка!*
+      if (hasCard) {
+        message = `🔔 *Завтра заканчивается подписка!*
 
 ${userName}, это последнее напоминание.
 
@@ -99,11 +116,22 @@ ${userName}, это последнее напоминание.
 🎯 *Тариф:* ${tariffName}
 📆 *Дата окончания:* ${formattedDate}${priceInfo}
 
-${hasCard 
-  ? '💳 Завтра мы автоматически продлим вашу подписку.' 
-  : '❗ Срочно привяжите карту или оплатите вручную, иначе доступ будет закрыт.'}
+💳 Завтра мы автоматически продлим вашу подписку.
 
-🔗 [Управление подпиской](https://club.gorbova.by/purchases)`;
+🔗 [${ctaText}](${ctaUrl})`;
+      } else {
+        message = `🛑 *Завтра доступ может быть ограничен*
+
+${userName}, это последнее напоминание.
+
+📦 *${productName}*
+📆 Истекает: ${formattedDate}
+
+❗ Если оплата не пройдет, ваша текущая цена «сгорит», и следующий вход будет стоить дороже.
+
+Уделите 1 минуту сейчас:
+🔗 [Привязать карту](${ctaUrl})`;
+      }
     }
 
     if (!message) return false;
@@ -156,12 +184,20 @@ async function sendEmailReminder(
     let subject = '';
     let bodyHtml = '';
 
+    const ctaUrl = hasCard 
+      ? 'https://club.gorbova.by/purchases' 
+      : 'https://club.gorbova.by/settings/payment-methods';
+    const ctaText = hasCard ? 'Управление подпиской' : 'Привязать карту и сохранить цену';
+
     const cardSection = hasCard 
       ? `<p style="color: #059669; margin: 16px 0;">✅ У вас привязана карта. Подписка будет продлена автоматически на сумму <strong>${formatCurrency(amount, currency)}</strong>.</p>`
-      : `<p style="color: #d97706; margin: 16px 0;">⚠️ Чтобы продолжить пользоваться сервисом, <a href="https://club.gorbova.by/settings/payment-methods" style="color: #7c3aed;">привяжите карту</a> или оплатите вручную.</p>`;
+      : `<div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 16px; margin: 16px 0;">
+          <p style="margin: 0; font-weight: 600; color: #92400e;">⚠️ Важно:</p>
+          <p style="margin: 8px 0 0 0; color: #78350f;">Сейчас за вами закреплена <strong>выгодная цена</strong>. Если подписка прервется, повторный вход будет по новым, более высоким тарифам.</p>
+        </div>`;
 
     if (daysLeft === 7) {
-      subject = `📅 Напоминание: подписка заканчивается через неделю`;
+      subject = hasCard ? '📅 Напоминание: подписка заканчивается через неделю' : '📅 Сохраните вашу стоимость участия в клубе';
       bodyHtml = `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <h1 style="color: #1f2937; font-size: 24px; margin-bottom: 20px;">Напоминание о подписке</h1>
@@ -177,8 +213,8 @@ async function sendEmailReminder(
           ${cardSection}
           
           <p style="margin-top: 24px;">
-            <a href="https://club.gorbova.by/purchases" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
-              Управление подпиской
+            <a href="${ctaUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+              ${ctaText}
             </a>
           </p>
           
@@ -188,7 +224,7 @@ async function sendEmailReminder(
         </div>
       `;
     } else if (daysLeft === 3) {
-      subject = `⏰ Подписка заканчивается через 3 дня`;
+      subject = hasCard ? '⏰ Подписка заканчивается через 3 дня' : '⏰ Через 3 дня подписка может прерваться';
       bodyHtml = `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <h1 style="color: #1f2937; font-size: 24px; margin-bottom: 20px;">Осталось 3 дня</h1>
@@ -204,8 +240,8 @@ async function sendEmailReminder(
           ${cardSection}
           
           <p style="margin-top: 24px;">
-            <a href="https://club.gorbova.by/purchases" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
-              Управление подпиской
+            <a href="${ctaUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+              ${ctaText}
             </a>
           </p>
           
@@ -215,10 +251,10 @@ async function sendEmailReminder(
         </div>
       `;
     } else if (daysLeft === 1) {
-      subject = `🔔 Завтра заканчивается подписка!`;
+      subject = hasCard ? '🔔 Завтра заканчивается подписка!' : '🛑 Завтра доступ может быть ограничен';
       bodyHtml = `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <h1 style="color: #dc2626; font-size: 24px; margin-bottom: 20px;">Последнее напоминание!</h1>
+          <h1 style="color: #dc2626; font-size: 24px; margin-bottom: 20px;">${hasCard ? 'Последнее напоминание!' : '⚠️ Последний шанс сохранить цену!'}</h1>
           <p>Здравствуйте!</p>
           <p>Ваша подписка заканчивается <strong>завтра</strong>.</p>
           
@@ -231,8 +267,8 @@ async function sendEmailReminder(
           ${cardSection}
           
           <p style="margin-top: 24px;">
-            <a href="https://club.gorbova.by/purchases" style="display: inline-block; background: #dc2626; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
-              Продлить сейчас
+            <a href="${ctaUrl}" style="display: inline-block; background: #dc2626; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
+              ${hasCard ? 'Управление подпиской' : 'Привязать карту сейчас'}
             </a>
           </p>
           
