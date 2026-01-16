@@ -281,6 +281,19 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             uiSource = 'webhook';
           }
           
+          // Determine if this is a refund transaction
+          const txType = (q.transaction_type || '').toLowerCase();
+          const statusNorm = (q.status_normalized || q.status || '').toLowerCase();
+          const isRefundTransaction = 
+            txType === 'возврат средств' ||
+            txType === 'refund' ||
+            txType.includes('возврат') ||
+            statusNorm === 'refunded';
+          
+          // Invert amount for refunds (show as negative)
+          const rawAmount = q.amount || 0;
+          const effectiveAmount = isRefundTransaction ? -Math.abs(rawAmount) : rawAmount;
+          
           return {
             id: q.id,
             uid: q.bepaid_uid || q.id,
@@ -288,7 +301,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             rawSource: 'queue' as const,
             transaction_type: q.transaction_type || 'payment',
             status_normalized: q.status_normalized || q.status || 'pending',
-            amount: q.amount || 0,
+            amount: effectiveAmount,
             currency: q.currency || 'BYN',
             paid_at: q.paid_at,
             created_at: q.created_at,
@@ -344,8 +357,11 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         withRefunds: allPayments.filter(p => p.refunds_count > 0).length,
         external: allPayments.filter(p => p.is_external).length,
         conflicts: allPayments.filter(p => p.has_conflict).length,
-        totalAmount: allPayments.reduce((sum, p) => sum + (p.amount || 0), 0),
-        totalRefunded: allPayments.reduce((sum, p) => sum + (p.total_refunded || 0), 0),
+        // totalAmount: only positive amounts (payments)
+        totalAmount: allPayments.filter(p => p.amount > 0).reduce((sum, p) => sum + p.amount, 0),
+        // totalRefunded: sum of absolute values of negative amounts (refunds)
+        totalRefunded: allPayments.filter(p => p.amount < 0).reduce((sum, p) => sum + Math.abs(p.amount), 0) 
+          + allPayments.reduce((sum, p) => sum + (p.total_refunded || 0), 0),
         pending: allPayments.filter(p => p.status_normalized === 'pending').length,
         failed: allPayments.filter(p => p.status_normalized === 'failed').length,
         successful: allPayments.filter(p => ['successful', 'succeeded'].includes(p.status_normalized)).length,

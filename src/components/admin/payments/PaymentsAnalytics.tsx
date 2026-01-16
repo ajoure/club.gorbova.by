@@ -199,7 +199,16 @@ export default function PaymentsAnalytics({
 
       const statusNormalized = (p.status_normalized || '').toLowerCase();
       
-      if (SUCCESSFUL_STATUSES.includes(statusNormalized)) {
+      // Check if this is a refund transaction (negative amount or refund type)
+      const txType = (p.transaction_type || '').toLowerCase();
+      const isRefundTx = p.amount < 0 
+        || txType === 'возврат средств' 
+        || txType === 'refund'
+        || txType.includes('возврат')
+        || statusNormalized === 'refunded';
+      
+      // Only count successful if it's NOT a refund
+      if (SUCCESSFUL_STATUSES.includes(statusNormalized) && !isRefundTx && p.amount > 0) {
         result.successful[currency] = (result.successful[currency] || 0) + p.amount;
         
         // Try to extract fee from provider response
@@ -272,17 +281,18 @@ export default function PaymentsAnalytics({
         }
       }
       
-      if (p.rawSource === 'queue') {
-        const isRefundTx = p.transaction_type === 'Возврат средств' 
-          || p.transaction_type === 'refund'
-          || statusNormalized === 'refunded';
-        
-        if (isRefundTx) {
-          const shouldSkip = p.uid && processedRefundUids.has(p.uid);
-          if (!shouldSkip) {
-            result.refunded[currency] = (result.refunded[currency] || 0) + p.amount;
-          }
+      // Handle refunds from queue (now with negative amounts)
+      if (p.rawSource === 'queue' && isRefundTx) {
+        const shouldSkip = p.uid && processedRefundUids.has(p.uid);
+        if (!shouldSkip) {
+          // Use absolute value since amount is now negative for refunds
+          result.refunded[currency] = (result.refunded[currency] || 0) + Math.abs(p.amount);
         }
+      }
+      
+      // Also catch any negative amount as refund (even if not explicitly marked)
+      if (p.amount < 0 && !isRefundTx) {
+        result.refunded[currency] = (result.refunded[currency] || 0) + Math.abs(p.amount);
       }
     });
 
