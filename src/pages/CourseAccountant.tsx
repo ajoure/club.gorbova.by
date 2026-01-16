@@ -9,6 +9,7 @@ import { CourseResults } from "@/components/course/CourseResults";
 import { CoursePricing } from "@/components/course/CoursePricing";
 import { CourseIndustries } from "@/components/course/CourseIndustries";
 import { CourseLearningProcess } from "@/components/course/CourseLearningProcess";
+import { CourseBenefits } from "@/components/course/CourseBenefits";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -40,9 +41,7 @@ export default function CourseAccountant() {
       navigate("/auth", { state: { returnTo: "/course-accountant" } });
       return;
     }
-    // Navigate to checkout with tariff info
     toast.success(`Выбран тариф "${tariff.name}". Переходим к оплате...`);
-    // TODO: Integrate with PaymentDialog after payment system is configured
   };
 
   return (
@@ -53,6 +52,7 @@ export default function CourseAccountant() {
         <CourseHero />
         <CourseAudience />
         <CourseExpert />
+        <CourseBenefits />
         <CourseLearningProcess />
         <CourseProgram />
         <CourseIndustries />

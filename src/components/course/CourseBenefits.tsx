@@ -1,7 +1,7 @@
 import { AnimatedSection } from "@/components/landing/AnimatedSection";
 import { TrendingUp, Shield, Target, Award, Clock, BookOpen } from "lucide-react";
 
-const results = [
+const benefits = [
   {
     icon: TrendingUp,
     value: "+40 000",
@@ -40,9 +40,9 @@ const results = [
   }
 ];
 
-export function CourseResults() {
+export function CourseBenefits() {
   return (
-    <section id="results" className="py-20 md:py-28 relative overflow-hidden bg-muted/30">
+    <section id="benefits" className="py-20 md:py-28 relative overflow-hidden bg-muted/30">
       <div className="container mx-auto px-4 relative z-10">
         <AnimatedSection>
           <div className="text-center mb-16">
@@ -54,15 +54,15 @@ export function CourseResults() {
         </AnimatedSection>
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 md:gap-6 max-w-6xl mx-auto">
-          {results.map((result, index) => (
+          {benefits.map((benefit, index) => (
             <AnimatedSection key={index} delay={index * 80}>
               <div className="group bg-card rounded-2xl p-6 border border-border/50 text-center h-full hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 hover:-translate-y-1">
                 <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform duration-300">
-                  <result.icon className="w-7 h-7 text-primary" />
+                  <benefit.icon className="w-7 h-7 text-primary" />
                 </div>
-                <div className="text-2xl md:text-3xl font-bold text-primary mb-1">{result.value}</div>
-                <div className="text-sm font-medium text-foreground mb-2">{result.label}</div>
-                <p className="text-xs text-muted-foreground leading-relaxed">{result.description}</p>
+                <div className="text-2xl md:text-3xl font-bold text-primary mb-1">{benefit.value}</div>
+                <div className="text-sm font-medium text-foreground mb-2">{benefit.label}</div>
+                <p className="text-xs text-muted-foreground leading-relaxed">{benefit.description}</p>
               </div>
             </AnimatedSection>
           ))}
