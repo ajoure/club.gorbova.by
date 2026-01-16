@@ -375,7 +375,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         failed: allPayments.filter(p => ['failed', 'error', 'declined'].includes(p.status_normalized)).length,
         successful: allPayments.filter(p => ['successful', 'succeeded'].includes(p.status_normalized) && p.amount > 0).length,
         refunded: allPayments.filter(p => ['refunded', 'refund'].includes(p.status_normalized) || p.amount < 0).length,
-        cancelled: allPayments.filter(p => ['cancelled', 'cancel'].includes(p.status_normalized)).length,
+        cancelled: allPayments.filter(p => ['cancelled', 'canceled', 'expired', 'voided'].includes(p.status_normalized)).length,
       };
       
       return { payments: allPayments, stats };

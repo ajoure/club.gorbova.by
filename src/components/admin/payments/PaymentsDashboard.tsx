@@ -1,9 +1,9 @@
 import { cn } from "@/lib/utils";
-import { Database, CheckCircle, Clock, XCircle, Handshake } from "lucide-react";
+import { Database, CheckCircle, Clock, XCircle, Handshake, Ban } from "lucide-react";
 import { PaymentsStats } from "@/hooks/useUnifiedPayments";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export type DashboardFilter = 'all' | 'successful' | 'pending' | 'failed' | 'withDeal';
+export type DashboardFilter = 'all' | 'successful' | 'pending' | 'failed' | 'cancelled' | 'withDeal';
 
 interface PaymentsDashboardProps {
   stats: PaymentsStats;
@@ -158,6 +158,17 @@ export default function PaymentsDashboard({ stats, isLoading, activeFilter, onFi
         glowColor="bg-red-500"
         isActive={activeFilter === 'failed'}
         onClick={() => handleClick('failed')}
+      />
+      
+      <DashboardCard
+        title="Отменённые"
+        value={stats.cancelled || 0}
+        subtitle="Истекшие/Отмены"
+        icon={<Ban className="h-5 w-5" />}
+        colorClass="text-gray-500"
+        glowColor="bg-gray-500"
+        isActive={activeFilter === 'cancelled'}
+        onClick={() => handleClick('cancelled')}
       />
       
       <DashboardCard

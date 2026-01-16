@@ -211,10 +211,11 @@ Deno.serve(async (req) => {
     };
 
     // Step 1: PRIMARY SOURCE - orders_v2 with bepaid_uid in meta
+    // IMPORTANT: No status filter - process ALL orders with bepaid_uid
     const { data: ordersWithUid, error: ordersError } = await supabaseAdmin
       .from('orders_v2')
-      .select('id, meta')
-      .in('status', ['paid', 'refunded'])
+      .select('id, meta, status')
+      .not('meta->bepaid_uid', 'is', null)
       .gte('created_at', `${fromDate}T00:00:00Z`)
       .lte('created_at', `${toDate}T23:59:59Z`)
       .limit(limit);
@@ -418,28 +419,54 @@ Deno.serve(async (req) => {
       } else {
         // Execute upsert
         // CRITICAL: Do NOT overwrite existing order_id, profile_id, user_id
+        
+        // Comprehensive status mapping from bePaid to payments_v2
+        const mapBepaidStatus = (bepStatus: string | undefined): string => {
+          const s = (bepStatus || '').toLowerCase();
+          if (s === 'successful' || s === 'paid') return 'succeeded';
+          if (s === 'refunded') return 'refunded';
+          if (['failed', 'declined', 'error'].includes(s)) return 'failed';
+          if (['expired', 'voided', 'cancelled', 'canceled'].includes(s)) return 'canceled';
+          if (s === 'pending' || s === 'processing') return 'pending';
+          return 'pending'; // Unknown status → pending for manual review
+        };
+        
+        // Extract gateway error message if present
+        const gatewayMessage = transaction.message 
+          || transaction.gateway_message 
+          || transaction.response?.message 
+          || null;
+        
         const upsertData: Record<string, any> = {
           provider: 'bepaid',
           provider_payment_id: uid,
           amount: transaction.amount ? Number(transaction.amount) / 100 : null,
           currency: transaction.currency || 'BYN',
-          status: transaction.status || 'successful',
+          status: mapBepaidStatus(transaction.status),
           paid_at: newPaidAt,
           provider_response: fetchResult.data,
           card_last4: transaction.credit_card?.last_4,
           card_brand: transaction.credit_card?.brand,
           updated_at: new Date().toISOString(),
+          meta: {
+            gateway_message: gatewayMessage,
+            original_bepaid_status: transaction.status,
+            source: 'uid_resync',
+          },
         };
 
         if (existingPayment) {
           // Update only specific fields, preserve links
+          // ALSO update status and meta for failed/cancelled transactions
           const { error: updateError } = await supabaseAdmin
             .from('payments_v2')
             .update({
+              status: upsertData.status,
               paid_at: upsertData.paid_at || existingPayment.paid_at,
               provider_response: upsertData.provider_response,
               card_last4: upsertData.card_last4 || undefined,
               card_brand: upsertData.card_brand || undefined,
+              meta: upsertData.meta,
               updated_at: upsertData.updated_at,
             })
             .eq('id', existingPayment.id);
@@ -456,7 +483,11 @@ Deno.serve(async (req) => {
         } else {
           // Create new payment record
           upsertData.created_at = new Date().toISOString();
-          upsertData.meta = { source: 'uid_resync', needs_manual_link: true };
+          // Preserve gateway_message and status info in meta
+          upsertData.meta = { 
+            ...upsertData.meta,
+            needs_manual_link: true,
+          };
 
           const { error: insertError } = await supabaseAdmin
             .from('payments_v2')

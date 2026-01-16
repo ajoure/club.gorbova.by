@@ -72,12 +72,12 @@ serve(async (req) => {
   };
 
   try {
-    // Get refunds from queue
+    // Get ALL items from queue (not just refunds) - including failed/cancelled
+    // This ensures full transaction transparency - every attempt is recorded
     const { data: refundItems, error: fetchError } = await supabase
       .from("payment_reconcile_queue")
       .select("*")
-      .or("transaction_type.eq.Возврат средств,transaction_type.ilike.%refund%")
-      .in("status", ["pending", "error", "cancelled"])
+      .in("status", ["pending", "error", "cancelled", "failed"])
       .order("created_at", { ascending: true })
       .limit(maxItems);
 
@@ -150,11 +150,33 @@ serve(async (req) => {
       }
 
       // EXECUTE: Create payment record
-      // FIXED: Use 'refunded' status (valid enum: pending, processing, succeeded, failed, refunded, canceled)
+      // Comprehensive status mapping from bePaid/queue to payments_v2
+      const mapStatusForPayment = (queueStatus: string | undefined, txType: string | undefined): string => {
+        const s = (queueStatus || '').toLowerCase();
+        const t = (txType || '').toLowerCase();
+        
+        // If it's a refund transaction
+        if (t.includes('refund') || t.includes('возврат')) return 'refunded';
+        
+        // Map based on status
+        if (s === 'successful' || s === 'succeeded') return 'succeeded';
+        if (s === 'refunded') return 'refunded';
+        if (['failed', 'declined', 'error'].includes(s)) return 'failed';
+        if (['expired', 'voided', 'cancelled', 'canceled'].includes(s)) return 'canceled';
+        if (s === 'pending' || s === 'processing') return 'pending';
+        return 'pending'; // Unknown → pending for manual review
+      };
+      
+      const isRefundTx = (item.transaction_type || '').toLowerCase().includes('refund') 
+        || (item.transaction_type || '').toLowerCase().includes('возврат');
+      
+      // FIXED: Use 'refunded' status for refunds, proper status for other transactions
+      const paymentStatus = mapStatusForPayment(item.status_normalized || item.status, item.transaction_type);
+      
       const paymentInsert: any = {
-        amount: -(item.amount || 0), // Negative for refund
+        amount: isRefundTx ? -(item.amount || 0) : (item.amount || 0), // Negative only for refunds
         currency: item.currency || "BYN",
-        status: "refunded", // Correct enum value for refund transactions
+        status: paymentStatus,
         provider: "bepaid",
         provider_payment_id: item.bepaid_uid,
         provider_response: item.raw_payload,
@@ -162,10 +184,12 @@ serve(async (req) => {
         card_last4: item.card_last4,
         card_brand: item.card_brand,
         meta: {
-          transaction_type: "refund",
-          source: "refund_processing",
+          transaction_type: item.transaction_type || 'unknown',
+          source: "queue_processing",
           queue_item_id: item.id,
           reference_transaction_uid: item.reference_transaction_uid,
+          gateway_message: item.raw_payload?.transaction?.message || item.raw_payload?.message || null,
+          original_queue_status: item.status,
         },
       };
 

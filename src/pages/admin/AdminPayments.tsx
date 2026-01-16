@@ -115,7 +115,10 @@ export default function AdminPayments() {
             if (p.status_normalized !== 'pending') return false;
             break;
           case 'failed':
-            if (p.status_normalized !== 'failed') return false;
+            if (!['failed', 'error', 'declined'].includes(p.status_normalized)) return false;
+            break;
+          case 'cancelled':
+            if (!['cancelled', 'canceled', 'expired', 'voided'].includes(p.status_normalized)) return false;
             break;
           case 'withDeal':
             if (!p.order_id) return false;

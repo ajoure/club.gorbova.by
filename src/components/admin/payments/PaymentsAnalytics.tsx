@@ -12,7 +12,7 @@ import {
 export type AnalyticsFilter = 'successful' | 'refunded' | 'failed' | 'fees' | 'net' | null;
 
 // Constants for status classification
-export const FAILED_STATUSES = ['failed', 'canceled', 'cancelled', 'expired', 'declined', 'error'];
+export const FAILED_STATUSES = ['failed', 'canceled', 'cancelled', 'expired', 'declined', 'error', 'voided'];
 export const SUCCESSFUL_STATUSES = ['successful', 'succeeded'];
 
 interface PaymentsAnalyticsProps {

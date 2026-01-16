@@ -323,6 +323,12 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
       pending: { variant: "outline", label: "Ожидает", className: "border-yellow-500 text-yellow-600" },
       processing: { variant: "outline", label: "Обработка", className: "border-yellow-500 text-yellow-600" },
       failed: { variant: "destructive", label: "Ошибка", className: "bg-red-500 hover:bg-red-600" },
+      declined: { variant: "destructive", label: "Отклонено", className: "bg-red-500 hover:bg-red-600" },
+      error: { variant: "destructive", label: "Ошибка", className: "bg-red-500 hover:bg-red-600" },
+      canceled: { variant: "secondary", label: "Отменён", className: "bg-gray-500/20 text-gray-600 dark:text-gray-400" },
+      cancelled: { variant: "secondary", label: "Отменён", className: "bg-gray-500/20 text-gray-600 dark:text-gray-400" },
+      expired: { variant: "secondary", label: "Истёк", className: "bg-gray-500/20 text-gray-600 dark:text-gray-400" },
+      voided: { variant: "secondary", label: "Аннулирован", className: "bg-gray-500/20 text-gray-600 dark:text-gray-400" },
       refunded: { variant: "secondary", label: "Возврат", className: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" },
       unknown: { variant: "outline", label: "Неизвестно", className: "border-gray-400 text-gray-500" },
     };
