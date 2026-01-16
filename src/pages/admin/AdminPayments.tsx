@@ -4,8 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
-  Download, Upload, ArrowLeft, Search, Filter, X, RefreshCw, Loader2
+  Download, Upload, ArrowLeft, Search, Filter, X, RefreshCw, Loader2, Shield
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -20,6 +21,7 @@ import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActio
 import UnifiedPaymentsDashboard, { UnifiedDashboardFilter } from "@/components/admin/payments/UnifiedPaymentsDashboard";
 import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
 import PaymentsSettingsDropdown from "@/components/admin/payments/PaymentsSettingsDropdown";
+import PaymentSecurityTab from "@/components/admin/payments/PaymentSecurityTab";
 
 export type PaymentFilters = {
   search: string;
@@ -54,6 +56,7 @@ const defaultFilters: PaymentFilters = {
 export default function AdminPayments() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<"payments" | "security">("payments");
   
   // Date filter - default to current month
   const now = new Date();
@@ -352,54 +355,75 @@ export default function AdminPayments() {
               </p>
             </div>
           </div>
+          
+          {/* Tab switcher + Actions */}
           <div className="flex items-center gap-2">
-            {/* Period selector */}
-            <DatePeriodSelector 
-              value={dateFilter} 
-              onChange={setDateFilter} 
-            />
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "payments" | "security")}>
+              <TabsList>
+                <TabsTrigger value="payments">Транзакции</TabsTrigger>
+                <TabsTrigger value="security" className="gap-1">
+                  <Shield className="h-3.5 w-3.5" />
+                  Безопасность
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
             
-            {/* Sync with bePaid */}
-            <Button
-              variant="outline"
-              onClick={handleBepaidSync}
-              disabled={isSyncing}
-              className="gap-2 h-9"
-            >
-              {isSyncing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              <span className="hidden sm:inline">Синхронизировать</span>
-            </Button>
-            
-            {/* Import button */}
-            <Button 
-              onClick={() => setImportDialogOpen(true)} 
-              className="gap-2 h-9"
-            >
-              <Upload className="h-4 w-4" />
-              <span className="hidden sm:inline">Импорт</span>
-            </Button>
-            
-            {/* Settings dropdown */}
-            <PaymentsSettingsDropdown 
-              selectedIds={selectedItems.size > 0 ? Array.from(selectedItems) : undefined}
-              onRefreshFromApi={handleRefreshFromApi}
-              isRefreshingFromApi={isRefreshingFromApi}
-              onComplete={refetch}
-            />
+            {activeTab === "payments" && (
+              <>
+                {/* Period selector */}
+                <DatePeriodSelector 
+                  value={dateFilter} 
+                  onChange={setDateFilter} 
+                />
+                
+                {/* Sync with bePaid */}
+                <Button
+                  variant="outline"
+                  onClick={handleBepaidSync}
+                  disabled={isSyncing}
+                  className="gap-2 h-9"
+                >
+                  {isSyncing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  <span className="hidden sm:inline">Синхронизировать</span>
+                </Button>
+                
+                {/* Import button */}
+                <Button 
+                  onClick={() => setImportDialogOpen(true)} 
+                  className="gap-2 h-9"
+                >
+                  <Upload className="h-4 w-4" />
+                  <span className="hidden sm:inline">Импорт</span>
+                </Button>
+                
+                {/* Settings dropdown */}
+                <PaymentsSettingsDropdown 
+                  selectedIds={selectedItems.size > 0 ? Array.from(selectedItems) : undefined}
+                  onRefreshFromApi={handleRefreshFromApi}
+                  isRefreshingFromApi={isRefreshingFromApi}
+                  onComplete={refetch}
+                />
+              </>
+            )}
           </div>
         </div>
         
-        {/* Unified Financial Dashboard */}
-        <UnifiedPaymentsDashboard 
-          payments={payments} 
-          isLoading={isLoading} 
-          activeFilter={dashboardFilter}
-          onFilterChange={setDashboardFilter}
-        />
+        {/* Tab Content */}
+        {activeTab === "security" ? (
+          <PaymentSecurityTab />
+        ) : (
+          <>
+            {/* Unified Financial Dashboard */}
+            <UnifiedPaymentsDashboard 
+              payments={payments} 
+              isLoading={isLoading} 
+              activeFilter={dashboardFilter}
+              onFilterChange={setDashboardFilter}
+            />
 
         {/* Main content */}
         <Card>
@@ -492,6 +516,8 @@ export default function AdminPayments() {
             setImportDialogOpen(false);
           }}
         />
+          </>
+        )}
       </div>
     </AdminLayout>
   );

@@ -27,10 +27,20 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MenuSettingsDialog } from "@/components/admin/MenuSettingsDialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   LogOut,
   ArrowLeft,
   Settings,
   Cog,
+  ScrollText,
+  Wrench,
+  ChevronUp,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -280,48 +290,60 @@ export function AdminSidebar() {
         </SidebarContent>
 
         <SidebarFooter className="p-3" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}>
-          <div
-            className="rounded-xl p-3"
-            style={{
-              background: "hsl(var(--sidebar-accent))",
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <Avatar className="h-10 w-10 shrink-0">
-                {profile?.avatar_url && (
-                  <AvatarImage src={profile.avatar_url} alt="Аватар" className="object-cover" />
-                )}
-                <AvatarFallback className="bg-gradient-to-br from-destructive to-orange-500 text-white text-sm font-medium">
-                  {getUserInitials()}
-                </AvatarFallback>
-              </Avatar>
-              {!collapsed && (
-                <div className="flex-1 min-w-0">
-                  <div className="leading-tight">
-                    <p className="text-sm font-medium text-sidebar-foreground truncate">
-                      {firstName}
-                    </p>
-                    {lastName && (
-                      <p className="text-sm font-medium text-sidebar-foreground truncate">
-                        {lastName}
-                      </p>
-                    )}
-                  </div>
-                  <p className="text-xs text-sidebar-foreground/60 mt-0.5">
-                    Администратор
-                  </p>
-                </div>
-              )}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleSignOut}
-                className="h-8 w-8 shrink-0 text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent"
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <div
+                className="rounded-xl p-3 cursor-pointer hover:opacity-90 transition-opacity"
+                style={{
+                  background: "hsl(var(--sidebar-accent))",
+                }}
               >
+                <div className="flex items-center gap-3">
+                  <Avatar className="h-10 w-10 shrink-0">
+                    {profile?.avatar_url && (
+                      <AvatarImage src={profile.avatar_url} alt="Аватар" className="object-cover" />
+                    )}
+                    <AvatarFallback className="bg-gradient-to-br from-destructive to-orange-500 text-white text-sm font-medium">
+                      {getUserInitials()}
+                    </AvatarFallback>
+                  </Avatar>
+                  {!collapsed && (
+                    <div className="flex-1 min-w-0">
+                      <div className="leading-tight">
+                        <p className="text-sm font-medium text-sidebar-foreground truncate">
+                          {firstName}
+                        </p>
+                        {lastName && (
+                          <p className="text-sm font-medium text-sidebar-foreground truncate">
+                            {lastName}
+                          </p>
+                        )}
+                      </div>
+                      <p className="text-xs text-sidebar-foreground/60 mt-0.5">
+                        Администратор
+                      </p>
+                    </div>
+                  )}
+                  <ChevronUp className="h-4 w-4 shrink-0 text-sidebar-foreground/60" />
+                </div>
+              </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top" className="w-56">
+              <DropdownMenuItem onClick={() => navigate("/admin/audit")} className="gap-2">
+                <ScrollText className="h-4 w-4" />
+                Аудит-лог
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/admin/system/audit")} className="gap-2">
+                <Wrench className="h-4 w-4" />
+                Аудит системы
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleSignOut} className="gap-2 text-destructive focus:text-destructive">
                 <LogOut className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
+                Выйти
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </SidebarFooter>
       </Sidebar>
 
