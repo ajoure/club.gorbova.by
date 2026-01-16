@@ -72,8 +72,7 @@ import LibraryLesson from "./pages/LibraryLesson";
 import AdminTrainingModules from "./pages/admin/AdminTrainingModules";
 import AdminTrainingLessons from "./pages/admin/AdminTrainingLessons";
 import AdminLessonBlockEditor from "./pages/admin/AdminLessonBlockEditor";
-// AdminBepaidSync removed - redirecting to /admin/payments
-import AdminRefundsV2 from "./pages/admin/AdminRefundsV2";
+// AdminBepaidSync and AdminRefundsV2 removed - all functionality in /admin/payments
 import Support from "./pages/Support";
 import SupportTicket from "./pages/SupportTicket";
 import AdminSupport from "./pages/admin/AdminSupport";
@@ -183,7 +182,7 @@ const App = () => (
               <Route path="/admin/training-modules/:moduleId/lessons" element={<ProtectedRoute><AdminTrainingLessons /></ProtectedRoute>} />
               <Route path="/admin/training-lessons/:moduleId/edit/:lessonId" element={<ProtectedRoute><AdminLessonBlockEditor /></ProtectedRoute>} />
               <Route path="/admin/bepaid-sync" element={<Navigate to="/admin/payments" replace />} />
-              <Route path="/admin/refunds-v2" element={<ProtectedRoute><AdminRefundsV2 /></ProtectedRoute>} />
+              <Route path="/admin/refunds-v2" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/payments" element={<ProtectedRoute><AdminPaymentsPage /></ProtectedRoute>} />
               <Route path="/admin/support" element={<ProtectedRoute><AdminSupport /></ProtectedRoute>} />
               
