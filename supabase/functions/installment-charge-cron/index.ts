@@ -224,12 +224,28 @@ Deno.serve(async (req) => {
       results.processed++;
       const subscription = installment.subscriptions_v2;
 
-      // Skip if subscription is not active or has no payment token
-      if (!subscription?.payment_token || !['active', 'trial'].includes(subscription.status)) {
-        console.log(`Skipping installment ${installment.id}: subscription inactive or no token`);
+      // SECURITY FIX: Check payment_method_id, not just payment_token
+      // This ensures we only charge cards the user can see and manage
+      if (!subscription?.payment_method_id || !['active', 'trial'].includes(subscription.status)) {
+        console.log(`Skipping installment ${installment.id}: subscription inactive or no payment_method linked`);
         results.skipped++;
         continue;
       }
+
+      // Get the actual token from payment_methods table (trusted source)
+      const { data: paymentMethod } = await supabase
+        .from('payment_methods')
+        .select('id, status, provider_token')
+        .eq('id', subscription.payment_method_id)
+        .single();
+
+      if (!paymentMethod || paymentMethod.status !== 'active' || !paymentMethod.provider_token) {
+        console.log(`Skipping installment ${installment.id}: payment_method not found or inactive`);
+        results.skipped++;
+        continue;
+      }
+
+      const effectiveToken = paymentMethod.provider_token;
 
       try {
         // Update installment status to processing
@@ -252,7 +268,7 @@ Deno.serve(async (req) => {
             currency: installment.currency,
             status: 'processing',
             provider: 'bepaid',
-            payment_token: subscription.payment_token,
+            payment_token: effectiveToken, // Use verified token from payment_methods
             is_recurring: true,
             installment_number: installment.payment_number,
             meta: {
@@ -279,8 +295,8 @@ Deno.serve(async (req) => {
             description: `Рассрочка ${installment.payment_number}/${installment.total_payments}: ${productName}`,
             tracking_id: payment.id,
             test: testMode,
-            credit_card: {
-              token: subscription.payment_token,
+          credit_card: {
+              token: effectiveToken, // Use verified token from payment_methods
             },
             additional_data: {
               contract: ['recurring', 'unscheduled'],

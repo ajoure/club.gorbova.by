@@ -192,3 +192,6 @@ verify_jwt = false
 
 [functions.bepaid-sync-cron]
 verify_jwt = false
+
+[functions.bepaid-subscription-audit]
+verify_jwt = false
