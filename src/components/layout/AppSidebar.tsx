@@ -1,12 +1,22 @@
 import { useLocation, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { supabase } from "@/integrations/supabase/client";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar } from "@/components/ui/sidebar";
 import { NavLink } from "@/components/NavLink";
-import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, Package, Library } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, Package, ChevronUp } from "lucide-react";
+
 const mainMenuItems = [{
   title: "Обзор",
   url: "/dashboard",
@@ -45,29 +55,17 @@ const leaderToolsItems = [{
   title: "Колесо баланса",
   url: "/tools/balance-wheel",
   icon: Target
-}, {
-  title: "FAQ",
-  url: "/docs",
-  icon: BookOpen
 }];
 
-const settingsItems = [{
-  title: "Профиль",
-  url: "/settings/profile",
-  icon: User
-}, {
-  title: "Оплата и карты",
-  url: "/settings/payment-methods",
-  icon: ShoppingBag
-}, {
-  title: "Согласия",
-  url: "/settings/consents",
-  icon: Shield
-}, {
-  title: "Мои покупки",
-  url: "/purchases",
-  icon: Target
-}];
+// Profile menu items (moved from sidebar)
+const profileMenuItems = [
+  { title: "FAQ", url: "/docs", icon: BookOpen },
+  { title: "Профиль", url: "/settings/profile", icon: User },
+  { title: "Оплата и карты", url: "/settings/payment-methods", icon: ShoppingBag },
+  { title: "Согласия", url: "/settings/consents", icon: Shield },
+  { title: "Мои покупки", url: "/purchases", icon: Target },
+];
+
 export function AppSidebar() {
   const {
     state
@@ -84,13 +82,28 @@ export function AppSidebar() {
     isAdmin,
   } = usePermissions();
   const collapsed = state === "collapsed";
+
+  // Fetch profile data including avatar_url from Telegram
+  const { data: profile } = useQuery({
+    queryKey: ["sidebar-profile", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data } = await supabase
+        .from("profiles")
+        .select("avatar_url, full_name")
+        .eq("user_id", user.id)
+        .single();
+      return data;
+    },
+    enabled: !!user?.id,
+  });
+
   const handleSignOut = async () => {
     await signOut();
     navigate("/");
   };
 
   const handleLogoClick = () => {
-    // Always navigate to the main club domain
     const hostname = window.location.hostname;
     const isProductDomain = hostname !== "localhost" && 
                             hostname !== "127.0.0.1" &&
@@ -100,12 +113,12 @@ export function AppSidebar() {
                             !hostname.includes(".lovableproject.com");
     
     if (isProductDomain) {
-      // On product domains (like consultation.gorbova.by), redirect to main club
       window.location.href = "https://club.gorbova.by";
     } else {
       navigate("/");
     }
   };
+
   const getRoleLabel = () => {
     switch (role) {
       case "superadmin":
@@ -116,6 +129,7 @@ export function AppSidebar() {
         return "Пользователь";
     }
   };
+
   const getUserInitials = () => {
     if (user?.user_metadata?.full_name) {
       const names = user.user_metadata.full_name.split(" ");
@@ -124,9 +138,8 @@ export function AppSidebar() {
     return user?.email?.slice(0, 2).toUpperCase() || "U";
   };
 
-  // Split full name into first and last name for two-line display
   const getNameParts = () => {
-    const fullName = user?.user_metadata?.full_name;
+    const fullName = user?.user_metadata?.full_name || profile?.full_name;
     if (fullName) {
       const parts = fullName.trim().split(/\s+/);
       if (parts.length >= 2) {
@@ -139,7 +152,10 @@ export function AppSidebar() {
     }
     return { firstName: user?.email || "Пользователь", lastName: null };
   };
+
   const showAdminLink = isAdmin() || hasAdminAccess();
+  const { firstName, lastName } = getNameParts();
+
   return <Sidebar collapsible="icon" className="border-r-0" style={{
     background: "var(--gradient-sidebar)"
   }}>
@@ -196,24 +212,6 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-wider px-3">
-            {!collapsed && "Настройки"}
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {settingsItems.map(item => <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location.pathname === item.url} tooltip={collapsed ? item.title : undefined}>
-                    <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
-                      <item.icon className="h-5 w-5 shrink-0" />
-                      {!collapsed && <span>{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>)}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
         {showAdminLink && <SidebarGroup>
             <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-wider px-3">
               {!collapsed && "Администрирование"}
@@ -235,19 +233,23 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="p-3" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}>
-        <div className="rounded-xl p-3" style={{
-        background: "hsl(var(--sidebar-accent))"
-      }}>
-          <div className="flex items-center gap-3">
-            <Avatar className="h-10 w-10 shrink-0">
-              <AvatarFallback className="bg-gradient-to-br from-primary to-accent text-primary-foreground text-sm font-medium">
-                {getUserInitials()}
-              </AvatarFallback>
-            </Avatar>
-            {!collapsed && <div className="flex-1 min-w-0">
-                {(() => {
-                  const { firstName, lastName } = getNameParts();
-                  return (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button 
+              className="w-full rounded-xl p-3 hover:bg-sidebar-accent/80 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50"
+              style={{ background: "hsl(var(--sidebar-accent))" }}
+            >
+              <div className="flex items-center gap-3">
+                <Avatar className="h-10 w-10 shrink-0">
+                  {profile?.avatar_url && (
+                    <AvatarImage src={profile.avatar_url} alt="Аватар" className="object-cover" />
+                  )}
+                  <AvatarFallback className="bg-gradient-to-br from-primary to-accent text-primary-foreground text-sm font-medium">
+                    {getUserInitials()}
+                  </AvatarFallback>
+                </Avatar>
+                {!collapsed && (
+                  <div className="flex-1 min-w-0 text-left">
                     <div className="leading-tight">
                       <p className="text-sm font-medium text-sidebar-foreground truncate">
                         {firstName}
@@ -258,17 +260,63 @@ export function AppSidebar() {
                         </p>
                       )}
                     </div>
-                  );
-                })()}
-                <p className="text-xs text-sidebar-foreground/60 mt-0.5">
-                  {getRoleLabel()}
-                </p>
-              </div>}
-            <Button variant="ghost" size="icon" onClick={handleSignOut} className="h-8 w-8 shrink-0 text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent">
+                    <p className="text-xs text-sidebar-foreground/60 mt-0.5">
+                      {getRoleLabel()}
+                    </p>
+                  </div>
+                )}
+                <ChevronUp className="h-4 w-4 text-sidebar-foreground/60 shrink-0" />
+              </div>
+            </button>
+          </DropdownMenuTrigger>
+          
+          <DropdownMenuContent 
+            side="top" 
+            align="start" 
+            className="w-56 mb-2 bg-card border-border"
+            sideOffset={8}
+          >
+            <DropdownMenuLabel className="font-normal">
+              <div className="flex items-center gap-3">
+                <Avatar className="h-8 w-8">
+                  {profile?.avatar_url && (
+                    <AvatarImage src={profile.avatar_url} alt="Аватар" className="object-cover" />
+                  )}
+                  <AvatarFallback className="bg-gradient-to-br from-primary to-accent text-primary-foreground text-xs">
+                    {getUserInitials()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">{firstName} {lastName}</p>
+                  <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+                </div>
+              </div>
+            </DropdownMenuLabel>
+            
+            <DropdownMenuSeparator />
+            
+            {profileMenuItems.map((item) => (
+              <DropdownMenuItem 
+                key={item.url}
+                onClick={() => navigate(item.url)}
+                className="cursor-pointer gap-2"
+              >
+                <item.icon className="h-4 w-4" />
+                {item.title}
+              </DropdownMenuItem>
+            ))}
+            
+            <DropdownMenuSeparator />
+            
+            <DropdownMenuItem 
+              onClick={handleSignOut}
+              className="cursor-pointer gap-2 text-destructive focus:text-destructive focus:bg-destructive/10"
+            >
               <LogOut className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+              Выйти
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </SidebarFooter>
     </Sidebar>;
 }
