@@ -23,6 +23,7 @@ import {
   RefreshCw,
   Undo2,
   CreditCard,
+  LifeBuoy,
   LucideIcon,
 } from "lucide-react";
 
@@ -68,6 +69,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   RefreshCw,
   Undo2,
   CreditCard,
+  LifeBuoy,
 };
 
 // Default menu configuration
@@ -78,15 +80,16 @@ export const DEFAULT_MENU: MenuSettings = [
     order: 0,
     items: [
       { id: "inbox", label: "Общение", path: "/admin/inbox", icon: "Inbox", order: 0, permission: "users.view", badge: "unread" },
-      { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 1, permission: "entitlements.view" },
-      { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 2, permission: "users.view", badge: "duplicates" },
-      { id: "products", label: "Продукты", path: "/admin/products-v2", icon: "Package", order: 3, permission: "entitlements.view" },
-      { id: "installments", label: "Рассрочки", path: "/admin/installments", icon: "CalendarClock", order: 4, permission: "entitlements.view" },
-      { id: "preregistrations", label: "Предзаписи", path: "/admin/preregistrations", icon: "ClipboardList", order: 5, permission: "users.view" },
-      { id: "broadcasts", label: "Рассылки", path: "/admin/broadcasts", icon: "Send", order: 6, permission: "users.view" },
-      { id: "integrations", label: "Интеграции", path: "/admin/integrations/crm", icon: "Plug", order: 7, permission: "entitlements.view" },
-      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 8, permission: "entitlements.view" },
-      { id: "refunds", label: "Возвраты", path: "/admin/refunds-v2", icon: "Undo2", order: 9, permission: "entitlements.view" },
+      { id: "support", label: "Техподдержка", path: "/admin/support", icon: "LifeBuoy", order: 1, permission: "users.view" },
+      { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 2, permission: "entitlements.view" },
+      { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 3, permission: "users.view", badge: "duplicates" },
+      { id: "products", label: "Продукты", path: "/admin/products-v2", icon: "Package", order: 4, permission: "entitlements.view" },
+      { id: "installments", label: "Рассрочки", path: "/admin/installments", icon: "CalendarClock", order: 5, permission: "entitlements.view" },
+      { id: "preregistrations", label: "Предзаписи", path: "/admin/preregistrations", icon: "ClipboardList", order: 6, permission: "users.view" },
+      { id: "broadcasts", label: "Рассылки", path: "/admin/broadcasts", icon: "Send", order: 7, permission: "users.view" },
+      { id: "integrations", label: "Интеграции", path: "/admin/integrations/crm", icon: "Plug", order: 8, permission: "entitlements.view" },
+      { id: "payments", label: "Платежи", path: "/admin/payments", icon: "CreditCard", order: 9, permission: "entitlements.view" },
+      { id: "refunds", label: "Возвраты", path: "/admin/refunds-v2", icon: "Undo2", order: 10, permission: "entitlements.view" },
     ],
   },
   {
