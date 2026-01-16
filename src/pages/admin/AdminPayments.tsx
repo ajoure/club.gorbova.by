@@ -267,39 +267,39 @@ export default function AdminPayments() {
     }
   };
   
-  // Sync with bePaid (UID-based resync)
+  // Sync with bePaid (Discovery mode - fetches ALL transactions for date range)
   const handleBepaidSync = async () => {
     setIsSyncing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('bepaid-uid-resync', {
+      // Use bepaid-fetch-transactions with explicit dates (Discovery mode)
+      const { data, error } = await supabase.functions.invoke('bepaid-fetch-transactions', {
         body: {
-          fromDate: dateFilter.from || '2024-01-01',
+          fromDate: dateFilter.from || format(startOfMonth(now), 'yyyy-MM-dd'),
           toDate: dateFilter.to || format(new Date(), 'yyyy-MM-dd'),
-          dryRun: false,
-          unsafeAllowLarge: true,
+          mode: 'execute',
+          syncMode: 'BULK',
         }
       });
       
       if (error) throw error;
       
       const result = data as {
-        success?: boolean;
-        stats?: {
-          total_candidates?: number;
-          processed?: number;
-          updated?: number;
-          created?: number;
-          fetch_errors?: number;
-        };
-        stop_reason?: string;
+        transactions_fetched?: number;
+        upserted?: number;
+        queued_for_review?: number;
+        already_exists?: number;
+        payments_found?: number;
+        refunds_found?: number;
         error?: string;
       };
       
-      if (!result.success && result.stop_reason) {
-        toast.error(result.stop_reason);
-      } else if (result.stats) {
+      if (result.error) {
+        toast.error(`Ошибка: ${result.error}`);
+      } else {
         toast.success(
-          `Синхронизация завершена: ${result.stats.updated || 0} обновлено, ${result.stats.created || 0} создано`
+          `Найдено ${result.transactions_fetched || 0} транзакций: ` +
+          `${result.upserted || 0} новых, ${result.already_exists || 0} уже были` +
+          (result.queued_for_review ? `, ${result.queued_for_review} в очередь` : '')
         );
         refetch();
       }

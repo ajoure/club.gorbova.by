@@ -222,6 +222,10 @@ serve(async (req) => {
   const forceFullSync = body.forceFullSync === true;
   const customWindowHours = body.windowHours;
   const maxRecoverItems = body.maxRecoverItems || 50;
+  
+  // Explicit date parameters for Discovery mode
+  const fromDateExplicit = body.fromDate as string | undefined; // "2026-01-16"
+  const toDateExplicit = body.toDate as string | undefined;     // "2026-01-16"
 
   console.info(`[bepaid-fetch] Starting. Mode: ${mode}, SyncMode: ${syncMode}, forceFullSync: ${forceFullSync}`);
 
@@ -283,17 +287,30 @@ serve(async (req) => {
     // Calculate date range
     const now = new Date();
     let fromDate: Date;
+    let toDate: Date;
 
-    if (forceFullSync) {
+    // Check for explicit dates (Discovery mode)
+    if (fromDateExplicit && toDateExplicit) {
+      // Explicit dates from request — Discovery mode
+      fromDate = new Date(`${fromDateExplicit}T00:00:00Z`);
+      toDate = new Date(`${toDateExplicit}T23:59:59Z`);
+      console.log(`[bepaid-fetch] DISCOVERY mode: explicit dates ${fromDateExplicit} to ${toDateExplicit}`);
+    } else if (fromDateExplicit) {
+      // Only fromDate provided
+      fromDate = new Date(`${fromDateExplicit}T00:00:00Z`);
+      toDate = now;
+      console.log(`[bepaid-fetch] DISCOVERY mode: from ${fromDateExplicit} to now`);
+    } else if (forceFullSync) {
       fromDate = new Date(now.getTime() - config.sync_window_hours * 60 * 60 * 1000);
+      toDate = now;
     } else if (bepaidInstance.last_successful_sync_at) {
       const watermark = new Date(bepaidInstance.last_successful_sync_at);
       fromDate = new Date(watermark.getTime() - config.sync_overlap_hours * 60 * 60 * 1000);
+      toDate = now;
     } else {
       fromDate = new Date(now.getTime() - config.sync_window_hours * 60 * 60 * 1000);
+      toDate = now;
     }
-
-    const toDate = now;
 
     console.log(`[bepaid-fetch] Config: window=${config.sync_window_hours}h, max_pages=${config.sync_max_pages}`);
     console.log(`[bepaid-fetch] Date range: from=${fromDate.toISOString()} to=${toDate.toISOString()}`);
