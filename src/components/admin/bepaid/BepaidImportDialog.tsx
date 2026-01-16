@@ -330,30 +330,54 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
             return row;
           });
       } else {
-        // Parse Excel - bePaid exports have 2 sheets: summary (first) and details (second)
+        // Parse Excel - bePaid exports have multiple sheets:
+        // Page 1: Summary
+        // Page 2: Card transactions (detailed)
+        // Page 3: ERIP transactions (detailed)
+        // Page 4: Memorial orders (aggregated - skip)
         const buffer = await selectedFile.arrayBuffer();
         const workbook = XLSX.read(buffer, { type: 'array' });
         
-        // Try second sheet first (detailed transactions), fall back to first sheet
-        let sheetName = workbook.SheetNames[1] || workbook.SheetNames[0];
-        let sheet = workbook.Sheets[sheetName];
-        let tempRows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '' });
+        console.log("Excel sheets:", workbook.SheetNames);
         
-        // If second sheet doesn't have UID column, try first sheet
-        if (tempRows.length > 0 && !('UID' in tempRows[0]) && workbook.SheetNames.length > 1) {
-          // Second sheet didn't have UID, maybe structure is different - try with raw option
-          tempRows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '', raw: false });
+        // Parse card transactions from Page 2 (index 1)
+        let cardRows: Record<string, string>[] = [];
+        if (workbook.SheetNames.length > 1) {
+          const cardSheet = workbook.Sheets[workbook.SheetNames[1]];
+          cardRows = XLSX.utils.sheet_to_json<Record<string, string>>(cardSheet, { defval: '', raw: false });
+          
+          // Validate it has UID column
+          if (cardRows.length > 0 && !('UID' in cardRows[0])) {
+            cardRows = [];
+          }
         }
         
-        // Still no UID? Try first sheet
-        if (tempRows.length > 0 && !('UID' in tempRows[0]) && workbook.SheetNames[0] !== sheetName) {
-          sheetName = workbook.SheetNames[0];
-          sheet = workbook.Sheets[sheetName];
-          tempRows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '' });
+        // Parse ERIP transactions from Page 3 (index 2) if exists
+        let eripRows: Record<string, string>[] = [];
+        if (workbook.SheetNames.length > 2) {
+          const eripSheet = workbook.Sheets[workbook.SheetNames[2]];
+          const rawEripRows = XLSX.utils.sheet_to_json<Record<string, string>>(eripSheet, { defval: '', raw: false });
+          
+          // Validate it has UID column (ERIP sheet has same structure)
+          if (rawEripRows.length > 0 && 'UID' in rawEripRows[0]) {
+            // Mark ERIP transactions with payment_method
+            eripRows = rawEripRows.map(row => ({
+              ...row,
+              'Способ оплаты': 'erip', // Override payment method for ERIP
+              '_source': 'erip'
+            }));
+            console.log("ERIP transactions found:", eripRows.length);
+          }
         }
         
-        rows = tempRows;
-        console.log("Excel parsed:", { sheetName, rowCount: rows.length, columns: rows[0] ? Object.keys(rows[0]) : [] });
+        // Combine card and ERIP transactions
+        rows = [...cardRows, ...eripRows];
+        console.log("Excel parsed:", { 
+          cardCount: cardRows.length, 
+          eripCount: eripRows.length, 
+          totalRows: rows.length,
+          columns: rows[0] ? Object.keys(rows[0]).slice(0, 10) : [] 
+        });
       }
 
       // Parse transactions
