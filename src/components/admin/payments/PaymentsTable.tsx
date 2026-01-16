@@ -404,8 +404,14 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
       case 'status':
         return getStatusBadge(payment.status_normalized);
         
-      case 'amount':
-        return <span className="font-medium">{payment.amount} {payment.currency}</span>;
+      case 'amount': {
+        const isNegative = payment.amount < 0;
+        return (
+          <span className={`font-medium ${isNegative ? 'text-red-500' : ''}`}>
+            {payment.amount.toFixed(2)} {payment.currency}
+          </span>
+        );
+      }
         
       case 'payer':
         // E1-E4: Use PaymentMethodBadge component
