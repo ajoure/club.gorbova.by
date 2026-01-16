@@ -362,7 +362,7 @@ export default function PaymentSecurityTab() {
               </div>
 
               {/* External subscriptions list */}
-              {auditResult.external.subscriptions.length > 0 && (
+              {(auditResult.external?.subscriptions?.length ?? 0) > 0 && (
                 <div>
                   <h4 className="font-medium mb-2">Подписки bePaid</h4>
                   <ScrollArea className="h-48">
@@ -377,7 +377,7 @@ export default function PaymentSecurityTab() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {auditResult.external.subscriptions.map((sub) => (
+                        {(auditResult.external?.subscriptions ?? []).map((sub) => (
                           <TableRow key={sub.id}>
                             <TableCell className="font-mono text-xs">{sub.id}</TableCell>
                             <TableCell>{sub.plan_title}</TableCell>
@@ -469,7 +469,7 @@ export default function PaymentSecurityTab() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        {sub.next_charge_at
+                        {sub.next_charge_at && !isNaN(new Date(sub.next_charge_at).getTime())
                           ? format(new Date(sub.next_charge_at), "dd.MM.yyyy", { locale: ru })
                           : "—"}
                       </TableCell>
