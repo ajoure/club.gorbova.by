@@ -74,6 +74,9 @@ import AdminTrainingLessons from "./pages/admin/AdminTrainingLessons";
 import AdminLessonBlockEditor from "./pages/admin/AdminLessonBlockEditor";
 // AdminBepaidSync removed - redirecting to /admin/payments
 import AdminRefundsV2 from "./pages/admin/AdminRefundsV2";
+import Support from "./pages/Support";
+import SupportTicket from "./pages/SupportTicket";
+import AdminSupport from "./pages/admin/AdminSupport";
 
 const queryClient = new QueryClient();
 
@@ -117,6 +120,8 @@ const App = () => (
               <Route path="/tools" element={<Navigate to="/tools/eisenhower" replace />} />
               <Route path="/tools/eisenhower" element={<ProtectedRoute><EisenhowerMatrix /></ProtectedRoute>} />
               <Route path="/tools/balance-wheel" element={<ProtectedRoute><BalanceWheel /></ProtectedRoute>} />
+              <Route path="/support" element={<ProtectedRoute><Support /></ProtectedRoute>} />
+              <Route path="/support/:ticketId" element={<ProtectedRoute><SupportTicket /></ProtectedRoute>} />
               <Route path="/docs" element={<ProtectedRoute><Documentation /></ProtectedRoute>} />
               <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
               <Route path="/library/:moduleSlug" element={<ProtectedRoute><LibraryModule /></ProtectedRoute>} />
@@ -174,6 +179,7 @@ const App = () => (
               <Route path="/admin/bepaid-sync" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/refunds-v2" element={<ProtectedRoute><AdminRefundsV2 /></ProtectedRoute>} />
               <Route path="/admin/payments" element={<ProtectedRoute><AdminPaymentsPage /></ProtectedRoute>} />
+              <Route path="/admin/support" element={<ProtectedRoute><AdminSupport /></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />

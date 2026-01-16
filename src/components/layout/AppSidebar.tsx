@@ -15,7 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, Package, ChevronUp } from "lucide-react";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, Package, ChevronUp, LifeBuoy } from "lucide-react";
 
 const mainMenuItems = [{
   title: "Обзор",
@@ -60,6 +60,7 @@ const leaderToolsItems = [{
 // Profile menu items (moved from sidebar)
 const profileMenuItems = [
   { title: "FAQ", url: "/docs", icon: BookOpen },
+  { title: "Техподдержка", url: "/support", icon: LifeBuoy },
   { title: "Профиль", url: "/settings/profile", icon: User },
   { title: "Оплата и карты", url: "/settings/payment-methods", icon: ShoppingBag },
   { title: "Согласия", url: "/settings/consents", icon: Shield },
