@@ -136,8 +136,10 @@ export default function AdminPayments() {
             break;
           case 'refunded': {
             const isRefundTx = normalizeType(p.transaction_type) === 'refund';
-            // Show payments with refunds OR refund transactions
-            if (p.total_refunded <= 0 && !isRefundTx) return false;
+            const isNegativeAmount = p.amount < 0;
+            const hasRefundedStatus = ['refunded', 'refund'].includes(p.status_normalized);
+            // FIX: Show payments if ANY of these is true: refund tx, negative amount, refunded status, has refunds
+            if (!isRefundTx && !isNegativeAmount && !hasRefundedStatus && p.total_refunded <= 0) return false;
             break;
           }
           case 'failed':
