@@ -76,6 +76,7 @@ import AdminLessonBlockEditor from "./pages/admin/AdminLessonBlockEditor";
 import Support from "./pages/Support";
 import SupportTicket from "./pages/SupportTicket";
 import AdminSupport from "./pages/admin/AdminSupport";
+import AdminNews from "./pages/admin/AdminNews";
 import Money from "./pages/Money";
 import AI from "./pages/AI";
 import Knowledge from "./pages/Knowledge";
@@ -185,6 +186,7 @@ const App = () => (
               <Route path="/admin/refunds-v2" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/payments" element={<ProtectedRoute><AdminPaymentsPage /></ProtectedRoute>} />
               <Route path="/admin/support" element={<ProtectedRoute><AdminSupport /></ProtectedRoute>} />
+              <Route path="/admin/news" element={<ProtectedRoute><AdminNews /></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />

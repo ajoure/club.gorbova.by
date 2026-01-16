@@ -2446,6 +2446,48 @@ export type Database = {
           },
         ]
       }
+      news_content: {
+        Row: {
+          category: string
+          country: string
+          created_at: string
+          created_by: string | null
+          id: string
+          is_published: boolean
+          source: string
+          source_url: string | null
+          summary: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          country: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_published?: boolean
+          source: string
+          source_url?: string | null
+          summary?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          country?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_published?: boolean
+          source?: string
+          source_url?: string | null
+          summary?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       orders: {
         Row: {
           amount: number

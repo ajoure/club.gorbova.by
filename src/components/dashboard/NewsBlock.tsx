@@ -1,97 +1,18 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { ExternalLink, AlertTriangle, FileText, MessageSquare } from "lucide-react";
+import { ExternalLink, AlertTriangle, FileText, MessageSquare, Loader2 } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
 interface NewsItem {
   id: string;
   title: string;
-  summary?: string;
-  position?: string;
+  summary: string | null;
   source: string;
-  sourceUrl: string;
+  source_url: string | null;
 }
-
-// Mock data for Belarus
-const belarusDigest: NewsItem[] = [
-  {
-    id: "by-1",
-    title: "Изменения в Налоговый кодекс Республики Беларусь",
-    summary: "Внесены уточнения в порядок исчисления НДС при экспорте услуг",
-    source: "pravo.by",
-    sourceUrl: "https://pravo.by",
-  },
-  {
-    id: "by-2",
-    title: "О порядке применения упрощенной системы налогообложения",
-    summary: "Разъяснения по применению УСН для субъектов малого бизнеса",
-    source: "pravo.by",
-    sourceUrl: "https://pravo.by",
-  },
-];
-
-const belarusComments: NewsItem[] = [
-  {
-    id: "by-c-1",
-    title: "Письмо МНС о порядке заполнения декларации",
-    position: "Разъяснение особенностей отражения льгот в налоговой декларации",
-    source: "МНС РБ",
-    sourceUrl: "https://nalog.gov.by",
-  },
-];
-
-const belarusUrgent: NewsItem[] = [
-  {
-    id: "by-u-1",
-    title: "Продлён срок подачи отчётности за 4 квартал",
-    source: "nalog.gov.by",
-    sourceUrl: "https://nalog.gov.by",
-  },
-  {
-    id: "by-u-2",
-    title: "Новые формы документов для ИП с 01.02.2025",
-    source: "pravo.by",
-    sourceUrl: "https://pravo.by",
-  },
-];
-
-// Mock data for Russia
-const russiaDigest: NewsItem[] = [
-  {
-    id: "ru-1",
-    title: "Федеральный закон о внесении изменений в НК РФ",
-    summary: "Изменения в части налогообложения цифровых активов",
-    source: "consultant.ru",
-    sourceUrl: "https://consultant.ru",
-  },
-  {
-    id: "ru-2",
-    title: "Новый порядок применения налоговых вычетов",
-    summary: "Упрощение процедуры получения социальных вычетов",
-    source: "nalog.ru",
-    sourceUrl: "https://nalog.ru",
-  },
-];
-
-const russiaComments: NewsItem[] = [
-  {
-    id: "ru-c-1",
-    title: "Письмо Минфина о порядке учёта расходов",
-    position: "Разъяснение по вопросам признания расходов на рекламу",
-    source: "Минфин РФ",
-    sourceUrl: "https://minfin.gov.ru",
-  },
-];
-
-const russiaUrgent: NewsItem[] = [
-  {
-    id: "ru-u-1",
-    title: "ЕНС: изменения в порядке уплаты налогов с 2025",
-    source: "nalog.ru",
-    sourceUrl: "https://nalog.ru",
-  },
-];
 
 function NewsCard({ item, type }: { item: NewsItem; type: "digest" | "comments" | "urgent" }) {
   return (
@@ -99,23 +20,30 @@ function NewsCard({ item, type }: { item: NewsItem; type: "digest" | "comments" 
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <h4 className="text-sm font-medium text-foreground line-clamp-2">{item.title}</h4>
-          {type === "digest" && item.summary && (
+          {(type === "digest" || type === "comments") && item.summary && (
             <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{item.summary}</p>
-          )}
-          {type === "comments" && item.position && (
-            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{item.position}</p>
           )}
           <p className="text-[10px] text-muted-foreground/70 mt-1.5">{item.source}</p>
         </div>
-        <a
-          href={item.sourceUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="shrink-0 p-1.5 rounded-md hover:bg-primary/10 transition-colors"
-        >
-          <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
-        </a>
+        {item.source_url && (
+          <a
+            href={item.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 p-1.5 rounded-md hover:bg-primary/10 transition-colors"
+          >
+            <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
+          </a>
+        )}
       </div>
+    </div>
+  );
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="py-6 text-center text-muted-foreground text-sm">
+      {message}
     </div>
   );
 }
@@ -123,9 +51,32 @@ function NewsCard({ item, type }: { item: NewsItem; type: "digest" | "comments" 
 export function NewsBlock() {
   const [country, setCountry] = useState<string>("by");
 
-  const data = country === "by" 
-    ? { digest: belarusDigest, comments: belarusComments, urgent: belarusUrgent }
-    : { digest: russiaDigest, comments: russiaComments, urgent: russiaUrgent };
+  // Fetch news from database
+  const { data: allNews, isLoading } = useQuery({
+    queryKey: ["news-content"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("news_content")
+        .select("id, title, summary, source, source_url, country, category")
+        .eq("is_published", true)
+        .order("created_at", { ascending: false });
+      
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  // Filter news by country and category
+  const getNewsForCategory = (cat: string) => {
+    if (!allNews) return [];
+    return allNews
+      .filter((n) => n.country === country && n.category === cat)
+      .slice(0, 5); // Limit to 5 items per category
+  };
+
+  const digest = getNewsForCategory("digest");
+  const comments = getNewsForCategory("comments");
+  const urgent = getNewsForCategory("urgent");
 
   return (
     <GlassCard className="p-4 md:p-6">
@@ -171,23 +122,43 @@ export function NewsBlock() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="digest" className="mt-3 space-y-2">
-            {data.digest.map((item) => (
-              <NewsCard key={item.id} item={item} type="digest" />
-            ))}
-          </TabsContent>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <>
+              <TabsContent value="digest" className="mt-3 space-y-2">
+                {digest.length > 0 ? (
+                  digest.map((item) => (
+                    <NewsCard key={item.id} item={item} type="digest" />
+                  ))
+                ) : (
+                  <EmptyState message="Нет новостей в дайджесте" />
+                )}
+              </TabsContent>
 
-          <TabsContent value="comments" className="mt-3 space-y-2">
-            {data.comments.map((item) => (
-              <NewsCard key={item.id} item={item} type="comments" />
-            ))}
-          </TabsContent>
+              <TabsContent value="comments" className="mt-3 space-y-2">
+                {comments.length > 0 ? (
+                  comments.map((item) => (
+                    <NewsCard key={item.id} item={item} type="comments" />
+                  ))
+                ) : (
+                  <EmptyState message="Нет комментариев госорганов" />
+                )}
+              </TabsContent>
 
-          <TabsContent value="urgent" className="mt-3 space-y-2">
-            {data.urgent.map((item) => (
-              <NewsCard key={item.id} item={item} type="urgent" />
-            ))}
-          </TabsContent>
+              <TabsContent value="urgent" className="mt-3 space-y-2">
+                {urgent.length > 0 ? (
+                  urgent.map((item) => (
+                    <NewsCard key={item.id} item={item} type="urgent" />
+                  ))
+                ) : (
+                  <EmptyState message="Срочных новостей нет" />
+                )}
+              </TabsContent>
+            </>
+          )}
         </Tabs>
       </div>
     </GlassCard>

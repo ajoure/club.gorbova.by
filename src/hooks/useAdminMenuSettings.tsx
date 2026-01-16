@@ -24,6 +24,7 @@ import {
   Undo2,
   CreditCard,
   LifeBuoy,
+  Newspaper,
   LucideIcon,
 } from "lucide-react";
 
@@ -70,6 +71,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   Undo2,
   CreditCard,
   LifeBuoy,
+  Newspaper,
 };
 
 // Default menu configuration - Reorganized structure
@@ -99,6 +101,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "inbox", label: "Общение", path: "/admin/inbox", icon: "Inbox", order: 0, permission: "users.view", badge: "unread" },
       { id: "support", label: "Техподдержка", path: "/admin/support", icon: "LifeBuoy", order: 1, permission: "users.view" },
       { id: "broadcasts", label: "Рассылки", path: "/admin/broadcasts", icon: "Send", order: 2, permission: "users.view" },
+      { id: "news", label: "Новости", path: "/admin/news", icon: "Newspaper", order: 3, permission: "news.view" },
     ],
   },
   {
