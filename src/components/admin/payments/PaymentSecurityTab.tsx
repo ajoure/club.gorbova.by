@@ -328,12 +328,12 @@ export default function PaymentSecurityTab() {
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span>Найдено подписок:</span>
-                        <Badge variant="outline">{auditResult.external.total_found}</Badge>
+                        <Badge variant="outline">{auditResult.external?.total_found ?? 0}</Badge>
                       </div>
                       <div className="flex justify-between">
                         <span>Отменено:</span>
-                        <Badge variant={auditResult.external.cancelled > 0 ? "destructive" : "secondary"}>
-                          {auditResult.external.cancelled}
+                        <Badge variant={(auditResult.external?.cancelled ?? 0) > 0 ? "destructive" : "secondary"}>
+                          {auditResult.external?.cancelled ?? 0}
                         </Badge>
                       </div>
                     </div>
@@ -348,12 +348,12 @@ export default function PaymentSecurityTab() {
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span>Проверено:</span>
-                        <Badge variant="outline">{auditResult.internal.total_checked}</Badge>
+                        <Badge variant="outline">{auditResult.internal?.total_checked ?? 0}</Badge>
                       </div>
                       <div className="flex justify-between">
                         <span>Проблем:</span>
-                        <Badge variant={auditResult.internal.at_risk > 0 ? "destructive" : "secondary"}>
-                          {auditResult.internal.at_risk}
+                        <Badge variant={(auditResult.internal?.at_risk ?? 0) > 0 ? "destructive" : "secondary"}>
+                          {auditResult.internal?.at_risk ?? 0}
                         </Badge>
                       </div>
                     </div>
