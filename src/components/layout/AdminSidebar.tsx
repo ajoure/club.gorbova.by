@@ -24,7 +24,7 @@ import {
 import { NavLink } from "@/components/NavLink";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MenuSettingsDialog } from "@/components/admin/MenuSettingsDialog";
 import {
   LogOut,
@@ -63,6 +63,21 @@ export function AdminSidebar() {
     refetchInterval: 60000,
   });
 
+  // Fetch profile data including avatar_url
+  const { data: profile } = useQuery({
+    queryKey: ["admin-sidebar-profile", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data } = await supabase
+        .from("profiles")
+        .select("avatar_url, full_name")
+        .eq("user_id", user.id)
+        .single();
+      return data;
+    },
+    enabled: !!user?.id,
+  });
+
   const handleSignOut = async () => {
     await signOut();
     navigate("/auth");
@@ -75,6 +90,24 @@ export function AdminSidebar() {
     }
     return user?.email?.slice(0, 2).toUpperCase() || "U";
   };
+
+  // Split full name into first and last name for two-line display
+  const getNameParts = () => {
+    const fullName = user?.user_metadata?.full_name || profile?.full_name;
+    if (fullName) {
+      const parts = fullName.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        return {
+          firstName: parts[0],
+          lastName: parts.slice(1).join(" "),
+        };
+      }
+      return { firstName: fullName, lastName: null };
+    }
+    return { firstName: user?.email || "Пользователь", lastName: null };
+  };
+
+  const { firstName, lastName } = getNameParts();
 
   // Permission mappings for menu items
   const permissionMap: Record<string, boolean> = {
@@ -255,16 +288,26 @@ export function AdminSidebar() {
           >
             <div className="flex items-center gap-3">
               <Avatar className="h-10 w-10 shrink-0">
+                {profile?.avatar_url && (
+                  <AvatarImage src={profile.avatar_url} alt="Аватар" className="object-cover" />
+                )}
                 <AvatarFallback className="bg-gradient-to-br from-destructive to-orange-500 text-white text-sm font-medium">
                   {getUserInitials()}
                 </AvatarFallback>
               </Avatar>
               {!collapsed && (
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-sidebar-foreground truncate">
-                    {user?.user_metadata?.full_name || user?.email}
-                  </p>
-                  <p className="text-xs text-sidebar-foreground/60">
+                  <div className="leading-tight">
+                    <p className="text-sm font-medium text-sidebar-foreground truncate">
+                      {firstName}
+                    </p>
+                    {lastName && (
+                      <p className="text-sm font-medium text-sidebar-foreground truncate">
+                        {lastName}
+                      </p>
+                    )}
+                  </div>
+                  <p className="text-xs text-sidebar-foreground/60 mt-0.5">
                     Администратор
                   </p>
                 </div>
