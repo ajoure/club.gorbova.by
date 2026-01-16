@@ -12,7 +12,7 @@ import {
 export type AnalyticsFilter = 'successful' | 'refunded' | 'failed' | 'fees' | 'net' | null;
 
 // Constants for status classification
-export const FAILED_STATUSES = ['failed', 'canceled', 'expired', 'declined', 'error'];
+export const FAILED_STATUSES = ['failed', 'canceled', 'cancelled', 'expired', 'declined', 'error'];
 export const SUCCESSFUL_STATUSES = ['successful', 'succeeded'];
 
 interface PaymentsAnalyticsProps {
@@ -271,9 +271,10 @@ export default function PaymentsAnalytics({
       }
 
       if (FAILED_STATUSES.includes(statusNormalized)) {
-        result.failed[currency] = (result.failed[currency] || 0) + p.amount;
+        result.failed[currency] = (result.failed[currency] || 0) + Math.abs(p.amount);
       }
 
+      // Handle refunds from payments_v2 via total_refunded field (linked to parent payment)
       if (p.rawSource === 'payments_v2' && p.total_refunded > 0) {
         result.refunded[currency] = (result.refunded[currency] || 0) + p.total_refunded;
         if (p.uid) {
@@ -281,18 +282,27 @@ export default function PaymentsAnalytics({
         }
       }
       
-      // Handle refunds from queue (now with negative amounts)
+      // Handle standalone refund records (from payments_v2 with status=refunded and negative amount)
+      if (p.rawSource === 'payments_v2' && statusNormalized === 'refunded' && p.amount < 0) {
+        const shouldSkip = p.uid && processedRefundUids.has(p.uid);
+        if (!shouldSkip) {
+          result.refunded[currency] = (result.refunded[currency] || 0) + Math.abs(p.amount);
+          if (p.uid) {
+            processedRefundUids.add(p.uid);
+          }
+        }
+      }
+      
+      // Handle refunds from queue (now with negative amounts after transformation)
       if (p.rawSource === 'queue' && isRefundTx) {
         const shouldSkip = p.uid && processedRefundUids.has(p.uid);
         if (!shouldSkip) {
           // Use absolute value since amount is now negative for refunds
           result.refunded[currency] = (result.refunded[currency] || 0) + Math.abs(p.amount);
+          if (p.uid) {
+            processedRefundUids.add(p.uid);
+          }
         }
-      }
-      
-      // Also catch any negative amount as refund (even if not explicitly marked)
-      if (p.amount < 0 && !isRefundTx) {
-        result.refunded[currency] = (result.refunded[currency] || 0) + Math.abs(p.amount);
       }
     });
 
