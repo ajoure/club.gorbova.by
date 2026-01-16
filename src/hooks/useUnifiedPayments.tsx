@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface DateFilter {
@@ -93,6 +94,53 @@ export interface PaymentsStats {
 }
 
 export function useUnifiedPayments(dateFilter: DateFilter) {
+  const queryClient = useQueryClient();
+
+  // Realtime subscription for automatic updates
+  useEffect(() => {
+    const channel = supabase
+      .channel('payments-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'payments_v2' },
+        (payload) => {
+          console.log('[Realtime] payments_v2 INSERT:', payload.new);
+          queryClient.invalidateQueries({ queryKey: ['unified-payments'] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'payments_v2' },
+        (payload) => {
+          console.log('[Realtime] payments_v2 UPDATE:', payload.new);
+          queryClient.invalidateQueries({ queryKey: ['unified-payments'] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'payment_reconcile_queue' },
+        (payload) => {
+          console.log('[Realtime] queue INSERT:', payload.new);
+          queryClient.invalidateQueries({ queryKey: ['unified-payments'] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'payment_reconcile_queue' },
+        (payload) => {
+          console.log('[Realtime] queue UPDATE:', payload.new);
+          queryClient.invalidateQueries({ queryKey: ['unified-payments'] });
+        }
+      )
+      .subscribe((status) => {
+        console.log('[Realtime] Subscription status:', status);
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
+
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["unified-payments", dateFilter],
     queryFn: async () => {

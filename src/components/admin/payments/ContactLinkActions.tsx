@@ -136,7 +136,13 @@ export default function ContactLinkActions({
         throw new Error(data.message);
       }
 
-      toast.success("Контакт привязан");
+      // Show propagation info in toast
+      const propagated = (data.changes?.propagated_queue || 0) + (data.changes?.propagated_payments || 0);
+      if (propagated > 0) {
+        toast.success(`Контакт привязан к ${1 + propagated} платежам с этой карты`);
+      } else {
+        toast.success("Контакт привязан");
+      }
       setOpen(false);
       onLinked();
     } catch (err: any) {
@@ -190,7 +196,13 @@ export default function ContactLinkActions({
         throw new Error(data.message);
       }
 
-      toast.success("Ghost-контакт создан и привязан");
+      // Show propagation info in toast
+      const propagated = (data.changes?.propagated_queue || 0) + (data.changes?.propagated_payments || 0);
+      if (propagated > 0) {
+        toast.success(`Ghost-контакт создан и привязан к ${1 + propagated} платежам с этой карты`);
+      } else {
+        toast.success("Ghost-контакт создан и привязан");
+      }
       setOpen(false);
       resetGhostForm();
       onLinked();

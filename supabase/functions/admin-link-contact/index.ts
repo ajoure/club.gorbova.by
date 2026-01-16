@@ -37,6 +37,8 @@ interface AdminLinkContactResponse {
     payment_updated: boolean;
     order_updated: boolean;
     profile_created: boolean;
+    propagated_queue: number;
+    propagated_payments: number;
   };
 }
 
@@ -166,6 +168,8 @@ Deno.serve(async (req) => {
               payment_updated: true,
               order_updated: !!order_id,
               profile_created: true,
+              propagated_queue: 0,
+              propagated_payments: 0,
             },
           } as AdminLinkContactResponse),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -173,7 +177,6 @@ Deno.serve(async (req) => {
       }
 
       // B1: Create ghost profile using service role (bypasses RLS)
-      // B1: Fixed - removed 'ghost' status if not in enum
       const { data: newProfile, error: createError } = await supabaseAdmin
         .from('profiles')
         .insert({
@@ -181,7 +184,6 @@ Deno.serve(async (req) => {
           email: ghost_data.email || null,
           phone: ghost_data.phone || null,
           user_id: null, // Ghost - no auth user
-          // B1: Removed status: 'ghost' - use marker in meta instead
         })
         .select('id')
         .single();
@@ -245,6 +247,8 @@ Deno.serve(async (req) => {
             payment_updated: true,
             order_updated: !!order_id,
             profile_created: false,
+            propagated_queue: 0,
+            propagated_payments: 0,
           },
         } as AdminLinkContactResponse),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -264,7 +268,6 @@ Deno.serve(async (req) => {
       
       if (error) {
         console.error('Failed to update queue item:', error);
-        // B1: Return error, don't "swallow"
         return new Response(
           JSON.stringify({ success: false, status: 'error', message: `Failed to update queue: ${error.message}` }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -279,7 +282,6 @@ Deno.serve(async (req) => {
       
       if (error) {
         console.error('Failed to update payment:', error);
-        // B1: Return error, don't "swallow"
         return new Response(
           JSON.stringify({ success: false, status: 'error', message: `Failed to update payment: ${error.message}` }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -297,7 +299,6 @@ Deno.serve(async (req) => {
       
       if (error) {
         console.error('Failed to update order:', error);
-        // B1: Return error, don't "swallow"
         return new Response(
           JSON.stringify({ success: false, status: 'error', message: `Failed to update order: ${error.message}` }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -306,19 +307,115 @@ Deno.serve(async (req) => {
       orderUpdated = true;
     }
 
-    // B1: Fixed audit log - store target_profile_id in meta, not target_user_id
+    // ========================================
+    // SMART LINKING: Propagate to all payments with same card
+    // ========================================
+    let propagatedQueue = 0;
+    let propagatedPayments = 0;
+
+    if (targetProfileId) {
+      // Get card info from current payment
+      let cardLast4: string | null = null;
+      let cardBrand: string | null = null;
+      let cardHolder: string | null = null;
+
+      if (is_queue_item) {
+        const { data: queueItem } = await supabaseAdmin
+          .from('payment_reconcile_queue')
+          .select('card_last4, card_brand, card_holder')
+          .eq('id', payment_id)
+          .single();
+        cardLast4 = queueItem?.card_last4 || null;
+        cardBrand = queueItem?.card_brand || null;
+        cardHolder = queueItem?.card_holder || null;
+      } else {
+        const { data: payment } = await supabaseAdmin
+          .from('payments_v2')
+          .select('card_last4, card_brand, provider_response')
+          .eq('id', payment_id)
+          .single();
+        cardLast4 = payment?.card_last4 || null;
+        cardBrand = payment?.card_brand || null;
+        // Extract card_holder from provider_response if available
+        const providerResponse = payment?.provider_response as any;
+        if (providerResponse?.transaction?.credit_card?.holder) {
+          cardHolder = providerResponse.transaction.credit_card.holder;
+        }
+      }
+
+      console.log(`[Smart Link] Card info: last4=${cardLast4}, brand=${cardBrand}, holder=${cardHolder}`);
+
+      if (cardLast4) {
+        // 1. Upsert card-profile link for future auto-linking
+        const { error: upsertError } = await supabaseAdmin
+          .from('card_profile_links')
+          .upsert({
+            card_last4: cardLast4,
+            card_brand: cardBrand,
+            card_holder: cardHolder,
+            profile_id: targetProfileId,
+            updated_at: new Date().toISOString(),
+          }, { 
+            onConflict: 'card_last4,profile_id',
+            ignoreDuplicates: false 
+          });
+
+        if (upsertError) {
+          console.warn('[Smart Link] Failed to upsert card_profile_links:', upsertError);
+          // Non-critical, continue
+        }
+
+        // 2. Update all queue items with same card that don't have a profile
+        const { data: updatedQueue, error: queueError } = await supabaseAdmin
+          .from('payment_reconcile_queue')
+          .update({ matched_profile_id: targetProfileId })
+          .eq('card_last4', cardLast4)
+          .is('matched_profile_id', null)
+          .neq('id', payment_id) // Don't count the current payment
+          .select('id');
+
+        if (queueError) {
+          console.warn('[Smart Link] Failed to propagate to queue:', queueError);
+        } else {
+          propagatedQueue = updatedQueue?.length || 0;
+        }
+
+        // 3. Update all payments_v2 with same card that don't have a profile
+        const { data: updatedPayments, error: paymentsError } = await supabaseAdmin
+          .from('payments_v2')
+          .update({ profile_id: targetProfileId })
+          .eq('card_last4', cardLast4)
+          .is('profile_id', null)
+          .neq('id', payment_id) // Don't count the current payment
+          .select('id');
+
+        if (paymentsError) {
+          console.warn('[Smart Link] Failed to propagate to payments:', paymentsError);
+        } else {
+          propagatedPayments = updatedPayments?.length || 0;
+        }
+
+        console.log(`[Smart Link] Propagated profile ${targetProfileId} to ${propagatedQueue} queue + ${propagatedPayments} payments`);
+      }
+    }
+
+    // Audit log
     const { error: auditError } = await supabaseAdmin.from('audit_logs').insert({
       action: action === 'create_ghost' ? 'admin_create_ghost_link' : 'admin_link_contact',
       actor_user_id: user.id,
-      target_user_id: null, // B1: Don't put profile_id here
+      target_user_id: null,
       meta: {
-        target_profile_id: targetProfileId, // B1: Store in meta instead
+        target_profile_id: targetProfileId,
         payment_id,
         order_id,
         is_queue_item,
         force,
         previous_order_profile_id: existingOrderProfileId,
         ghost_data: action === 'create_ghost' ? ghost_data : undefined,
+        smart_link: {
+          propagated_queue: propagatedQueue,
+          propagated_payments: propagatedPayments,
+        },
       },
     });
 
@@ -327,16 +424,24 @@ Deno.serve(async (req) => {
       // Non-critical - don't fail the operation
     }
 
+    const totalPropagated = propagatedQueue + propagatedPayments;
+    let message = action === 'create_ghost' ? 'Ghost-контакт создан и привязан' : 'Контакт привязан';
+    if (totalPropagated > 0) {
+      message += ` (+${totalPropagated} платежей с этой карты)`;
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
         status: action === 'create_ghost' ? 'created' : 'linked',
         profile_id: targetProfileId,
-        message: `${action === 'create_ghost' ? 'Ghost-контакт создан и привязан' : 'Контакт привязан'}`,
+        message,
         changes: {
           payment_updated: paymentUpdated,
           order_updated: orderUpdated,
           profile_created: profileCreated,
+          propagated_queue: propagatedQueue,
+          propagated_payments: propagatedPayments,
         },
       } as AdminLinkContactResponse),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
