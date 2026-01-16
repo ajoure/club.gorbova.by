@@ -123,6 +123,22 @@ export function AppSidebar() {
     }
     return user?.email?.slice(0, 2).toUpperCase() || "U";
   };
+
+  // Split full name into first and last name for two-line display
+  const getNameParts = () => {
+    const fullName = user?.user_metadata?.full_name;
+    if (fullName) {
+      const parts = fullName.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        return {
+          firstName: parts[0],
+          lastName: parts.slice(1).join(" "),
+        };
+      }
+      return { firstName: fullName, lastName: null };
+    }
+    return { firstName: user?.email || "Пользователь", lastName: null };
+  };
   const showAdminLink = isAdmin() || hasAdminAccess();
   return <Sidebar collapsible="icon" className="border-r-0" style={{
     background: "var(--gradient-sidebar)"
@@ -229,10 +245,22 @@ export function AppSidebar() {
               </AvatarFallback>
             </Avatar>
             {!collapsed && <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-sidebar-foreground truncate">
-                  {user?.user_metadata?.full_name || user?.email}
-                </p>
-                <p className="text-xs text-sidebar-foreground/60">
+                {(() => {
+                  const { firstName, lastName } = getNameParts();
+                  return (
+                    <div className="leading-tight">
+                      <p className="text-sm font-medium text-sidebar-foreground truncate">
+                        {firstName}
+                      </p>
+                      {lastName && (
+                        <p className="text-sm font-medium text-sidebar-foreground truncate">
+                          {lastName}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+                <p className="text-xs text-sidebar-foreground/60 mt-0.5">
                   {getRoleLabel()}
                 </p>
               </div>}

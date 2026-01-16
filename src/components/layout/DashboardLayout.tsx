@@ -6,6 +6,7 @@ import { AppSidebar } from "./AppSidebar";
 import { DashboardBreadcrumbs } from "./DashboardBreadcrumbs";
 import { ConsentUpdateModal } from "@/components/consent/ConsentUpdateModal";
 import { PullToRefresh } from "./PullToRefresh";
+import { MobileBottomNav } from "./MobileBottomNav";
 import { Loader2, Shield } from "lucide-react";
 
 interface DashboardLayoutProps {
@@ -58,17 +59,17 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </header>
           <PullToRefresh>
             <main 
-              className="flex-1 p-4 md:p-6 bg-gradient-to-br from-background via-muted/30 to-background overflow-x-hidden"
+              className="flex-1 p-4 md:p-6 bg-gradient-to-br from-background via-muted/30 to-background overflow-x-hidden pb-20 md:pb-6"
               style={{
                 paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
                 paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
-                paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))'
               }}
             >
               {children}
             </main>
           </PullToRefresh>
         </SidebarInset>
+        <MobileBottomNav />
       </div>
     </SidebarProvider>
   );
