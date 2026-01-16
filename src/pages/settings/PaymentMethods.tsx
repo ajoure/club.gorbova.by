@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useUserPendingInstallments } from "@/hooks/useInstallments";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -224,6 +225,12 @@ export default function PaymentMethodsSettings() {
     return true;
   };
 
+  // Check: active subscriptions but no linked cards
+  const hasActiveSubsWithoutCard = 
+    activeSubscriptions && 
+    activeSubscriptions.length > 0 && 
+    (!paymentMethods || paymentMethods.length === 0);
+
   return (
     <DashboardLayout>
       <div className="max-w-2xl mx-auto space-y-6">
@@ -231,6 +238,21 @@ export default function PaymentMethodsSettings() {
           <h1 className="text-2xl font-bold text-foreground">Оплата и карты</h1>
           <p className="text-muted-foreground">Управление способами оплаты</p>
         </div>
+
+        {/* Price Protection Alert */}
+        {hasActiveSubsWithoutCard && (
+          <Alert className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
+            <AlertTriangle className="h-5 w-5 text-amber-600" />
+            <AlertTitle className="text-amber-800 dark:text-amber-200">
+              Ваша цена заблокирована
+            </AlertTitle>
+            <AlertDescription className="text-amber-700 dark:text-amber-300">
+              Сейчас вы пользуетесь клубом по специальной стоимости. 
+              Чтобы сохранить эти условия и избежать повышения цены при следующем продлении, 
+              пожалуйста, привяжите карту для автоматического списания.
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Card>
           <CardHeader>
