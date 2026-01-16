@@ -23,6 +23,7 @@ interface RefundDialogProps {
   orderNumber: string;
   amount: number;
   currency: string;
+  paymentProvider?: string | null;
   onSuccess?: () => void;
 }
 
@@ -35,6 +36,7 @@ export function RefundDialog({
   orderNumber,
   amount,
   currency,
+  paymentProvider,
   onSuccess,
 }: RefundDialogProps) {
   const [reason, setReason] = useState("");
@@ -135,12 +137,22 @@ export function RefundDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
-            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-amber-800 dark:text-amber-200">
-              Возврат будет проведён через платёжную систему и записан в историю.
-            </p>
-          </div>
+          {paymentProvider && paymentProvider !== 'bepaid' ? (
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-orange-50 dark:bg-orange-950/30 border border-orange-300 dark:border-orange-700">
+              <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-orange-800 dark:text-orange-200">
+                <p className="font-medium">Ручной платёж ({paymentProvider})</p>
+                <p className="mt-1">Этот заказ был оплачен вручную. Возврат через bePaid невозможен — будет только изменён статус в системе.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+              <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-800 dark:text-amber-200">
+                Возврат будет проведён через платёжную систему bePaid и записан в историю.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="refund-amount">Сумма возврата</Label>

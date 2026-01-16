@@ -2438,6 +2438,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             orderNumber={refundDeal.order_number}
             amount={Number(refundDeal.final_price)}
             currency={refundDeal.currency}
+            paymentProvider={(() => {
+              const payments = (refundDeal as any).payments_v2 as any[] | undefined;
+              const successfulPayment = payments?.find((p: any) => p.status === "succeeded");
+              return successfulPayment?.provider || null;
+            })()}
             onSuccess={() => {
               queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.user_id] });
             }}

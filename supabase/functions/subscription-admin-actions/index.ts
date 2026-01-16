@@ -374,7 +374,41 @@ Deno.serve(async (req) => {
         console.log('No successful payment found with provider_payment_id, skipping bePaid refund');
       }
 
-      // Update order status
+      // Check if bePaid refund succeeded (or if there was no bePaid payment to refund)
+      const hasBepaidPayment = !!successfulPayment?.provider_payment_id;
+      const bepaidRefundSuccessful = bepaidRefundResult?.transaction?.status === 'successful';
+      
+      // If there was a bePaid payment and refund failed, return error - don't update order
+      if (hasBepaidPayment && !bepaidRefundSuccessful) {
+        console.error(`bePaid refund failed for order ${order_id}, NOT marking as refunded`);
+        
+        // Log the failed attempt
+        await supabase.from('audit_logs').insert({
+          actor_user_id: adminUserId,
+          target_user_id: order.user_id,
+          action: 'admin.subscription.refund_failed',
+          meta: {
+            order_id,
+            order_number: order.order_number,
+            refund_amount: actualRefundAmount,
+            refund_reason: refund_reason,
+            bepaid_error: bepaidRefundError,
+            bepaid_response: bepaidRefundResult,
+          },
+        });
+
+        return new Response(JSON.stringify({ 
+          success: false, 
+          error: bepaidRefundError || 'Ошибка возврата в bePaid. Статус заказа не изменён.',
+          bepaid_error: bepaidRefundError,
+          bepaid_response: bepaidRefundResult,
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // bePaid refund successful OR no bePaid payment - proceed with order update
       await supabase
         .from('orders_v2')
         .update({
@@ -393,6 +427,31 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         })
         .eq('id', order_id);
+
+      // Create refund record in payments_v2 if bePaid refund was successful
+      if (bepaidRefundSuccessful) {
+        await supabase
+          .from('payments_v2')
+          .insert({
+            order_id: order_id,
+            profile_id: order.profile_id,
+            user_id: order.user_id,
+            amount: -actualRefundAmount, // Negative amount for refund
+            currency: order.currency,
+            status: 'succeeded',
+            provider: 'bepaid',
+            provider_payment_id: bepaidRefundResult.transaction.uid,
+            paid_at: new Date().toISOString(),
+            meta: {
+              type: 'refund',
+              parent_payment_id: successfulPayment.provider_payment_id,
+              parent_payment_uid: successfulPayment.provider_payment_id,
+              reason: refund_reason,
+              bepaid_response: bepaidRefundResult.transaction,
+            },
+          });
+        console.log(`Created refund record in payments_v2 with uid=${bepaidRefundResult.transaction.uid}`);
+      }
 
       // Handle access action
       const effectiveAccessAction = access_action || 'revoke';
@@ -455,7 +514,7 @@ Deno.serve(async (req) => {
         // 'keep' action = do nothing with access
       }
 
-      // Log the refund action
+      // Log the successful refund action
       await supabase.from('audit_logs').insert({
         actor_user_id: adminUserId,
         target_user_id: order.user_id,
@@ -469,9 +528,10 @@ Deno.serve(async (req) => {
           original_amount: order.final_price,
           access_action: effectiveAccessAction,
           reduce_days: reduce_days || null,
-          bepaid_success: bepaidRefundResult?.transaction?.status === 'successful',
+          bepaid_success: bepaidRefundSuccessful,
           bepaid_refund_uid: bepaidRefundResult?.transaction?.uid || null,
           bepaid_error: bepaidRefundError,
+          had_bepaid_payment: hasBepaidPayment,
         },
       });
 
@@ -481,9 +541,10 @@ Deno.serve(async (req) => {
         success: true, 
         refund_amount: actualRefundAmount,
         order_number: order.order_number,
-        bepaid_success: bepaidRefundResult?.transaction?.status === 'successful',
+        bepaid_success: bepaidRefundSuccessful,
         bepaid_error: bepaidRefundError,
         access_action: effectiveAccessAction,
+        refund_payment_uid: bepaidRefundResult?.transaction?.uid || null,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
