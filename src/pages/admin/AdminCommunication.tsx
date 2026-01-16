@@ -2,17 +2,17 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, LifeBuoy } from "lucide-react";
+import { MessageCircle, Send, LifeBuoy, Inbox } from "lucide-react";
 
-// Import support content
+// Import tab contents
 import { SupportTabContent } from "@/components/admin/communication/SupportTabContent";
-// Import broadcasts content
 import { BroadcastsTabContent } from "@/components/admin/communication/BroadcastsTabContent";
+import { InboxTabContent } from "@/components/admin/communication/InboxTabContent";
 
 export default function AdminCommunication() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<string>(
-    searchParams.get("tab") || "support"
+    searchParams.get("tab") || "inbox"
   );
 
   // Sync tab with URL
@@ -40,14 +40,18 @@ export default function AdminCommunication() {
             <div>
               <h1 className="text-xl md:text-2xl font-bold">Общение</h1>
               <p className="text-sm text-muted-foreground">
-                Техподдержка и рассылки
+                Почта, техподдержка и рассылки
               </p>
             </div>
           </div>
 
           {/* Tabs */}
           <Tabs value={activeTab} onValueChange={handleTabChange}>
-            <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsList className="grid w-full max-w-lg grid-cols-3">
+              <TabsTrigger value="inbox" className="gap-2">
+                <Inbox className="h-4 w-4" />
+                Почта
+              </TabsTrigger>
               <TabsTrigger value="support" className="gap-2">
                 <LifeBuoy className="h-4 w-4" />
                 Техподдержка
@@ -62,6 +66,7 @@ export default function AdminCommunication() {
 
         {/* Tab Content */}
         <div className="flex-1 overflow-hidden">
+          {activeTab === "inbox" && <InboxTabContent />}
           {activeTab === "support" && <SupportTabContent />}
           {activeTab === "broadcasts" && <BroadcastsTabContent />}
         </div>
