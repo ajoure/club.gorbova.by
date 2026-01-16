@@ -1,97 +1,125 @@
 import { AnimatedSection } from "@/components/landing/AnimatedSection";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Check, Sparkles } from "lucide-react";
+import { Check, Sparkles, Crown } from "lucide-react";
 
-interface CourseTariff {
+interface TariffData {
+  id: string;
   name: string;
+  subtitle: string;
   price: number;
   originalPrice?: number;
-  description: string;
+  monthly?: number;
+  accessMonths: number;
+  conferences: number;
   features: string[];
   isPopular?: boolean;
-  isTrial?: boolean;
+  badge?: string;
 }
 
-const tariffs: CourseTariff[] = [
+const tariffs: TariffData[] = [
   {
-    name: "Самостоятельный",
-    price: 590,
-    originalPrice: 790,
-    description: "Для тех, кто готов учиться самостоятельно",
+    id: "buh",
+    name: "Бухгалтер",
+    subtitle: "Для тех, кто хочет полюбить бухгалтерию",
+    price: 1490,
+    originalPrice: 1690,
+    monthly: 136,
+    accessMonths: 6,
+    conferences: 5,
     features: [
-      "Доступ ко всем 25 модулям",
-      "Видеоуроки в записи",
-      "Рабочие материалы и шаблоны",
-      "Доступ к чату участников",
-      "Сертификат о прохождении"
+      "Предобучение",
+      "18 основных модулей",
+      "Задания с подробными разборами",
+      "Материалы, тетрадь, майндкарты",
+      "Доступ к клубу «Буква закона»",
+      "Итоговый конспект",
+      "Сертификат о прохождении",
+      "VIP модули: Делегирование, Найм, Таймлайн"
     ]
   },
   {
-    name: "С поддержкой",
-    price: 990,
-    originalPrice: 1290,
-    description: "Оптимальный выбор с обратной связью",
+    id: "gl-buh",
+    name: "Главный бухгалтер",
+    subtitle: "Полная программа с глубоким погружением",
+    price: 2490,
+    originalPrice: 2690,
+    monthly: 227,
+    accessMonths: 8,
+    conferences: 6,
+    isPopular: true,
+    badge: "Популярный",
     features: [
-      "Всё из тарифа «Самостоятельный»",
-      "Проверка домашних заданий",
-      "Ответы на вопросы в чате",
-      "Еженедельные Q&A сессии",
-      "Разбор ваших кейсов"
-    ],
-    isPopular: true
+      "Всё из тарифа «Бухгалтер»",
+      "Доступ к Клубу тариф Full на 4 недели",
+      "Grand модуль: Налоговое законодательство",
+      "Grand модуль: Система в бухгалтерии",
+      "Письменная характеристика",
+      "Личная рекомендация от Катерины"
+    ]
   },
   {
-    name: "VIP",
-    price: 1990,
-    originalPrice: 2490,
-    description: "Максимум внимания и индивидуальная работа",
+    id: "biz-lady",
+    name: "Бизнес-леди",
+    subtitle: "Максимальный результат после курса",
+    price: 2490,
+    originalPrice: 2690,
+    monthly: 163,
+    accessMonths: 10,
+    conferences: 6,
+    badge: "VIP",
     features: [
-      "Всё из тарифа «С поддержкой»",
-      "3 личные консультации с экспертом",
-      "Приоритетная проверка заданий",
-      "Индивидуальный план развития",
-      "Доступ к закрытому клубу на 3 месяца"
+      "Всё из тарифа «Главный бухгалтер»",
+      "Business модуль: Экспресс-аудит",
+      "Business модуль: Восстановление учета",
+      "Скидка 50% на модули по отраслям",
+      "Дополнительная живая встреча"
     ]
   }
 ];
 
 interface CoursePricingProps {
-  onPreregister?: (tariff: CourseTariff) => void;
-  onPurchase?: (tariff: CourseTariff) => void;
+  onPreregister?: (tariff: TariffData) => void;
+  onPurchase?: (tariff: TariffData) => void;
 }
 
 export function CoursePricing({ onPreregister, onPurchase }: CoursePricingProps) {
   return (
-    <section id="tariffs" className="py-16 md:py-24 bg-muted/30">
-      <div className="container mx-auto px-4">
+    <section id="tariffs" className="py-20 md:py-28 relative overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-b from-background via-muted/20 to-background" />
+      
+      <div className="container mx-auto px-4 relative z-10">
         <AnimatedSection>
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Тарифы</h2>
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-5xl font-bold mb-6">Выберите тариф</h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Выберите подходящий формат обучения
+              Рассрочка до 12 месяцев без переплат
             </p>
           </div>
         </AnimatedSection>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-6xl mx-auto">
           {tariffs.map((tariff, index) => (
-            <AnimatedSection key={index} delay={index * 100}>
-              <div className={`relative bg-card rounded-2xl p-6 border h-full flex flex-col ${
+            <AnimatedSection key={tariff.id} delay={index * 100}>
+              <div className={`relative bg-card/80 backdrop-blur-xl rounded-3xl p-6 md:p-8 border h-full flex flex-col transition-all duration-300 hover:shadow-xl ${
                 tariff.isPopular 
-                  ? 'border-primary shadow-lg shadow-primary/10' 
-                  : 'border-border'
+                  ? 'border-primary shadow-lg shadow-primary/10 scale-[1.02]' 
+                  : 'border-border/50 hover:border-primary/30'
               }`}>
-                {tariff.isPopular && (
-                  <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground">
-                    <Sparkles className="w-3 h-3 mr-1" />
-                    Популярный
+                {tariff.badge && (
+                  <Badge className={`absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 ${
+                    tariff.isPopular 
+                      ? 'bg-primary text-primary-foreground' 
+                      : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white border-0'
+                  }`}>
+                    {tariff.isPopular ? <Sparkles className="w-3 h-3 mr-1" /> : <Crown className="w-3 h-3 mr-1" />}
+                    {tariff.badge}
                   </Badge>
                 )}
                 
-                <div className="text-center mb-6">
+                <div className="text-center mb-6 pt-2">
                   <h3 className="text-xl font-bold mb-2">{tariff.name}</h3>
-                  <p className="text-sm text-muted-foreground mb-4">{tariff.description}</p>
+                  <p className="text-sm text-muted-foreground mb-4">{tariff.subtitle}</p>
                   
                   <div className="flex items-baseline justify-center gap-2">
                     <span className="text-4xl font-bold">{tariff.price}</span>
@@ -102,6 +130,17 @@ export function CoursePricing({ onPreregister, onPurchase }: CoursePricingProps)
                       {tariff.originalPrice} BYN
                     </div>
                   )}
+                  {tariff.monthly && (
+                    <div className="text-sm text-primary mt-1">
+                      или от {tariff.monthly} BYN/мес
+                    </div>
+                  )}
+                  
+                  <div className="flex justify-center gap-4 mt-4 text-xs text-muted-foreground">
+                    <span>Доступ: {tariff.accessMonths} мес</span>
+                    <span>•</span>
+                    <span>{tariff.conferences} конференций</span>
+                  </div>
                 </div>
                 
                 <ul className="space-y-3 mb-6 flex-1">
@@ -115,30 +154,24 @@ export function CoursePricing({ onPreregister, onPurchase }: CoursePricingProps)
                 
                 <div className="space-y-2">
                   <Button 
-                    className="w-full" 
-                    variant={tariff.isPopular ? "default" : "outline"}
+                    className={`w-full ${tariff.isPopular ? '' : 'bg-primary/90 hover:bg-primary'}`}
+                    size="lg"
                     onClick={() => onPurchase?.(tariff)}
                   >
-                    Оплатить
+                    Оплатить {tariff.price} BYN
                   </Button>
                   <Button 
                     className="w-full" 
-                    variant="ghost"
+                    variant="outline"
                     onClick={() => onPreregister?.(tariff)}
                   >
-                    Предзапись
+                    Рассрочка от {tariff.monthly} BYN/мес
                   </Button>
                 </div>
               </div>
             </AnimatedSection>
           ))}
         </div>
-        
-        <AnimatedSection delay={400}>
-          <p className="text-center text-sm text-muted-foreground mt-8">
-            Возможна оплата в рассрочку. Свяжитесь с нами для уточнения условий.
-          </p>
-        </AnimatedSection>
       </div>
     </section>
   );

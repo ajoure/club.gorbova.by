@@ -4,58 +4,72 @@ import { AnimatedSection } from "@/components/landing/AnimatedSection";
 const audienceCards = [
   {
     icon: GraduationCap,
+    emoji: "👤",
     title: "Новичкам в бухгалтерии",
-    description: "Кто хочет освоить профессию с нуля и получить системные знания"
+    description: "Быстрый старт в профессии с нуля. Получите системные знания и уверенность"
   },
   {
     icon: Briefcase,
+    emoji: "🌸",
     title: "Бухгалтерам с опытом",
-    description: "Кто хочет углубить знания и повысить свою ценность на рынке"
+    description: "Вырасти до главного бухгалтера, повысить ценность на рынке и доход"
   },
   {
     icon: Users,
+    emoji: "⭐",
     title: "Главным бухгалтерам",
-    description: "Кто хочет уверенно проходить проверки и защищать компанию"
+    description: "Консультации от 250$/30мин. Уверенно проходить любые проверки"
   },
   {
     icon: BookOpen,
-    title: "Студентам",
-    description: "Кто хочет получить практические навыки параллельно с теорией"
+    emoji: "📚",
+    title: "Студентам бухгалтерии",
+    description: "Понять методологию простым языком параллельно с теорией в ВУЗе"
   },
   {
     icon: Scale,
+    emoji: "⚖️",
     title: "Юристам",
-    description: "Кто хочет понимать бухгалтерский учет для комплексного консалтинга"
+    description: "Выигрывать суды без привлечения бухгалтера, комплексный консалтинг"
   },
   {
     icon: Building2,
+    emoji: "🏢",
     title: "Предпринимателям",
-    description: "Кто хочет контролировать финансы и понимать своего бухгалтера"
+    description: "Контролировать бизнес, различать ошибки бухгалтера и защитить активы"
   }
 ];
 
 export function CourseAudience() {
   return (
-    <section className="py-16 md:py-24 bg-muted/30">
-      <div className="container mx-auto px-4">
+    <section id="audience" className="py-20 md:py-28 relative overflow-hidden">
+      {/* Background */}
+      <div className="absolute inset-0 bg-gradient-to-b from-background to-muted/30" />
+      
+      <div className="container mx-auto px-4 relative z-10">
         <AnimatedSection>
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Для кого этот курс?</h2>
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-5xl font-bold mb-6">Для кого этот курс?</h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
               Курс подойдет специалистам с разным уровнем подготовки
             </p>
           </div>
         </AnimatedSection>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
           {audienceCards.map((card, index) => (
-            <AnimatedSection key={index} delay={index * 100}>
-              <div className="bg-card rounded-xl p-6 border border-border hover:border-primary/50 transition-all duration-300 h-full">
-                <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
-                  <card.icon className="w-6 h-6 text-primary" />
+            <AnimatedSection key={index} delay={index * 80}>
+              <div className="group relative bg-card/50 backdrop-blur-xl rounded-2xl p-6 border border-border/50 hover:border-primary/30 transition-all duration-500 h-full hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-1">
+                {/* Glass shine effect */}
+                <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                
+                <div className="relative z-10">
+                  <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center mb-5 group-hover:scale-110 transition-transform duration-300">
+                    <span className="text-2xl">{card.emoji}</span>
+                  </div>
+                  <h3 className="text-lg font-semibold mb-3 group-hover:text-primary transition-colors">{card.title}</h3>
+                  <p className="text-muted-foreground text-sm leading-relaxed">{card.description}</p>
                 </div>
-                <h3 className="text-lg font-semibold mb-2">{card.title}</h3>
-                <p className="text-muted-foreground text-sm">{card.description}</p>
               </div>
             </AnimatedSection>
           ))}

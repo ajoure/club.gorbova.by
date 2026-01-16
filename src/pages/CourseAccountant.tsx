@@ -7,16 +7,19 @@ import { CourseExpert } from "@/components/course/CourseExpert";
 import { CourseProgram } from "@/components/course/CourseProgram";
 import { CourseResults } from "@/components/course/CourseResults";
 import { CoursePricing } from "@/components/course/CoursePricing";
+import { CourseIndustries } from "@/components/course/CourseIndustries";
+import { CourseLearningProcess } from "@/components/course/CourseLearningProcess";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
 interface CourseTariff {
+  id: string;
   name: string;
   price: number;
   originalPrice?: number;
-  description: string;
+  subtitle: string;
   features: string[];
   isPopular?: boolean;
 }
@@ -37,8 +40,9 @@ export default function CourseAccountant() {
       navigate("/auth", { state: { returnTo: "/course-accountant" } });
       return;
     }
-    // TODO: После создания продукта в БД, использовать PaymentDialog с правильным productId
-    toast.info("Оплата будет доступна после настройки тарифов в админ-панели");
+    // Navigate to checkout with tariff info
+    toast.success(`Выбран тариф "${tariff.name}". Переходим к оплате...`);
+    // TODO: Integrate with PaymentDialog after payment system is configured
   };
 
   return (
@@ -49,7 +53,9 @@ export default function CourseAccountant() {
         <CourseHero />
         <CourseAudience />
         <CourseExpert />
+        <CourseLearningProcess />
         <CourseProgram />
+        <CourseIndustries />
         <CourseResults />
         <CoursePricing 
           onPreregister={handlePreregister}
