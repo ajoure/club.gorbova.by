@@ -7,12 +7,17 @@ import { NewsBlock } from "@/components/dashboard/NewsBlock";
 import { NavigationCards } from "@/components/dashboard/NavigationCards";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useTelegramLinkStatus } from "@/hooks/useTelegramLink";
 import { ArrowUpRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
 export default function Dashboard() {
   const { user } = useAuth();
   const { userRoles, hasAdminAccess, isAdmin } = usePermissions();
+  const { data: telegramStatus } = useTelegramLinkStatus();
+
+  // Check if Telegram is connected
+  const isTelegramConnected = telegramStatus?.status === 'active';
 
   // Get effective role for display (single role model)
   const getEffectiveRole = () => {
@@ -75,9 +80,13 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Telegram compact + reminder */}
-        <TelegramCompactCard />
-        <TelegramLinkReminder />
+        {/* Telegram widgets - only show if NOT connected */}
+        {!isTelegramConnected && (
+          <>
+            <TelegramCompactCard />
+            <TelegramLinkReminder />
+          </>
+        )}
 
         {/* Block 2: Daily Affirmation */}
         <DailyAffirmation />

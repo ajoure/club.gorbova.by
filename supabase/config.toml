@@ -195,3 +195,6 @@ verify_jwt = false
 
 [functions.bepaid-subscription-audit]
 verify_jwt = false
+
+[functions.generate-affirmation]
+verify_jwt = false
