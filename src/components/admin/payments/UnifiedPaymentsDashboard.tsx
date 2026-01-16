@@ -97,8 +97,8 @@ function DashboardCard({
         </div>
       )}
       
-      {/* Content - fully centered */}
-      <div className="relative flex-1 flex flex-col items-center justify-center gap-1.5 h-full">
+      {/* Content - fully centered with consistent structure */}
+      <div className="relative flex flex-col items-center justify-between h-full py-2">
         {/* Icon with glow */}
         <div className={cn(
           "flex items-center justify-center w-10 h-10 rounded-xl",
@@ -111,13 +111,13 @@ function DashboardCard({
           </div>
         </div>
         
-        {/* Title */}
-        <span className="text-xs font-medium text-muted-foreground tracking-wide">
+        {/* Title - fixed height */}
+        <span className="text-xs font-medium text-muted-foreground tracking-wide h-4 flex items-center">
           {title}
         </span>
         
-        {/* Value */}
-        <div className="flex flex-col items-center">
+        {/* Value block - fixed height for alignment */}
+        <div className="flex flex-col items-center h-[52px] justify-center">
           {showDash || amount === null ? (
             <span className="text-xl font-bold text-muted-foreground/50">—</span>
           ) : (
@@ -130,9 +130,9 @@ function DashboardCard({
           )}
         </div>
         
-        {/* Count subtitle */}
-        <p className="text-[11px] text-muted-foreground/80 text-center leading-tight">
-          {count} {countLabel}
+        {/* Count subtitle - fixed height for alignment */}
+        <p className="text-[11px] text-muted-foreground/80 text-center leading-tight h-8 flex items-center">
+          {count > 0 ? `${count} ${countLabel}` : countLabel}
         </p>
       </div>
       

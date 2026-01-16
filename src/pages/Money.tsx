@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { CashFlowTable } from "@/components/money/CashFlowTable";
 import { 
   Briefcase, 
   ShieldCheck, 
@@ -14,9 +15,7 @@ import {
   FileText,
   MessageSquare,
   AlertTriangle,
-  CheckCircle,
-  Target,
-  PiggyBank
+  CheckCircle
 } from "lucide-react";
 
 // Mock data for Business tab
@@ -268,30 +267,8 @@ const Money = () => {
 
           {/* Personal Finance Tab */}
           <TabsContent value="personal" className="mt-6">
-            <GlassCard className="p-8">
-              <div className="flex flex-col items-center justify-center text-center space-y-4">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 rounded-xl bg-primary/10">
-                    <PiggyBank className="h-8 w-8 text-primary" />
-                  </div>
-                  <div className="p-3 rounded-xl bg-accent/10">
-                    <Target className="h-8 w-8 text-accent-foreground" />
-                  </div>
-                  <div className="p-3 rounded-xl bg-secondary/50">
-                    <Wallet className="h-8 w-8 text-secondary-foreground" />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <h3 className="text-lg font-semibold">Личные финансы</h3>
-                  <p className="text-muted-foreground max-w-md">
-                    Здесь будет таблица учета ДДС, Финансовые цели и Вишлист. 
-                    Раздел находится в разработке.
-                  </p>
-                </div>
-                <Badge variant="outline" className="text-xs">
-                  Скоро
-                </Badge>
-              </div>
+            <GlassCard className="p-6">
+              <CashFlowTable />
             </GlassCard>
           </TabsContent>
         </Tabs>
