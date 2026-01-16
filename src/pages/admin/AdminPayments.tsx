@@ -17,8 +17,7 @@ import BepaidImportDialog from "@/components/admin/bepaid/BepaidImportDialog";
 import PaymentsTable from "@/components/admin/payments/PaymentsTable";
 import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
-import PaymentsDashboard, { DashboardFilter } from "@/components/admin/payments/PaymentsDashboard";
-import PaymentsAnalytics, { AnalyticsFilter } from "@/components/admin/payments/PaymentsAnalytics";
+import UnifiedPaymentsDashboard, { UnifiedDashboardFilter } from "@/components/admin/payments/UnifiedPaymentsDashboard";
 import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
 import PaymentsSettingsDropdown from "@/components/admin/payments/PaymentsSettingsDropdown";
 
@@ -67,11 +66,8 @@ export default function AdminPayments() {
   const [filters, setFilters] = useState<PaymentFilters>(defaultFilters);
   const [showFilters, setShowFilters] = useState(false);
   
-  // Dashboard filter (clickable cards)
-  const [dashboardFilter, setDashboardFilter] = useState<DashboardFilter | null>(null);
-  
-  // Analytics filter (clickable financial summary)
-  const [analyticsFilter, setAnalyticsFilter] = useState<AnalyticsFilter>(null);
+  // Dashboard filter (clickable cards) - unified with analytics
+  const [dashboardFilter, setDashboardFilter] = useState<UnifiedDashboardFilter>(null);
   
   // Selection for batch operations
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -108,32 +104,10 @@ export default function AdminPayments() {
     };
 
     return payments.filter(p => {
-      // Dashboard filter (from clickable cards) - removed 'attention' filter
+      // Unified dashboard filter (from clickable cards)
       if (dashboardFilter) {
+        const failedStatuses = ['failed', 'canceled', 'expired', 'declined', 'error', 'cancelled', 'voided'];
         switch (dashboardFilter) {
-          case 'successful':
-            if (!['successful', 'succeeded'].includes(p.status_normalized)) return false;
-            break;
-          case 'pending':
-            if (p.status_normalized !== 'pending') return false;
-            break;
-          case 'failed':
-            if (!['failed', 'error', 'declined'].includes(p.status_normalized)) return false;
-            break;
-          case 'cancelled':
-            if (!['cancelled', 'canceled', 'expired', 'voided'].includes(p.status_normalized)) return false;
-            break;
-          case 'withDeal':
-            if (!p.order_id) return false;
-            break;
-          // 'all' - no filter
-        }
-      }
-
-      // Analytics filter (from clickable financial summary)
-      if (analyticsFilter) {
-        const failedStatuses = ['failed', 'canceled', 'expired', 'declined', 'error'];
-        switch (analyticsFilter) {
           case 'successful':
             if (!['successful', 'succeeded'].includes(p.status_normalized)) return false;
             break;
@@ -141,23 +115,12 @@ export default function AdminPayments() {
             const isRefundTx = normalizeType(p.transaction_type) === 'refund';
             const isNegativeAmount = p.amount < 0;
             const hasRefundedStatus = ['refunded', 'refund'].includes(p.status_normalized);
-            // FIX: Show payments if ANY of these is true: refund tx, negative amount, refunded status, has refunds
             if (!isRefundTx && !isNegativeAmount && !hasRefundedStatus && p.total_refunded <= 0) return false;
             break;
           }
           case 'failed':
             if (!failedStatuses.includes(p.status_normalized)) return false;
             break;
-          case 'fees':
-            // Show successful payments (fees are on successful transactions)
-            if (!['successful', 'succeeded'].includes(p.status_normalized)) return false;
-            break;
-          case 'net': {
-            const isRefundTx = normalizeType(p.transaction_type) === 'refund';
-            // Show successful + refunds (net revenue components)
-            if (!['successful', 'succeeded'].includes(p.status_normalized) && p.total_refunded <= 0 && !isRefundTx) return false;
-            break;
-          }
         }
       }
 
@@ -234,7 +197,7 @@ export default function AdminPayments() {
 
       return true;
     });
-  }, [payments, filters, dashboardFilter, analyticsFilter]);
+  }, [payments, filters, dashboardFilter]);
 
   // Refresh from bePaid API
   const handleRefreshFromApi = async () => {
@@ -430,20 +393,12 @@ export default function AdminPayments() {
           </div>
         </div>
         
-        {/* Dashboard Stats - Glassmorphism clickable cards */}
-        <PaymentsDashboard 
-          stats={stats} 
+        {/* Unified Financial Dashboard */}
+        <UnifiedPaymentsDashboard 
+          payments={payments} 
           isLoading={isLoading} 
           activeFilter={dashboardFilter}
           onFilterChange={setDashboardFilter}
-        />
-        
-        {/* Financial Analytics - PATCH 8: Use FULL payments list for correct totals */}
-        <PaymentsAnalytics 
-          payments={payments} 
-          isLoading={isLoading} 
-          activeFilter={analyticsFilter}
-          onFilterChange={setAnalyticsFilter}
         />
 
         {/* Main content */}

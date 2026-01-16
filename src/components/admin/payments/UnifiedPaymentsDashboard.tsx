@@ -1,0 +1,468 @@
+import { useMemo } from "react";
+import { cn } from "@/lib/utils";
+import { TrendingUp, RotateCcw, Ban, Percent, Wallet, Filter } from "lucide-react";
+import { UnifiedPayment } from "@/hooks/useUnifiedPayments";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Skeleton } from "@/components/ui/skeleton";
+import { 
+  useBepaidFeeRules, 
+  calculateFallbackFee, 
+  detectPaymentChannel, 
+  extractIssuerCountry 
+} from "@/hooks/useBepaidFeeRules";
+
+export type UnifiedDashboardFilter = 'successful' | 'refunded' | 'failed' | null;
+
+// Constants for status classification
+const FAILED_STATUSES = ['failed', 'canceled', 'cancelled', 'expired', 'declined', 'error', 'voided'];
+const SUCCESSFUL_STATUSES = ['successful', 'succeeded'];
+
+interface UnifiedPaymentsDashboardProps {
+  payments: UnifiedPayment[];
+  isLoading: boolean;
+  activeFilter?: UnifiedDashboardFilter;
+  onFilterChange?: (filter: UnifiedDashboardFilter) => void;
+}
+
+interface DashboardCardProps {
+  title: string;
+  amount: number | null;
+  count: number;
+  countLabel: string;
+  currency: string;
+  icon: React.ReactNode;
+  colorClass: string;
+  glowColor: string;
+  isClickable?: boolean;
+  isActive?: boolean;
+  onClick?: () => void;
+  tooltip?: string;
+  showDash?: boolean;
+}
+
+function DashboardCard({ 
+  title, 
+  amount, 
+  count,
+  countLabel,
+  currency, 
+  icon, 
+  colorClass, 
+  glowColor,
+  isClickable = false,
+  isActive = false,
+  onClick,
+  tooltip,
+  showDash = false,
+}: DashboardCardProps) {
+  const formatAmount = (value: number) => {
+    return new Intl.NumberFormat('ru-RU', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  };
+
+  const content = (
+    <div 
+      className={cn(
+        "relative overflow-hidden rounded-2xl transition-all duration-300 ease-out",
+        "backdrop-blur-2xl bg-gradient-to-br from-card/80 via-card/60 to-card/40",
+        "border border-border/30 hover:border-border/60",
+        "shadow-lg hover:shadow-xl",
+        "min-h-[140px] p-5",
+        "group",
+        isClickable && "cursor-pointer hover:scale-[1.02] active:scale-[0.98]",
+        !isClickable && "opacity-90",
+        isActive && "ring-2 ring-primary ring-offset-2 ring-offset-background scale-[1.01]"
+      )}
+      onClick={isClickable ? onClick : undefined}
+      role={isClickable ? "button" : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+    >
+      {/* Glassmorphism layers */}
+      <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent pointer-events-none" />
+      
+      {/* Colored glow effect */}
+      <div className={cn(
+        "absolute -top-6 -right-6 w-24 h-24 rounded-full blur-2xl transition-all duration-300",
+        "opacity-20 group-hover:opacity-40",
+        glowColor
+      )} />
+      
+      {/* Active filter indicator */}
+      {isActive && (
+        <div className="absolute top-3 right-3">
+          <Filter className="h-3.5 w-3.5 text-primary animate-pulse" />
+        </div>
+      )}
+      
+      {/* Content - fully centered */}
+      <div className="relative flex-1 flex flex-col items-center justify-center gap-1.5 h-full">
+        {/* Icon with glow */}
+        <div className={cn(
+          "flex items-center justify-center w-10 h-10 rounded-xl",
+          "bg-gradient-to-br from-white/20 to-white/5",
+          "shadow-inner border border-white/10",
+          "transition-transform duration-300 group-hover:scale-110"
+        )}>
+          <div className={cn("transition-all duration-300", colorClass)}>
+            {icon}
+          </div>
+        </div>
+        
+        {/* Title */}
+        <span className="text-xs font-medium text-muted-foreground tracking-wide">
+          {title}
+        </span>
+        
+        {/* Value */}
+        <div className="flex flex-col items-center">
+          {showDash || amount === null ? (
+            <span className="text-xl font-bold text-muted-foreground/50">—</span>
+          ) : (
+            <>
+              <span className={cn("text-xl font-bold tabular-nums tracking-tight", colorClass)}>
+                {formatAmount(amount)}
+              </span>
+              <span className="text-[10px] font-medium text-muted-foreground">{currency}</span>
+            </>
+          )}
+        </div>
+        
+        {/* Count subtitle */}
+        <p className="text-[11px] text-muted-foreground/80 text-center leading-tight">
+          {count} {countLabel}
+        </p>
+      </div>
+      
+      {/* Active indicator */}
+      {isActive && (
+        <div className={cn("absolute bottom-0 left-0 right-0 h-1 rounded-b-2xl", glowColor)} />
+      )}
+    </div>
+  );
+
+  if (tooltip) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div>{content}</div>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-xs">
+          <p className="text-xs">{tooltip}</p>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return content;
+}
+
+export default function UnifiedPaymentsDashboard({ 
+  payments, 
+  isLoading,
+  activeFilter,
+  onFilterChange,
+}: UnifiedPaymentsDashboardProps) {
+  // Fetch fee rules from integration settings
+  const { data: feeRules, isLoading: isLoadingRules } = useBepaidFeeRules();
+  
+  const analytics = useMemo(() => {
+    if (!payments.length || !feeRules) {
+      return {
+        successful: { amount: 0, count: 0 },
+        refunded: { amount: 0, count: 0 },
+        failed: { amount: 0, count: 0 },
+        fees: { amount: 0, count: 0 },
+        feesUnknown: 0,
+        feesKnown: 0,
+        feesFallback: 0,
+        primaryCurrency: 'BYN',
+        netRevenue: 0,
+      };
+    }
+
+    const result = {
+      successful: { BYN: 0, count: 0 } as { [key: string]: number; count: number },
+      refunded: { BYN: 0, count: 0 } as { [key: string]: number; count: number },
+      failed: { BYN: 0, count: 0 } as { [key: string]: number; count: number },
+      fees: { BYN: 0 } as Record<string, number>,
+      feesUnknown: 0,
+      feesKnown: 0,
+      feesFallback: 0,
+    };
+
+    const currencyCount: Record<string, number> = {};
+    const processedRefundUids = new Set<string>();
+
+    payments.forEach(p => {
+      const currency = p.currency || 'BYN';
+      currencyCount[currency] = (currencyCount[currency] || 0) + 1;
+
+      const statusNormalized = (p.status_normalized || '').toLowerCase();
+      
+      // Check if this is a refund transaction (negative amount or refund type)
+      const txType = (p.transaction_type || '').toLowerCase();
+      const isRefundTx = p.amount < 0 
+        || txType === 'возврат средств' 
+        || txType === 'refund'
+        || txType.includes('возврат')
+        || statusNormalized === 'refunded';
+      
+      // Only count successful if it's NOT a refund
+      if (SUCCESSFUL_STATUSES.includes(statusNormalized) && !isRefundTx && p.amount > 0) {
+        result.successful[currency] = (result.successful[currency] || 0) + p.amount;
+        result.successful.count++;
+        
+        // Try to extract fee from provider response
+        let feeAmount: number | null = null;
+        let feeSource: 'provider' | 'fallback' | null = null;
+        const providerResponse = p.provider_response;
+        
+        if (providerResponse) {
+          const fee = providerResponse.transaction?.fee 
+            ?? providerResponse.transaction?.processing?.fee
+            ?? providerResponse.transaction?.payment?.fee
+            ?? providerResponse.fee
+            ?? null;
+          
+          if (fee !== null && fee !== undefined && Number(fee) > 0) {
+            feeAmount = Number(fee) / 100;
+            feeSource = 'provider';
+          }
+        }
+        
+        // Fallback to provider_fee_amount column
+        if (feeAmount === null && (p as any).provider_fee_amount != null && (p as any).provider_fee_amount > 0) {
+          feeAmount = (p as any).provider_fee_amount;
+          feeSource = 'provider';
+        }
+        
+        // Apply fallback calculation if no provider fee found
+        if (feeAmount === null || feeAmount <= 0) {
+          const channel = detectPaymentChannel(
+            (p as any).payment_method,
+            p.transaction_type,
+            providerResponse
+          );
+          const issuerCountry = extractIssuerCountry(providerResponse);
+          
+          const fallbackResult = calculateFallbackFee(
+            p.amount,
+            currency,
+            channel,
+            issuerCountry,
+            feeRules
+          );
+          
+          feeAmount = fallbackResult.fee;
+          feeSource = 'fallback';
+        }
+        
+        // Add fee to totals
+        if (feeAmount !== null && !isNaN(feeAmount) && feeAmount > 0) {
+          result.fees[currency] = (result.fees[currency] || 0) + feeAmount;
+          
+          if (feeSource === 'provider') {
+            result.feesKnown++;
+          } else if (feeSource === 'fallback') {
+            result.feesFallback++;
+          }
+        } else {
+          result.feesUnknown++;
+        }
+      }
+
+      if (FAILED_STATUSES.includes(statusNormalized)) {
+        result.failed[currency] = (result.failed[currency] || 0) + Math.abs(p.amount);
+        result.failed.count++;
+      }
+
+      // Handle refunds from payments_v2 via total_refunded field
+      if (p.rawSource === 'payments_v2' && p.total_refunded > 0) {
+        result.refunded[currency] = (result.refunded[currency] || 0) + p.total_refunded;
+        result.refunded.count++;
+        if (p.uid) {
+          processedRefundUids.add(p.uid);
+        }
+      }
+      
+      // Handle standalone refund records
+      if (p.rawSource === 'payments_v2' && statusNormalized === 'refunded' && p.amount < 0) {
+        const shouldSkip = p.uid && processedRefundUids.has(p.uid);
+        if (!shouldSkip) {
+          result.refunded[currency] = (result.refunded[currency] || 0) + Math.abs(p.amount);
+          result.refunded.count++;
+          if (p.uid) {
+            processedRefundUids.add(p.uid);
+          }
+        }
+      }
+      
+      // Handle refunds from queue
+      if (p.rawSource === 'queue' && isRefundTx) {
+        const shouldSkip = p.uid && processedRefundUids.has(p.uid);
+        if (!shouldSkip) {
+          result.refunded[currency] = (result.refunded[currency] || 0) + Math.abs(p.amount);
+          result.refunded.count++;
+          if (p.uid) {
+            processedRefundUids.add(p.uid);
+          }
+        }
+      }
+    });
+
+    const primaryCurrency = Object.entries(currencyCount)
+      .sort((a, b) => b[1] - a[1])[0]?.[0] || 'BYN';
+
+    const successfulAmount = result.successful[primaryCurrency] || 0;
+    const refundedAmount = result.refunded[primaryCurrency] || 0;
+    const feesAmount = result.fees[primaryCurrency] || 0;
+    const netRevenue = successfulAmount - refundedAmount - feesAmount;
+
+    return { 
+      successful: { amount: successfulAmount, count: result.successful.count },
+      refunded: { amount: refundedAmount, count: result.refunded.count },
+      failed: { amount: result.failed[primaryCurrency] || 0, count: result.failed.count },
+      fees: { amount: feesAmount, count: result.feesKnown + result.feesFallback },
+      feesUnknown: result.feesUnknown,
+      feesKnown: result.feesKnown,
+      feesFallback: result.feesFallback,
+      primaryCurrency,
+      netRevenue,
+    };
+  }, [payments, feeRules]);
+
+  const handleFilterClick = (filter: UnifiedDashboardFilter) => {
+    if (onFilterChange) {
+      onFilterChange(activeFilter === filter ? null : filter);
+    }
+  };
+
+  if (isLoading || isLoadingRules) {
+    return (
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="rounded-2xl p-5 backdrop-blur-2xl bg-card/60 border border-border/30 min-h-[140px] flex flex-col items-center justify-center gap-2">
+            <Skeleton className="h-10 w-10 rounded-xl" />
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-6 w-24" />
+            <Skeleton className="h-3 w-20" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const { primaryCurrency } = analytics;
+  const showFeesAsDash = analytics.feesKnown === 0 && analytics.feesFallback === 0;
+
+  // Pluralize helper for Russian
+  const pluralize = (count: number, one: string, few: string, many: string) => {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 19) return many;
+    if (mod10 === 1) return one;
+    if (mod10 >= 2 && mod10 <= 4) return few;
+    return many;
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <Wallet className="h-4 w-4 text-primary" />
+          Финансовая сводка
+        </h3>
+        {activeFilter && (
+          <div className="flex items-center gap-2 text-xs text-primary bg-primary/10 px-2.5 py-1 rounded-full animate-in fade-in">
+            <Filter className="h-3 w-3" />
+            <span>Активен фильтр</span>
+            <button 
+              onClick={() => onFilterChange?.(null)}
+              className="ml-1 hover:text-primary/70 underline"
+            >
+              сбросить
+            </button>
+          </div>
+        )}
+      </div>
+      
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+        <DashboardCard
+          title="Успешные"
+          amount={analytics.successful.amount}
+          count={analytics.successful.count}
+          countLabel={pluralize(analytics.successful.count, 'транзакция', 'транзакции', 'транзакций')}
+          currency={primaryCurrency}
+          icon={<TrendingUp className="h-5 w-5" />}
+          colorClass="text-emerald-500"
+          glowColor="bg-emerald-500"
+          isClickable={!!onFilterChange}
+          isActive={activeFilter === 'successful'}
+          onClick={() => handleFilterClick('successful')}
+          tooltip="Клик для фильтрации по успешным платежам"
+        />
+        
+        <DashboardCard
+          title="Возвраты"
+          amount={analytics.refunded.amount}
+          count={analytics.refunded.count}
+          countLabel={pluralize(analytics.refunded.count, 'возврат', 'возврата', 'возвратов')}
+          currency={primaryCurrency}
+          icon={<RotateCcw className="h-5 w-5" />}
+          colorClass="text-amber-500"
+          glowColor="bg-amber-500"
+          isClickable={!!onFilterChange}
+          isActive={activeFilter === 'refunded'}
+          onClick={() => handleFilterClick('refunded')}
+          tooltip="Клик для фильтрации по возвратам"
+        />
+        
+        <DashboardCard
+          title="Ошибочные"
+          amount={analytics.failed.amount}
+          count={analytics.failed.count}
+          countLabel={pluralize(analytics.failed.count, 'ошибка', 'ошибки', 'ошибок')}
+          currency={primaryCurrency}
+          icon={<Ban className="h-5 w-5" />}
+          colorClass="text-rose-500"
+          glowColor="bg-rose-500"
+          isClickable={!!onFilterChange}
+          isActive={activeFilter === 'failed'}
+          onClick={() => handleFilterClick('failed')}
+          tooltip="Клик для фильтрации по ошибочным платежам"
+        />
+
+        <DashboardCard
+          title="Комиссии"
+          amount={showFeesAsDash ? null : analytics.fees.amount}
+          count={analytics.fees.count}
+          countLabel={analytics.feesFallback > 0 ? `расчёт: ${analytics.feesFallback}` : ''}
+          currency={primaryCurrency}
+          icon={<Percent className="h-5 w-5" />}
+          colorClass="text-violet-500"
+          glowColor="bg-violet-500"
+          isClickable={false}
+          isActive={false}
+          tooltip={`Из API: ${analytics.feesKnown} · Расчётные: ${analytics.feesFallback} · Неизвестно: ${analytics.feesUnknown}`}
+          showDash={showFeesAsDash}
+        />
+
+        <DashboardCard
+          title="Чистая выручка"
+          amount={analytics.netRevenue}
+          count={0}
+          countLabel="Gross − Возвраты − Комиссии"
+          currency={primaryCurrency}
+          icon={<Wallet className="h-5 w-5" />}
+          colorClass={analytics.netRevenue >= 0 ? "text-sky-500" : "text-rose-500"}
+          glowColor={analytics.netRevenue >= 0 ? "bg-sky-500" : "bg-rose-500"}
+          isClickable={false}
+          isActive={false}
+        />
+      </div>
+    </div>
+  );
+}

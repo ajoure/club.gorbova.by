@@ -61,8 +61,7 @@ const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "deal", label: "Сделка", visible: true, width: 120, order: 8 },
   { key: "product", label: "Продукт", visible: true, width: 130, order: 9 },
   { key: "receipt", label: "Чек", visible: true, width: 50, order: 10 },
-  { key: "flags", label: "Флаги", visible: true, width: 140, order: 11 },
-  { key: "actions", label: "", visible: true, width: 50, order: 12 },
+  { key: "actions", label: "", visible: true, width: 50, order: 11 },
 ];
 
 const STORAGE_KEY = 'admin_payments_columns_v1';
@@ -601,16 +600,6 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
             providerUid={payment.uid}
             onRefetch={onRefetch}
           />
-        );
-        
-      case 'flags':
-        return (
-          <div className="flex flex-wrap gap-1">
-            {payment.is_external && <Badge variant="secondary" className="text-[10px]">Внешний</Badge>}
-            {payment.has_conflict && <Badge variant="destructive" className="text-[10px]">Конфликт</Badge>}
-            {payment.refunds_count > 0 && <Badge variant="outline" className="text-[10px]">Возвр: {payment.refunds_count}</Badge>}
-            {getSourceBadge(payment.source)}
-          </div>
         );
         
       case 'actions':
