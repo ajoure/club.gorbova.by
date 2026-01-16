@@ -335,7 +335,6 @@ export function GlobalPaymentHandler() {
             <div className="space-y-4">
               <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-2">
                 <p className="text-sm text-foreground">Ждём подтверждение платежа от банка и платёжного сервиса.</p>
-                <p className="text-sm text-muted-foreground">Не показываем «успех», пока платёж не подтверждён.</p>
                 {timedOut && (
                   <p className="text-sm text-muted-foreground">
                     Проверка заняла больше минуты. Это нормально для некоторых банков — статус появится в «Моих покупках».

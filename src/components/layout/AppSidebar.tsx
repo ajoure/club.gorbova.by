@@ -15,36 +15,50 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, Package, ChevronUp, LifeBuoy } from "lucide-react";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, Package, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive } from "lucide-react";
 
 const mainMenuItems = [{
-  title: "Обзор",
+  title: "Пульс",
   url: "/dashboard",
-  icon: LayoutGrid
+  icon: Activity
 }, {
   title: "База знаний",
-  url: "/library",
+  url: "/knowledge",
   icon: BookOpen
 }, {
-  title: "Продукты",
+  title: "Деньги",
+  url: "/money",
+  icon: Wallet
+}, {
+  title: "Саморазвитие",
+  url: "/self-development",
+  icon: Sparkles
+}, {
+  title: "Нейросеть",
+  url: "/ai",
+  icon: Cpu
+}, {
+  title: "Обучение",
   url: "/products",
-  icon: Package
+  icon: GraduationCap
+}];
+
+const legacyMenuItems = [{
+  title: "Бизнес",
+  url: "/business",
+  icon: Briefcase
 }, {
   title: "Бухгалтер",
   url: "/accountant",
   icon: Calculator
 }, {
-  title: "Бизнес",
-  url: "/business",
-  icon: Briefcase
-}, {
   title: "Проверки",
   url: "/audits",
   icon: ClipboardCheck
 }, {
-  title: "Саморазвитие",
-  url: "/self-development",
-  icon: Sparkles
+  title: "Библиотека",
+  url: "/library",
+  icon: BookOpen
 }];
 
 const leaderToolsItems = [{
@@ -206,6 +220,25 @@ export function AppSidebar() {
                     <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
                       <item.icon className="h-5 w-5 shrink-0" />
                       {!collapsed && <span className="text-sm leading-tight flex-1">{item.title}</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>)}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-wider px-3">
+            {!collapsed && <span className="flex items-center gap-2"><Archive className="h-3.5 w-3.5" />Разное</span>}
+            {collapsed && <Archive className="h-4 w-4" />}
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {legacyMenuItems.map(item => <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton asChild isActive={location.pathname === item.url} tooltip={collapsed ? item.title : undefined}>
+                    <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
+                      <item.icon className="h-5 w-5 shrink-0" />
+                      {!collapsed && <span>{item.title}</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>)}

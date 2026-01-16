@@ -77,6 +77,9 @@ import AdminRefundsV2 from "./pages/admin/AdminRefundsV2";
 import Support from "./pages/Support";
 import SupportTicket from "./pages/SupportTicket";
 import AdminSupport from "./pages/admin/AdminSupport";
+import Money from "./pages/Money";
+import AI from "./pages/AI";
+import Knowledge from "./pages/Knowledge";
 
 const queryClient = new QueryClient();
 
@@ -110,6 +113,9 @@ const App = () => (
               {/* Protected routes */}
               <Route path="/products" element={<ProtectedRoute><Products /></ProtectedRoute>} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/money" element={<ProtectedRoute><Money /></ProtectedRoute>} />
+              <Route path="/ai" element={<ProtectedRoute><AI /></ProtectedRoute>} />
+              <Route path="/knowledge" element={<ProtectedRoute><Knowledge /></ProtectedRoute>} />
               <Route path="/purchases" element={<ProtectedRoute><Purchases /></ProtectedRoute>} />
               <Route path="/accountant" element={<ProtectedRoute><Accountant /></ProtectedRoute>} />
               <Route path="/business" element={<ProtectedRoute><Business /></ProtectedRoute>} />
