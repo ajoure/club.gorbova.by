@@ -15,46 +15,32 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, Package, ChevronUp, LifeBuoy } from "lucide-react";
+import { Activity, Sparkles, LogOut, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Wallet, Cpu, GraduationCap, Target } from "lucide-react";
 
 const mainMenuItems = [{
-  title: "Обзор",
+  title: "Пульс",
   url: "/dashboard",
-  icon: LayoutGrid
+  icon: Activity
 }, {
   title: "База знаний",
-  url: "/library",
+  url: "/knowledge",
   icon: BookOpen
 }, {
-  title: "Продукты",
-  url: "/products",
-  icon: Package
-}, {
-  title: "Бухгалтер",
-  url: "/accountant",
-  icon: Calculator
-}, {
-  title: "Бизнес",
-  url: "/business",
-  icon: Briefcase
-}, {
-  title: "Проверки",
-  url: "/audits",
-  icon: ClipboardCheck
+  title: "Деньги",
+  url: "/money",
+  icon: Wallet
 }, {
   title: "Саморазвитие",
   url: "/self-development",
   icon: Sparkles
-}];
-
-const leaderToolsItems = [{
-  title: "Матрица продуктивности",
-  url: "/tools/eisenhower",
-  icon: LayoutGrid
 }, {
-  title: "Колесо баланса",
-  url: "/tools/balance-wheel",
-  icon: Target
+  title: "Нейросеть",
+  url: "/ai",
+  icon: Cpu
+}, {
+  title: "Обучение",
+  url: "/learning",
+  icon: GraduationCap
 }];
 
 // Profile menu items (moved from sidebar)
@@ -184,28 +170,10 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {mainMenuItems.map(item => <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location.pathname === item.url} tooltip={collapsed ? item.title : undefined}>
+                  <SidebarMenuButton asChild isActive={location.pathname === item.url || location.pathname.startsWith(item.url + '/')} tooltip={collapsed ? item.title : undefined}>
                     <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
                       <item.icon className="h-5 w-5 shrink-0" />
                       {!collapsed && <span>{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>)}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-wider px-3">
-            {!collapsed && "Инструменты лидера"}
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {leaderToolsItems.map(item => <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location.pathname === item.url} tooltip={collapsed ? item.title : undefined}>
-                    <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
-                      <item.icon className="h-5 w-5 shrink-0" />
-                      {!collapsed && <span className="text-sm leading-tight flex-1">{item.title}</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>)}
