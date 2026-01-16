@@ -137,17 +137,17 @@ export function NewsBlock() {
             type="single" 
             value={country} 
             onValueChange={(v) => v && setCountry(v)}
-            className="bg-muted/50 p-0.5 rounded-lg"
+            className="bg-muted/70 p-0.5 rounded-lg border border-border/30"
           >
             <ToggleGroupItem 
               value="by" 
-              className="text-xs px-3 py-1.5 data-[state=on]:bg-background data-[state=on]:shadow-sm"
+              className="text-xs px-3 py-1.5 font-medium text-muted-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:font-semibold data-[state=on]:shadow-sm transition-all"
             >
               Беларусь
             </ToggleGroupItem>
             <ToggleGroupItem 
               value="ru" 
-              className="text-xs px-3 py-1.5 data-[state=on]:bg-background data-[state=on]:shadow-sm"
+              className="text-xs px-3 py-1.5 font-medium text-muted-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:font-semibold data-[state=on]:shadow-sm transition-all"
             >
               Россия
             </ToggleGroupItem>

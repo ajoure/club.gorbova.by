@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { User, Mail, Phone, Save, X, FileText, ChevronRight, Key, Eye, EyeOff, Loader2, Camera, Upload } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MultiContactInput, ContactItem } from "@/components/ui/MultiContactInput";
+import { TelegramProfileWidget } from "@/components/profile/TelegramProfileWidget";
 
 interface ProfileData {
   id: string;
@@ -571,6 +572,9 @@ export default function ProfileSettings() {
             )}
           </CardContent>
         </Card>
+
+        {/* Telegram Widget */}
+        <TelegramProfileWidget />
 
         {/* Password Change Card */}
         <PasswordChangeCard />
