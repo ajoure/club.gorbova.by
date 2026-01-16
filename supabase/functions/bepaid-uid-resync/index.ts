@@ -118,9 +118,26 @@ Deno.serve(async (req) => {
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-  // bePaid credentials
-  const shopId = Deno.env.get("BEPAID_SHOP_ID") || "361";
-  const secretKey = Deno.env.get("BEPAID_SECRET_KEY")!;
+  // bePaid credentials - get from integration_instances (primary) or env (fallback)
+  const { data: bepaidInstance } = await supabaseAdmin
+    .from('integration_instances')
+    .select('config')
+    .eq('provider', 'bepaid')
+    .in('status', ['active', 'connected'])
+    .maybeSingle();
+
+  const instanceConfig = bepaidInstance?.config as Record<string, unknown> | null;
+  const shopId = (instanceConfig?.shop_id as string) || Deno.env.get("BEPAID_SHOP_ID") || "33524";
+  const secretKey = (instanceConfig?.secret_key as string) || Deno.env.get("BEPAID_SECRET_KEY");
+
+  if (!secretKey) {
+    return new Response(
+      JSON.stringify({ success: false, message: "bePaid credentials not configured" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  console.log(`[bepaid-uid-resync] Using shopId: ${shopId}`);
 
   // Auth check
   const authHeader = req.headers.get("Authorization");
