@@ -33,18 +33,21 @@ interface TelegramUpdate {
   };
 }
 
+// Club branding
+const CLUB_LOGO_URL = 'https://gorbova.lovable.app/images/club-logo.png';
+
 const MESSAGES = {
-  welcome: `👋 Привет!\n\nЯ бот клуба Gorbova Club.\n\nЧерез меня ты получишь доступ к закрытому каналу и чату клуба ✨`,
-  accessGranted: `✅ Всё отлично!\n\nТвоя подписка активна, я уже открыл тебе доступ 🙌\n\nДобро пожаловать в клуб 💙`,
-  accessWithLinks: `✅ Подписка активна!\n\nЯ подготовил для тебя доступ в клуб.\n⚠️ Ссылки одноразовые — лучше открыть сразу.`,
-  noSubscription: `🔒 Доступ закрыт\n\nСейчас у тебя нет активной подписки, поэтому я не могу добавить тебя в клуб.\n\nКак только подписка будет оформлена — доступ появится автоматически 💫`,
-  notLinked: `🤝 Давай познакомимся\n\nЧтобы я мог добавить тебя в чат и канал, нужно связать твой Telegram с аккаунтом клуба.\n\nПросто нажми кнопку ниже 👇`,
-  linkSuccess: `✅ Telegram успешно привязан!\n\nТеперь я могу управлять твоим доступом к клубу.`,
-  linkExpired: `❌ Ссылка устарела\n\nЭта ссылка для привязки уже не действует.\n\nПожалуйста, сгенерируй новую в личном кабинете.`,
+  welcome: `👋 <b>Добро пожаловать в клуб «Буква закона»!</b>\n\nЗдесь вы найдёте материалы, продукты и поддержку по вопросам бизнеса и законодательства.\n\nЧерез меня ты получишь доступ к закрытому каналу и чату клуба ✨`,
+  accessGranted: `✅ <b>Всё отлично!</b>\n\nТвоя подписка активна, я уже открыл тебе доступ 🙌\n\nДобро пожаловать в клуб «Буква закона» 💙`,
+  accessWithLinks: `✅ <b>Подписка активна!</b>\n\nЯ подготовил для тебя доступ в клуб «Буква закона».\n⚠️ Ссылки одноразовые — лучше открыть сразу.`,
+  noSubscription: `🔒 <b>Доступ закрыт</b>\n\nСейчас у тебя нет активной подписки, поэтому я не могу добавить тебя в клуб.\n\nКак только подписка будет оформлена — доступ появится автоматически 💫`,
+  notLinked: `🤝 <b>Давай познакомимся</b>\n\nЧтобы я мог добавить тебя в чат и канал, нужно связать твой Telegram с аккаунтом клуба.\n\nПросто нажми кнопку ниже 👇`,
+  linkSuccess: `✅ <b>Telegram успешно привязан!</b>\n\nТеперь я могу управлять твоим доступом к клубу «Буква закона».`,
+  linkExpired: `❌ <b>Ссылка устарела</b>\n\nЭта ссылка для привязки уже не действует.\n\nПожалуйста, сгенерируй новую в личном кабинете.`,
   alreadyLinked: `ℹ️ Этот Telegram уже привязан к другому аккаунту.\n\nЕсли это ошибка — обратись к администратору.`,
-  joinApproved: `✅ Заявка одобрена!\n\nДобро пожаловать в клуб 💙`,
-  joinDeclined: `❌ Заявка отклонена\n\nУ тебя нет активного доступа в клуб.\n\nОформи подписку, чтобы получить доступ 👇`,
-  error: `⚠️ Что-то пошло не так\n\nПопробуй чуть позже или напиши администратору 💬`,
+  joinApproved: `✅ <b>Заявка одобрена!</b>\n\nДобро пожаловать в клуб «Буква закона» 💙`,
+  joinDeclined: `❌ <b>Заявка отклонена</b>\n\nУ тебя нет активного доступа в клуб.\n\nОформи подписку, чтобы получить доступ 👇`,
+  error: `⚠️ <b>Что-то пошло не так</b>\n\nПопробуй чуть позже или напиши администратору 💬`,
 };
 
 async function telegramRequest(botToken: string, method: string, params: Record<string, unknown>) {
@@ -61,6 +64,18 @@ async function sendMessage(botToken: string, chatId: number, text: string, reply
   const body: Record<string, unknown> = { chat_id: chatId, text, parse_mode: 'HTML' };
   if (replyMarkup) body.reply_markup = replyMarkup;
   return telegramRequest(botToken, 'sendMessage', body);
+}
+
+// Send photo with caption - for branded welcome messages
+async function sendPhotoWithCaption(botToken: string, chatId: number, photoUrl: string, caption: string, replyMarkup?: object) {
+  const body: Record<string, unknown> = { 
+    chat_id: chatId, 
+    photo: photoUrl, 
+    caption, 
+    parse_mode: 'HTML' 
+  };
+  if (replyMarkup) body.reply_markup = replyMarkup;
+  return telegramRequest(botToken, 'sendPhoto', body);
 }
 
 function getSiteUrl(): string {
@@ -562,7 +577,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Regular /start - check user status
+      // Regular /start - send branded welcome with logo, then check user status
       const { data: profile } = await supabase
         .from('profiles')
         .select('*')
@@ -570,13 +585,15 @@ Deno.serve(async (req) => {
         .single();
 
       if (!profile) {
+        // New user - send logo + welcome + link buttons
         const keyboard = {
           inline_keyboard: [
             [{ text: '🔗 Привязать Telegram', url: `${getSiteUrl()}/dashboard` }],
             [{ text: '💳 Оформить подписку', url: `${getSiteUrl()}/#pricing` }],
           ],
         };
-        await sendMessage(botToken, chatId, MESSAGES.notLinked, keyboard);
+        // Send welcome with logo
+        await sendPhotoWithCaption(botToken, chatId, CLUB_LOGO_URL, MESSAGES.welcome, keyboard);
       } else {
         const { data: subscription } = await supabase
           .from('subscriptions')
@@ -586,12 +603,14 @@ Deno.serve(async (req) => {
           .single();
 
         if (subscription?.expires_at && new Date(subscription.expires_at) > new Date()) {
-          await sendMessage(botToken, chatId, MESSAGES.accessGranted);
+          // Active subscription - send logo + access granted
+          await sendPhotoWithCaption(botToken, chatId, CLUB_LOGO_URL, MESSAGES.accessGranted);
         } else {
+          // No subscription - send logo + no subscription message
           const keyboard = {
             inline_keyboard: [[{ text: '💳 Оформить подписку', url: `${getSiteUrl()}/#pricing` }]],
           };
-          await sendMessage(botToken, chatId, MESSAGES.noSubscription, keyboard);
+          await sendPhotoWithCaption(botToken, chatId, CLUB_LOGO_URL, MESSAGES.noSubscription, keyboard);
         }
       }
     }
