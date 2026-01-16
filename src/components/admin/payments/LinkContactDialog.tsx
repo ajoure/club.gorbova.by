@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,6 +80,7 @@ export function LinkContactDialog({
   cardHolder,
   onSuccess 
 }: LinkContactDialogProps) {
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState(initialEmail || initialPhone || "");
   const [results, setResults] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(false);
@@ -172,20 +174,20 @@ export function LinkContactDialog({
             });
         }
 
-        // 2. Always link to all payments with this card
+        // 2. Always link ALL payments with this card (override existing if needed)
         // Update all queue items with this card
         await supabase
           .from("payment_reconcile_queue")
           .update({ matched_profile_id: selected.id })
-          .eq("card_last4", cardLast4)
-          .is("matched_profile_id", null);
+          .eq("card_last4", cardLast4);
 
         // Update all payments_v2 with this card
         await supabase
           .from("payments_v2")
           .update({ profile_id: selected.id })
-          .eq("card_last4", cardLast4)
-          .is("profile_id", null);
+          .eq("card_last4", cardLast4);
+        
+        console.log(`Linked card ${cardLast4} to profile ${selected.id}`);
       }
 
       // 3. Link current payment
@@ -247,6 +249,12 @@ export function LinkContactDialog({
       
       const linkedCount = cardLast4 ? "ко всем платежам с этой картой" : "";
       toast.success(`Контакт связан ${linkedCount}`);
+      
+      // Force invalidate all payment queries to refresh data
+      queryClient.invalidateQueries({ queryKey: ["unified-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
+      queryClient.invalidateQueries({ queryKey: ["bepaid-payments"] });
+      
       onSuccess();
       onOpenChange(false);
     } catch (e: any) {

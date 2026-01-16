@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Calendar, ChevronDown } from "lucide-react";
+import { Calendar as CalendarIcon, ChevronDown, X, CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Input } from "@/components/ui/input";
+import { Calendar } from "@/components/ui/calendar";
 import { Label } from "@/components/ui/label";
-import { format, startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter, subQuarters, startOfYear, endOfYear, subYears } from "date-fns";
+import { format, startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter, subQuarters, startOfYear, endOfYear, subYears, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
 
 export interface DateFilter {
@@ -127,24 +127,133 @@ function formatPeriodLabel(value: DateFilter): string {
   return `${format(fromDate, 'd MMM', { locale: ru })} — ${toStr}`;
 }
 
+// Glassmorphism Calendar Popover component
+function GlassCalendarPicker({ 
+  label, 
+  value, 
+  onChange,
+  minDate,
+  maxDate
+}: { 
+  label: string;
+  value: Date | undefined;
+  onChange: (date: Date | undefined) => void;
+  minDate?: Date;
+  maxDate?: Date;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="flex-1 space-y-1.5">
+      <Label className="text-[11px] text-muted-foreground/80 font-medium">{label}</Label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            className={cn(
+              "w-full h-9 justify-start text-left text-xs font-normal",
+              "bg-muted/40 border-border/40 rounded-lg",
+              "hover:bg-muted/60 hover:border-border/60",
+              "focus:ring-2 focus:ring-primary/20",
+              "transition-all duration-200",
+              !value && "text-muted-foreground"
+            )}
+          >
+            <CalendarIcon className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
+            {value ? format(value, "d MMM yyyy", { locale: ru }) : "Выбрать..."}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent 
+          align="start"
+          sideOffset={4}
+          className={cn(
+            "w-auto p-0 z-[100]",
+            "bg-background/95 backdrop-blur-xl",
+            "border-border/50 shadow-2xl",
+            "rounded-2xl overflow-hidden",
+            "animate-in fade-in-0 zoom-in-95"
+          )}
+        >
+          <Calendar
+            mode="single"
+            selected={value}
+            onSelect={(date) => {
+              onChange(date);
+              setOpen(false);
+            }}
+            disabled={(date) => {
+              if (minDate && date < minDate) return true;
+              if (maxDate && date > maxDate) return true;
+              return false;
+            }}
+            locale={ru}
+            initialFocus
+            className={cn(
+              "p-3 pointer-events-auto",
+              "[&_.rdp-day_focus]:ring-2 [&_.rdp-day_focus]:ring-primary/30",
+              "[&_.rdp-day_selected]:bg-primary [&_.rdp-day_selected]:text-primary-foreground",
+              "[&_.rdp-day_today]:bg-accent/60 [&_.rdp-day_today]:font-semibold"
+            )}
+          />
+          <div className="flex items-center justify-between p-2 pt-0 border-t border-border/30">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                onChange(undefined);
+                setOpen(false);
+              }}
+            >
+              <X className="h-3 w-3 mr-1" />
+              Очистить
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => {
+                onChange(new Date());
+                setOpen(false);
+              }}
+            >
+              <CalendarDays className="h-3 w-3 mr-1" />
+              Сегодня
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
 export function PeriodSelector({ value, onChange, className, align = "start" }: PeriodSelectorProps) {
   const [open, setOpen] = useState(false);
-  const [customFrom, setCustomFrom] = useState(value.from);
-  const [customTo, setCustomTo] = useState(value.to || '');
+  const [customFrom, setCustomFrom] = useState<Date | undefined>(
+    value.from ? parseISO(value.from) : undefined
+  );
+  const [customTo, setCustomTo] = useState<Date | undefined>(
+    value.to ? parseISO(value.to) : undefined
+  );
   
   const activePreset = detectActivePreset(value);
 
   const handlePresetClick = (preset: Preset) => {
     const range = preset.getRange();
     onChange({ from: range.from, to: range.to });
-    setCustomFrom(range.from);
-    setCustomTo(range.to);
+    setCustomFrom(parseISO(range.from));
+    setCustomTo(parseISO(range.to));
     setOpen(false);
   };
 
   const handleCustomApply = () => {
-    onChange({ from: customFrom, to: customTo || undefined });
-    setOpen(false);
+    if (customFrom) {
+      onChange({ 
+        from: format(customFrom, 'yyyy-MM-dd'), 
+        to: customTo ? format(customTo, 'yyyy-MM-dd') : undefined 
+      });
+      setOpen(false);
+    }
   };
 
   return (
@@ -160,7 +269,7 @@ export function PeriodSelector({ value, onChange, className, align = "start" }: 
             className
           )}
         >
-          <Calendar className="h-4 w-4 text-muted-foreground" />
+          <CalendarIcon className="h-4 w-4 text-muted-foreground" />
           <span className="font-medium">{formatPeriodLabel(value)}</span>
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
@@ -169,10 +278,11 @@ export function PeriodSelector({ value, onChange, className, align = "start" }: 
         align={align}
         sideOffset={8}
         className={cn(
-          "w-72 p-0 z-50",
+          "w-80 p-0 z-50",
           "bg-background/95 backdrop-blur-xl",
           "border-border/50 shadow-2xl",
-          "rounded-2xl overflow-hidden"
+          "rounded-2xl overflow-hidden",
+          "animate-in fade-in-0 zoom-in-95"
         )}
       >
         {/* Presets */}
@@ -197,36 +307,29 @@ export function PeriodSelector({ value, onChange, className, align = "start" }: 
         {/* Divider */}
         <div className="h-px bg-border/40 mx-3" />
         
-        {/* Custom range */}
+        {/* Custom range with Calendar pickers */}
         <div className="p-3 space-y-3">
           <Label className="text-xs text-muted-foreground font-medium">
             Свой период
           </Label>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="period-from" className="text-[11px] text-muted-foreground/80">С</Label>
-              <Input
-                id="period-from"
-                type="date"
-                value={customFrom}
-                onChange={(e) => setCustomFrom(e.target.value)}
-                className="h-9 text-xs bg-muted/40 border-border/40 rounded-lg focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="period-to" className="text-[11px] text-muted-foreground/80">По</Label>
-              <Input
-                id="period-to"
-                type="date"
-                value={customTo}
-                onChange={(e) => setCustomTo(e.target.value)}
-                className="h-9 text-xs bg-muted/40 border-border/40 rounded-lg focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
+          <div className="flex gap-2">
+            <GlassCalendarPicker
+              label="С"
+              value={customFrom}
+              onChange={setCustomFrom}
+              maxDate={customTo}
+            />
+            <GlassCalendarPicker
+              label="По"
+              value={customTo}
+              onChange={setCustomTo}
+              minDate={customFrom}
+            />
           </div>
           <Button 
             size="sm" 
             onClick={handleCustomApply}
+            disabled={!customFrom}
             className="w-full h-9 text-xs rounded-xl"
           >
             Применить
