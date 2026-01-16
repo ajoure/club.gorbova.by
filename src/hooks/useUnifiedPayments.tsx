@@ -400,35 +400,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
     staleTime: 30000,
   });
 
-  const result = {
-    payments: data?.payments || [],
-    stats: data?.stats || {
-      total: 0,
-      inQueue: 0,
-      processed: 0,
-      withContact: 0,
-      withoutContact: 0,
-      withDeal: 0,
-      withoutDeal: 0,
-      withReceipt: 0,
-      withoutReceipt: 0,
-      withRefunds: 0,
-      external: 0,
-      conflicts: 0,
-      totalAmount: 0,
-      totalRefunded: 0,
-      pending: 0,
-      failed: 0,
-      successful: 0,
-      refunded: 0,
-      cancelled: 0,
-    },
-    isLoading,
-    error,
-    refetch,
-  };
-
-  // Realtime subscription for automatic updates - MUST be after useQuery
+  // Realtime subscription for automatic updates
   useEffect(() => {
     const channel = supabase
       .channel('payments-realtime')
@@ -473,5 +445,31 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
     };
   }, [queryClient]);
 
-  return result;
+  return {
+    payments: data?.payments || [],
+    stats: data?.stats || {
+      total: 0,
+      inQueue: 0,
+      processed: 0,
+      withContact: 0,
+      withoutContact: 0,
+      withDeal: 0,
+      withoutDeal: 0,
+      withReceipt: 0,
+      withoutReceipt: 0,
+      withRefunds: 0,
+      external: 0,
+      conflicts: 0,
+      totalAmount: 0,
+      totalRefunded: 0,
+      pending: 0,
+      failed: 0,
+      successful: 0,
+      refunded: 0,
+      cancelled: 0,
+    },
+    isLoading,
+    error,
+    refetch,
+  };
 }
