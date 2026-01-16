@@ -77,6 +77,7 @@ import Support from "./pages/Support";
 import SupportTicket from "./pages/SupportTicket";
 import AdminSupport from "./pages/admin/AdminSupport";
 import AdminNews from "./pages/admin/AdminNews";
+import AdminCommunication from "./pages/admin/AdminCommunication";
 import Money from "./pages/Money";
 import AI from "./pages/AI";
 import Knowledge from "./pages/Knowledge";
@@ -144,6 +145,7 @@ const App = () => (
               {/* Admin routes - CRM */}
               <Route path="/admin" element={<Navigate to="/admin/deals" replace />} />
               <Route path="/admin/inbox" element={<ProtectedRoute><AdminInbox /></ProtectedRoute>} />
+              <Route path="/admin/communication" element={<ProtectedRoute><AdminCommunication /></ProtectedRoute>} />
               <Route path="/admin/broadcasts" element={<ProtectedRoute><AdminBroadcasts /></ProtectedRoute>} />
               <Route path="/admin/contacts" element={<ProtectedRoute><AdminLayout><AdminContacts /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/contacts/duplicates" element={<ProtectedRoute><AdminLayout><AdminDuplicates /></AdminLayout></ProtectedRoute>} />
