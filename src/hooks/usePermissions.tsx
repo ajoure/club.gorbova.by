@@ -104,6 +104,28 @@ export function usePermissions() {
     return hasRole("admin") || hasRole("super_admin");
   }, [hasRole]);
 
+  // Check if user has a view-only role (e.g., admin_gost, _view, _readonly)
+  const isViewOnlyRole = useCallback((): boolean => {
+    return userRoles.some((r) => 
+      r.code.includes('_gost') || 
+      r.code.includes('_view') || 
+      r.code.includes('_readonly')
+    );
+  }, [userRoles]);
+
+  // Check if user can write (edit/manage/delete) in a specific category
+  const canWrite = useCallback((category: string): boolean => {
+    // Super admins can always write
+    if (hasRole("super_admin")) return true;
+    // View-only roles cannot write
+    if (isViewOnlyRole()) return false;
+    // Check for specific write permissions
+    return hasPermission(`${category}.edit`) || 
+           hasPermission(`${category}.manage`) ||
+           hasPermission(`${category}.delete`) ||
+           hasPermission(`${category}.create`);
+  }, [hasRole, isViewOnlyRole, hasPermission]);
+
   const hasAdminAccess = useCallback((): boolean => {
     // Has access to admin panel if has any admin-related permission
     const adminPermissions = [
@@ -118,6 +140,8 @@ export function usePermissions() {
       "entitlements.view",
       "entitlements.manage",
       "audit.view",
+      "news.view",
+      "news.edit",
     ];
     return hasAnyPermission(adminPermissions);
   }, [hasAnyPermission]);
@@ -131,6 +155,8 @@ export function usePermissions() {
     hasRole,
     isSuperAdmin,
     isAdmin,
+    isViewOnlyRole,
+    canWrite,
     hasAdminAccess,
     refetch: fetchPermissions,
   };

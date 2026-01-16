@@ -55,10 +55,6 @@ const legacyMenuItems = [{
   title: "Проверки",
   url: "/audits",
   icon: ClipboardCheck
-}, {
-  title: "Библиотека",
-  url: "/library",
-  icon: BookOpen
 }];
 
 const leaderToolsItems = [{

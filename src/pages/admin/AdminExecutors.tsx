@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { useExecutors, Executor } from "@/hooks/useLegalDetails";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { supabase } from "@/integrations/supabase/client";
+import { usePermissions } from "@/hooks/usePermissions";
 
 // Предустановленные должности руководителя
 const DIRECTOR_POSITIONS = [
@@ -100,6 +101,10 @@ function generateActsOnBasisText(type: string, basis: string, details: string): 
 
 export default function AdminExecutors() {
   const { executors, isLoading: executorsLoading, createExecutor, updateExecutor, deleteExecutor, setDefault: setDefaultExecutor, isCreating, isUpdating } = useExecutors();
+  const { canWrite, isSuperAdmin } = usePermissions();
+  
+  // Permission check - can user edit executors?
+  const canEdit = canWrite("executors") || isSuperAdmin();
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -266,10 +271,12 @@ export default function AdminExecutors() {
               Юридические лица для договоров и актов
             </p>
           </div>
-          <Button onClick={() => handleOpenDialog()}>
-            <Plus className="h-4 w-4 mr-2" />
-            Добавить
-          </Button>
+          {canEdit && (
+            <Button onClick={() => handleOpenDialog()}>
+              <Plus className="h-4 w-4 mr-2" />
+              Добавить
+            </Button>
+          )}
         </div>
 
         {/* Stats */}
@@ -349,7 +356,7 @@ export default function AdminExecutors() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
-                            {!executor.is_default && (
+                            {canEdit && !executor.is_default && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -368,21 +375,25 @@ export default function AdminExecutors() {
                             >
                               <Copy className="h-4 w-4" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleOpenDialog(executor)}
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setDeleteConfirmId(executor.id)}
-                              className="text-destructive hover:text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            {canEdit && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleOpenDialog(executor)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {canEdit && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setDeleteConfirmId(executor.id)}
+                                className="text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
