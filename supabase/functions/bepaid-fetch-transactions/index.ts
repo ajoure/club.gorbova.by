@@ -7,10 +7,9 @@ const corsHeaders = {
 };
 
 /**
- * bepaid-fetch-transactions v3
+ * bepaid-fetch-transactions v4
  * 
- * PATCH: Исправлен API endpoint — используем gateway.bepaid.by/transactions
- * (проверенный работающий endpoint из bepaid-raw-transactions)
+ * CRITICAL UPDATE: Added Reports API support for manual invoice payments
  * 
  * Режимы:
  * - BULK (default): Пробирует несколько endpoints, качает транзакции
@@ -18,9 +17,10 @@ const corsHeaders = {
  * 
  * Особенности:
  * - Probe mode: тестирует endpoints и выбирает рабочий
- * - Поддержка refunds (отрицательная сумма в payments_v2)
+ * - Reports API: POST-запрос для ручных ссылок (инвойсов)
+ * - Поддержка refunds с наследованием profile_id от родителя
+ * - Буфер ±12 часов для часовых поясов
  * - STOP-предохранители: max_pages, max_items, max_runtime_ms
- * - Логирует какой endpoint реально используется
  */
 
 interface SyncConfig {
@@ -117,6 +117,86 @@ interface ProbeResult {
   status: number;
   error?: string;
   transactionCount?: number;
+}
+
+// ============================================================
+// Reports API - POST request for manual invoice payments
+// ============================================================
+interface ReportsAPIResult {
+  success: boolean;
+  transactions: any[];
+  error?: string;
+  endpoint_used?: string;
+}
+
+async function fetchReportsAPI(
+  auth: string,
+  shopId: string,
+  fromDate: Date,
+  toDate: Date
+): Promise<ReportsAPIResult> {
+  const endpoints = [
+    "https://api.bepaid.by/api/reports",
+    "https://gateway.bepaid.by/api/reports",
+    "https://api.bepaid.by/reports",
+    "https://gateway.bepaid.by/reports",
+  ];
+
+  // Format dates for bePaid Reports API (with timezone)
+  const formatDate = (d: Date) => {
+    return d.toISOString().replace('T', ' ').substring(0, 19);
+  };
+
+  const requestBody = {
+    report_params: {
+      date_type: "created_at",
+      from: formatDate(fromDate),
+      to: formatDate(toDate),
+      status: "all",
+      payment_method_type: "all",
+      time_zone: "Europe/Minsk"
+    }
+  };
+
+  console.log(`[bepaid-fetch] Reports API request body:`, JSON.stringify(requestBody));
+
+  for (const endpoint of endpoints) {
+    try {
+      console.log(`[bepaid-fetch] Trying Reports API: ${endpoint}`);
+      
+      const response = await fetch(endpoint, {
+        method: "POST",  // CRITICAL: Reports API requires POST!
+        headers: {
+          Authorization: `Basic ${auth}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "X-Api-Version": "2",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      console.log(`[bepaid-fetch] Reports API ${endpoint}: ${response.status}`);
+
+      if (response.ok) {
+        const data = await response.json();
+        // Reports API may return data in different structures
+        const transactions = data.transactions || data.data?.transactions || data.items || [];
+        console.log(`[bepaid-fetch] Reports API returned ${transactions.length} transactions from ${endpoint}`);
+        return { 
+          success: true, 
+          transactions, 
+          endpoint_used: endpoint 
+        };
+      } else {
+        const errText = await response.text();
+        console.log(`[bepaid-fetch] Reports API ${endpoint} error: ${errText.substring(0, 200)}`);
+      }
+    } catch (err) {
+      console.error(`[bepaid-fetch] Reports API error for ${endpoint}:`, err);
+    }
+  }
+
+  return { success: false, transactions: [], error: "All Reports API endpoints failed" };
 }
 
 // Probe bePaid endpoints to find working one
@@ -297,15 +377,15 @@ serve(async (req) => {
     // Check for explicit dates (Discovery mode)
     if (fromDateExplicit && toDateExplicit) {
       // Explicit dates from request — Discovery mode
-      // Extend range by ±6 hours to handle timezone differences (+03:00 etc)
+      // Extend range by ±12 hours to handle timezone differences (+03:00 etc)
       fromDate = new Date(`${fromDateExplicit}T00:00:00Z`);
-      fromDate.setHours(fromDate.getHours() - 6);
+      fromDate.setHours(fromDate.getHours() - 12);
       
       toDate = new Date(`${toDateExplicit}T23:59:59Z`);
-      toDate.setHours(toDate.getHours() + 6);
+      toDate.setHours(toDate.getHours() + 12);
       
       console.log(`[bepaid-fetch] DISCOVERY mode: explicit dates ${fromDateExplicit} to ${toDateExplicit}`);
-      console.log(`[bepaid-fetch] Extended range (±6h TZ buffer): ${fromDate.toISOString()} to ${toDate.toISOString()}`);
+      console.log(`[bepaid-fetch] Extended range (±12h TZ buffer): ${fromDate.toISOString()} to ${toDate.toISOString()}`);
     } else if (fromDateExplicit) {
       // Only fromDate provided
       fromDate = new Date(`${fromDateExplicit}T00:00:00Z`);
@@ -578,7 +658,156 @@ serve(async (req) => {
     });
 
     if (!workingEndpoint) {
-      console.log(`[bepaid-fetch] No bulk endpoint found, trying UID-based fallback...`);
+      console.log(`[bepaid-fetch] No bulk endpoint found, trying Reports API (POST)...`);
+      
+      // FIRST: Try Reports API (POST) - captures manual invoice payments
+      const reportsResult = await fetchReportsAPI(auth, String(shopId), fromDate, toDate);
+      
+      if (reportsResult.success && reportsResult.transactions.length > 0) {
+        console.log(`[bepaid-fetch] Reports API success: ${reportsResult.transactions.length} transactions from ${reportsResult.endpoint_used}`);
+        results.reports_api_used = true;
+        results.reports_api_count = reportsResult.transactions.length;
+        results.reports_api_endpoint = reportsResult.endpoint_used;
+        
+        // Process transactions from Reports API
+        for (const tx of reportsResult.transactions) {
+          results.items_processed++;
+          
+          const uid = tx.uid || tx.id;
+          if (!uid) continue;
+          
+          const { type: txType, isRefund } = determineTransactionType(tx);
+          const normalizedStatus = normalizeTransactionStatus(tx.status);
+          const parsed = parseTrackingId(tx.tracking_id);
+          
+          if (isRefund) {
+            results.refunds_found++;
+          } else {
+            results.payments_found++;
+          }
+          
+          results.sample_uids.push(uid);
+          results.transactions_fetched++;
+          
+          // Check if already exists
+          const { data: existingPayment } = await supabase
+            .from("payments_v2")
+            .select("id")
+            .eq("provider_payment_id", uid)
+            .maybeSingle();
+            
+          if (existingPayment) {
+            results.already_exists++;
+            continue;
+          }
+          
+          if (mode === 'dry-run') {
+            results.dry_run_items.push({
+              uid,
+              type: txType,
+              status: normalizedStatus,
+              amount: tx.amount ? tx.amount / 100 : null,
+              source: 'reports_api',
+            });
+            continue;
+          }
+          
+          if (mode === 'execute' && parsed.orderId) {
+            const { data: order } = await supabase
+              .from("orders_v2")
+              .select("id, profile_id, user_id")
+              .eq("id", parsed.orderId)
+              .maybeSingle();
+              
+            if (order) {
+              const paymentData: any = {
+                order_id: order.id,
+                user_id: order.user_id,
+                profile_id: order.profile_id,
+                amount: isRefund ? -(tx.amount / 100) : (tx.amount / 100),
+                currency: tx.currency || "BYN",
+                status: normalizedStatus,
+                transaction_type: txType,
+                provider: "bepaid",
+                provider_payment_id: uid,
+                provider_response: tx,
+                paid_at: tx.paid_at || tx.created_at,
+                card_last4: tx.credit_card?.last_4,
+                card_brand: tx.credit_card?.brand,
+                meta: {
+                  transaction_type: txType,
+                  source: "reports_api",
+                  tracking_id: tx.tracking_id,
+                },
+              };
+              
+              // Handle refund linking with profile_id inheritance
+              if (isRefund) {
+                let parentUid = tx.parent_uid || tx.parent_transaction_uid;
+                
+                if (parentUid) {
+                  const { data: parentPayment } = await supabase
+                    .from("payments_v2")
+                    .select("id, profile_id, user_id, order_id")
+                    .eq("provider_payment_id", parentUid)
+                    .maybeSingle();
+                    
+                  if (parentPayment) {
+                    paymentData.reference_payment_id = parentPayment.id;
+                    paymentData.profile_id = parentPayment.profile_id;
+                    paymentData.user_id = parentPayment.user_id;
+                    if (!paymentData.order_id) {
+                      paymentData.order_id = parentPayment.order_id;
+                    }
+                    console.log(`[bepaid-fetch] Reports API: Linked refund ${uid} to parent, profile: ${parentPayment.profile_id}`);
+                  }
+                }
+              }
+              
+              const { error: upsertError } = await supabase
+                .from("payments_v2")
+                .upsert(paymentData, { onConflict: "provider_payment_id" });
+                
+              if (!upsertError) {
+                results.upserted++;
+              } else {
+                console.error(`[bepaid-fetch] Reports API upsert error:`, upsertError);
+                results.errors++;
+              }
+              continue;
+            }
+          }
+          
+          // Queue for manual review if no order found
+          const queueData: any = {
+            provider: "bepaid",
+            bepaid_uid: uid,
+            tracking_id: tx.tracking_id,
+            amount: tx.amount ? tx.amount / 100 : null,
+            currency: tx.currency || "BYN",
+            customer_email: tx.customer?.email,
+            raw_payload: tx,
+            source: "reports_api",
+            status: "pending",
+            status_normalized: normalizedStatus,
+            transaction_type: txType,
+            paid_at: tx.paid_at,
+            created_at_bepaid: tx.created_at,
+          };
+          
+          const { error: queueError } = await supabase
+            .from("payment_reconcile_queue")
+            .upsert(queueData, { onConflict: "provider,bepaid_uid", ignoreDuplicates: true });
+            
+          if (!queueError) {
+            results.queued_for_review++;
+          }
+        }
+        
+        // Skip UID fallback if Reports API worked
+      } else {
+        console.log(`[bepaid-fetch] Reports API failed or returned 0 transactions, trying UID fallback...`);
+      }
       
       // FALLBACK: Try to recover transactions from payment_reconcile_queue by UID
       const { data: queueItems } = await supabase
@@ -879,16 +1108,52 @@ serve(async (req) => {
                 },
               };
 
-              // If refund, link to parent payment
-              if (isRefund && tx.parent_uid) {
-                const { data: parentPayment } = await supabase
-                  .from("payments_v2")
-                  .select("id")
-                  .eq("provider_payment_id", tx.parent_uid)
-                  .maybeSingle();
+              // If refund, link to parent payment AND inherit profile_id
+              if (isRefund) {
+                let parentUid = tx.parent_uid || tx.parent_transaction_uid;
+                
+                // If parent_uid missing, try to fetch from bePaid API
+                if (!parentUid && uid) {
+                  try {
+                    const txDetailsResp = await fetch(
+                      `https://gateway.bepaid.by/transactions/${uid}`,
+                      { 
+                        headers: { 
+                          Authorization: `Basic ${auth}`, 
+                          Accept: "application/json" 
+                        } 
+                      }
+                    );
+                    if (txDetailsResp.ok) {
+                      const txDetails = await txDetailsResp.json();
+                      parentUid = txDetails.transaction?.parent_uid || txDetails.parent_uid;
+                      console.log(`[bepaid-fetch] Got parent_uid from API for refund ${uid}: ${parentUid}`);
+                    }
+                  } catch (e) {
+                    console.error(`[bepaid-fetch] Failed to get parent_uid for ${uid}:`, e);
+                  }
+                }
+                
+                if (parentUid) {
+                  const { data: parentPayment } = await supabase
+                    .from("payments_v2")
+                    .select("id, profile_id, user_id, order_id")
+                    .eq("provider_payment_id", parentUid)
+                    .maybeSingle();
 
-                if (parentPayment) {
-                  paymentData.reference_payment_id = parentPayment.id;
+                  if (parentPayment) {
+                    paymentData.reference_payment_id = parentPayment.id;
+                    // INHERIT profile_id, user_id, order_id from parent
+                    paymentData.profile_id = parentPayment.profile_id;
+                    paymentData.user_id = parentPayment.user_id;
+                    if (!paymentData.order_id) {
+                      paymentData.order_id = parentPayment.order_id;
+                    }
+                    console.log(`[bepaid-fetch] Linked refund ${uid} to parent, profile: ${parentPayment.profile_id}`);
+                    results.refunds_linked = (results.refunds_linked || 0) + 1;
+                  } else {
+                    results.missing_parent = (results.missing_parent || 0) + 1;
+                  }
                 }
               }
 
@@ -1019,11 +1284,24 @@ serve(async (req) => {
       },
     });
 
+    // Add summary for diagnostics
+    results.summary = {
+      total_from_api: results.transactions_fetched,
+      reports_api_used: results.reports_api_used || false,
+      reports_api_count: results.reports_api_count || 0,
+      reports_api_endpoint: results.reports_api_endpoint || null,
+      fallback_used: results.fallback_mode || false,
+      refunds_linked: results.refunds_linked || 0,
+      missing_parent_count: results.missing_parent || 0,
+    };
+
     console.log(`[bepaid-fetch] Completed in ${Date.now() - startTime}ms`);
     console.log(`[bepaid-fetch] Results:`, JSON.stringify({
       working_endpoint: workingEndpoint,
+      reports_api_used: results.reports_api_used,
       transactions_fetched: results.transactions_fetched,
       refunds_found: results.refunds_found,
+      refunds_linked: results.refunds_linked,
       queued_for_review: results.queued_for_review,
       upserted: results.upserted,
     }));
