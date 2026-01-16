@@ -53,6 +53,7 @@ import { SelectionBox } from "@/components/admin/SelectionBox";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -66,6 +67,11 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
 
 export default function AdminDeals() {
   const navigate = useNavigate();
+  const { canWrite, isSuperAdmin } = usePermissions();
+  
+  // Permission check - can user edit/delete deals?
+  const canEdit = canWrite("deals") || isSuperAdmin();
+  
   const [search, setSearch] = useState("");
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
   const [activePreset, setActivePreset] = useState("all");
@@ -831,14 +837,16 @@ export default function AdminDeals() {
       )}
 
       {/* Bulk Actions Bar */}
-      <BulkActionsBar
-        selectedCount={selectedCount}
-        onClearSelection={clearSelection}
-        onBulkDelete={() => setShowDeleteDialog(true)}
-        totalCount={sortedDeals.length}
-        entityName="сделок"
-        onSelectAll={selectAll}
-      />
+      {canEdit && (
+        <BulkActionsBar
+          selectedCount={selectedCount}
+          onClearSelection={clearSelection}
+          onBulkDelete={() => setShowDeleteDialog(true)}
+          totalCount={sortedDeals.length}
+          entityName="сделок"
+          onSelectAll={selectAll}
+        />
+      )}
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

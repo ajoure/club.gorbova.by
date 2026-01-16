@@ -26,6 +26,7 @@ import { MassBroadcastDialog } from "@/components/telegram/MassBroadcastDialog";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
   crm: Link2,
@@ -38,6 +39,10 @@ export default function AdminIntegrations() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { canWrite, isSuperAdmin } = usePermissions();
+  
+  // Permission check - can user edit integrations?
+  const canEdit = canWrite("integrations") || isSuperAdmin();
 
   // State
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -126,16 +131,18 @@ export default function AdminIntegrations() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-2xl font-bold">Интеграции</h1>
         <div className="flex gap-2">
-          {activeTab === "crm" && (
+          {activeTab === "crm" && canEdit && (
             <Button variant="outline" onClick={() => setGetcourseImportOpen(true)}>
               <Download className="h-4 w-4 mr-2" />
               Импорт из GetCourse
             </Button>
           )}
-          <Button onClick={() => handleAddNew(activeTab)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Добавить подключение
-          </Button>
+          {canEdit && (
+            <Button onClick={() => handleAddNew(activeTab)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Добавить подключение
+            </Button>
+          )}
         </div>
       </div>
 
@@ -214,10 +221,10 @@ export default function AdminIntegrations() {
               ) : (
                 <IntegrationInstanceList
                   instances={instances || []}
-                  onEdit={setEditInstance}
+                  onEdit={canEdit ? setEditInstance : undefined}
                   onViewLogs={setLogsInstance}
-                  onHealthCheck={handleHealthCheck}
-                  onSyncSettings={setSyncSettingsInstance}
+                  onHealthCheck={canEdit ? handleHealthCheck : undefined}
+                  onSyncSettings={canEdit ? setSyncSettingsInstance : undefined}
                 />
               )}
             </CardContent>
