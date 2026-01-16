@@ -339,10 +339,69 @@ async function chargeSubscription(
   subscription: any,
   bepaidConfig: any
 ): Promise<ChargeResult> {
-  const { id, user_id, payment_token, tariffs, next_charge_at, is_trial, order_id, tariff_id, meta: subMeta } = subscription;
+  const { id, user_id, payment_token, payment_method_id, tariffs, next_charge_at, is_trial, order_id, tariff_id, meta: subMeta } = subscription;
   
-  if (!payment_token) {
-    return { subscription_id: id, success: false, error: 'No payment token saved' };
+  // === CRITICAL FIX: Only charge if payment_method is linked and active ===
+  // This prevents "ghost token" charges where user doesn't see/control the card
+  
+  if (!payment_method_id) {
+    console.log(`Subscription ${id}: No payment_method_id linked, skipping charge`);
+    
+    // Send notification to user asking to link a card
+    try {
+      await supabase.functions.invoke('telegram-send-notification', {
+        body: {
+          user_id: user_id,
+          message: '⚠️ Не удалось продлить подписку: карта не привязана.\n\n' +
+            'Чтобы продолжить пользоваться сервисом, привяжите карту в личном кабинете:\n' +
+            '🔗 https://club.gorbova.by/settings/payment-methods',
+        }
+      });
+    } catch (notifyErr) {
+      console.error(`Failed to send card-link notification to user ${user_id}:`, notifyErr);
+    }
+    
+    return { subscription_id: id, success: false, error: 'No payment method linked - card not visible to user' };
+  }
+  
+  // Verify payment method is active
+  const { data: paymentMethod } = await supabase
+    .from('payment_methods')
+    .select('id, status, provider_token')
+    .eq('id', payment_method_id)
+    .single();
+  
+  if (!paymentMethod) {
+    console.log(`Subscription ${id}: payment_method ${payment_method_id} not found`);
+    return { subscription_id: id, success: false, error: 'Payment method not found' };
+  }
+  
+  if (paymentMethod.status !== 'active') {
+    console.log(`Subscription ${id}: payment_method ${payment_method_id} is ${paymentMethod.status}, not active`);
+    
+    // Send notification to user
+    try {
+      await supabase.functions.invoke('telegram-send-notification', {
+        body: {
+          user_id: user_id,
+          message: '⚠️ Не удалось продлить подписку: привязанная карта неактивна.\n\n' +
+            'Привяжите новую карту в личном кабинете:\n' +
+            '🔗 https://club.gorbova.by/settings/payment-methods',
+        }
+      });
+    } catch (notifyErr) {
+      console.error(`Failed to send card-inactive notification to user ${user_id}:`, notifyErr);
+    }
+    
+    return { subscription_id: id, success: false, error: `Payment method status: ${paymentMethod.status}` };
+  }
+  
+  // Use the token from payment_method (trusted source)
+  const effectiveToken = paymentMethod.provider_token;
+  
+  if (!effectiveToken) {
+    console.log(`Subscription ${id}: payment_method ${payment_method_id} has no provider_token`);
+    return { subscription_id: id, success: false, error: 'Payment method has no token' };
   }
 
   // Get tariff price
@@ -466,7 +525,7 @@ async function chargeSubscription(
       currency,
       status: 'processing',
       provider: 'bepaid',
-      payment_token,
+      payment_token: effectiveToken, // Use token from verified payment_method
       is_recurring: true,
       installment_number: (subscription.charge_attempts || 0) + 1,
       meta: {
@@ -503,7 +562,7 @@ async function chargeSubscription(
         tracking_id: payment.id,
         test: testMode,
         credit_card: {
-          token: payment_token,
+          token: effectiveToken, // Use token from verified payment_method
         },
         additional_data: {
           contract: ["recurring"],
@@ -753,7 +812,8 @@ Deno.serve(async (req) => {
     console.log('Starting subscription charge job...');
 
     // Find subscriptions that need to be charged
-    // next_charge_at <= now AND status IN (active, trial, past_due) AND payment_token IS NOT NULL
+    // next_charge_at <= now AND status IN (active, trial, past_due) AND payment_method_id IS NOT NULL
+    // CRITICAL: Only charge subscriptions with linked payment_method (user can see/control the card)
     const { data: subscriptions, error: queryError } = await supabase
       .from('subscriptions_v2')
       .select(`
@@ -762,7 +822,7 @@ Deno.serve(async (req) => {
       `)
       .lte('next_charge_at', now)
       .in('status', ['active', 'trial', 'past_due'])
-      .not('payment_token', 'is', null)
+      .not('payment_method_id', 'is', null)
       .lt('charge_attempts', 3);
 
     if (queryError) {
@@ -792,6 +852,7 @@ Deno.serve(async (req) => {
     }
 
     // Also check for trial subscriptions that need to auto-charge
+    // Only those with linked payment_method
     const { data: trialEnding } = await supabase
       .from('subscriptions_v2')
       .select(`
@@ -801,12 +862,12 @@ Deno.serve(async (req) => {
       .eq('status', 'trial')
       .eq('is_trial', true)
       .lte('trial_end_at', now)
-      .not('payment_token', 'is', null);
+      .not('payment_method_id', 'is', null);
 
     for (const sub of trialEnding || []) {
       const tariff = sub.tariffs as any;
       
-      if (tariff?.trial_auto_charge && sub.payment_token) {
+      if (tariff?.trial_auto_charge && sub.payment_method_id) {
         // Set next_charge_at to trigger immediate charge
         await supabase
           .from('subscriptions_v2')

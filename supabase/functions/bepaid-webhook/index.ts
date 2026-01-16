@@ -1109,6 +1109,62 @@ Deno.serve(async (req) => {
               isRecurringSubscription,
             });
 
+            // === CRITICAL FIX: Create/link payment_method from checkout card data ===
+            // This ensures users can see and manage their cards
+            let paymentMethodId: string | null = (orderV2.meta as any)?.payment_method_id || null;
+            const cardData = transaction?.credit_card;
+            
+            // If card token is present and no payment_method_id yet, create or find payment_method
+            if (paymentV2.payment_token && cardData && !paymentMethodId && isRecurringSubscription) {
+              console.log('Creating payment_method from checkout card data...');
+              
+              // Check if payment_method with this token already exists
+              const { data: existingPM } = await supabase
+                .from('payment_methods')
+                .select('id')
+                .eq('user_id', orderV2.user_id)
+                .eq('provider_token', paymentV2.payment_token)
+                .maybeSingle();
+              
+              if (existingPM) {
+                paymentMethodId = existingPM.id;
+                console.log('Found existing payment_method:', paymentMethodId);
+              } else {
+                // Create new payment_method
+                const { data: newPM, error: pmError } = await supabase
+                  .from('payment_methods')
+                  .insert({
+                    user_id: orderV2.user_id,
+                    provider: 'bepaid',
+                    provider_token: paymentV2.payment_token,
+                    brand: cardData.brand || null,
+                    last4: cardData.last_4 || null,
+                    exp_month: cardData.exp_month ? parseInt(cardData.exp_month) : null,
+                    exp_year: cardData.exp_year ? parseInt(cardData.exp_year) : null,
+                    is_default: true,
+                    status: 'active',
+                    card_product: cardData.product || null,
+                    card_category: cardData.category || null,
+                  })
+                  .select('id')
+                  .single();
+                
+                if (pmError) {
+                  console.error('Failed to create payment_method:', pmError);
+                } else {
+                  paymentMethodId = newPM.id;
+                  console.log('Created new payment_method:', paymentMethodId);
+                  
+                  // Unset is_default for other payment methods of this user
+                  await supabase
+                    .from('payment_methods')
+                    .update({ is_default: false })
+                    .eq('user_id', orderV2.user_id)
+                    .neq('id', paymentMethodId);
+                }
+              }
+            }
+
             if (existingSub && isSameTariff && !orderV2.is_trial) {
               // Update existing active subscription - extend it (same tariff)
               await supabase
@@ -1118,13 +1174,13 @@ Deno.serve(async (req) => {
                   is_trial: false,
                   access_end_at: accessEndAt.toISOString(),
                   next_charge_at: nextChargeAt?.toISOString() || null,
-                  payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
-                  payment_token: paymentV2.payment_token || null,
+                  payment_method_id: paymentMethodId,
+                  payment_token: paymentMethodId ? paymentV2.payment_token : null, // Only save token if payment_method exists
                   updated_at: now.toISOString(),
                 })
                 .eq('id', existingSub.id);
               
-              console.log('Updated existing subscription:', existingSub.id);
+              console.log('Updated existing subscription:', existingSub.id, 'payment_method_id:', paymentMethodId);
             } else {
               // Create new subscription (new tariff or upgrade/downgrade with proration)
               const subscriptionMeta = prorationResult ? {
@@ -1149,8 +1205,8 @@ Deno.serve(async (req) => {
                   access_end_at: accessEndAt.toISOString(),
                   trial_end_at: orderV2.is_trial ? accessEndAt.toISOString() : null,
                   next_charge_at: nextChargeAt?.toISOString() || null,
-                  payment_method_id: (orderV2.meta as any)?.payment_method_id || null,
-                  payment_token: paymentV2.payment_token || null,
+                  payment_method_id: paymentMethodId,
+                  payment_token: paymentMethodId ? paymentV2.payment_token : null, // Only save token if payment_method exists
                   meta: subscriptionMeta,
                 })
                 .select('id')
