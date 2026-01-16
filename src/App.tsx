@@ -60,7 +60,7 @@ import AdminInstallments from "./pages/admin/AdminInstallments";
 import AdminConsents from "./pages/admin/AdminConsents";
 import AdminPreregistrations from "./pages/admin/AdminPreregistrations";
 import AdminInbox from "./pages/admin/AdminInbox";
-import Products from "./pages/Products";
+import Learning from "./pages/Learning";
 import AdminExecutors from "./pages/admin/AdminExecutors";
 import AdminDocumentTemplates from "./pages/admin/AdminDocumentTemplates";
 import Consultation from "./pages/Consultation";
@@ -111,7 +111,7 @@ const App = () => (
               <Route path="/course-accountant" element={<CourseAccountant />} />
               
               {/* Protected routes */}
-              <Route path="/products" element={<ProtectedRoute><Products /></ProtectedRoute>} />
+              <Route path="/products" element={<ProtectedRoute><Learning /></ProtectedRoute>} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/money" element={<ProtectedRoute><Money /></ProtectedRoute>} />
               <Route path="/ai" element={<ProtectedRoute><AI /></ProtectedRoute>} />
