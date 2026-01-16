@@ -96,7 +96,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["unified-payments", dateFilter],
     queryFn: async () => {
-      const fromDate = dateFilter.from || "2026-01-01";
+      // Default to early date to show ALL historical data (no hidden payments)
+      const fromDate = dateFilter.from || "2020-01-01";
       
       // Fetch from payment_reconcile_queue (queue items) - NO STATUS FILTER, show all
       // IMPORTANT: Filter by paid_at (actual payment date), not created_at (import date)
@@ -285,12 +286,14 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           
           // Determine if this is a refund transaction
           const txType = (q.transaction_type || '').toLowerCase();
-          const statusNorm = (q.status_normalized || q.status || '').toLowerCase();
+          const statusNorm = (q.status_normalized || '').toLowerCase();
+          const rawStatus = (q.status || '').toLowerCase();
           const isRefundTransaction = 
             txType === 'возврат средств' ||
             txType === 'refund' ||
             txType.includes('возврат') ||
-            statusNorm === 'refunded';
+            statusNorm === 'refunded' ||
+            statusNorm === 'refund';
           
           // Determine if this is a cancelled transaction
           const isCancelledTransaction = 
@@ -309,7 +312,11 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             source: uiSource,
             rawSource: 'queue' as const,
             transaction_type: q.transaction_type || 'payment',
-            status_normalized: q.status_normalized || q.status || 'pending',
+            // FIX: Queue status is JOB status, not payment status!
+            // If job status is 'cancelled' but status_normalized is 'successful' -> payment is successful
+            status_normalized: q.status_normalized || 
+              (rawStatus === 'cancelled' ? 'pending' : rawStatus) || 
+              'pending',
             amount: effectiveAmount,
             currency: q.currency || 'BYN',
             paid_at: q.paid_at,
@@ -374,7 +381,14 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         pending: allPayments.filter(p => p.status_normalized === 'pending').length,
         failed: allPayments.filter(p => ['failed', 'error', 'declined'].includes(p.status_normalized)).length,
         successful: allPayments.filter(p => ['successful', 'succeeded'].includes(p.status_normalized) && p.amount > 0).length,
-        refunded: allPayments.filter(p => ['refunded', 'refund'].includes(p.status_normalized) || p.amount < 0).length,
+        // FIX: Count refunds by status OR transaction_type OR negative amount
+        refunded: allPayments.filter(p => {
+          const txType = (p.transaction_type || '').toLowerCase();
+          return ['refunded', 'refund'].includes(p.status_normalized) ||
+                 txType.includes('возврат') ||
+                 txType === 'refund' ||
+                 p.amount < 0;
+        }).length,
         cancelled: allPayments.filter(p => ['cancelled', 'canceled', 'expired', 'voided'].includes(p.status_normalized)).length,
       };
       

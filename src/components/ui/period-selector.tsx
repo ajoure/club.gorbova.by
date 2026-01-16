@@ -20,7 +20,7 @@ interface PeriodSelectorProps {
   align?: "start" | "center" | "end";
 }
 
-type PresetKey = 'thisMonth' | 'lastMonth' | 'thisQuarter' | 'lastQuarter' | 'thisYear' | 'lastYear' | 'custom';
+type PresetKey = 'allTime' | 'thisMonth' | 'lastMonth' | 'thisQuarter' | 'lastQuarter' | 'thisYear' | 'lastYear' | 'custom';
 
 interface Preset {
   key: PresetKey;
@@ -29,6 +29,14 @@ interface Preset {
 }
 
 const presets: Preset[] = [
+  {
+    key: 'allTime',
+    label: 'Все периоды',
+    getRange: () => ({
+      from: '2020-01-01',
+      to: format(new Date(), 'yyyy-MM-dd'),
+    }),
+  },
   {
     key: 'thisMonth',
     label: 'Этот месяц',
