@@ -64,16 +64,18 @@ import AdminInbox from "./pages/admin/AdminInbox";
 import Library from "./pages/Library";
 import LibraryModule from "./pages/LibraryModule";
 import LibraryLesson from "./pages/LibraryLesson";
-import LibraryModule from "./pages/LibraryModule";
-import LibraryLesson from "./pages/LibraryLesson";
 import AdminTrainingModules from "./pages/admin/AdminTrainingModules";
 import AdminTrainingLessons from "./pages/admin/AdminTrainingLessons";
 import AdminLessonBlockEditor from "./pages/admin/AdminLessonBlockEditor";
-// AdminBepaidSync removed - redirecting to /admin/payments
 import AdminRefundsV2 from "./pages/admin/AdminRefundsV2";
 import Support from "./pages/Support";
 import SupportTicket from "./pages/SupportTicket";
 import AdminSupport from "./pages/admin/AdminSupport";
+import AdminBroadcasts from "./pages/admin/AdminBroadcasts";
+import AdminExecutors from "./pages/admin/AdminExecutors";
+import AdminDocumentTemplates from "./pages/admin/AdminDocumentTemplates";
+import Consultation from "./pages/Consultation";
+import CourseAccountant from "./pages/CourseAccountant";
 
 const queryClient = new QueryClient();
 
@@ -105,12 +107,12 @@ const App = () => (
               <Route path="/course-accountant" element={<CourseAccountant />} />
               
               {/* Protected routes */}
-              <Route path="/products" element={<ProtectedRoute><Products /></ProtectedRoute>} />
+              <Route path="/products" element={<Navigate to="/learning" replace />} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/purchases" element={<ProtectedRoute><Purchases /></ProtectedRoute>} />
-              <Route path="/accountant" element={<ProtectedRoute><Accountant /></ProtectedRoute>} />
-              <Route path="/business" element={<ProtectedRoute><Business /></ProtectedRoute>} />
-              <Route path="/audits" element={<ProtectedRoute><Audits /></ProtectedRoute>} />
+              <Route path="/accountant" element={<Navigate to="/money" replace />} />
+              <Route path="/business" element={<Navigate to="/money?tab=business" replace />} />
+              <Route path="/audits" element={<Navigate to="/money?tab=security" replace />} />
               <Route path="/audits/mns-response" element={<ProtectedRoute><MnsResponseService /></ProtectedRoute>} />
               <Route path="/audits/mns-history" element={<ProtectedRoute><MnsDocumentHistory /></ProtectedRoute>} />
               <Route path="/self-development" element={<ProtectedRoute><SelfDevelopment /></ProtectedRoute>} />
