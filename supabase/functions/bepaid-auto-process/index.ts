@@ -394,19 +394,17 @@ Deno.serve(async (req) => {
           }
         }
 
-        // 1e. Create ghost profile if we have card_holder but no match
-        if (!profileId && createGhostProfiles && item.card_holder && !dryRun) {
-          const translitName = transliterateToCyrillic(item.card_holder);
-          const ghostEmail = item.customer_email || null;
-          
-          // Create profile without user_id (will be linked when user registers)
+        // 1e. Create ghost profile ONLY if we have EMAIL (not from card_holder alone)
+        // This prevents ghost contacts from being created from card holder names
+        if (!profileId && createGhostProfiles && item.customer_email && !dryRun) {
+          // Create profile from email, NOT from card_holder name
           const { data: newProfile, error: profileError } = await supabase
             .from('profiles')
             .insert({
-              full_name: translitName,
-              email: ghostEmail,
+              email: item.customer_email,
               phone: item.customer_phone,
               source: 'bepaid_import',
+              // Note: full_name is intentionally NOT set from card_holder
             })
             .select('id')
             .single();
@@ -417,10 +415,10 @@ Deno.serve(async (req) => {
             profileId = newProfile.id;
             matchedBy = 'ghost_created';
             results.profiles_created++;
-            console.log(`[BEPAID-AUTO-PROCESS] Created ghost profile: ${profileId} (${translitName})`);
+            console.log(`[BEPAID-AUTO-PROCESS] Created ghost profile from email: ${profileId} (${item.customer_email})`);
             
-            // Save card link for future
-            if (item.card_last4) {
+            // Save card link for future (for matching, but NOT for name)
+            if (item.card_last4 && item.card_holder) {
               await supabase.from('card_profile_links').upsert({
                 card_last4: item.card_last4,
                 card_holder: item.card_holder,

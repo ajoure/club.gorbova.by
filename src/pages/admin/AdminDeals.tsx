@@ -255,11 +255,24 @@ export default function AdminDeals() {
   // Bulk delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
+      console.log(`[AdminDeals] Starting deletion of ${ids.length} orders:`, ids);
+      
       // 0. Get order details for notifications and GetCourse cancel
-      const { data: ordersToDelete } = await supabase
+      const { data: ordersToDelete, error: fetchError } = await supabase
         .from("orders_v2")
         .select("id, user_id, product_id, order_number, status, customer_email, products_v2(name, code, telegram_club_id)")
         .in("id", ids);
+
+      if (fetchError) {
+        console.error("[AdminDeals] Failed to fetch orders for deletion:", fetchError);
+        throw new Error(`Не удалось получить данные сделок: ${fetchError.message}`);
+      }
+
+      if (!ordersToDelete || ordersToDelete.length === 0) {
+        throw new Error("Сделки не найдены или уже удалены");
+      }
+
+      console.log(`[AdminDeals] Found ${ordersToDelete.length} orders to delete`);
 
       // 0.5 Cancel in GetCourse for paid orders BEFORE deleting
       for (const order of ordersToDelete || []) {
@@ -272,12 +285,17 @@ export default function AdminDeals() {
       }
 
       // 1. Get subscription IDs linked to these orders
-      const { data: subscriptions } = await supabase
+      const { data: subscriptions, error: subsQueryError } = await supabase
         .from("subscriptions_v2")
         .select("id, user_id")
         .in("order_id", ids);
       
+      if (subsQueryError) {
+        console.error("[AdminDeals] Error fetching subscriptions:", subsQueryError);
+      }
+      
       const subscriptionIds = subscriptions?.map(s => s.id) || [];
+      console.log(`[AdminDeals] Found ${subscriptionIds.length} subscriptions to delete`);
       
       // Collect unique user IDs for notifications
       const affectedUserIds = new Set<string>();
@@ -291,19 +309,23 @@ export default function AdminDeals() {
           .in("subscription_id", subscriptionIds);
         
         if (installmentsError) {
-          console.error("Error deleting installments:", installmentsError);
+          console.error("[AdminDeals] Error deleting installments:", installmentsError);
+          // Don't throw - continue with deletion
         }
       }
       
       // 3. Delete subscriptions
-      const { error: subscriptionsError } = await supabase
-        .from("subscriptions_v2")
-        .delete()
-        .in("order_id", ids);
-      
-      if (subscriptionsError) {
-        console.error("Error deleting subscriptions:", subscriptionsError);
-        throw subscriptionsError;
+      if (subscriptionIds.length > 0) {
+        const { error: subscriptionsError } = await supabase
+          .from("subscriptions_v2")
+          .delete()
+          .in("order_id", ids);
+        
+        if (subscriptionsError) {
+          console.error("[AdminDeals] Error deleting subscriptions:", subscriptionsError);
+          throw new Error(`Ошибка удаления подписок: ${subscriptionsError.message}`);
+        }
+        console.log(`[AdminDeals] Deleted ${subscriptionIds.length} subscriptions`);
       }
       
       // 4. Delete entitlements for affected users & products
@@ -372,16 +394,25 @@ export default function AdminDeals() {
         .in("order_id", ids);
       
       if (paymentsError) {
-        console.error("Error deleting payments:", paymentsError);
+        console.error("[AdminDeals] Error deleting payments:", paymentsError);
+        // Don't throw - continue with order deletion
+      } else {
+        console.log(`[AdminDeals] Deleted payments for orders`);
       }
 
-      // 6. Delete orders
-      const { error } = await supabase
+      // 6. Delete orders - CRITICAL STEP
+      console.log(`[AdminDeals] Attempting to delete orders:`, ids);
+      const { error, count } = await supabase
         .from("orders_v2")
         .delete()
         .in("id", ids);
       
-      if (error) throw error;
+      if (error) {
+        console.error("[AdminDeals] CRITICAL: Failed to delete orders:", error);
+        throw new Error(`Не удалось удалить сделки: ${error.message}. Код: ${error.code}`);
+      }
+      
+      console.log(`[AdminDeals] Successfully deleted orders, count:`, count);
       
       // 7. Send revocation notifications to affected users
       for (const userId of affectedUserIds) {
@@ -399,8 +430,9 @@ export default function AdminDeals() {
       queryClient.invalidateQueries({ queryKey: ["admin-subscriptions"] });
       queryClient.invalidateQueries({ queryKey: ["admin-entitlements"] });
     },
-    onError: (error) => {
-      toast.error("Ошибка удаления: " + (error as Error).message);
+    onError: (error: any) => {
+      console.error("[AdminDeals] Delete mutation error:", error);
+      toast.error("Ошибка удаления: " + (error?.message || String(error)));
     },
   });
 

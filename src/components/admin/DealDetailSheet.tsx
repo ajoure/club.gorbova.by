@@ -217,6 +217,8 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const deleteMutation = useMutation({
     mutationFn: async () => {
       if (!deal?.id) throw new Error("No deal ID");
+      
+      console.log(`[DealDetailSheet] Starting deletion of deal: ${deal.id}`);
 
       // 0. Load order snapshot for notifications + telegram revoke + GetCourse cancel
       const { data: order, error: orderError } = await supabase
@@ -225,7 +227,16 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         .eq("id", deal.id)
         .single();
 
-      if (orderError || !order) throw orderError || new Error("Order not found");
+      if (orderError) {
+        console.error("[DealDetailSheet] Error fetching order:", orderError);
+        throw new Error(`Не удалось найти сделку: ${orderError.message}`);
+      }
+      
+      if (!order) {
+        throw new Error("Сделка не найдена или уже удалена");
+      }
+
+      console.log(`[DealDetailSheet] Found order to delete:`, order.order_number);
 
       // 0.5 Cancel in GetCourse for paid orders BEFORE deleting
       if (order.status === "paid") {
@@ -233,41 +244,64 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           .invoke("getcourse-cancel-deal", {
             body: { order_id: order.id, reason: "deal_deleted_by_admin" },
           })
-          .catch(console.error);
+          .catch(err => console.error("[DealDetailSheet] GetCourse cancel error:", err));
       }
 
       // 1. Get subscription IDs linked to this order
-      const { data: subscriptions } = await supabase
+      const { data: subscriptions, error: subsError } = await supabase
         .from("subscriptions_v2")
         .select("id")
         .eq("order_id", order.id);
 
+      if (subsError) {
+        console.error("[DealDetailSheet] Error fetching subscriptions:", subsError);
+      }
+
       const subscriptionIds = subscriptions?.map((s) => s.id) || [];
+      console.log(`[DealDetailSheet] Found ${subscriptionIds.length} subscriptions to delete`);
 
       // 2. Delete installment payments for these subscriptions
       if (subscriptionIds.length > 0) {
-        await supabase
+        const { error: installError } = await supabase
           .from("installment_payments")
           .delete()
           .in("subscription_id", subscriptionIds);
+        
+        if (installError) {
+          console.error("[DealDetailSheet] Error deleting installments:", installError);
+        }
       }
 
       // 3. Delete subscriptions
-      await supabase.from("subscriptions_v2").delete().eq("order_id", order.id);
+      if (subscriptionIds.length > 0) {
+        const { error: subsDeleteError } = await supabase
+          .from("subscriptions_v2")
+          .delete()
+          .eq("order_id", order.id);
+        
+        if (subsDeleteError) {
+          console.error("[DealDetailSheet] Error deleting subscriptions:", subsDeleteError);
+          throw new Error(`Ошибка удаления подписок: ${subsDeleteError.message}`);
+        }
+        console.log(`[DealDetailSheet] Deleted subscriptions`);
+      }
 
       // 4. Delete entitlements for affected user & product
       const orderProductCode = (order.products_v2 as any)?.code;
       if (order.user_id && orderProductCode) {
-        await supabase
+        const { error: entError } = await supabase
           .from("entitlements")
           .delete()
           .eq("user_id", order.user_id)
           .eq("product_code", orderProductCode);
+        
+        if (entError) {
+          console.error("[DealDetailSheet] Error deleting entitlements:", entError);
+        }
       }
 
       // 4.1 Check for other active deals before revoking Telegram access
       const telegramClubId = (order.products_v2 as any)?.telegram_club_id;
-      const productCode = (order.products_v2 as any)?.code;
       
       if (order.user_id && telegramClubId) {
         // Check if user has other active deals with same product
@@ -316,11 +350,30 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         .catch(console.error);
 
       // 5. Delete payments
-      await supabase.from("payments_v2").delete().eq("order_id", order.id);
+      const { error: paymentsError } = await supabase
+        .from("payments_v2")
+        .delete()
+        .eq("order_id", order.id);
+      
+      if (paymentsError) {
+        console.error("[DealDetailSheet] Error deleting payments:", paymentsError);
+      } else {
+        console.log(`[DealDetailSheet] Deleted payments`);
+      }
 
-      // 6. Delete order
-      const { error } = await supabase.from("orders_v2").delete().eq("id", order.id);
-      if (error) throw error;
+      // 6. Delete order - CRITICAL STEP
+      console.log(`[DealDetailSheet] Attempting to delete order: ${order.id}`);
+      const { error } = await supabase
+        .from("orders_v2")
+        .delete()
+        .eq("id", order.id);
+      
+      if (error) {
+        console.error("[DealDetailSheet] CRITICAL: Failed to delete order:", error);
+        throw new Error(`Не удалось удалить сделку: ${error.message}. Код: ${error.code}`);
+      }
+      
+      console.log(`[DealDetailSheet] Successfully deleted order ${order.order_number}`);
     },
     onSuccess: () => {
       toast.success("Сделка удалена");
@@ -328,8 +381,9 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       onOpenChange(false);
       onDeleted?.();
     },
-    onError: (error) => {
-      toast.error("Ошибка: " + (error as Error).message);
+    onError: (error: any) => {
+      console.error("[DealDetailSheet] Delete mutation error:", error);
+      toast.error("Ошибка: " + (error?.message || String(error)));
     },
   });
 

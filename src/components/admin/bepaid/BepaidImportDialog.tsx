@@ -112,8 +112,12 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
   // Определяем тип транзакции
   const isRefund = typeRaw.includes('Возврат') || typeRaw.toLowerCase().includes('refund');
   const isCancel = typeRaw.includes('Отмен') || typeRaw.toLowerCase().includes('cancel');
+  // Расширенный список маркеров ошибок
   const isDeclined = messageRaw.includes('declined') || messageRaw.includes('отклон') || 
-                     messageRaw.includes('error') || messageRaw.includes('insufficient');
+                     messageRaw.includes('error') || messageRaw.includes('insufficient') ||
+                     messageRaw.includes('reject') || messageRaw.includes('fail') ||
+                     messageRaw.includes('ошибк') || messageRaw.includes('denied') ||
+                     messageRaw.includes('refused') || messageRaw.includes('cancel');
   
   let status_normalized: ParsedTransaction['status_normalized'] = 'pending';
   
@@ -129,14 +133,15 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
   else if (isDeclined) {
     status_normalized = 'failed';
   }
-  // 4. Проверяем неуспешный статус
-  else if (statusRaw.includes('неуспеш') || statusRaw.includes('ошибк') || statusRaw === 'failed' || statusRaw === 'error') {
+  // 4. Проверяем неуспешный статус - более строгая проверка
+  else if (statusRaw.includes('неуспеш') || statusRaw.includes('ошибк') || statusRaw === 'failed' || statusRaw === 'error' || statusRaw.includes('fail')) {
     status_normalized = 'failed';
   }
-  // 5. Наконец проверяем успешный статус
-  else if (statusRaw.includes('успеш') || statusRaw === 'successful') {
+  // 5. Наконец проверяем успешный статус - ТОЛЬКО если явно "успешный"
+  else if (statusRaw === 'успешно' || statusRaw === 'successful' || statusRaw.startsWith('успеш')) {
     status_normalized = 'successful';
   }
+  // 6. Если статус не распознан - оставляем pending (не считаем успешным)
 
   // Parse numeric with comma as decimal separator
   const parseNum = (val: any): number | undefined => {
