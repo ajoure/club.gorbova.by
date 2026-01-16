@@ -10,25 +10,71 @@ import {
 import { Home } from "lucide-react";
 
 const routeLabels: Record<string, string> = {
+  // Main pages
   "/dashboard": "Обзор",
+  "/products": "Продукты",
+  "/purchases": "Мои покупки",
   "/accountant": "Бухгалтер",
   "/business": "Бизнес",
   "/audits": "Проверки",
   "/audits/mns-response": "Сервис ответов МНС",
   "/audits/mns-history": "История документов",
   "/self-development": "Саморазвитие",
+  "/library": "База знаний",
+  "/docs": "Документация",
+  "/help": "Помощь",
+  
+  // Tools
   "/tools": "Инструменты",
   "/tools/eisenhower": "Матрица продуктивности",
   "/tools/balance-wheel": "Колесо баланса",
+  
+  // Settings
   "/settings": "Настройки",
+  "/settings/profile": "Профиль",
+  "/settings/payment-methods": "Оплата и карты",
   "/settings/legal-details": "Реквизиты",
   "/settings/consents": "Согласия",
+  
+  // Admin - CRM
   "/admin": "Администрирование",
-  "/admin/users": "Пользователи",
+  "/admin/inbox": "Входящие",
+  "/admin/broadcasts": "Рассылки",
+  "/admin/contacts": "Контакты",
+  "/admin/contacts/duplicates": "Дубликаты",
+  "/admin/deals": "Сделки",
+  
+  // Admin - Service
   "/admin/roles": "Роли",
   "/admin/audit": "Аудит",
-  "/admin/entitlements": "Подписки",
   "/admin/content": "Контент",
+  "/admin/consents": "Согласия",
+  "/admin/entitlements": "Подписки",
+  "/admin/preregistrations": "Предзаписи",
+  
+  // Admin - Integrations
+  "/admin/integrations": "Интеграции",
+  "/admin/integrations/crm": "CRM",
+  "/admin/integrations/payments": "Платежи",
+  "/admin/integrations/email": "Email",
+  "/admin/integrations/telegram": "Telegram",
+  "/admin/integrations/telegram/invites": "Приглашения",
+  "/admin/integrations/telegram/product-mappings": "Связь продуктов",
+  "/admin/integrations/telegram/analytics": "Аналитика чатов",
+  "/admin/fields": "Реестр полей",
+  "/admin/system/audit": "Системный аудит",
+  
+  // Admin - V2 modules
+  "/admin/products-v2": "Продукты",
+  "/admin/orders-v2": "Заказы",
+  "/admin/payments-v2": "Платежи",
+  "/admin/payments": "Платежи",
+  "/admin/subscriptions-v2": "Подписки",
+  "/admin/installments": "Рассрочки",
+  "/admin/refunds-v2": "Возвраты",
+  "/admin/executors": "Исполнители",
+  "/admin/document-templates": "Шаблоны документов",
+  "/admin/training-modules": "Учебные модули",
 };
 
 export function DashboardBreadcrumbs() {
