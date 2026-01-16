@@ -31,7 +31,7 @@ interface ParsedTransaction {
   uid: string;
   bepaid_order_id?: string;
   status: string;
-  status_normalized: 'successful' | 'failed' | 'pending' | 'refund' | 'cancel';
+  status_normalized: 'successful' | 'failed' | 'pending' | 'refund' | 'cancel' | 'refunded' | 'cancelled';
   transaction_type: string;
   amount: number;
   currency: string;
@@ -107,12 +107,36 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
 
   const statusRaw = (row['Статус'] || row['Status'] || '').toLowerCase();
   const typeRaw = row['Тип транзакции'] || row['Transaction type'] || 'Платеж';
+  const messageRaw = (row['Сообщение'] || row['Message'] || '').toLowerCase();
+  
+  // Определяем тип транзакции
+  const isRefund = typeRaw.includes('Возврат') || typeRaw.toLowerCase().includes('refund');
+  const isCancel = typeRaw.includes('Отмен') || typeRaw.toLowerCase().includes('cancel');
+  const isDeclined = messageRaw.includes('declined') || messageRaw.includes('отклон') || 
+                     messageRaw.includes('error') || messageRaw.includes('insufficient');
   
   let status_normalized: ParsedTransaction['status_normalized'] = 'pending';
-  if (statusRaw.includes('успеш') || statusRaw === 'successful') status_normalized = 'successful';
-  else if (statusRaw.includes('ошибк') || statusRaw === 'failed' || statusRaw === 'error') status_normalized = 'failed';
-  else if (typeRaw.includes('Возврат') || typeRaw.toLowerCase().includes('refund')) status_normalized = 'refund';
-  else if (typeRaw.includes('Отмен') || typeRaw.toLowerCase().includes('cancel')) status_normalized = 'cancel';
+  
+  // 1. Сначала проверяем тип транзакции (refund имеет приоритет)
+  if (isRefund) {
+    status_normalized = 'refund';
+  }
+  // 2. Затем проверяем cancel
+  else if (isCancel) {
+    status_normalized = 'cancel';
+  }
+  // 3. Проверяем declined в message (даже если статус "успешный")
+  else if (isDeclined) {
+    status_normalized = 'failed';
+  }
+  // 4. Проверяем неуспешный статус
+  else if (statusRaw.includes('неуспеш') || statusRaw.includes('ошибк') || statusRaw === 'failed' || statusRaw === 'error') {
+    status_normalized = 'failed';
+  }
+  // 5. Наконец проверяем успешный статус
+  else if (statusRaw.includes('успеш') || statusRaw === 'successful') {
+    status_normalized = 'successful';
+  }
 
   // Parse numeric with comma as decimal separator
   const parseNum = (val: any): number | undefined => {

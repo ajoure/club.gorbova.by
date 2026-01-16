@@ -88,6 +88,8 @@ export interface PaymentsStats {
   pending: number;
   failed: number;
   successful: number;
+  refunded: number;
+  cancelled: number;
 }
 
 export function useUnifiedPayments(dateFilter: DateFilter) {
@@ -290,9 +292,16 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             txType.includes('возврат') ||
             statusNorm === 'refunded';
           
-          // Invert amount for refunds (show as negative)
+          // Determine if this is a cancelled transaction
+          const isCancelledTransaction = 
+            txType === 'отмена' ||
+            txType.includes('отмен') ||
+            txType.includes('cancel') ||
+            statusNorm === 'cancelled';
+          
+          // Invert amount for refunds and cancellations (show as negative)
           const rawAmount = q.amount || 0;
-          const effectiveAmount = isRefundTransaction ? -Math.abs(rawAmount) : rawAmount;
+          const effectiveAmount = (isRefundTransaction || isCancelledTransaction) ? -Math.abs(rawAmount) : rawAmount;
           
           return {
             id: q.id,
@@ -363,8 +372,10 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         totalRefunded: allPayments.filter(p => p.amount < 0).reduce((sum, p) => sum + Math.abs(p.amount), 0) 
           + allPayments.reduce((sum, p) => sum + (p.total_refunded || 0), 0),
         pending: allPayments.filter(p => p.status_normalized === 'pending').length,
-        failed: allPayments.filter(p => p.status_normalized === 'failed').length,
-        successful: allPayments.filter(p => ['successful', 'succeeded'].includes(p.status_normalized)).length,
+        failed: allPayments.filter(p => ['failed', 'error', 'declined'].includes(p.status_normalized)).length,
+        successful: allPayments.filter(p => ['successful', 'succeeded'].includes(p.status_normalized) && p.amount > 0).length,
+        refunded: allPayments.filter(p => ['refunded', 'refund'].includes(p.status_normalized) || p.amount < 0).length,
+        cancelled: allPayments.filter(p => ['cancelled', 'cancel'].includes(p.status_normalized)).length,
       };
       
       return { payments: allPayments, stats };
@@ -392,6 +403,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       pending: 0,
       failed: 0,
       successful: 0,
+      refunded: 0,
+      cancelled: 0,
     },
     isLoading,
     error,
