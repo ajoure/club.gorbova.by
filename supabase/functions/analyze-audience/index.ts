@@ -187,7 +187,20 @@ ${messagesForAnalysis}
         continue;
       }
 
-      const aiData = await aiResponse.json();
+      // Safely parse AI response with error handling
+      let aiData;
+      try {
+        const responseText = await aiResponse.text();
+        if (!responseText || responseText.trim() === "") {
+          console.error(`[analyze-audience] Empty response for batch ${batchIndex + 1}`);
+          continue;
+        }
+        aiData = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error(`[analyze-audience] Failed to parse AI response for batch ${batchIndex + 1}:`, parseError);
+        continue;
+      }
+
       const aiContent = aiData.choices?.[0]?.message?.content || "";
 
       try {
