@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { StyleProfileDialog } from "@/components/admin/StyleProfileDialog";
 import { SyncResultDialog } from "@/components/admin/SyncResultDialog";
+import { AudienceInsightsDialog } from "@/components/admin/AudienceInsightsDialog";
 
 interface NewsItem {
   id: string;
@@ -184,15 +185,11 @@ const AdminEditorial = () => {
 
   // Sync result dialog state
   const [syncResultDialogOpen, setSyncResultDialogOpen] = useState(false);
-  const [syncResult, setSyncResult] = useState<{
-    total_messages: number;
-    meaningful_messages: number;
-    synced: number;
-    earliest_date?: string;
-    latest_date?: string;
-    ready_for_analysis: boolean;
-    author?: string;
-  } | null>(null);
+  const [syncResult, setSyncResult] = useState<any>(null);
+
+  // Audience insights dialog state
+  const [audienceDialogOpen, setAudienceDialogOpen] = useState(false);
+  const [audienceResult, setAudienceResult] = useState<any>(null);
 
   // Sources management state
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
@@ -418,6 +415,29 @@ const AdminEditorial = () => {
     },
     onError: (error: Error) => {
       toast.error(`Ошибка синхронизации: ${error.message}`);
+    },
+  });
+
+  // Analyze audience mutation
+  const analyzeAudienceMutation = useMutation({
+    mutationFn: async () => {
+      const channelId = channelWithStyle?.settings 
+        ? (channelWithStyle as any)?.settings?.channel_id 
+        : null;
+      
+      const { data, error } = await supabase.functions.invoke("analyze-audience", {
+        body: { channel_id: channelId, force: true },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: (data) => {
+      setAudienceResult(data);
+      setAudienceDialogOpen(true);
+    },
+    onError: (error: Error) => {
+      toast.error(`Ошибка анализа: ${error.message}`);
     },
   });
 
@@ -1826,7 +1846,21 @@ const AdminEditorial = () => {
             setSyncResultDialogOpen(false);
             channelWithStyle && learnStyleMutation.mutate(channelWithStyle.id);
           }}
+          onAnalyzeAudience={() => {
+            setSyncResultDialogOpen(false);
+            analyzeAudienceMutation.mutate();
+          }}
           isLearnStyleLoading={learnStyleMutation.isPending}
+          isAnalyzeLoading={analyzeAudienceMutation.isPending}
+        />
+
+        {/* Audience Insights Dialog */}
+        <AudienceInsightsDialog
+          open={audienceDialogOpen}
+          onOpenChange={setAudienceDialogOpen}
+          result={audienceResult}
+          onReanalyze={() => analyzeAudienceMutation.mutate()}
+          isReanalyzing={analyzeAudienceMutation.isPending}
         />
       </div>
     </AdminLayout>

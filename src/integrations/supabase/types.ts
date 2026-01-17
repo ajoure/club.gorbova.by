@@ -38,6 +38,60 @@ export type Database = {
         }
         Relationships: []
       }
+      audience_insights: {
+        Row: {
+          channel_id: string | null
+          created_at: string | null
+          description: string | null
+          examples: string[] | null
+          first_seen_at: string | null
+          frequency: number | null
+          id: string
+          insight_type: string
+          last_seen_at: string | null
+          meta: Json | null
+          relevance_score: number | null
+          sentiment: string | null
+          source_message_count: number | null
+          title: string
+          updated_at: string | null
+        }
+        Insert: {
+          channel_id?: string | null
+          created_at?: string | null
+          description?: string | null
+          examples?: string[] | null
+          first_seen_at?: string | null
+          frequency?: number | null
+          id?: string
+          insight_type: string
+          last_seen_at?: string | null
+          meta?: Json | null
+          relevance_score?: number | null
+          sentiment?: string | null
+          source_message_count?: number | null
+          title: string
+          updated_at?: string | null
+        }
+        Update: {
+          channel_id?: string | null
+          created_at?: string | null
+          description?: string | null
+          examples?: string[] | null
+          first_seen_at?: string | null
+          frequency?: number | null
+          id?: string
+          insight_type?: string
+          last_seen_at?: string | null
+          meta?: Json | null
+          relevance_score?: number | null
+          sentiment?: string | null
+          source_message_count?: number | null
+          title?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       audience_interests: {
         Row: {
           created_at: string | null

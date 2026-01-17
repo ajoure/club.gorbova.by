@@ -228,3 +228,6 @@ verify_jwt = false
 
 [functions.import-telegram-history]
 verify_jwt = false
+
+[functions.analyze-audience]
+verify_jwt = false
