@@ -2870,6 +2870,7 @@ export type Database = {
           provider: string
           provider_token: string
           status: string
+          supports_recurring: boolean | null
           updated_at: string
           user_id: string
         }
@@ -2887,6 +2888,7 @@ export type Database = {
           provider?: string
           provider_token: string
           status?: string
+          supports_recurring?: boolean | null
           updated_at?: string
           user_id: string
         }
@@ -2904,6 +2906,7 @@ export type Database = {
           provider?: string
           provider_token?: string
           status?: string
+          supports_recurring?: boolean | null
           updated_at?: string
           user_id?: string
         }
