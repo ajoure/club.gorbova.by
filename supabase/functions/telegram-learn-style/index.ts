@@ -71,22 +71,71 @@ Deno.serve(async (req) => {
       throw new Error(`Failed to fetch sent news: ${newsError.message}`);
     }
 
-    if (!sentNews || sentNews.length < 5) {
-      return new Response(JSON.stringify({
-        error: 'Not enough published posts to analyze (need at least 5)',
-        posts_found: sentNews?.length || 0,
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    // If not enough sent news, try to use archived channel posts
+    let postsForAnalysis: Array<{ title?: string; text: string }> = [];
+    let dataSource = 'news_content';
+
+    if (sentNews && sentNews.length >= 5) {
+      postsForAnalysis = sentNews.map(news => ({
+        title: news.title,
+        text: news.ai_summary || news.summary || '',
+      }));
+    } else {
+      console.log(`[learn-style] Only ${sentNews?.length || 0} sent news, checking channel_posts_archive...`);
+      
+      // Try to get posts from channel_posts_archive
+      const { data: archivedPosts, error: archiveError } = await supabase
+        .from('channel_posts_archive')
+        .select('text, date, views')
+        .eq('channel_id', channel.channel_id)
+        .not('text', 'is', null)
+        .order('date', { ascending: false })
+        .limit(50);
+
+      if (archiveError) {
+        console.error('[learn-style] Archive query error:', archiveError);
+      }
+
+      if (archivedPosts && archivedPosts.length >= 5) {
+        console.log(`[learn-style] Found ${archivedPosts.length} posts in archive`);
+        postsForAnalysis = archivedPosts
+          .filter(post => post.text && post.text.trim().length > 20)
+          .map(post => ({ text: post.text }));
+        dataSource = 'channel_posts_archive';
+      } else {
+        // Combine both sources if available
+        const combinedPosts = [
+          ...(sentNews || []).map(news => ({
+            title: news.title,
+            text: news.ai_summary || news.summary || '',
+          })),
+          ...(archivedPosts || [])
+            .filter(post => post.text && post.text.trim().length > 20)
+            .map(post => ({ text: post.text })),
+        ];
+
+        if (combinedPosts.length >= 5) {
+          postsForAnalysis = combinedPosts;
+          dataSource = 'combined';
+        } else {
+          return new Response(JSON.stringify({
+            error: 'Недостаточно постов для анализа (нужно минимум 5). Импортируйте историю канала через JSON-экспорт из Telegram Desktop.',
+            posts_found: combinedPosts.length,
+            hint: 'Telegram Desktop → Канал → Меню (⋮) → Экспорт данных → JSON',
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
     }
 
-    console.log(`[learn-style] Analyzing ${sentNews.length} published posts`);
+    console.log(`[learn-style] Using ${postsForAnalysis.length} posts from ${dataSource}`);
 
     // Prepare posts text for analysis
-    const postsText = sentNews.map((news, idx) => {
-      const content = news.ai_summary || news.summary || '';
-      return `--- Пост ${idx + 1} ---\nЗаголовок: ${news.title}\nТекст: ${content}`;
+    const postsText = postsForAnalysis.map((post, idx) => {
+      const title = 'title' in post && post.title ? `Заголовок: ${post.title}\n` : '';
+      return `--- Пост ${idx + 1} ---\n${title}Текст: ${post.text}`;
     }).join('\n\n');
 
     if (!lovableApiKey) {
@@ -186,7 +235,8 @@ ${postsText.slice(0, 20000)}
         ...currentSettings,
         style_profile: styleProfile,
         style_profile_generated_at: new Date().toISOString(),
-        style_profile_posts_analyzed: sentNews.length,
+        style_profile_posts_analyzed: postsForAnalysis.length,
+        style_profile_data_source: dataSource,
       };
 
       const { error: updateError } = await supabase
@@ -207,7 +257,8 @@ ${postsText.slice(0, 20000)}
         status: 'ok',
         meta: {
           channel_id: body.channel_id,
-          posts_analyzed: sentNews.length,
+          posts_analyzed: postsForAnalysis.length,
+          data_source: dataSource,
           profile_keys: Object.keys(styleProfile),
         },
       });
@@ -215,7 +266,8 @@ ${postsText.slice(0, 20000)}
       return new Response(JSON.stringify({
         success: true,
         message: 'Style profile generated successfully',
-        posts_analyzed: sentNews.length,
+        posts_analyzed: postsForAnalysis.length,
+        data_source: dataSource,
         style_profile: styleProfile,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

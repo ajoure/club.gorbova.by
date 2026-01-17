@@ -39,6 +39,8 @@ import {
   RefreshCcw,
   Info,
   Zap,
+  Upload,
+  FileJson,
 } from "lucide-react";
 
 interface NewsItem {
@@ -333,6 +335,89 @@ const AdminEditorial = () => {
       }
     },
   });
+
+  // Import channel history mutation
+  const importHistoryMutation = useMutation({
+    mutationFn: async (exportData: unknown) => {
+      const { data, error } = await supabase.functions.invoke("import-telegram-history", {
+        body: { 
+          export_data: exportData,
+          channel_id: channelWithStyle?.settings ? (channelWithStyle as { id: string; channel_name: string; settings: ChannelSettings & { channel_id?: string } })?.settings?.channel_id : null,
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success("История канала импортирована", {
+        description: `Импортировано ${data.imported} постов из ${data.text_messages}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["archived-posts-count"] });
+    },
+    onError: (error: Error) => {
+      toast.error(`Ошибка импорта: ${error.message}`);
+    },
+  });
+
+  // Fetch archived posts count for the active channel
+  const { data: archivedPostsCount } = useQuery({
+    queryKey: ["archived-posts-count", channelWithStyle?.id],
+    queryFn: async () => {
+      if (!channelWithStyle) return 0;
+      // Get channel_id from telegram_publish_channels
+      const { data: channelData } = await supabase
+        .from("telegram_publish_channels")
+        .select("channel_id")
+        .eq("id", channelWithStyle.id)
+        .single();
+      
+      if (!channelData?.channel_id) return 0;
+
+      const { count, error } = await supabase
+        .from("channel_posts_archive")
+        .select("*", { count: "exact", head: true })
+        .eq("channel_id", channelData.channel_id);
+      
+      if (error) return 0;
+      return count || 0;
+    },
+    enabled: !!channelWithStyle,
+  });
+
+  // Handle file upload for history import
+  const handleHistoryFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.json')) {
+      toast.error("Неверный формат файла", {
+        description: "Загрузите JSON-файл экспорта из Telegram Desktop",
+      });
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const exportData = JSON.parse(text);
+      
+      if (!exportData.messages || !Array.isArray(exportData.messages)) {
+        toast.error("Неверная структура файла", {
+          description: "Файл должен содержать массив messages",
+        });
+        return;
+      }
+
+      importHistoryMutation.mutate(exportData);
+    } catch {
+      toast.error("Ошибка чтения файла", {
+        description: "Не удалось распарсить JSON",
+      });
+    }
+    
+    // Reset input
+    event.target.value = '';
+  };
 
   // Retry single source mutation
   const retrySourceMutation = useMutation({
@@ -947,26 +1032,88 @@ const AdminEditorial = () => {
                             ⚠️ Нет активного Telegram-канала. Добавьте канал в настройках Telegram.
                           </p>
                         )}
-                        {sentNews && sentNews.length < 5 && (
+                        {channelWithStyle && ((sentNews?.length || 0) + (archivedPostsCount || 0)) < 5 && (
                           <p className="text-xs text-orange-600">
-                            ⚠️ Опубликовано постов: {sentNews.length} из 5 минимум
+                            ⚠️ Постов для анализа: {(sentNews?.length || 0) + (archivedPostsCount || 0)} из 5 минимум. Импортируйте историю канала.
                           </p>
                         )}
                       </div>
                     )}
                   </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => channelWithStyle && learnStyleMutation.mutate(channelWithStyle.id)}
-                    disabled={learnStyleMutation.isPending || !channelWithStyle || (sentNews && sentNews.length < 5)}
-                  >
-                    {learnStyleMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Zap className="h-4 w-4 mr-2" />
-                    )}
-                    Обучить стилю
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => channelWithStyle && learnStyleMutation.mutate(channelWithStyle.id)}
+                      disabled={learnStyleMutation.isPending || !channelWithStyle || ((sentNews?.length || 0) + (archivedPostsCount || 0)) < 5}
+                    >
+                      {learnStyleMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Zap className="h-4 w-4 mr-2" />
+                      )}
+                      Обучить стилю
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Import Channel History Card */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2">
+                  <Upload className="h-5 w-5" />
+                  Импорт истории канала
+                </CardTitle>
+                <CardDescription>
+                  Загрузите JSON-экспорт из Telegram Desktop для обучения ИИ на основе существующих постов
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <p className="text-sm">
+                        Постов в архиве: <span className="font-medium">{archivedPostsCount || 0}</span>
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Telegram Desktop → Канал → ⋮ → Экспорт данных → JSON
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="file"
+                        accept=".json"
+                        onChange={handleHistoryFileUpload}
+                        className="hidden"
+                        id="history-file-input"
+                        disabled={importHistoryMutation.isPending}
+                      />
+                      <Label
+                        htmlFor="history-file-input"
+                        className={`inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 cursor-pointer ${importHistoryMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        {importHistoryMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <FileJson className="h-4 w-4" />
+                        )}
+                        Загрузить JSON
+                      </Label>
+                    </div>
+                  </div>
+                  
+                  {/* Instructions */}
+                  <div className="rounded-md bg-muted p-3 text-sm">
+                    <p className="font-medium mb-2">Как экспортировать историю:</p>
+                    <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                      <li>Откройте <strong>Telegram Desktop</strong></li>
+                      <li>Перейдите в ваш канал</li>
+                      <li>Меню (⋮) → <strong>Экспорт данных чата</strong></li>
+                      <li>Выберите формат <strong>JSON</strong></li>
+                      <li>Загрузите файл <code className="bg-background px-1 rounded">result.json</code></li>
+                    </ol>
+                  </div>
                 </div>
               </CardContent>
             </Card>

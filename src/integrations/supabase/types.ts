@@ -310,6 +310,51 @@ export type Database = {
           },
         ]
       }
+      channel_posts_archive: {
+        Row: {
+          channel_id: string
+          created_at: string | null
+          date: string | null
+          forwards: number | null
+          from_name: string | null
+          id: string
+          imported_at: string | null
+          media_type: string | null
+          raw_data: Json | null
+          telegram_message_id: number | null
+          text: string | null
+          views: number | null
+        }
+        Insert: {
+          channel_id: string
+          created_at?: string | null
+          date?: string | null
+          forwards?: number | null
+          from_name?: string | null
+          id?: string
+          imported_at?: string | null
+          media_type?: string | null
+          raw_data?: Json | null
+          telegram_message_id?: number | null
+          text?: string | null
+          views?: number | null
+        }
+        Update: {
+          channel_id?: string
+          created_at?: string | null
+          date?: string | null
+          forwards?: number | null
+          from_name?: string | null
+          id?: string
+          imported_at?: string | null
+          media_type?: string | null
+          raw_data?: Json | null
+          telegram_message_id?: number | null
+          text?: string | null
+          views?: number | null
+        }
+        Relationships: []
+      }
       chat_preferences: {
         Row: {
           admin_user_id: string
