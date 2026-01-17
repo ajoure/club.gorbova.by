@@ -1991,7 +1991,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         {/* Auto-renewal status */}
                         {isActive && !isCanceled && (
                           <div className="flex items-center gap-2 mb-3 p-2 rounded-lg bg-muted/50 text-xs">
-                            {sub.payment_token && paymentMethods && paymentMethods.length > 0 ? (
+                            {sub.payment_method_id && sub.auto_renew ? (
                               <>
                                 <CheckCircle className="w-3.5 h-3.5 text-green-600" />
                                 <span className="text-green-700">Автопродление включено</span>
