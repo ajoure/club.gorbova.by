@@ -427,10 +427,24 @@ Deno.serve(async (req) => {
             `🆔 Заказ: ${orderNumber}\n` +
             `👨‍💼 Админ: ${user.email}`;
 
-          await supabase.functions.invoke('telegram-notify-admins', {
-            body: { message: notifyMessage, parse_mode: 'HTML' },
+          const { data: notifyData, error: notifyInvokeError } = await supabase.functions.invoke('telegram-notify-admins', {
+            body: { 
+              message: notifyMessage, 
+              parse_mode: 'HTML',
+              source: 'admin_manual_charge',
+              order_id: order.id,
+              order_number: orderNumber,
+              payment_id: payment.id,
+            },
           });
-          console.log('Admin notification sent for manual charge');
+          
+          if (notifyInvokeError) {
+            console.error('Admin notification invoke error:', notifyInvokeError);
+          } else if (notifyData?.sent === 0) {
+            console.warn('Admin notification sent=0:', notifyData);
+          } else {
+            console.log('Admin notification sent for manual charge:', notifyData);
+          }
         } catch (notifyError) {
           console.error('Admin notification error (non-critical):', notifyError);
         }

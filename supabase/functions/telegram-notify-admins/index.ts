@@ -8,6 +8,11 @@ const corsHeaders = {
 interface NotifyRequest {
   message: string;
   parse_mode?: 'HTML' | 'MarkdownV2';
+  // Optional tracking fields for diagnostics
+  source?: string;
+  order_id?: string;
+  order_number?: string;
+  payment_id?: string;
 }
 
 Deno.serve(async (req) => {
@@ -47,7 +52,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { message, parse_mode = 'HTML' }: NotifyRequest = await req.json();
+    const { message, parse_mode = 'HTML', source, order_id, order_number, payment_id }: NotifyRequest = await req.json();
 
     if (!message) {
       return new Response(JSON.stringify({ error: 'message required' }), {
@@ -55,6 +60,8 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    console.log(`[telegram-notify-admins] Starting notification, source=${source || 'unknown'}, order=${order_number || order_id || 'N/A'}`);
 
     // Get only super_admin role ID (not regular admins)
     const { data: adminRoles } = await supabase
@@ -64,6 +71,12 @@ Deno.serve(async (req) => {
 
     if (!adminRoles || adminRoles.length === 0) {
       console.log('No admin roles defined in system');
+      // Log the skip
+      await supabase.from('telegram_logs').insert({
+        action: 'ADMIN_NOTIFY_SKIPPED',
+        status: 'info',
+        meta: { reason: 'no_admin_roles', source, order_id, order_number, payment_id },
+      });
       return new Response(JSON.stringify({ success: true, sent: 0, reason: 'no_admin_roles' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -79,6 +92,11 @@ Deno.serve(async (req) => {
 
     if (!adminUserRoles || adminUserRoles.length === 0) {
       console.log('No users with admin roles found');
+      await supabase.from('telegram_logs').insert({
+        action: 'ADMIN_NOTIFY_SKIPPED',
+        status: 'info',
+        meta: { reason: 'no_super_admins', source, order_id, order_number, payment_id },
+      });
       return new Response(JSON.stringify({ success: true, sent: 0, reason: 'no_super_admins' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -96,6 +114,11 @@ Deno.serve(async (req) => {
 
     if (!adminProfiles || adminProfiles.length === 0) {
       console.log('No super admins with Telegram linked');
+      await supabase.from('telegram_logs').insert({
+        action: 'ADMIN_NOTIFY_SKIPPED',
+        status: 'info',
+        meta: { reason: 'no_telegram_linked', admin_count: superAdminUserIds.length, source, order_id, order_number, payment_id },
+      });
       return new Response(JSON.stringify({ success: true, sent: 0, reason: 'no_telegram_linked' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -109,6 +132,11 @@ Deno.serve(async (req) => {
 
     if (!bots || bots.length === 0) {
       console.warn('No active telegram bots');
+      await supabase.from('telegram_logs').insert({
+        action: 'ADMIN_NOTIFY_FAILED',
+        status: 'error',
+        meta: { reason: 'no_active_bots', source, order_id, order_number, payment_id },
+      });
       return new Response(JSON.stringify({ success: false, error: 'no_active_bots' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -166,6 +194,10 @@ Deno.serve(async (req) => {
               admin_name: admin.full_name,
               telegram_user_id: admin.telegram_user_id,
               error: errorDesc,
+              source,
+              order_id,
+              order_number,
+              payment_id,
               hint: errorDesc.includes("can't initiate") 
                 ? 'Админ должен отправить /start боту для получения уведомлений'
                 : null,
@@ -178,7 +210,22 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`Notified ${sentCount}/${adminProfiles.length} super admins`);
+    console.log(`Notified ${sentCount}/${adminProfiles.length} super admins, source=${source || 'unknown'}`);
+
+    // Log success summary
+    await supabase.from('telegram_logs').insert({
+      action: 'ADMIN_NOTIFY_SENT',
+      status: sentCount > 0 ? 'success' : 'warning',
+      meta: { 
+        sent: sentCount, 
+        total: adminProfiles.length,
+        source,
+        order_id,
+        order_number,
+        payment_id,
+        errors: errors.length > 0 ? errors : undefined,
+      },
+    });
 
     return new Response(JSON.stringify({ 
       success: true, 

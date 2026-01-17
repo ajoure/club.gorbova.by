@@ -698,7 +698,7 @@ async function chargeSubscription(
         },
       });
 
-      // Send success notifications (Telegram + Email)
+      // Send success notifications (Telegram + Email to customer)
       await sendRenewalSuccessTelegram(
         supabase,
         user_id,
@@ -717,6 +717,50 @@ async function chargeSubscription(
         currency,
         newEndDate
       );
+
+      // Notify admins about successful renewal
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name, email, phone, telegram_username')
+          .eq('user_id', user_id)
+          .single();
+
+        const formattedDate = newEndDate.toLocaleDateString('ru-RU', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        });
+
+        const adminMessage = `🔁 <b>Продление подписки</b>\n\n` +
+          `👤 <b>Клиент:</b> ${profile?.full_name || 'Не указано'}\n` +
+          `📧 Email: ${profile?.email || 'Не указан'}\n` +
+          `📱 Телефон: ${profile?.phone || 'Не указан'}\n` +
+          (profile?.telegram_username ? `💬 Telegram: @${profile.telegram_username}\n` : '') +
+          `\n📦 <b>Тариф:</b> ${tariff.name || 'N/A'}\n` +
+          `💵 Сумма: ${amount} ${currency}\n` +
+          `📆 Доступ до: ${formattedDate}\n` +
+          `🆔 Подписка: ${id}`;
+
+        const { data: notifyData, error: notifyError } = await supabase.functions.invoke('telegram-notify-admins', {
+          body: { 
+            message: adminMessage, 
+            parse_mode: 'HTML',
+            source: 'subscription_charge',
+            payment_id: payment.id,
+          },
+        });
+
+        if (notifyError) {
+          console.error('Admin notification invoke error:', notifyError);
+        } else if (notifyData?.sent === 0) {
+          console.warn('Admin notification sent=0:', notifyData);
+        } else {
+          console.log('Admin notification sent for renewal:', notifyData);
+        }
+      } catch (adminNotifyError) {
+        console.error('Admin notification error (non-critical):', adminNotifyError);
+      }
 
       return { subscription_id: id, success: true, payment_id: payment.id };
     } else {

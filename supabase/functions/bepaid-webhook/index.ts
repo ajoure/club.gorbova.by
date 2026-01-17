@@ -1549,11 +1549,23 @@ Deno.serve(async (req) => {
               `💵 Сумма: ${amountFormatted} ${paymentV2.currency}\n` +
               `🆔 Заказ: ${notifyOrderData.order_number}`;
 
-            const notifyResult = await supabase.functions.invoke('telegram-notify-admins', {
-              body: { message: notifyMessage },
+            const { data: notifyData, error: notifyInvokeError } = await supabase.functions.invoke('telegram-notify-admins', {
+              body: { 
+                message: notifyMessage,
+                source: 'bepaid_webhook',
+                order_id: notifyOrderData.id,
+                order_number: notifyOrderData.order_number,
+                payment_id: paymentV2.id,
+              },
             });
             
-            console.log('Admin notification sent for payment:', paymentV2.id, notifyResult.data);
+            if (notifyInvokeError) {
+              console.error('Admin notification invoke error:', notifyInvokeError);
+            } else if (notifyData?.sent === 0) {
+              console.warn('Admin notification sent=0:', notifyData);
+            } else {
+              console.log('Admin notification sent for payment:', paymentV2.id, notifyData);
+            }
           }
         } catch (notifyError) {
           console.error('Error notifying super admins:', notifyError);

@@ -558,7 +558,7 @@ async function fixOrderAndCreateSubscription(
     // Create entitlement
     const { data: product } = await supabase
       .from("products_v2")
-      .select("code")
+      .select("code, name")
       .eq("id", order.product_id)
       .single();
 
@@ -586,6 +586,51 @@ async function fixOrderAndCreateSubscription(
       });
     } catch (e) {
       console.error("Error granting Telegram access:", e);
+    }
+
+    // Notify admins about reconciled payment
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name, email, phone, telegram_username")
+        .eq("user_id", order.user_id)
+        .single();
+
+      const { data: tariffData } = await supabase
+        .from("tariffs")
+        .select("name")
+        .eq("id", order.tariff_id)
+        .single();
+
+      const adminMessage = `🔄 <b>Платёж восстановлен (reconcile)</b>\n\n` +
+        `👤 <b>Клиент:</b> ${profile?.full_name || 'Не указано'}\n` +
+        `📧 Email: ${profile?.email || order.customer_email || 'Не указан'}\n` +
+        `📱 Телефон: ${profile?.phone || 'Не указан'}\n` +
+        (profile?.telegram_username ? `💬 Telegram: @${profile.telegram_username}\n` : '') +
+        `\n📦 <b>Продукт:</b> ${product?.name || 'N/A'}\n` +
+        `📋 Тариф: ${tariffData?.name || 'N/A'}\n` +
+        `💵 Сумма: ${order.final_price} ${order.currency || 'BYN'}\n` +
+        `🆔 Заказ: ${order.order_number}`;
+
+      const { data: notifyData, error: notifyError } = await supabase.functions.invoke("telegram-notify-admins", {
+        body: { 
+          message: adminMessage, 
+          parse_mode: 'HTML',
+          source: 'payments_reconcile_fix',
+          order_id: order.id,
+          order_number: order.order_number,
+        },
+      });
+
+      if (notifyError) {
+        console.error("Admin notification invoke error:", notifyError);
+      } else if (notifyData?.sent === 0) {
+        console.warn("Admin notification sent=0:", notifyData);
+      } else {
+        console.log("Reconcile fix admin notification sent:", notifyData);
+      }
+    } catch (adminNotifyError) {
+      console.error("Admin notification error (non-critical):", adminNotifyError);
     }
   }
 
@@ -750,9 +795,20 @@ async function notifyAdmins(supabase: any, results: any) {
             .join("\n")
         : "");
 
-    await supabase.functions.invoke("telegram-notify-admins", {
-      body: { message, type: "reconciliation" },
+    const { data: notifyData, error: notifyError } = await supabase.functions.invoke("telegram-notify-admins", {
+      body: { 
+        message, 
+        source: 'payments_reconcile',
+      },
     });
+    
+    if (notifyError) {
+      console.error("Admin notification invoke error:", notifyError);
+    } else if (notifyData?.sent === 0) {
+      console.warn("Admin notification sent=0:", notifyData);
+    } else {
+      console.log("Reconcile admin notification sent:", notifyData);
+    }
   } catch (e) {
     console.error("Error notifying admins:", e);
   }
