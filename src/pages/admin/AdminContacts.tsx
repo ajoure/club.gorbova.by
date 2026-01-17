@@ -981,6 +981,25 @@ export default function AdminContacts() {
               </Button>
             </>
           )}
+          <Button
+            variant="outline"
+            onClick={async () => {
+              toast.info("Запускаем массовый анализ лояльности...");
+              try {
+                const { data, error } = await supabase.functions.invoke("analyze-all-loyalty", {
+                  body: { limit: 50, offset: 0 },
+                });
+                if (error) throw error;
+                toast.success(`Проанализировано ${data?.success || 0} контактов`);
+                queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+              } catch (err: any) {
+                toast.error(`Ошибка: ${err.message}`);
+              }
+            }}
+          >
+            <Sparkles className="h-4 w-4 mr-2" />
+            Лояльность
+          </Button>
           <Button variant="outline" onClick={() => refetch()}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Обновить

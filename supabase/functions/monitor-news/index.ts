@@ -604,10 +604,13 @@ async function scrapeSourceWithDepth(
 // Check if URL is a government site that needs premium proxy
 function isGovSite(url: string): boolean {
   const govDomains = [
-    ".gov.by", ".gov.ru", 
-    "pravo.by", "nalog.gov.by", "minfin.gov.by",
-    "economy.gov.ru", "minfin.ru", "nalog.ru",
-    "government.ru", "government.by"
+    // Belarus
+    ".gov.by", "pravo.by", "nalog.gov.by", "minfin.gov.by", "president.gov.by",
+    "government.by", "nbrb.by", "customs.gov.by", "mintrud.gov.by",
+    "economy.gov.by", "minzdrav.gov.by", "belstat.gov.by",
+    // Russia
+    ".gov.ru", "economy.gov.ru", "minfin.ru", "nalog.ru",
+    "government.ru", "cbr.ru", "consultant.ru",
   ];
   return govDomains.some(domain => url.includes(domain));
 }
@@ -638,10 +641,14 @@ async function scrapeUrl(
       console.log(`[monitor-news] Using premium proxy for gov site: ${url}`);
       // Firecrawl premium mode with residential proxies
       (requestBody as Record<string, unknown>).premium = true;
+      (requestBody as Record<string, unknown>).mobile = false; // Force desktop mode
+      (requestBody as Record<string, unknown>).timeout = 30000; // 30 second timeout
       // Add realistic browser headers
       (requestBody as Record<string, unknown>).headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "no-cache",
       };
     }
     

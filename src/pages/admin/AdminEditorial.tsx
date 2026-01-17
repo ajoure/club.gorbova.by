@@ -1351,10 +1351,45 @@ const AdminEditorial = () => {
                     Управление источниками для мониторинга
                   </CardDescription>
                 </div>
-                <Button onClick={handleAddSource}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Добавить
-                </Button>
+                <div className="flex gap-2">
+                  {(healthStats?.error || 0) > 0 && (
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        const failedSources = sources?.filter(s => 
+                          s.last_error || getHealthStatus(s).status === "error" || getHealthStatus(s).status === "offline"
+                        ) || [];
+                        
+                        if (failedSources.length === 0) {
+                          toast.info("Все источники работают");
+                          return;
+                        }
+                        
+                        toast.info(`Пересканируем ${failedSources.length} проблемных источников...`);
+                        
+                        for (const source of failedSources) {
+                          try {
+                            await supabase.functions.invoke("monitor-news", {
+                              body: { sourceId: source.id, limit: 1, async: true },
+                            });
+                          } catch (err) {
+                            console.error(`Failed to retry ${source.name}:`, err);
+                          }
+                        }
+                        
+                        toast.success(`Запущено пересканирование ${failedSources.length} источников`);
+                        setTimeout(() => queryClient.invalidateQueries({ queryKey: ["news-sources-all"] }), 5000);
+                      }}
+                    >
+                      <RefreshCcw className="h-4 w-4 mr-2" />
+                      Повторить для ошибок ({healthStats?.error})
+                    </Button>
+                  )}
+                  <Button onClick={handleAddSource}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Добавить
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 {loadingSources ? (
@@ -1625,6 +1660,22 @@ const AdminEditorial = () => {
                     }}
                   >
                     🔥 С иронией
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      if (!editForm.summary) return;
+                      toast.info("Сокращаем до сути...");
+                      const { data, error } = await supabase.functions.invoke("stylize-sarcasm", {
+                        body: { text: editForm.summary, persona: "brief" },
+                      });
+                      if (error) { toast.error(error.message); return; }
+                      setEditForm({ ...editForm, summary: data.stylized });
+                      toast.success("📌 Краткий факт готов!");
+                    }}
+                  >
+                    📌 Краткий факт
                   </Button>
                 </div>
               </div>
