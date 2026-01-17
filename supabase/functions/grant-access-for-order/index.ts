@@ -168,24 +168,46 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 2. Create or update subscription for this order
+    // 2. Find user's active payment method to enable auto-renewal
+    const { data: userPaymentMethod } = await supabase
+      .from("payment_methods")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .order("is_default", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const hasPaymentMethod = !!userPaymentMethod?.id;
+    console.log(`User ${userId} payment method: ${userPaymentMethod?.id || 'none'}, auto_renew will be: ${hasPaymentMethod}`);
+
+    // 3. Create or update subscription for this order
     const { data: existingSub } = await supabase
       .from("subscriptions_v2")
-      .select("id")
+      .select("id, payment_method_id")
       .eq("order_id", orderId)
       .maybeSingle();
 
     if (existingSub) {
       // Update existing subscription with correct fields
+      // Only update payment_method_id if it's currently null and we have one
+      const updateData: any = {
+        status: "active",
+        access_start_at: accessStartAt.toISOString(),
+        access_end_at: accessEndAt.toISOString(),
+        next_charge_at: accessEndAt.toISOString(),
+        updated_at: now.toISOString(),
+      };
+
+      if (!existingSub.payment_method_id && hasPaymentMethod) {
+        updateData.payment_method_id = userPaymentMethod.id;
+        updateData.auto_renew = true;
+      }
+
       const { error: updateSubError } = await supabase
         .from("subscriptions_v2")
-        .update({
-          status: "active",
-          access_start_at: accessStartAt.toISOString(),
-          access_end_at: accessEndAt.toISOString(),
-          next_charge_at: accessEndAt.toISOString(),
-          updated_at: now.toISOString(),
-        })
+        .update(updateData)
         .eq("id", existingSub.id);
 
       if (updateSubError) {
@@ -194,7 +216,7 @@ Deno.serve(async (req) => {
         results.subscription = { action: "updated", id: existingSub.id };
       }
     } else {
-      // Create new subscription for this order
+      // Create new subscription for this order with payment method if available
       const { data: newSub, error: createSubError } = await supabase
         .from("subscriptions_v2")
         .insert({
@@ -207,7 +229,8 @@ Deno.serve(async (req) => {
           access_start_at: accessStartAt.toISOString(),
           access_end_at: accessEndAt.toISOString(),
           next_charge_at: accessEndAt.toISOString(),
-          auto_renew: false, // Manual grant, no auto-renewal
+          payment_method_id: hasPaymentMethod ? userPaymentMethod.id : null,
+          auto_renew: hasPaymentMethod, // Enable auto-renew if user has a card
           meta: {
             granted_by: "grant-access-for-order",
             granted_at: now.toISOString(),
@@ -220,7 +243,7 @@ Deno.serve(async (req) => {
       if (createSubError) {
         console.error("Error creating subscription:", createSubError);
       } else {
-        results.subscription = { action: "created", id: newSub?.id };
+        results.subscription = { action: "created", id: newSub?.id, auto_renew: hasPaymentMethod };
       }
     }
 
