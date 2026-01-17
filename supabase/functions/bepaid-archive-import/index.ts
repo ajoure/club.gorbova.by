@@ -249,8 +249,9 @@ Deno.serve(async (req) => {
               .insert({
                 name: autoProductName,
                 code: autoProductCode,
-                type: "course",
                 status: "archived",
+                is_active: false,
+                currency: "BYN",
                 description: `Автоматически создан при импорте архива bePaid. Оригинальное название: ${productName}`,
               })
               .select()
@@ -296,8 +297,9 @@ Deno.serve(async (req) => {
               .insert({
                 name: finalProductName,
                 code: customProductCode,
-                type: "course",
                 status: "active",
+                is_active: true,
+                currency: "BYN",
                 description: `Создан при импорте архива bePaid. Оригинальное название из bePaid: ${productName}`,
               })
               .select()
