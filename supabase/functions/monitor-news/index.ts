@@ -136,13 +136,15 @@ serve(async (req) => {
             }
 
             // Save to database
+            // IMPORTANT: category must be one of: digest, comments, urgent (CHECK constraint)
+            // Use AI-determined category, not source.category (which is: government, npa, media)
             const { error: insertError } = await supabase.from("news_content").insert({
               title: analysis.title || item.title,
               summary: analysis.summary,
               source: source.name,
               source_url: item.url,
               country: source.country,
-              category: source.category,
+              category: analysis.category || "digest", // AI returns: digest | comments | urgent
               source_id: source.id,
               raw_content: item.content.slice(0, 10000),
               ai_summary: analysis.summary,
