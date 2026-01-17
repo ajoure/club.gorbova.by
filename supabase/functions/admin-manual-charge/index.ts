@@ -362,7 +362,7 @@ Deno.serve(async (req) => {
         const durationDays = tariff?.access_duration_days || tariff?.duration_days || 365;
         const accessEnd = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
-        // Create subscription (entitlement)
+        // Create subscription record with CORRECT column names
         const { data: subscription, error: subError } = await supabase
           .from('subscriptions_v2')
           .insert({
@@ -372,8 +372,11 @@ Deno.serve(async (req) => {
             tariff_id,
             status: 'active',
             payment_token: paymentMethod.provider_token,
-            access_start: now.toISOString(),
-            access_end: accessEnd.toISOString(),
+            payment_method_id: paymentMethod.id,
+            access_start_at: now.toISOString(),
+            access_end_at: accessEnd.toISOString(),
+            next_charge_at: accessEnd.toISOString(),
+            auto_renew: false,
             meta: {
               source: 'admin_manual_charge',
               charged_by: user.id,
@@ -386,6 +389,50 @@ Deno.serve(async (req) => {
         if (subError) {
           console.error('Subscription creation error:', subError);
           // Don't fail the payment, just log it
+        }
+
+        // Grant access via centralized function (handles entitlements, Telegram, GetCourse)
+        try {
+          const grantResult = await supabase.functions.invoke('grant-access-for-order', {
+            body: {
+              orderId: order.id,
+              grantTelegram: true,
+              grantGetcourse: true,
+            },
+          });
+          console.log('Access grant result:', grantResult.data);
+          if (grantResult.error) {
+            console.error('Access grant error:', grantResult.error);
+          }
+        } catch (grantError) {
+          console.error('Access grant exception (non-critical):', grantError);
+        }
+
+        // Notify admins about the payment
+        try {
+          const { data: customerProfile } = await supabase
+            .from('profiles')
+            .select('full_name, email, phone, telegram_username')
+            .eq('user_id', user_id)
+            .single();
+
+          const notifyMessage = `💳 <b>Ручное списание</b>\n\n` +
+            `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
+            `📧 Email: ${customerProfile?.email || 'Не указан'}\n` +
+            `📱 Телефон: ${customerProfile?.phone || 'Не указан'}\n` +
+            (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
+            `\n📦 <b>Продукт:</b> ${product?.name || 'N/A'}\n` +
+            `📋 Тариф: ${tariff?.name || 'N/A'}\n` +
+            `💵 Сумма: ${amount / 100} BYN\n` +
+            `🆔 Заказ: ${orderNumber}\n` +
+            `👨‍💼 Админ: ${user.email}`;
+
+          await supabase.functions.invoke('telegram-notify-admins', {
+            body: { message: notifyMessage, parse_mode: 'HTML' },
+          });
+          console.log('Admin notification sent for manual charge');
+        } catch (notifyError) {
+          console.error('Admin notification error (non-critical):', notifyError);
         }
 
         // Audit log
