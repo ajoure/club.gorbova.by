@@ -373,6 +373,33 @@ const AdminEditorial = () => {
     },
   });
 
+  // Sync bot history mutation
+  const syncHistoryMutation = useMutation({
+    mutationFn: async () => {
+      const channelId = channelWithStyle?.settings 
+        ? (channelWithStyle as { id: string; channel_name: string; settings: ChannelSettings & { channel_id?: string } })?.settings?.channel_id 
+        : null;
+      
+      const { data, error } = await supabase.functions.invoke("sync-telegram-history", {
+        body: { channel_id: channelId },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success("История бота синхронизирована", {
+        description: `${data.meaningful_messages} сообщений готовы для анализа`,
+      });
+      refetchKaterinaCount();
+      refetchKaterinaDateRange();
+      queryClient.invalidateQueries({ queryKey: ["archived-posts-count"] });
+    },
+    onError: (error: Error) => {
+      toast.error(`Ошибка синхронизации: ${error.message}`);
+    },
+  });
+
   // Fetch archived posts count for the active channel
   const { data: archivedPostsCount } = useQuery({
     queryKey: ["archived-posts-count", channelWithStyle?.id],
@@ -1168,6 +1195,21 @@ const AdminEditorial = () => {
 
                   {/* Action Buttons */}
                   <div className="flex flex-wrap items-center gap-2">
+                    {/* Sync Bot History Button */}
+                    <Button
+                      variant="outline"
+                      onClick={() => syncHistoryMutation.mutate()}
+                      disabled={syncHistoryMutation.isPending || (katerinaMessagesCount || 0) === 0}
+                    >
+                      {syncHistoryMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4 mr-2" />
+                      )}
+                      Загрузить историю бота
+                    </Button>
+                    
+                    {/* Upload JSON Button */}
                     <input
                       type="file"
                       accept=".json"
