@@ -231,3 +231,9 @@ verify_jwt = false
 
 [functions.analyze-audience]
 verify_jwt = false
+
+[functions.analyze-contact-loyalty]
+verify_jwt = false
+
+[functions.analyze-all-loyalty]
+verify_jwt = false

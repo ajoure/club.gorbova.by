@@ -4151,8 +4151,12 @@ export type Database = {
           is_archived: boolean | null
           last_name: string | null
           last_seen_at: string | null
+          loyalty_ai_summary: string | null
+          loyalty_analyzed_messages_count: number | null
           loyalty_auto_update: boolean | null
+          loyalty_proofs: Json | null
           loyalty_score: number | null
+          loyalty_status_reason: string | null
           loyalty_updated_at: string | null
           marketing_consent: boolean | null
           merged_to_profile_id: string | null
@@ -4201,8 +4205,12 @@ export type Database = {
           is_archived?: boolean | null
           last_name?: string | null
           last_seen_at?: string | null
+          loyalty_ai_summary?: string | null
+          loyalty_analyzed_messages_count?: number | null
           loyalty_auto_update?: boolean | null
+          loyalty_proofs?: Json | null
           loyalty_score?: number | null
+          loyalty_status_reason?: string | null
           loyalty_updated_at?: string | null
           marketing_consent?: boolean | null
           merged_to_profile_id?: string | null
@@ -4251,8 +4259,12 @@ export type Database = {
           is_archived?: boolean | null
           last_name?: string | null
           last_seen_at?: string | null
+          loyalty_ai_summary?: string | null
+          loyalty_analyzed_messages_count?: number | null
           loyalty_auto_update?: boolean | null
+          loyalty_proofs?: Json | null
           loyalty_score?: number | null
+          loyalty_status_reason?: string | null
           loyalty_updated_at?: string | null
           marketing_consent?: boolean | null
           merged_to_profile_id?: string | null

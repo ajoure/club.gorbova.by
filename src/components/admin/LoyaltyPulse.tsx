@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface LoyaltyPulseProps {
-  score: number;
+  score: number | null | undefined;
   size?: "sm" | "md" | "lg";
   showLabel?: boolean;
   className?: string;
@@ -55,13 +55,54 @@ const getScoreData = (score: number) => {
 };
 
 export function LoyaltyPulse({ score, size = "md", showLabel = false, className }: LoyaltyPulseProps) {
-  const data = getScoreData(score);
-  
   const sizeClasses = {
     sm: { ring: "w-8 h-8", text: "text-xs", glow: "shadow-md" },
     md: { ring: "w-12 h-12", text: "text-sm", glow: "shadow-lg" },
     lg: { ring: "w-16 h-16", text: "text-lg", glow: "shadow-xl" },
   };
+
+  // Handle null/undefined score - show gray placeholder
+  if (score === null || score === undefined) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className={cn("flex items-center gap-2", className)}>
+              <div
+                className={cn(
+                  "relative flex items-center justify-center rounded-full",
+                  "bg-muted",
+                  sizeClasses[size].ring
+                )}
+              >
+                <div className={cn(
+                  "absolute inset-1 rounded-full bg-background/90 flex items-center justify-center",
+                  "font-bold text-muted-foreground",
+                  sizeClasses[size].text
+                )}>
+                  ?
+                </div>
+              </div>
+              {showLabel && (
+                <div className="flex flex-col">
+                  <span className="text-sm font-medium text-muted-foreground">Нет данных</span>
+                  <span className="text-xs text-muted-foreground">Требуется анализ</span>
+                </div>
+              )}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            <div className="text-center">
+              <p className="font-semibold">Нет данных</p>
+              <p className="text-xs text-muted-foreground">Запустите анализ лояльности</p>
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
+  const data = getScoreData(score);
 
   return (
     <TooltipProvider>
@@ -122,7 +163,31 @@ export function LoyaltyPulse({ score, size = "md", showLabel = false, className 
 }
 
 // Compact version for tables
-export function LoyaltyBadge({ score, className }: { score: number; className?: string }) {
+export function LoyaltyBadge({ score, className }: { score: number | null | undefined; className?: string }) {
+  // Handle null/undefined
+  if (score === null || score === undefined) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div
+              className={cn(
+                "inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold",
+                "bg-muted text-muted-foreground",
+                className
+              )}
+            >
+              ?
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Нет данных</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
   const data = getScoreData(score);
   
   return (

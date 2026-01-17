@@ -96,6 +96,7 @@ import { ComposeEmailDialog } from "./ComposeEmailDialog";
 import { AdminChargeDialog } from "./AdminChargeDialog";
 import { AvatarZoomDialog } from "./AvatarZoomDialog";
 import { LoyaltyPulse } from "./LoyaltyPulse";
+import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 
@@ -1121,6 +1122,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <TabsTrigger value="installments" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 <Wallet className="w-3 h-3 mr-1" />
                 Рассрочки
+              </TabsTrigger>
+              <TabsTrigger value="loyalty" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <Sparkles className="w-3 h-3 mr-1" />
+                Лояльность
               </TabsTrigger>
               {contact.duplicate_flag && contact.duplicate_flag !== 'none' && (
                 <TabsTrigger value="duplicates" className="text-xs sm:text-sm px-2.5 sm:px-3">Дубли</TabsTrigger>
@@ -2390,6 +2395,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             {/* Installments Tab */}
             <TabsContent value="installments" className="m-0">
               <ContactInstallments userId={contact.user_id} />
+            </TabsContent>
+
+            {/* Loyalty Tab */}
+            <TabsContent value="loyalty" className="m-0">
+              <ContactLoyaltyTab contact={contact} />
             </TabsContent>
 
             {/* Duplicates Tab */}
