@@ -81,6 +81,7 @@ import AdminNews from "./pages/admin/AdminNews";
 import AdminCommunication from "./pages/admin/AdminCommunication";
 import AdminEditorial from "./pages/admin/AdminEditorial";
 import AdminIlex from "./pages/admin/AdminIlex";
+import AdminMarketingInsights from "./pages/admin/AdminMarketingInsights";
 
 import Money from "./pages/Money";
 import AI from "./pages/AI";
@@ -199,6 +200,7 @@ const App = () => (
               <Route path="/admin/editorial" element={<ProtectedRoute><AdminEditorial /></ProtectedRoute>} />
               <Route path="/admin/editorial/sources" element={<Navigate to="/admin/editorial" replace />} />
               <Route path="/admin/ilex" element={<ProtectedRoute><AdminIlex /></ProtectedRoute>} />
+              <Route path="/admin/marketing" element={<ProtectedRoute><AdminMarketingInsights /></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />

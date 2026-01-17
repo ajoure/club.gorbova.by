@@ -56,44 +56,82 @@ serve(async (req) => {
       }
     }
 
-    // Fetch audience messages (not from Katerina)
+    // Fetch ALL audience messages with pagination (not from Katerina)
     const KATERINA_USER_ID = 99340019;
-    const { data: messages, error: fetchError } = await supabase
-      .from("tg_chat_messages")
-      .select("id, text, message_ts, from_display_name, from_tg_user_id")
-      .not("text", "is", null)
-      .neq("from_tg_user_id", KATERINA_USER_ID)
-      .order("message_ts", { ascending: false })
-      .limit(500);
+    let allMessages: any[] = [];
+    let offset = 0;
+    const batchSize = 1000;
 
-    if (fetchError) {
-      throw new Error(`Failed to fetch messages: ${fetchError.message}`);
+    console.log("[analyze-audience] Fetching all messages with pagination...");
+
+    while (true) {
+      const { data: batch, error: fetchError } = await supabase
+        .from("tg_chat_messages")
+        .select("id, text, message_ts, from_display_name, from_tg_user_id")
+        .not("text", "is", null)
+        .neq("from_tg_user_id", KATERINA_USER_ID)
+        .order("message_ts", { ascending: false })
+        .range(offset, offset + batchSize - 1);
+
+      if (fetchError) {
+        throw new Error(`Failed to fetch messages: ${fetchError.message}`);
+      }
+
+      if (!batch || batch.length === 0) break;
+
+      allMessages = [...allMessages, ...batch];
+      offset += batchSize;
+      console.log(`[analyze-audience] Fetched ${allMessages.length} messages so far...`);
+
+      if (batch.length < batchSize) break;
     }
 
-    if (!messages || messages.length < 10) {
+    console.log(`[analyze-audience] Total messages fetched: ${allMessages.length}`);
+
+    if (allMessages.length < 10) {
       return new Response(JSON.stringify({
         success: false,
         error: "Недостаточно сообщений для анализа. Минимум: 10 сообщений.",
-        message_count: messages?.length || 0,
+        message_count: allMessages.length,
       }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    console.log(`[analyze-audience] Analyzing ${messages.length} messages`);
+    // Filter meaningful messages (at least 10 characters)
+    const meaningfulMessages = allMessages.filter(m => m.text && m.text.trim().length >= 10);
+    console.log(`[analyze-audience] Meaningful messages: ${meaningfulMessages.length}`);
 
-    // Prepare messages for AI analysis
-    const messagesForAnalysis = messages
-      .filter(m => m.text && m.text.trim().length >= 10)
-      .map(m => `[${m.from_display_name || 'Пользователь'}]: ${m.text}`)
-      .slice(0, 300) // Limit for context
-      .join("\n\n");
+    // Analyze in batches of 800 messages for better context
+    const BATCH_SIZE_FOR_AI = 800;
+    const batches: string[][] = [];
+    
+    for (let i = 0; i < meaningfulMessages.length; i += BATCH_SIZE_FOR_AI) {
+      const batch = meaningfulMessages.slice(i, i + BATCH_SIZE_FOR_AI);
+      batches.push(batch.map(m => `[${m.from_display_name || 'Пользователь'}]: ${m.text}`));
+    }
 
-    // Call AI for analysis
-    const aiPrompt = `Проанализируй сообщения пользователей из чата с коучем/консультантом и выдели ключевые инсайты для маркетинга.
+    console.log(`[analyze-audience] Split into ${batches.length} batches for AI analysis`);
 
-СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЕЙ:
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      throw new Error("LOVABLE_API_KEY is not configured");
+    }
+
+    // Analyze each batch and collect insights
+    let allInsights: AudienceInsight[] = [];
+    let allSummaries: string[] = [];
+
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex];
+      console.log(`[analyze-audience] Analyzing batch ${batchIndex + 1}/${batches.length} (${batch.length} messages)`);
+
+      const messagesForAnalysis = batch.join("\n\n");
+
+      const aiPrompt = `Проанализируй сообщения пользователей из чата с коучем/консультантом и выдели ключевые инсайты для маркетинга.
+
+СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЕЙ (часть ${batchIndex + 1} из ${batches.length}):
 ${messagesForAnalysis}
 
 ЗАДАЧА:
@@ -127,48 +165,83 @@ ${messagesForAnalysis}
       "relevance_score": 0.8
     }
   ],
-  "summary": "Краткое резюме аудитории (2-3 предложения)"
+  "summary": "Краткое резюме аудитории этой части (2-3 предложения)"
 }`;
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+      const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-pro", // Using Pro for better analysis of large context
+          messages: [{ role: "user", content: aiPrompt }],
+        }),
+      });
+
+      if (!aiResponse.ok) {
+        const errorText = await aiResponse.text();
+        console.error(`[analyze-audience] AI API error for batch ${batchIndex + 1}:`, aiResponse.status, errorText);
+        // Continue with other batches if one fails
+        continue;
+      }
+
+      const aiData = await aiResponse.json();
+      const aiContent = aiData.choices?.[0]?.message?.content || "";
+
+      try {
+        const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error("No JSON in response");
+        const batchResult = JSON.parse(jsonMatch[0]);
+        
+        if (batchResult.insights && Array.isArray(batchResult.insights)) {
+          allInsights = [...allInsights, ...batchResult.insights];
+        }
+        if (batchResult.summary) {
+          allSummaries.push(batchResult.summary);
+        }
+      } catch (parseError) {
+        console.error(`[analyze-audience] Parse error for batch ${batchIndex + 1}:`, parseError);
+        // Continue with other batches
+      }
     }
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [{ role: "user", content: aiPrompt }],
-      }),
-    });
+    console.log(`[analyze-audience] Total insights collected: ${allInsights.length}`);
 
-    if (!aiResponse.ok) {
-      throw new Error(`AI API error: ${aiResponse.status}`);
+    // Deduplicate and merge similar insights
+    const mergedInsights = mergeInsights(allInsights);
+    console.log(`[analyze-audience] After merging: ${mergedInsights.length} unique insights`);
+
+    // Generate final summary if we have multiple batches
+    let finalSummary = allSummaries.join(" ");
+    if (batches.length > 1 && allSummaries.length > 0) {
+      try {
+        const summaryPrompt = `Объедини эти резюме в одно краткое (2-3 предложения) о целевой аудитории:\n\n${allSummaries.join("\n\n")}`;
+        
+        const summaryResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: [{ role: "user", content: summaryPrompt }],
+          }),
+        });
+
+        if (summaryResponse.ok) {
+          const summaryData = await summaryResponse.json();
+          finalSummary = summaryData.choices?.[0]?.message?.content || finalSummary;
+        }
+      } catch (e) {
+        console.error("[analyze-audience] Error generating final summary:", e);
+      }
     }
-
-    const aiData = await aiResponse.json();
-    const aiContent = aiData.choices?.[0]?.message?.content || "";
-
-    // Parse AI response
-    let analysisResult: { insights: AudienceInsight[]; summary: string };
-    try {
-      const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No JSON in response");
-      analysisResult = JSON.parse(jsonMatch[0]);
-    } catch (parseError) {
-      console.error("[analyze-audience] Parse error:", parseError);
-      throw new Error("Не удалось распарсить ответ ИИ");
-    }
-
-    console.log(`[analyze-audience] Found ${analysisResult.insights.length} insights`);
 
     // Get date range from messages
-    const sortedMsgs = [...messages].sort(
+    const sortedMsgs = [...allMessages].sort(
       (a, b) => new Date(a.message_ts).getTime() - new Date(b.message_ts).getTime()
     );
     const firstSeen = sortedMsgs[0]?.message_ts;
@@ -180,9 +253,15 @@ ${messagesForAnalysis}
         .from("audience_insights")
         .delete()
         .eq("channel_id", channel_id);
+    } else {
+      // Clear all insights if no channel_id
+      await supabase
+        .from("audience_insights")
+        .delete()
+        .is("channel_id", null);
     }
 
-    const insightsToInsert = analysisResult.insights.map(insight => ({
+    const insightsToInsert = mergedInsights.map(insight => ({
       channel_id: channel_id || null,
       insight_type: insight.insight_type,
       title: insight.title,
@@ -191,10 +270,10 @@ ${messagesForAnalysis}
       frequency: insight.frequency,
       sentiment: insight.sentiment,
       relevance_score: insight.relevance_score,
-      source_message_count: messages.length,
+      source_message_count: allMessages.length,
       first_seen_at: firstSeen,
       last_seen_at: lastSeen,
-      meta: { summary: analysisResult.summary },
+      meta: { summary: finalSummary, batches_analyzed: batches.length },
     }));
 
     const { error: insertError } = await supabase
@@ -211,18 +290,22 @@ ${messagesForAnalysis}
       target: channel_id || "all",
       status: "ok",
       meta: {
-        messages_analyzed: messages.length,
-        insights_found: analysisResult.insights.length,
-        summary: analysisResult.summary,
+        messages_analyzed: allMessages.length,
+        meaningful_messages: meaningfulMessages.length,
+        batches_processed: batches.length,
+        insights_found: mergedInsights.length,
+        summary: finalSummary,
       },
     });
 
     return new Response(JSON.stringify({
       success: true,
-      messages_analyzed: messages.length,
-      insights_count: analysisResult.insights.length,
-      insights: analysisResult.insights,
-      summary: analysisResult.summary,
+      messages_analyzed: allMessages.length,
+      meaningful_messages: meaningfulMessages.length,
+      batches_processed: batches.length,
+      insights_count: mergedInsights.length,
+      insights: mergedInsights,
+      summary: finalSummary,
       period: {
         from: firstSeen,
         to: lastSeen,
@@ -241,3 +324,32 @@ ${messagesForAnalysis}
     });
   }
 });
+
+// Helper function to merge similar insights
+function mergeInsights(insights: AudienceInsight[]): AudienceInsight[] {
+  const merged: Map<string, AudienceInsight> = new Map();
+
+  for (const insight of insights) {
+    // Create a key based on type and normalized title
+    const key = `${insight.insight_type}:${insight.title.toLowerCase().trim()}`;
+    
+    if (merged.has(key)) {
+      // Merge with existing
+      const existing = merged.get(key)!;
+      existing.frequency = Math.min(10, existing.frequency + insight.frequency);
+      existing.relevance_score = Math.max(existing.relevance_score, insight.relevance_score);
+      // Add unique examples
+      const existingExamples = new Set(existing.examples);
+      for (const example of insight.examples) {
+        if (!existingExamples.has(example) && existing.examples.length < 5) {
+          existing.examples.push(example);
+        }
+      }
+    } else {
+      merged.set(key, { ...insight });
+    }
+  }
+
+  // Sort by relevance score
+  return Array.from(merged.values()).sort((a, b) => b.relevance_score - a.relevance_score);
+}
