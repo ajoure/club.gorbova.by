@@ -1,9 +1,10 @@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { CheckCircle, Calendar, FileText, Zap, MessageSquare, Users, User, Brain } from "lucide-react";
+import { CheckCircle, Calendar, FileText, Zap, MessageSquare, Users, User, Brain, ExternalLink, TrendingUp } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { useNavigate } from "react-router-dom";
 
 interface SyncResult {
   total_messages: number;
@@ -17,6 +18,7 @@ interface SyncResult {
   latest_date?: string;
   ready_for_style?: boolean;
   ready_for_audience_analysis?: boolean;
+  by_user?: Record<string, { count: number; name: string; user_id: number }>;
   // Legacy fields for backward compatibility
   meaningful_messages?: number;
   synced?: number;
@@ -43,7 +45,17 @@ export function SyncResultDialog({
   isLearnStyleLoading,
   isAnalyzeLoading,
 }: SyncResultDialogProps) {
+  const navigate = useNavigate();
+  
   if (!result) return null;
+  
+  // Get top 5 active users
+  const topUsers = result.by_user 
+    ? Object.entries(result.by_user)
+        .filter(([key]) => key !== '99340019') // Exclude Katerina
+        .sort((a, b) => b[1].count - a[1].count)
+        .slice(0, 5)
+    : [];
 
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return "—";
@@ -151,6 +163,26 @@ export function SyncResultDialog({
           </div>
         </div>
 
+        {/* Топ активных пользователей */}
+        {topUsers.length > 0 && (
+          <div className="rounded-md border p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium text-sm">Топ-5 активных пользователей</span>
+            </div>
+            <div className="space-y-1.5">
+              {topUsers.map(([key, user], idx) => (
+                <div key={key} className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">
+                    {idx + 1}. {user.name}
+                  </span>
+                  <span className="font-medium">{user.count} сообщ.</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Резюме */}
         <div className="bg-primary/5 border border-primary/20 rounded-lg p-4">
           <h4 className="font-medium flex items-center gap-2 mb-2 text-sm">
@@ -184,6 +216,17 @@ export function SyncResultDialog({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2 flex-wrap">
+          <Button 
+            variant="ghost" 
+            size="sm"
+            onClick={() => {
+              onOpenChange(false);
+              navigate("/admin/integrations/telegram/analytics");
+            }}
+          >
+            <ExternalLink className="h-4 w-4 mr-2" />
+            Аналитика чата
+          </Button>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Закрыть
           </Button>

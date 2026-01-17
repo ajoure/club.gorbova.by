@@ -401,12 +401,17 @@ const AdminEditorial = () => {
       // Show detailed dialog with sync results
       setSyncResult({
         total_messages: data.total_messages || 0,
-        meaningful_messages: data.meaningful_messages || 0,
-        synced: data.synced || 0,
+        katerina_messages: data.katerina_messages || 0,
+        katerina_meaningful: data.katerina_meaningful || 0,
+        audience_messages: data.audience_messages || 0,
+        audience_meaningful: data.audience_meaningful || 0,
+        unique_users: data.unique_users || 0,
+        synced_katerina: data.synced_katerina || 0,
         earliest_date: data.earliest_date,
         latest_date: data.latest_date,
-        ready_for_analysis: (data.meaningful_messages || 0) >= 5,
-        author: "Екатерина Горбова",
+        ready_for_style: data.ready_for_style ?? false,
+        ready_for_audience_analysis: data.ready_for_audience_analysis ?? false,
+        by_user: data.by_user,
       });
       setSyncResultDialogOpen(true);
       refetchKaterinaCount();
