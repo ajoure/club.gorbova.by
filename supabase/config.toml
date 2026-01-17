@@ -210,3 +210,9 @@ verify_jwt = false
 
 [functions.bepaid-archive-import]
 verify_jwt = false
+
+[functions.monitor-news]
+verify_jwt = false
+
+[functions.telegram-publish-news]
+verify_jwt = false

@@ -79,6 +79,8 @@ import SupportTicket from "./pages/SupportTicket";
 import AdminSupport from "./pages/admin/AdminSupport";
 import AdminNews from "./pages/admin/AdminNews";
 import AdminCommunication from "./pages/admin/AdminCommunication";
+import AdminEditorial from "./pages/admin/AdminEditorial";
+import AdminEditorialSources from "./pages/admin/AdminEditorialSources";
 import Money from "./pages/Money";
 import AI from "./pages/AI";
 import Knowledge from "./pages/Knowledge";
@@ -191,6 +193,10 @@ const App = () => (
               <Route path="/admin/bepaid-archive-import" element={<ProtectedRoute><AdminBepaidArchiveImport /></ProtectedRoute>} />
               <Route path="/admin/support" element={<ProtectedRoute><AdminSupport /></ProtectedRoute>} />
               <Route path="/admin/news" element={<ProtectedRoute><AdminNews /></ProtectedRoute>} />
+              
+              {/* Admin routes - Editorial */}
+              <Route path="/admin/editorial" element={<ProtectedRoute><AdminEditorial /></ProtectedRoute>} />
+              <Route path="/admin/editorial/sources" element={<ProtectedRoute><AdminEditorialSources /></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
