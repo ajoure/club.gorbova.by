@@ -624,7 +624,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                     />
                   </PopoverContent>
                 </Popover>
-                {formData.auto_renew && !subscription?.payment_token && (
+                {formData.auto_renew && !subscription?.payment_method_id && (
                   <p className="text-xs text-amber-600">
                     ⚠️ У клиента нет привязанной карты. Автосписание не будет работать.
                   </p>
