@@ -369,7 +369,7 @@ Deno.serve(async (req) => {
         .in('status', ['active', 'trial'])
         .gte('access_end_at', startOfDay.toISOString())
         .lte('access_end_at', endOfDay.toISOString())
-        .neq('cancel_at_period_end', true);
+        .eq('auto_renew', true);
 
       if (error) {
         console.error(`Query error for ${daysLeft} days:`, error);
