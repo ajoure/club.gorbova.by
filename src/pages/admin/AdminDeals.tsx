@@ -51,9 +51,11 @@ import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } f
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { BulkEditDealsDialog } from "@/components/admin/BulkEditDealsDialog";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import { usePermissions } from "@/hooks/usePermissions";
+import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -78,13 +80,15 @@ export default function AdminDeals() {
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [showImportWizard, setShowImportWizard] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showBulkEditDialog, setShowBulkEditDialog] = useState(false);
+  const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
   const queryClient = useQueryClient();
 
   // Fetch deals (orders_v2) with related data
   const { data: deals, isLoading, refetch } = useQuery({
-    queryKey: ["admin-deals"],
+    queryKey: ["admin-deals", dateFilter],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("orders_v2")
         .select(`
           *,
@@ -94,8 +98,17 @@ export default function AdminDeals() {
           payments_v2(id, status, amount, paid_at)
         `)
         .order("created_at", { ascending: false })
-        .limit(500);
+        .limit(1000);
 
+      // Apply date filter
+      if (dateFilter.from) {
+        query = query.gte("created_at", `${dateFilter.from}T00:00:00Z`);
+      }
+      if (dateFilter.to) {
+        query = query.lte("created_at", `${dateFilter.to}T23:59:59Z`);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
@@ -151,6 +164,17 @@ export default function AdminDeals() {
       type: "select",
       options: products?.map(p => ({ value: p.id, label: p.name })) || []
     },
+    { 
+      key: "reconcile_source", 
+      label: "Источник", 
+      type: "select",
+      options: [
+        { value: "bepaid_archive_import", label: "Архивный импорт (ARC-*)" },
+        { value: "bepaid_import", label: "Bepaid импорт" },
+        { value: "bepaid_reconcile", label: "Сверка" },
+        { value: "manual", label: "Ручная" },
+      ]
+    },
     { key: "final_price", label: "Сумма", type: "number" },
     { key: "is_trial", label: "Триал", type: "boolean" },
     { key: "created_at", label: "Дата создания", type: "date" },
@@ -205,6 +229,8 @@ export default function AdminDeals() {
         return (deal.products_v2 as any)?.name || "";
       case "tariff_name":
         return (deal.tariffs as any)?.name || "";
+      case "reconcile_source":
+        return deal.reconcile_source || "";
       default:
         return deal[fieldKey];
     }
@@ -245,12 +271,13 @@ export default function AdminDeals() {
 
   // Preset counts
   const presetCounts = useMemo(() => {
-    if (!deals) return { paid: 0, pending: 0, trial: 0, canceled: 0 };
+    if (!deals) return { paid: 0, pending: 0, trial: 0, canceled: 0, imported: 0 };
     return {
       paid: deals.filter(d => d.status === "paid").length,
       pending: deals.filter(d => d.status === "pending").length,
       trial: deals.filter(d => d.is_trial).length,
       canceled: deals.filter(d => d.status === "canceled" || d.status === "refunded").length,
+      imported: deals.filter(d => d.reconcile_source === "bepaid_archive_import").length,
     };
   }, [deals]);
 
@@ -260,6 +287,7 @@ export default function AdminDeals() {
     { id: "pending", label: "Ожидают оплаты", filters: [{ field: "status", operator: "equals", value: "pending" }], count: presetCounts.pending },
     { id: "trial", label: "Триал", filters: [{ field: "is_trial", operator: "equals", value: "true" }], count: presetCounts.trial },
     { id: "canceled", label: "Отменённые", filters: [{ field: "status", operator: "equals", value: "canceled" }], count: presetCounts.canceled },
+    { id: "imported", label: "Импортированные", filters: [{ field: "reconcile_source", operator: "equals", value: "bepaid_archive_import" }], count: presetCounts.imported },
   ], [presetCounts]);
 
   const selectedDeal = deals?.find(d => d.id === selectedDealId);
@@ -484,7 +512,8 @@ export default function AdminDeals() {
           </h1>
           <p className="text-muted-foreground">Все заказы, подписки, триалы и ручные выдачи</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <PeriodSelector value={dateFilter} onChange={setDateFilter} />
           <Button variant="outline" onClick={() => setShowImportWizard(true)}>
             <Sparkles className="h-4 w-4 mr-2" />
             Умный импорт
@@ -842,11 +871,24 @@ export default function AdminDeals() {
           selectedCount={selectedCount}
           onClearSelection={clearSelection}
           onBulkDelete={() => setShowDeleteDialog(true)}
+          onBulkEdit={() => setShowBulkEditDialog(true)}
           totalCount={sortedDeals.length}
           entityName="сделок"
           onSelectAll={selectAll}
         />
       )}
+
+      {/* Bulk Edit Dialog */}
+      <BulkEditDealsDialog
+        open={showBulkEditDialog}
+        onOpenChange={setShowBulkEditDialog}
+        selectedIds={Array.from(selectedDealIds)}
+        onSuccess={() => {
+          clearSelection();
+          setShowBulkEditDialog(false);
+          queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+        }}
+      />
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
