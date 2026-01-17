@@ -116,6 +116,11 @@ function detectActivePreset(value: DateFilter): PresetKey {
 }
 
 function formatPeriodLabel(value: DateFilter): string {
+  // Handle undefined/empty values
+  if (!value.from) {
+    return 'Все периоды';
+  }
+  
   const activePreset = detectActivePreset(value);
   if (activePreset !== 'custom') {
     const preset = presets.find(p => p.key === activePreset);
@@ -123,6 +128,11 @@ function formatPeriodLabel(value: DateFilter): string {
   }
   
   const fromDate = new Date(value.from);
+  // Validate date is valid
+  if (isNaN(fromDate.getTime())) {
+    return 'Все периоды';
+  }
+  
   const toStr = value.to ? format(new Date(value.to), 'd MMM', { locale: ru }) : 'сегодня';
   return `${format(fromDate, 'd MMM', { locale: ru })} — ${toStr}`;
 }
