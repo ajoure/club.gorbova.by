@@ -19,19 +19,37 @@ serve(async (req) => {
     const body = await req.json();
     const { channel_id } = body;
 
-    console.log("[sync-history] Starting sync of ALL chat messages");
+    console.log("[sync-history] Starting sync of ALL chat messages with pagination");
 
-    // Fetch ALL messages from the chat (not just Katerina)
-    const { data: messages, error: fetchError } = await supabase
-      .from("tg_chat_messages")
-      .select("id, text, message_ts, from_display_name, from_tg_user_id, chat_id")
-      .not("text", "is", null)
-      .order("message_ts", { ascending: false });
+    // Fetch ALL messages using pagination (Supabase default limit is 1000)
+    let allMessages: any[] = [];
+    let offset = 0;
+    const batchSize = 1000;
 
-    if (fetchError) {
-      console.error("[sync-history] Fetch error:", fetchError);
-      throw new Error(`Failed to fetch messages: ${fetchError.message}`);
+    while (true) {
+      console.log(`[sync-history] Fetching batch at offset ${offset}...`);
+      const { data: batch, error: fetchError } = await supabase
+        .from("tg_chat_messages")
+        .select("id, text, message_ts, from_display_name, from_tg_user_id, chat_id")
+        .not("text", "is", null)
+        .order("message_ts", { ascending: false })
+        .range(offset, offset + batchSize - 1);
+
+      if (fetchError) {
+        console.error("[sync-history] Fetch error:", fetchError);
+        throw new Error(`Failed to fetch messages: ${fetchError.message}`);
+      }
+
+      if (!batch || batch.length === 0) break;
+      
+      allMessages = [...allMessages, ...batch];
+      console.log(`[sync-history] Fetched ${batch.length} messages, total: ${allMessages.length}`);
+      
+      offset += batchSize;
+      if (batch.length < batchSize) break; // Last page
     }
+
+    const messages = allMessages;
 
     if (!messages || messages.length === 0) {
       return new Response(JSON.stringify({
