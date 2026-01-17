@@ -663,33 +663,35 @@ const AdminEditorial = () => {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            <TabsTrigger value="drafts" className="flex items-center gap-2">
-              <Edit className="h-4 w-4" />
-              Входящие
-              {draftNews && draftNews.length > 0 && (
-                <Badge variant="secondary">{draftNews.length}</Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="queued" className="flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              В очереди
-              {queuedNews && queuedNews.length > 0 && (
-                <Badge variant="secondary">{queuedNews.length}</Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="sent" className="flex items-center gap-2">
-              <CheckCircle className="h-4 w-4" />
-              Опубликовано
-            </TabsTrigger>
-            <TabsTrigger value="settings" className="flex items-center gap-2">
-              <Settings className="h-4 w-4" />
-              Настройки
-              {healthStats && healthStats.error > 0 && (
-                <Badge variant="destructive">{healthStats.error}</Badge>
-              )}
-            </TabsTrigger>
-          </TabsList>
+          <div className="overflow-x-auto -mx-4 px-4 pb-2">
+            <TabsList className="inline-flex w-auto min-w-full sm:w-auto">
+              <TabsTrigger value="drafts" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                <Edit className="h-4 w-4 hidden sm:block" />
+                Входящие
+                {draftNews && draftNews.length > 0 && (
+                  <Badge variant="secondary" className="ml-1">{draftNews.length}</Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="queued" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                <Clock className="h-4 w-4 hidden sm:block" />
+                В очереди
+                {queuedNews && queuedNews.length > 0 && (
+                  <Badge variant="secondary" className="ml-1">{queuedNews.length}</Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="sent" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                <CheckCircle className="h-4 w-4 hidden sm:block" />
+                Опубликовано
+              </TabsTrigger>
+              <TabsTrigger value="settings" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                <Settings className="h-4 w-4 hidden sm:block" />
+                Настройки
+                {healthStats && healthStats.error > 0 && (
+                  <Badge variant="destructive" className="ml-1">{healthStats.error}</Badge>
+                )}
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="drafts" className="mt-4">
             {loadingDrafts ? (
