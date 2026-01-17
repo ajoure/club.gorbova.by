@@ -160,8 +160,8 @@ Deno.serve(async (req) => {
         return { success: true, uid: txUid, response: chargeResult };
       }
 
-      // Handle 3D-Secure / redirect required (incomplete status with P.4011)
-      if (txStatus === 'incomplete' && txCode === 'P.4011') {
+      // Handle 3D-Secure / redirect required (incomplete status with P.4011, P.4012, or similar)
+      if (txStatus === 'incomplete' && (txCode === 'P.4011' || txCode === 'P.4012' || txCode?.startsWith('P.40'))) {
         return { 
           success: false, 
           error: 'Карта требует 3D-Secure верификацию. Для ручного списания используйте карту без 3DS или попросите клиента оплатить через форму.',
@@ -173,7 +173,7 @@ Deno.serve(async (req) => {
       if (txStatus === 'incomplete') {
         return { 
           success: false, 
-          error: `Платёж не завершён: ${chargeResult.transaction?.message || 'требуется дополнительная верификация'}`,
+          error: `Платёж не завершён: ${chargeResult.transaction?.message || chargeResult.transaction?.friendly_message || 'требуется дополнительная верификация'}`,
           response: chargeResult,
         };
       }
