@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -28,20 +29,28 @@ import {
   CheckCircle,
   AlertCircle,
   Package,
-  Users,
-  CreditCard,
   RefreshCw,
   Loader2,
   FileSpreadsheet,
-  ArrowRight,
+  Edit3,
+  Sparkles,
+  Save,
+  X,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
+interface ManualMapping {
+  customName: string | null;   // User's custom name (Priority 1)
+  productId: string | null;     // Existing product (Priority 2)
+  action: "manual" | "existing" | "auto"; // Type of mapping
+}
+
 export default function AdminBepaidArchiveImport() {
   const [onlyMapped, setOnlyMapped] = useState(false);
   const [batchSize, setBatchSize] = useState("100");
+  const [manualMappings, setManualMappings] = useState<Record<string, ManualMapping>>({});
   const queryClient = useQueryClient();
 
   // Fetch queue stats
@@ -80,7 +89,7 @@ export default function AdminBepaidArchiveImport() {
       const mappedTitles = new Set((mappings || []).map(m => m.bepaid_plan_title?.toLowerCase()));
 
       // Extract unique product names
-      const productCounts = new Map<string, { count: number; amount: number; hasMapping: boolean }>();
+      const productCounts = new Map<string, { count: number; amount: number; hasMapping: boolean; originalName: string }>();
 
       (queue || []).forEach(item => {
         const payload = item.raw_payload as Record<string, any> || {};
@@ -111,6 +120,7 @@ export default function AdminBepaidArchiveImport() {
             count: 1, 
             amount: item.amount || 0,
             hasMapping,
+            originalName: productName,
           });
         }
       });
@@ -118,6 +128,7 @@ export default function AdminBepaidArchiveImport() {
       return Array.from(productCounts.entries())
         .map(([name, data]) => ({
           productName: name,
+          originalName: data.originalName,
           count: data.count,
           totalAmount: data.amount,
           hasMapping: data.hasMapping,
@@ -139,6 +150,41 @@ export default function AdminBepaidArchiveImport() {
     },
   });
 
+  // Calculate mapping stats
+  const mappingStats = useMemo(() => {
+    if (!unmappedProducts) return { manual: 0, existing: 0, auto: 0, total: 0 };
+    
+    let manual = 0;
+    let existing = 0;
+    let auto = 0;
+    
+    unmappedProducts.forEach(item => {
+      const mapping = manualMappings[item.productName];
+      if (item.hasMapping) {
+        existing++;
+      } else if (mapping?.action === "manual" && mapping.customName) {
+        manual++;
+      } else if (mapping?.action === "existing" && mapping.productId) {
+        existing++;
+      } else {
+        auto++;
+      }
+    });
+    
+    return { manual, existing, auto, total: unmappedProducts.length };
+  }, [unmappedProducts, manualMappings]);
+
+  // Update manual mapping
+  const updateMapping = (productKey: string, update: Partial<ManualMapping>) => {
+    setManualMappings(prev => ({
+      ...prev,
+      [productKey]: {
+        ...prev[productKey],
+        ...update,
+      },
+    }));
+  };
+
   // Dry run mutation
   const dryRunMutation = useMutation({
     mutationFn: async () => {
@@ -147,6 +193,7 @@ export default function AdminBepaidArchiveImport() {
           batchSize: parseInt(batchSize), 
           dryRun: true,
           onlyMapped,
+          manualMappings,
         },
       });
       if (error) throw error;
@@ -168,6 +215,7 @@ export default function AdminBepaidArchiveImport() {
           batchSize: parseInt(batchSize), 
           dryRun: false,
           onlyMapped,
+          manualMappings,
         },
       });
       if (error) throw error;
@@ -183,21 +231,32 @@ export default function AdminBepaidArchiveImport() {
     },
   });
 
-  // Create mapping mutation
-  const createMappingMutation = useMutation({
-    mutationFn: async ({ title, productId }: { title: string; productId: string }) => {
+  // Save all mappings to database
+  const saveMappingsMutation = useMutation({
+    mutationFn: async () => {
+      const mappingsToSave = Object.entries(manualMappings)
+        .filter(([_, m]) => (m.action === "manual" && m.customName) || (m.action === "existing" && m.productId))
+        .map(([title, m]) => ({
+          bepaid_plan_title: title,
+          product_id: m.productId || null,
+          bepaid_description: m.customName || null,
+          auto_create_order: true,
+        }));
+      
+      if (mappingsToSave.length === 0) {
+        throw new Error("Нет маппингов для сохранения");
+      }
+
       const { error } = await supabase
         .from("bepaid_product_mappings")
-        .insert({
-          bepaid_plan_title: title,
-          product_id: productId,
-          auto_create_order: true,
-        });
+        .upsert(mappingsToSave, { onConflict: "bepaid_plan_title" });
+      
       if (error) throw error;
+      return mappingsToSave.length;
     },
-    onSuccess: () => {
+    onSuccess: (count) => {
       queryClient.invalidateQueries({ queryKey: ["bepaid-unmapped-descriptions"] });
-      toast.success("Маппинг создан");
+      toast.success(`Сохранено ${count} маппингов`);
     },
     onError: (error: Error) => {
       toast.error(`Ошибка: ${error.message}`);
@@ -219,7 +278,7 @@ export default function AdminBepaidArchiveImport() {
               Импорт архива bePaid 2025
             </h1>
             <p className="text-muted-foreground">
-              Массовый импорт транзакций из очереди сверки
+              Гибридный маппинг: ручной + автоматический со звездочкой
             </p>
           </div>
           <Button variant="outline" onClick={() => {
@@ -306,6 +365,50 @@ export default function AdminBepaidArchiveImport() {
           </Card>
         </div>
 
+        {/* Mapping Summary */}
+        <Card className="border-primary/20 bg-primary/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              Режим гибридного маппинга
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+              <div className="flex items-center gap-2">
+                <Badge variant="default" className="bg-green-600">
+                  <Edit3 className="h-3 w-3 mr-1" />
+                  {mappingStats.manual}
+                </Badge>
+                <span className="text-muted-foreground">Ручной</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="default" className="bg-blue-600">
+                  <CheckCircle className="h-3 w-3 mr-1" />
+                  {mappingStats.existing}
+                </Badge>
+                <span className="text-muted-foreground">Существующий</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary">
+                  <Sparkles className="h-3 w-3 mr-1" />
+                  {mappingStats.auto}
+                </Badge>
+                <span className="text-muted-foreground">Авто (*)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline">
+                  {mappingStats.total}
+                </Badge>
+                <span className="text-muted-foreground">Всего</span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-3">
+              <strong>Приоритет:</strong> 1) Ваше название → 2) Существующий продукт → 3) Авто-создание "* Название из bePaid"
+            </p>
+          </CardContent>
+        </Card>
+
         {/* Progress */}
         {queueStats && queueStats.total > 0 && (
           <Card>
@@ -358,19 +461,29 @@ export default function AdminBepaidArchiveImport() {
                   onCheckedChange={setOnlyMapped}
                 />
                 <Label htmlFor="only-mapped">
-                  Только с маппингом продуктов
+                  Только с ручным маппингом
                 </Label>
               </div>
             </div>
 
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-4">
+              <Button 
+                variant="outline" 
+                onClick={() => saveMappingsMutation.mutate()}
+                disabled={saveMappingsMutation.isPending || Object.keys(manualMappings).length === 0}
+              >
+                {saveMappingsMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                <Save className="h-4 w-4 mr-2" />
+                Сохранить маппинги
+              </Button>
+              
               <Button 
                 variant="outline" 
                 onClick={() => dryRunMutation.mutate()}
                 disabled={dryRunMutation.isPending || importMutation.isPending}
               >
                 {dryRunMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                Тестовый запуск (Dry Run)
+                Тестовый запуск
               </Button>
               
               <Button 
@@ -387,7 +500,7 @@ export default function AdminBepaidArchiveImport() {
             {(dryRunMutation.data || importMutation.data) && (
               <div className="p-4 bg-muted rounded-lg">
                 <h4 className="font-medium mb-2">Результат последнего запуска:</h4>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm">
                   <div>
                     <span className="text-muted-foreground">Обработано:</span>{" "}
                     <strong>{(dryRunMutation.data || importMutation.data)?.stats?.processed || 0}</strong>
@@ -403,6 +516,10 @@ export default function AdminBepaidArchiveImport() {
                   <div>
                     <span className="text-muted-foreground">Возвратов:</span>{" "}
                     <strong>{(dryRunMutation.data || importMutation.data)?.stats?.refundsProcessed || 0}</strong>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Авто-продуктов:</span>{" "}
+                    <strong className="text-amber-600">{(dryRunMutation.data || importMutation.data)?.stats?.productsAutoCreated || 0}</strong>
                   </div>
                 </div>
                 {(dryRunMutation.data || importMutation.data)?.stats?.errors?.length > 0 && (
@@ -420,10 +537,10 @@ export default function AdminBepaidArchiveImport() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Package className="h-5 w-5" />
-              Маппинг продуктов
+              Сверка продуктов из файла
             </CardTitle>
             <CardDescription>
-              Сопоставьте названия из bePaid с системными продуктами
+              Укажите правильные названия для ключевых продуктов. Остальные будут созданы автоматически со звездочкой (*).
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -436,73 +553,162 @@ export default function AdminBepaidArchiveImport() {
             ) : !unmappedProducts?.length ? (
               <div className="text-center text-muted-foreground py-8">
                 <CheckCircle className="h-12 w-12 mx-auto mb-4 opacity-30" />
-                <p>Все продукты сопоставлены</p>
+                <p>Нет записей в очереди</p>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Название из bePaid</TableHead>
-                    <TableHead className="text-right">Кол-во</TableHead>
-                    <TableHead className="text-right">Сумма</TableHead>
-                    <TableHead>Статус</TableHead>
-                    <TableHead>Системный продукт</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {unmappedProducts.map((item, idx) => (
-                    <TableRow key={idx}>
-                      <TableCell className="font-medium">
-                        {item.productName}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {item.count}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {new Intl.NumberFormat("ru-BY", { 
-                          style: "currency", 
-                          currency: "BYN" 
-                        }).format(item.totalAmount)}
-                      </TableCell>
-                      <TableCell>
-                        {item.hasMapping ? (
-                          <Badge variant="default" className="bg-green-600">
-                            <CheckCircle className="h-3 w-3 mr-1" />
-                            Сопоставлен
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary">
-                            Не сопоставлен
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {!item.hasMapping && (
-                          <Select
-                            onValueChange={(productId) => {
-                              createMappingMutation.mutate({
-                                title: item.productName,
-                                productId,
-                              });
-                            }}
-                          >
-                            <SelectTrigger className="w-[200px]">
-                              <SelectValue placeholder="Выберите продукт" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {products?.map(p => (
-                                <SelectItem key={p.id} value={p.id}>
-                                  {p.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        )}
-                      </TableCell>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="min-w-[200px]">Название из bePaid</TableHead>
+                      <TableHead className="text-right w-20">Кол-во</TableHead>
+                      <TableHead className="text-right w-32">Сумма</TableHead>
+                      <TableHead className="min-w-[200px]">Ваше название</TableHead>
+                      <TableHead className="min-w-[200px]">Или выберите продукт</TableHead>
+                      <TableHead className="w-24">Результат</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {unmappedProducts.map((item, idx) => {
+                      const mapping = manualMappings[item.productName];
+                      const selectedProduct = mapping?.productId 
+                        ? products?.find(p => p.id === mapping.productId) 
+                        : null;
+                      
+                      // Determine what will happen on import
+                      let resultType: "manual" | "existing" | "auto" = "auto";
+                      let resultName = `* ${item.originalName}`;
+                      
+                      if (item.hasMapping) {
+                        resultType = "existing";
+                        resultName = "✓ Уже сопоставлен";
+                      } else if (mapping?.customName) {
+                        resultType = "manual";
+                        resultName = mapping.customName;
+                      } else if (selectedProduct) {
+                        resultType = "existing";
+                        resultName = selectedProduct.name;
+                      }
+                      
+                      return (
+                        <TableRow key={idx} className={item.hasMapping ? "bg-green-50/50" : ""}>
+                          <TableCell className="font-medium">
+                            <div className="flex flex-col">
+                              <span>{item.originalName}</span>
+                              {item.productName !== item.originalName.toLowerCase() && (
+                                <span className="text-xs text-muted-foreground">
+                                  key: {item.productName}
+                                </span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {item.count}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {new Intl.NumberFormat("ru-BY", { 
+                              style: "currency", 
+                              currency: "BYN",
+                              maximumFractionDigits: 0,
+                            }).format(item.totalAmount)}
+                          </TableCell>
+                          <TableCell>
+                            {!item.hasMapping && (
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  placeholder="Введите название..."
+                                  value={mapping?.customName || ""}
+                                  onChange={(e) => updateMapping(item.productName, {
+                                    customName: e.target.value || null,
+                                    action: e.target.value ? "manual" : (mapping?.productId ? "existing" : "auto"),
+                                  })}
+                                  className="w-full"
+                                  disabled={!!mapping?.productId}
+                                />
+                                {mapping?.customName && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 shrink-0"
+                                    onClick={() => updateMapping(item.productName, {
+                                      customName: null,
+                                      action: "auto",
+                                    })}
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {!item.hasMapping && (
+                              <Select
+                                value={mapping?.productId || ""}
+                                onValueChange={(productId) => {
+                                  if (productId === "__clear__") {
+                                    updateMapping(item.productName, {
+                                      productId: null,
+                                      action: mapping?.customName ? "manual" : "auto",
+                                    });
+                                  } else {
+                                    updateMapping(item.productName, {
+                                      productId,
+                                      customName: null, // Clear custom name when selecting existing product
+                                      action: "existing",
+                                    });
+                                  }
+                                }}
+                                disabled={!!mapping?.customName}
+                              >
+                                <SelectTrigger className="w-full">
+                                  <SelectValue placeholder="Выберите..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {mapping?.productId && (
+                                    <SelectItem value="__clear__" className="text-muted-foreground">
+                                      — Очистить выбор —
+                                    </SelectItem>
+                                  )}
+                                  {products?.map(p => (
+                                    <SelectItem key={p.id} value={p.id}>
+                                      {p.name}
+                                      {p.status === "archived" && " (архив)"}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {resultType === "existing" && item.hasMapping ? (
+                              <Badge variant="default" className="bg-green-600 text-xs">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                OK
+                              </Badge>
+                            ) : resultType === "manual" ? (
+                              <Badge variant="default" className="bg-green-600 text-xs">
+                                <Edit3 className="h-3 w-3 mr-1" />
+                                {resultName}
+                              </Badge>
+                            ) : resultType === "existing" ? (
+                              <Badge variant="default" className="bg-blue-600 text-xs whitespace-nowrap">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                {resultName.substring(0, 15)}...
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-xs">
+                                <Sparkles className="h-3 w-3 mr-1" />
+                                *Авто
+                              </Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>

@@ -67,6 +67,12 @@ function transliterateToСyrillic(latinName: string): string {
   return result;
 }
 
+interface ManualMapping {
+  customName: string | null;
+  productId: string | null;
+  action: "manual" | "existing" | "auto";
+}
+
 interface ImportStats {
   processed: number;
   ordersCreated: number;
@@ -76,6 +82,7 @@ interface ImportStats {
   skipped: number;
   errors: string[];
   refundsProcessed: number;
+  productsAutoCreated: number;
 }
 
 Deno.serve(async (req) => {
@@ -88,12 +95,18 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { batchSize = 100, dryRun = false, onlyMapped = false } = await req.json();
+    const { 
+      batchSize = 100, 
+      dryRun = false, 
+      onlyMapped = false,
+      manualMappings = {} as Record<string, ManualMapping>,
+    } = await req.json();
 
     console.log(`Starting bePaid archive import: batchSize=${batchSize}, dryRun=${dryRun}, onlyMapped=${onlyMapped}`);
+    console.log(`Manual mappings provided: ${Object.keys(manualMappings).length}`);
 
     // Get pending queue items
-    let query = supabase
+    const query = supabase
       .from("payment_reconcile_queue")
       .select("*")
       .eq("status", "pending")
@@ -112,13 +125,22 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Load product mappings
+    // Load existing product mappings
     const { data: mappings } = await supabase
       .from("bepaid_product_mappings")
       .select("bepaid_plan_title, product_id, tariff_id, offer_id, is_subscription, auto_create_order");
 
     const mappingsMap = new Map(
       (mappings || []).map(m => [m.bepaid_plan_title?.toLowerCase(), m])
+    );
+
+    // Load all products for potential matching
+    const { data: existingProducts } = await supabase
+      .from("products_v2")
+      .select("id, name, code");
+    
+    const productsMap = new Map(
+      (existingProducts || []).map(p => [p.id, p])
     );
 
     // Load all profiles for matching
@@ -137,6 +159,9 @@ Deno.serve(async (req) => {
       cardMasks.forEach(mask => profilesByCardMask.set(mask, p));
     });
 
+    // Cache for auto-created products (to avoid duplicate creates)
+    const autoCreatedProducts = new Map<string, string>(); // productName -> productId
+
     const stats: ImportStats = {
       processed: 0,
       ordersCreated: 0,
@@ -146,6 +171,7 @@ Deno.serve(async (req) => {
       skipped: 0,
       errors: [],
       refundsProcessed: 0,
+      productsAutoCreated: 0,
     };
 
     for (const item of queueItems) {
@@ -154,8 +180,6 @@ Deno.serve(async (req) => {
         
         const payload = item.raw_payload as Record<string, any> || {};
         const plan = payload.plan || {};
-        const card = payload.card || {};
-        const customer = payload.customer || {};
         const additionalData = payload.additional_data || {};
 
         // Get description and parse it
@@ -164,13 +188,128 @@ Deno.serve(async (req) => {
         
         // Get plan title for mapping lookup
         const planTitle = plan.title || plan.name || productName || "";
-        const mapping = mappingsMap.get(planTitle.toLowerCase());
+        const planTitleLower = planTitle.toLowerCase();
+        
+        // Priority 1: Check manual mappings from UI
+        let productId: string | null = null;
+        let finalProductName = productName;
+        let mappingSource = "none";
+        
+        const manualMapping = manualMappings[planTitleLower];
+        
+        if (manualMapping?.customName) {
+          // Priority 1: User provided custom name - we'll create/find product with this name
+          finalProductName = manualMapping.customName;
+          mappingSource = "manual_custom";
+          console.log(`Using manual custom name: "${finalProductName}" for "${planTitle}"`);
+        } else if (manualMapping?.productId) {
+          // Priority 2: User selected existing product
+          productId = manualMapping.productId;
+          mappingSource = "manual_existing";
+          const product = productsMap.get(productId);
+          if (product) {
+            finalProductName = product.name;
+          }
+          console.log(`Using manual product selection: ${productId} for "${planTitle}"`);
+        } else {
+          // Priority 3: Check existing database mappings
+          const dbMapping = mappingsMap.get(planTitleLower);
+          if (dbMapping?.product_id) {
+            productId = dbMapping.product_id;
+            mappingSource = "db_mapping";
+            const product = productsMap.get(productId);
+            if (product) {
+              finalProductName = product.name;
+            }
+            console.log(`Using DB mapping: ${productId} for "${planTitle}"`);
+          }
+        }
 
         // Skip if onlyMapped is true and no mapping exists
-        if (onlyMapped && !mapping) {
+        if (onlyMapped && mappingSource === "none") {
           console.log(`Skipping unmapped: ${planTitle}`);
           stats.skipped++;
           continue;
+        }
+
+        // Priority 4: Auto-create product with asterisk prefix
+        if (!productId && mappingSource !== "manual_custom") {
+          // Check if we already auto-created this product in this batch
+          const cachedProductId = autoCreatedProducts.get(planTitleLower);
+          if (cachedProductId) {
+            productId = cachedProductId;
+            mappingSource = "auto_cached";
+          } else if (!dryRun) {
+            // Create new product with asterisk prefix
+            const autoProductName = `* ${productName}`;
+            const autoProductCode = `archive-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+            
+            const { data: newProduct, error: productError } = await supabase
+              .from("products_v2")
+              .insert({
+                name: autoProductName,
+                code: autoProductCode,
+                type: "course",
+                status: "archived",
+                description: `Автоматически создан при импорте архива bePaid. Оригинальное название: ${productName}`,
+              })
+              .select()
+              .single();
+
+            if (productError) {
+              console.error(`Error creating auto product: ${productError.message}`);
+              // Continue without product - order will still be created
+            } else if (newProduct) {
+              productId = newProduct.id;
+              autoCreatedProducts.set(planTitleLower, newProduct.id);
+              stats.productsAutoCreated++;
+              finalProductName = autoProductName;
+              mappingSource = "auto_created";
+              console.log(`Auto-created product: "${autoProductName}" (${newProduct.id})`);
+              
+              // Add to productsMap for future reference
+              productsMap.set(newProduct.id, newProduct);
+            }
+          } else {
+            // Dry run - just count
+            stats.productsAutoCreated++;
+            mappingSource = "auto_would_create";
+          }
+        }
+
+        // Handle manual custom name - find or create product
+        if (mappingSource === "manual_custom" && !dryRun) {
+          // Look for existing product with this name
+          const existingByName = (existingProducts || []).find(
+            p => p.name.toLowerCase() === finalProductName.toLowerCase()
+          );
+          
+          if (existingByName) {
+            productId = existingByName.id;
+            console.log(`Found existing product by custom name: ${productId}`);
+          } else {
+            // Create new product with the custom name
+            const customProductCode = `custom-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+            
+            const { data: newProduct, error: productError } = await supabase
+              .from("products_v2")
+              .insert({
+                name: finalProductName,
+                code: customProductCode,
+                type: "course",
+                status: "active",
+                description: `Создан при импорте архива bePaid. Оригинальное название из bePaid: ${productName}`,
+              })
+              .select()
+              .single();
+
+            if (productError) {
+              console.error(`Error creating custom product: ${productError.message}`);
+            } else {
+              productId = newProduct.id;
+              console.log(`Created custom product: "${finalProductName}" (${productId})`);
+            }
+          }
         }
 
         // Check if it's a refund
@@ -268,7 +407,6 @@ Deno.serve(async (req) => {
 
         // Handle refunds separately
         if (isRefund) {
-          // Find parent payment by reference UID if available
           const refundUid = item.bepaid_uid;
           
           // Create payment with negative amount
@@ -340,8 +478,7 @@ Deno.serve(async (req) => {
             order_number: orderNumber,
             user_id: profile.user_id || profile.id,
             profile_id: profile.id,
-            product_id: mapping?.product_id || null,
-            tariff_id: mapping?.tariff_id || null,
+            product_id: productId,
             status: "paid",
             final_price: amount,
             base_price: amount,
@@ -350,11 +487,13 @@ Deno.serve(async (req) => {
             reconcile_source: "bepaid_archive_import",
             created_at: actualPaymentDate,
             purchase_snapshot: {
-              product_name: productName,
+              product_name: finalProductName,
+              original_bepaid_name: productName,
               imported_from: "bepaid_archive",
               bepaid_uid: item.bepaid_uid,
               deal_id: dealId,
               original_description: description,
+              mapping_source: mappingSource,
             },
             meta: {
               customer_name: item.customer_name,
@@ -434,8 +573,8 @@ Deno.serve(async (req) => {
         success: true, 
         stats,
         message: dryRun 
-          ? `Dry run: would process ${stats.processed} items` 
-          : `Processed ${stats.processed} items`
+          ? `Dry run: would process ${stats.processed} items, auto-create ${stats.productsAutoCreated} products` 
+          : `Processed ${stats.processed} items, auto-created ${stats.productsAutoCreated} products`
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
