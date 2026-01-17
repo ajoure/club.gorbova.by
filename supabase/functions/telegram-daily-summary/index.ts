@@ -231,6 +231,40 @@ ${messagesText.slice(0, 15000)}
           }
         }
 
+        // Aggregate key_topics into audience_interests table
+        if (parsed.key_topics?.length && summary?.id) {
+          console.log(`[daily-summary] Aggregating ${parsed.key_topics.length} topics to audience_interests`);
+          for (const topic of parsed.key_topics) {
+            const normalizedTopic = topic.toLowerCase().trim();
+            if (normalizedTopic.length < 3) continue;
+            
+            // Upsert topic - increment frequency if exists
+            const { data: existing } = await supabase
+              .from('audience_interests')
+              .select('id, frequency')
+              .eq('topic', normalizedTopic)
+              .maybeSingle();
+
+            if (existing) {
+              await supabase
+                .from('audience_interests')
+                .update({
+                  frequency: existing.frequency + 1,
+                  last_discussed: targetDate,
+                  source_summary_id: summary.id,
+                })
+                .eq('id', existing.id);
+            } else {
+              await supabase.from('audience_interests').insert({
+                topic: normalizedTopic,
+                frequency: 1,
+                last_discussed: targetDate,
+                source_summary_id: summary.id,
+              });
+            }
+          }
+        }
+
         console.log(`Summary saved for ${club.club_name}: ${messages.length} messages, ${uniqueUsers.size} users`);
         results.push({ 
           club_id: club.id, 
@@ -238,6 +272,7 @@ ${messagesText.slice(0, 15000)}
           messages_count: messages.length,
           users_count: uniqueUsers.size,
           issues_count: parsed.support_issues?.length || 0,
+          topics_aggregated: parsed.key_topics?.length || 0,
         });
 
       } catch (aiError) {

@@ -97,6 +97,26 @@ serve(async (req) => {
 
     const { sourceId, limit = 5 } = await req.json().catch(() => ({}));
 
+    // Fetch audience interests from last 48 hours for resonance matching
+    const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const { data: recentTopics } = await supabase
+      .from('audience_interests')
+      .select('topic')
+      .gte('last_discussed', twoDaysAgo);
+
+    const audienceTopics = (recentTopics || []).map(t => t.topic.toLowerCase());
+    console.log(`[monitor-news] Loaded ${audienceTopics.length} audience topics from last 48h`);
+
+    // Fetch style profile for adaptive prompting
+    const { data: channelData } = await supabase
+      .from('telegram_publish_channels')
+      .select('settings')
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+
+    const styleProfile = channelData?.settings?.style_profile || null;
+
     // Get active sources
     let query = supabase
       .from("news_sources")
@@ -153,12 +173,27 @@ serve(async (req) => {
               continue;
             }
 
-            // AI analysis
-            const analysis = await analyzeWithAI(item, lovableKey);
+            // AI analysis with style profile for adaptive prompting
+            const analysis = await analyzeWithAI(item, lovableKey, styleProfile, audienceTopics);
 
             if (!analysis.is_relevant) {
               console.log(`[monitor-news] AI marked as irrelevant: ${item.title.slice(0, 50)}`);
               continue;
+            }
+
+            // Check resonance with audience interests
+            const newsKeywords = (analysis.keywords || []).map(k => k.toLowerCase());
+            const matchedTopics = audienceTopics.filter(topic =>
+              newsKeywords.some(kw => 
+                topic.includes(kw) || kw.includes(topic)
+              ) ||
+              item.title.toLowerCase().includes(topic) ||
+              item.content.toLowerCase().includes(topic)
+            );
+            const isResonant = matchedTopics.length > 0;
+
+            if (isResonant) {
+              console.log(`[monitor-news] 🔥 Resonant news found! Topics: ${matchedTopics.join(', ')}`);
             }
 
             // Save to database
@@ -179,6 +214,8 @@ serve(async (req) => {
               scraped_at: new Date().toISOString(),
               is_published: false,
               created_by: null,
+              is_resonant: isResonant,
+              resonance_topics: matchedTopics,
             });
 
             if (insertError) {
@@ -407,7 +444,9 @@ function parseNewsFromMarkdown(markdown: string, baseUrl: string): ScrapedItem[]
 
 async function analyzeWithAI(
   item: ScrapedItem,
-  lovableKey: string | undefined
+  lovableKey: string | undefined,
+  styleProfile: Record<string, unknown> | null = null,
+  audienceTopics: string[] = []
 ): Promise<AIAnalysis> {
   if (!lovableKey) {
     return {
@@ -420,8 +459,25 @@ async function analyzeWithAI(
     };
   }
 
+  // Build adaptive style guidance
+  let styleGuidance = '';
+  if (styleProfile) {
+    styleGuidance = `\n\nСТИЛЕВОЙ ПРОФИЛЬ КАНАЛА (пиши в этом стиле):
+- Тон: ${styleProfile.tone || 'деловой'}
+- Длина: ${styleProfile.avg_length || 'средний'}
+- Характерные фразы: ${(styleProfile.characteristic_phrases as string[] || []).slice(0, 5).join(', ')}
+- Форматирование: ${(styleProfile.formatting as any)?.html_tags_used?.join(', ') || '<b>, <i>'}`;
+  }
+
+  // Build audience context
+  let audienceContext = '';
+  if (audienceTopics.length > 0) {
+    audienceContext = `\n\nАУДИТОРИЯ СЕЙЧАС ОБСУЖДАЕТ (если новость связана - акцентируй):
+${audienceTopics.slice(0, 10).join(', ')}`;
+  }
+
   try {
-    // Softened AI prompt - more inclusive for business news
+    // Softened AI prompt - more inclusive for business news with adaptive style
     const systemPrompt = `Ты — редактор бизнес-издания для бухгалтеров и предпринимателей Беларуси и России.
 
 Проанализируй новость и верни JSON:
@@ -448,7 +504,7 @@ async function analyzeWithAI(
 - Маркировка товаров
 - Электронный документооборот
 - ВЭД, импорт/экспорт
-- Любые изменения, которые МОГУТ затронуть бизнес
+- Любые изменения, которые МОГУТ затронуть бизнес${styleGuidance}${audienceContext}
 
 НЕ релевантно (is_relevant = false) - только явно нерелевантное:
 - Спорт, развлечения, культура

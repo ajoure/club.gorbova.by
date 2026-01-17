@@ -54,6 +54,8 @@ interface NewsItem {
   scraped_at: string | null;
   source_id: string | null;
   is_published: boolean;
+  is_resonant?: boolean;
+  resonance_topics?: string[] | null;
   news_sources?: {
     name: string;
   };
@@ -269,6 +271,18 @@ const AdminEditorial = () => {
         results.telegram = true;
       }
 
+      // Log positive signal for feedback loop
+      await supabase.from("audit_logs").insert({
+        action: "editorial.publish",
+        actor_type: "admin",
+        meta: {
+          news_id: newsId,
+          signal: "positive",
+          published_to_site: toSite,
+          published_to_telegram: toTelegram,
+        },
+      });
+
       return results;
     },
     onSuccess: (data, variables) => {
@@ -305,14 +319,35 @@ const AdminEditorial = () => {
     },
   });
 
-  // Delete news mutation
+  // Delete news mutation with feedback loop
   const deleteNewsMutation = useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async ({ id, reason }: { id: string; reason?: string }) => {
+      // Get news data before deletion for feedback
+      const { data: newsData } = await supabase
+        .from("news_content")
+        .select("title, keywords, is_resonant")
+        .eq("id", id)
+        .single();
+
       const { error } = await supabase
         .from("news_content")
         .delete()
         .eq("id", id);
       if (error) throw error;
+
+      // Log negative signal for feedback loop
+      await supabase.from("audit_logs").insert({
+        action: "editorial.reject",
+        actor_type: "admin",
+        meta: {
+          news_id: id,
+          signal: "negative",
+          reason: reason || "not_specified",
+          title: newsData?.title,
+          keywords: newsData?.keywords,
+          was_resonant: newsData?.is_resonant,
+        },
+      });
     },
     onSuccess: () => {
       toast.success("Новость удалена");
@@ -484,6 +519,21 @@ const AdminEditorial = () => {
               {news.news_priority === "urgent" && (
                 <Badge variant="destructive" className="text-xs">🔴 СРОЧНО</Badge>
               )}
+              {news.is_resonant && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge className="text-xs bg-orange-500 hover:bg-orange-600">
+                        🔥 Резонанс
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="text-xs">Совпадение с обсуждениями:</p>
+                      <p className="text-xs font-medium">{news.resonance_topics?.join(', ') || 'темы аудитории'}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
               <Badge {...getCategoryBadge(news.category)}>{getCategoryBadge(news.category).label}</Badge>
               <span className="text-muted-foreground text-xs">{getCountryFlag(news.country)}</span>
               <span className="text-muted-foreground text-xs">
@@ -510,8 +560,9 @@ const AdminEditorial = () => {
                 variant="ghost"
                 size="icon"
                 onClick={() => {
-                  if (confirm("Удалить эту новость?")) {
-                    deleteNewsMutation.mutate(news.id);
+                  const reason = prompt("Причина удаления (необязательно):");
+                  if (reason !== null) {
+                    deleteNewsMutation.mutate({ id: news.id, reason: reason || undefined });
                   }
                 }}
               >

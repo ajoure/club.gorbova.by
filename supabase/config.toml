@@ -216,3 +216,6 @@ verify_jwt = false
 
 [functions.telegram-publish-news]
 verify_jwt = false
+
+[functions.telegram-learn-style]
+verify_jwt = false

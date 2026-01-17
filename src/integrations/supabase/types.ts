@@ -38,6 +38,44 @@ export type Database = {
         }
         Relationships: []
       }
+      audience_interests: {
+        Row: {
+          created_at: string | null
+          frequency: number | null
+          id: string
+          last_discussed: string
+          source_summary_id: string | null
+          topic: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          frequency?: number | null
+          id?: string
+          last_discussed: string
+          source_summary_id?: string | null
+          topic: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          frequency?: number | null
+          id?: string
+          last_discussed?: string
+          source_summary_id?: string | null
+          topic?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audience_interests_source_summary_id_fkey"
+            columns: ["source_summary_id"]
+            isOneToOne: false
+            referencedRelation: "tg_daily_summaries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_logs: {
         Row: {
           action: string
@@ -2456,9 +2494,11 @@ export type Database = {
           effective_date: string | null
           id: string
           is_published: boolean
+          is_resonant: boolean | null
           keywords: string[] | null
           news_priority: string | null
           raw_content: string | null
+          resonance_topics: string[] | null
           scraped_at: string | null
           source: string
           source_id: string | null
@@ -2480,9 +2520,11 @@ export type Database = {
           effective_date?: string | null
           id?: string
           is_published?: boolean
+          is_resonant?: boolean | null
           keywords?: string[] | null
           news_priority?: string | null
           raw_content?: string | null
+          resonance_topics?: string[] | null
           scraped_at?: string | null
           source: string
           source_id?: string | null
@@ -2504,9 +2546,11 @@ export type Database = {
           effective_date?: string | null
           id?: string
           is_published?: boolean
+          is_resonant?: boolean | null
           keywords?: string[] | null
           news_priority?: string | null
           raw_content?: string | null
+          resonance_topics?: string[] | null
           scraped_at?: string | null
           source?: string
           source_id?: string | null
