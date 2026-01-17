@@ -284,6 +284,7 @@ serve(async (req) => {
     const isFirstCard = (count || 0) === 0;
 
     // Create new payment method
+    // supports_recurring = true because we now tokenize with contract: ["recurring"]
     const { error: insertError } = await supabase
       .from('payment_methods')
       .insert({
@@ -298,6 +299,7 @@ serve(async (req) => {
         status: 'active',
         card_product: cardProduct,
         card_category: cardCategory,
+        supports_recurring: true,
         meta: {
           tracking_id: trackingId,
           transaction_id: transaction.uid,

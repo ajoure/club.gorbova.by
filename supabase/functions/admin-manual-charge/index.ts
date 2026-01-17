@@ -119,6 +119,11 @@ Deno.serve(async (req) => {
           },
           additional_data: {
             contract: ['recurring', 'unscheduled'],
+            // Indicate this is a merchant-initiated transaction (for cards tokenized with recurring)
+            card_on_file: {
+              initiator: 'merchant',
+              type: 'delayed_charge',
+            },
           },
         },
       };
@@ -220,6 +225,19 @@ Deno.serve(async (req) => {
       if (pmError || !paymentMethod) {
         return new Response(JSON.stringify({ success: false, error: 'Payment method not found' }), {
           status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Check if card supports recurring (was tokenized with contract: ["recurring"])
+      if (paymentMethod.supports_recurring === false) {
+        console.log(`Card ${paymentMethod.id} does not support recurring - was tokenized before the fix`);
+        return new Response(JSON.stringify({ 
+          success: false, 
+          error: 'Эта карта была привязана до обновления системы и не поддерживает автоматические списания. Попросите клиента перепривязать карту.',
+          requires_rebind: true,
+        }), {
+          status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }

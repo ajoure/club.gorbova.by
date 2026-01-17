@@ -108,7 +108,7 @@ serve(async (req) => {
             order: {
               amount: tokenizationAmountSafe,
               currency,
-              description: 'Card tokenization',
+              description: 'Card tokenization for recurring payments',
             },
             settings: {
               return_url: returnUrl,
@@ -121,6 +121,10 @@ serve(async (req) => {
               first_name: profile?.first_name || '',
               last_name: profile?.last_name || '',
               phone: profile?.phone || '',
+            },
+            // Enable recurring payments - card will be stored for merchant-initiated charges
+            additional_data: {
+              contract: ['recurring'],
             },
           },
         };
