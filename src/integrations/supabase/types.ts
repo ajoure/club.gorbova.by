@@ -2448,43 +2448,190 @@ export type Database = {
       }
       news_content: {
         Row: {
+          ai_summary: string | null
           category: string
           country: string
           created_at: string
           created_by: string | null
+          effective_date: string | null
           id: string
           is_published: boolean
+          keywords: string[] | null
+          news_priority: string | null
+          raw_content: string | null
+          scraped_at: string | null
           source: string
+          source_id: string | null
           source_url: string | null
           summary: string | null
+          telegram_channel_id: string | null
+          telegram_message_id: number | null
+          telegram_sent_at: string | null
+          telegram_status: string | null
           title: string
           updated_at: string
         }
         Insert: {
+          ai_summary?: string | null
           category: string
           country: string
           created_at?: string
           created_by?: string | null
+          effective_date?: string | null
           id?: string
           is_published?: boolean
+          keywords?: string[] | null
+          news_priority?: string | null
+          raw_content?: string | null
+          scraped_at?: string | null
           source: string
+          source_id?: string | null
           source_url?: string | null
           summary?: string | null
+          telegram_channel_id?: string | null
+          telegram_message_id?: number | null
+          telegram_sent_at?: string | null
+          telegram_status?: string | null
           title: string
           updated_at?: string
         }
         Update: {
+          ai_summary?: string | null
           category?: string
           country?: string
           created_at?: string
           created_by?: string | null
+          effective_date?: string | null
           id?: string
           is_published?: boolean
+          keywords?: string[] | null
+          news_priority?: string | null
+          raw_content?: string | null
+          scraped_at?: string | null
           source?: string
+          source_id?: string | null
           source_url?: string | null
           summary?: string | null
+          telegram_channel_id?: string | null
+          telegram_message_id?: number | null
+          telegram_sent_at?: string | null
+          telegram_status?: string | null
           title?: string
           updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "news_content_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "news_sources"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "news_content_telegram_channel_id_fkey"
+            columns: ["telegram_channel_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_publish_channels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      news_digest_queue: {
+        Row: {
+          channel_id: string | null
+          created_at: string | null
+          error_message: string | null
+          id: string
+          news_id: string | null
+          scheduled_at: string | null
+          sent_at: string | null
+          status: string | null
+          telegram_message_id: number | null
+        }
+        Insert: {
+          channel_id?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          news_id?: string | null
+          scheduled_at?: string | null
+          sent_at?: string | null
+          status?: string | null
+          telegram_message_id?: number | null
+        }
+        Update: {
+          channel_id?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          news_id?: string | null
+          scheduled_at?: string | null
+          sent_at?: string | null
+          status?: string | null
+          telegram_message_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "news_digest_queue_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_publish_channels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "news_digest_queue_news_id_fkey"
+            columns: ["news_id"]
+            isOneToOne: false
+            referencedRelation: "news_content"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      news_sources: {
+        Row: {
+          category: string
+          country: string
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          last_error: string | null
+          last_scraped_at: string | null
+          name: string
+          priority: number | null
+          scrape_config: Json | null
+          scrape_selector: string | null
+          updated_at: string | null
+          url: string
+        }
+        Insert: {
+          category: string
+          country: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_error?: string | null
+          last_scraped_at?: string | null
+          name: string
+          priority?: number | null
+          scrape_config?: Json | null
+          scrape_selector?: string | null
+          updated_at?: string | null
+          url: string
+        }
+        Update: {
+          category?: string
+          country?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_error?: string | null
+          last_scraped_at?: string | null
+          name?: string
+          priority?: number | null
+          scrape_config?: Json | null
+          scrape_selector?: string | null
+          updated_at?: string | null
+          url?: string
         }
         Relationships: []
       }
@@ -5205,6 +5352,50 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      telegram_publish_channels: {
+        Row: {
+          bot_id: string | null
+          channel_id: string
+          channel_name: string
+          channel_type: string | null
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          settings: Json | null
+          updated_at: string | null
+        }
+        Insert: {
+          bot_id?: string | null
+          channel_id: string
+          channel_name: string
+          channel_type?: string | null
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          settings?: Json | null
+          updated_at?: string | null
+        }
+        Update: {
+          bot_id?: string | null
+          channel_id?: string
+          channel_name?: string
+          channel_type?: string | null
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          settings?: Json | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_publish_channels_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tg_chat_messages: {
         Row: {
