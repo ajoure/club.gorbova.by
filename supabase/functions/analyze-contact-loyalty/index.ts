@@ -74,11 +74,12 @@ serve(async (req) => {
     }
 
     // Fetch all messages from this user
+    // Schema: id, chat_id, message_id, message_ts, from_tg_user_id, from_display_name, text, has_media, reply_to_message_id, raw_payload, created_at
     const { data: messages, error: messagesError } = await supabase
       .from("tg_chat_messages")
-      .select("id, message_text, created_at, sender_name, chat_id")
-      .eq("telegram_user_id", targetTelegramUserId)
-      .not("message_text", "is", null)
+      .select("id, text, created_at, from_display_name, chat_id, message_ts")
+      .eq("from_tg_user_id", targetTelegramUserId)
+      .not("text", "is", null)
       .order("created_at", { ascending: false })
       .limit(500);
 
@@ -121,7 +122,7 @@ serve(async (req) => {
 
     // Prepare messages for AI analysis
     const messagesText = messages
-      .map(m => `[${m.created_at}] ${m.sender_name || "User"}: ${m.message_text}`)
+      .map(m => `[${m.message_ts || m.created_at}] ${m.from_display_name || "User"}: ${m.text}`)
       .join("\n");
 
     // Send to AI for analysis
