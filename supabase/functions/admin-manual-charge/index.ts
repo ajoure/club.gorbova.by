@@ -149,14 +149,42 @@ Deno.serve(async (req) => {
 
       const txStatus = chargeResult.transaction?.status;
       const txUid = chargeResult.transaction?.uid;
+      const txCode = chargeResult.transaction?.code;
 
       if (txStatus === 'successful') {
         return { success: true, uid: txUid, response: chargeResult };
       }
 
+      // Handle 3D-Secure / redirect required (incomplete status with P.4011)
+      if (txStatus === 'incomplete' && txCode === 'P.4011') {
+        return { 
+          success: false, 
+          error: 'Карта требует 3D-Secure верификацию. Для ручного списания используйте карту без 3DS или попросите клиента оплатить через форму.',
+          response: chargeResult,
+        };
+      }
+
+      // Handle other incomplete statuses
+      if (txStatus === 'incomplete') {
+        return { 
+          success: false, 
+          error: `Платёж не завершён: ${chargeResult.transaction?.message || 'требуется дополнительная верификация'}`,
+          response: chargeResult,
+        };
+      }
+
+      // Handle failed/declined
+      if (txStatus === 'failed' || txStatus === 'declined') {
+        return { 
+          success: false, 
+          error: chargeResult.transaction?.message || 'Платёж отклонён',
+          response: chargeResult,
+        };
+      }
+
       return { 
         success: false, 
-        error: chargeResult.transaction?.message || 'Payment failed',
+        error: chargeResult.transaction?.message || `Неизвестный статус: ${txStatus}`,
         response: chargeResult,
       };
     }
