@@ -367,6 +367,28 @@ export function CreateDealFromPaymentDialog({
         },
       });
 
+      // 6. Notify admins about new deal
+      try {
+        const contactName = selectedContact.full_name || selectedContact.email || 'Неизвестно';
+        const notifyMessage = 
+          `📝 <b>Новая сделка из платежа</b>\n\n` +
+          `👤 ${contactName}\n` +
+          `📧 ${selectedContact.email || 'N/A'}\n` +
+          `📦 ${product?.name || 'Продукт'}\n` +
+          `🏷️ ${tariff?.name || 'Тариф'}\n` +
+          `💵 ${finalAmount} ${finalCurrency}\n` +
+          `📅 ${dateStr}\n` +
+          `🆔 ${orderNumber}\n` +
+          (grantAccess ? '✅ Доступ выдан' : '📋 Только сделка') +
+          `\n👨‍💼 Создал: ${currentUser?.email || 'Неизвестно'}`;
+
+        await supabase.functions.invoke('telegram-notify-admins', {
+          body: { message: notifyMessage, parse_mode: 'HTML' },
+        });
+      } catch (notifyErr) {
+        console.error('Failed to notify admins:', notifyErr);
+      }
+
       toast.success(grantAccess 
         ? `Сделка создана и доступ выдан (${dateStr})` 
         : `Сделка создана (${dateStr})`);
