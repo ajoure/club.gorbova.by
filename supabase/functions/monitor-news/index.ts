@@ -535,6 +535,17 @@ async function scrapeSourceWithDepth(
   }
 }
 
+// Check if URL is a government site that needs premium proxy
+function isGovSite(url: string): boolean {
+  const govDomains = [
+    ".gov.by", ".gov.ru", 
+    "pravo.by", "nalog.gov.by", "minfin.gov.by",
+    "economy.gov.ru", "minfin.ru", "nalog.ru",
+    "government.ru", "government.by"
+  ];
+  return govDomains.some(domain => url.includes(domain));
+}
+
 // Helper to scrape a single URL
 async function scrapeUrl(
   url: string, 
@@ -542,22 +553,39 @@ async function scrapeUrl(
   country: string
 ): Promise<{ content: string | null; errorCode?: string; errorDetails?: Record<string, unknown> }> {
   try {
+    const isGov = isGovSite(url);
+    
+    // Build request body with premium proxy for gov sites
+    const requestBody: Record<string, unknown> = {
+      url: url,
+      formats: ["markdown"],
+      onlyMainContent: true,
+      waitFor: isGov ? 5000 : 3000, // Longer wait for heavy gov sites
+      location: {
+        country: country === "by" ? "BY" : "RU",
+        languages: ["ru"],
+      },
+    };
+    
+    // Add premium proxy for government sites
+    if (isGov) {
+      console.log(`[monitor-news] Using premium proxy for gov site: ${url}`);
+      // Firecrawl premium mode with residential proxies
+      (requestBody as Record<string, unknown>).premium = true;
+      // Add realistic browser headers
+      (requestBody as Record<string, unknown>).headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+      };
+    }
+    
     const response = await fetch("https://api.firecrawl.dev/v1/scrape", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${firecrawlKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        url: url,
-        formats: ["markdown"],
-        onlyMainContent: true,
-        waitFor: 3000,
-        location: {
-          country: country === "by" ? "BY" : "RU",
-          languages: ["ru"],
-        },
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -569,6 +597,7 @@ async function scrapeUrl(
           status: response.status,
           statusText: response.statusText,
           url,
+          usedPremium: isGov,
         }
       };
     }

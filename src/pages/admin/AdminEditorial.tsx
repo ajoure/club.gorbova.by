@@ -306,16 +306,31 @@ const AdminEditorial = () => {
         body: { channel_id: channelId, force: true },
       });
       if (error) throw error;
+      // Check if API returned an error in the response body
+      if (data?.error) {
+        throw new Error(data.error);
+      }
       return data;
     },
     onSuccess: (data) => {
       toast.success("Стиль канала изучен", {
-        description: `Тон: ${data.style_profile?.tone || "деловой"}`,
+        description: `Тон: ${data.style_profile?.tone || "деловой"}, проанализировано ${data.posts_analyzed || 0} постов`,
       });
       queryClient.invalidateQueries({ queryKey: ["channel-style-profile"] });
     },
-    onError: (error) => {
-      toast.error(`Ошибка: ${error.message}`);
+    onError: (error: Error) => {
+      // Check if error is about insufficient posts
+      if (error.message.includes("at least 5")) {
+        toast.error("Недостаточно постов для анализа", {
+          description: "Опубликуйте минимум 5 новостей в Telegram, затем попробуйте снова.",
+        });
+      } else if (error.message.includes("Channel not found")) {
+        toast.error("Канал не найден", {
+          description: "Добавьте и активируйте Telegram-канал в настройках.",
+        });
+      } else {
+        toast.error(`Ошибка: ${error.message}`);
+      }
     },
   });
 
@@ -923,15 +938,27 @@ const AdminEditorial = () => {
                         </p>
                       </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground">
-                        Стиль ещё не изучен. Нажмите "Обучить" для анализа.
-                      </p>
+                      <div className="space-y-1">
+                        <p className="text-sm text-muted-foreground">
+                          Стиль ещё не изучен. Нажмите "Обучить" для анализа.
+                        </p>
+                        {!channelWithStyle && (
+                          <p className="text-xs text-orange-600">
+                            ⚠️ Нет активного Telegram-канала. Добавьте канал в настройках Telegram.
+                          </p>
+                        )}
+                        {sentNews && sentNews.length < 5 && (
+                          <p className="text-xs text-orange-600">
+                            ⚠️ Опубликовано постов: {sentNews.length} из 5 минимум
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
                   <Button
                     variant="outline"
                     onClick={() => channelWithStyle && learnStyleMutation.mutate(channelWithStyle.id)}
-                    disabled={learnStyleMutation.isPending || !channelWithStyle}
+                    disabled={learnStyleMutation.isPending || !channelWithStyle || (sentNews && sentNews.length < 5)}
                   >
                     {learnStyleMutation.isPending ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -1010,7 +1037,8 @@ const AdminEditorial = () => {
                         <TableHead>Категория</TableHead>
                         <TableHead className="w-20">Приор.</TableHead>
                         <TableHead>Последний скан</TableHead>
-                        <TableHead className="w-24">Действия</TableHead>
+                        <TableHead>Ошибка</TableHead>
+                        <TableHead className="w-32">Действия</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1081,7 +1109,50 @@ const AdminEditorial = () => {
                               )}
                             </TableCell>
                             <TableCell>
+                              {source.last_error_code ? (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger>
+                                      <Badge variant="destructive" className="text-xs">
+                                        {source.last_error_code === "403" && "🚫 Доступ"}
+                                        {source.last_error_code === "500" && "⚠️ Сервер"}
+                                        {source.last_error_code === "timeout" && "⏱ Таймаут"}
+                                        {!["403", "500", "timeout"].includes(source.last_error_code) && `❌ ${source.last_error_code}`}
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-xs">
+                                      <p className="font-medium">Код ошибки: {source.last_error_code}</p>
+                                      {source.last_error && <p className="text-xs">{source.last_error}</p>}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              ) : (
+                                <span className="text-muted-foreground/50">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
                               <div className="flex gap-1">
+                                {(source.last_error || health.status === "error" || health.status === "offline") && (
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button 
+                                          variant="ghost" 
+                                          size="icon"
+                                          onClick={() => retrySourceMutation.mutate(source.id)}
+                                          disabled={retrySourceMutation.isPending}
+                                        >
+                                          {retrySourceMutation.isPending ? (
+                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                          ) : (
+                                            <RefreshCw className="h-4 w-4 text-primary" />
+                                          )}
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent>Перепроверить источник</TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                )}
                                 <Button variant="ghost" size="icon" onClick={() => handleEditSource(source)}>
                                   <Edit className="h-4 w-4" />
                                 </Button>
