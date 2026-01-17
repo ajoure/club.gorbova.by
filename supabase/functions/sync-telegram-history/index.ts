@@ -24,7 +24,7 @@ serve(async (req) => {
     // Fetch all messages from Katerina Gorbova
     const { data: messages, error: fetchError } = await supabase
       .from("tg_chat_messages")
-      .select("id, text, message_ts, from_username, chat_id")
+      .select("id, text, message_ts, from_display_name, chat_id")
       .eq("from_tg_user_id", katerina_user_id)
       .not("text", "is", null)
       .order("message_ts", { ascending: false });
@@ -70,7 +70,7 @@ serve(async (req) => {
         telegram_message_id: parseInt(msg.id) || idx,
         text: msg.text,
         date: msg.message_ts,
-        from_name: msg.from_username || "@katerinagorbova",
+        from_name: msg.from_display_name || "@katerinagorbova",
         imported_at: new Date().toISOString(),
       }));
 
