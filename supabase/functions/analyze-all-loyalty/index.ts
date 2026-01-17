@@ -21,12 +21,12 @@ serve(async (req) => {
 
     console.log(`[analyze-all-loyalty] Starting batch analysis, limit=${limit}, offset=${offset}`);
 
-    // Get all unique telegram_user_ids from messages
+    // Get all unique from_tg_user_id from messages
     const { data: uniqueUsers, error: usersError } = await supabase
       .from("tg_chat_messages")
-      .select("telegram_user_id")
-      .not("telegram_user_id", "is", null)
-      .order("telegram_user_id");
+      .select("from_tg_user_id")
+      .not("from_tg_user_id", "is", null)
+      .order("from_tg_user_id");
 
     if (usersError) {
       console.error("[analyze-all-loyalty] Error fetching unique users:", usersError);
@@ -34,7 +34,7 @@ serve(async (req) => {
     }
 
     // Get unique user IDs
-    const userIds = [...new Set(uniqueUsers?.map(u => u.telegram_user_id) || [])];
+    const userIds = [...new Set(uniqueUsers?.map(u => u.from_tg_user_id) || [])];
     console.log(`[analyze-all-loyalty] Found ${userIds.length} unique users with messages`);
 
     // Get profiles that have these telegram_user_ids
