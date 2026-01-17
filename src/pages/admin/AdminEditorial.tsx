@@ -35,6 +35,10 @@ import {
   Plus,
   XCircle,
   AlertCircle,
+  Brain,
+  RefreshCcw,
+  Info,
+  Zap,
 } from "lucide-react";
 
 interface NewsItem {
@@ -79,7 +83,34 @@ interface NewsSource {
   priority: number;
   last_scraped_at: string | null;
   last_error: string | null;
+  last_error_code: string | null;
+  last_error_details: Record<string, unknown> | null;
   created_at: string;
+}
+
+interface ScrapeLog {
+  id: string;
+  started_at: string;
+  completed_at: string | null;
+  status: string;
+  sources_total: number;
+  sources_success: number;
+  sources_failed: number;
+  news_found: number;
+  news_saved: number;
+  news_duplicates: number;
+  errors: unknown;
+  summary: string | null;
+  triggered_by: string;
+}
+
+interface ChannelSettings {
+  style_profile?: {
+    tone?: string;
+    avg_length?: string;
+    characteristic_phrases?: string[];
+    generated_at?: string;
+  };
 }
 
 // Helper to format news for publication per regulations
@@ -216,22 +247,93 @@ const AdminEditorial = () => {
     },
   });
 
-  // Run scraper mutation
+  // Fetch last scrape log for notifications
+  const { data: lastScrapeLog, refetch: refetchScrapeLog } = useQuery({
+    queryKey: ["last-scrape-log"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("scrape_logs")
+        .select("*")
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data as ScrapeLog | null;
+    },
+    refetchInterval: 5000, // Poll every 5 seconds for updates
+  });
+
+  // Fetch channel settings for style profile
+  const { data: channelWithStyle } = useQuery({
+    queryKey: ["channel-style-profile"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("telegram_publish_channels")
+        .select("id, channel_name, settings")
+        .eq("is_active", true)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data as { id: string; channel_name: string; settings: ChannelSettings } | null;
+    },
+  });
+
+  // Run scraper mutation - now async with immediate response
   const runScraperMutation = useMutation({
     mutationFn: async () => {
       const { data, error } = await supabase.functions.invoke("monitor-news", {
-        body: { limit: 10 },
+        body: { limit: 10, async: true },
       });
       if (error) throw error;
       return data;
     },
     onSuccess: (data) => {
-      toast.success(`Парсинг завершён: ${data.totalItems} новых новостей`);
-      queryClient.invalidateQueries({ queryKey: ["editorial-news"] });
+      toast.success("Парсинг запущен в фоне", {
+        description: "Вы можете продолжить работу. Результаты появятся автоматически.",
+      });
+      // Start polling for results
+      setTimeout(() => refetchScrapeLog(), 2000);
+    },
+    onError: (error) => {
+      toast.error(`Ошибка запуска: ${error.message}`);
+    },
+  });
+
+  // Learn style mutation
+  const learnStyleMutation = useMutation({
+    mutationFn: async (channelId: string) => {
+      const { data, error } = await supabase.functions.invoke("telegram-learn-style", {
+        body: { channel_id: channelId, force: true },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success("Стиль канала изучен", {
+        description: `Тон: ${data.style_profile?.tone || "деловой"}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["channel-style-profile"] });
+    },
+    onError: (error) => {
+      toast.error(`Ошибка: ${error.message}`);
+    },
+  });
+
+  // Retry single source mutation
+  const retrySourceMutation = useMutation({
+    mutationFn: async (sourceId: string) => {
+      const { data, error } = await supabase.functions.invoke("monitor-news", {
+        body: { sourceId, limit: 1 },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Источник перепроверен");
       queryClient.invalidateQueries({ queryKey: ["news-sources-all"] });
     },
     onError: (error) => {
-      toast.error(`Ошибка парсинга: ${error.message}`);
+      toast.error(`Ошибка: ${error.message}`);
     },
   });
 
@@ -755,6 +857,93 @@ const AdminEditorial = () => {
 
           {/* Settings Tab with Sources & Health Status */}
           <TabsContent value="settings" className="mt-4 space-y-6">
+            {/* Last Scrape Result Notification */}
+            {lastScrapeLog && lastScrapeLog.status === "completed" && (
+              <Card className="border-green-200 bg-green-50 dark:bg-green-950/20">
+                <CardContent className="p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="h-5 w-5 text-green-600" />
+                    <div>
+                      <p className="font-medium text-green-800 dark:text-green-200">
+                        {lastScrapeLog.summary || `Найдено ${lastScrapeLog.news_saved} новостей`}
+                      </p>
+                      <p className="text-sm text-green-600 dark:text-green-400">
+                        {format(new Date(lastScrapeLog.completed_at || lastScrapeLog.started_at), "dd.MM.yyyy HH:mm", { locale: ru })}
+                      </p>
+                    </div>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => queryClient.invalidateQueries({ queryKey: ["editorial-news"] })}>
+                    <RefreshCcw className="h-4 w-4 mr-1" />
+                    Обновить
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {lastScrapeLog && lastScrapeLog.status === "running" && (
+              <Card className="border-blue-200 bg-blue-50 dark:bg-blue-950/20">
+                <CardContent className="p-4 flex items-center gap-3">
+                  <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />
+                  <div>
+                    <p className="font-medium text-blue-800 dark:text-blue-200">Парсинг в процессе...</p>
+                    <p className="text-sm text-blue-600 dark:text-blue-400">Результаты появятся автоматически</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* AI Style Control Panel */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2">
+                  <Brain className="h-5 w-5" />
+                  Управление ИИ-стилем
+                </CardTitle>
+                <CardDescription>
+                  Обучите ИИ писать в стиле вашего канала
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between">
+                  <div>
+                    {channelWithStyle?.settings?.style_profile ? (
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="secondary">
+                            Тон: {channelWithStyle.settings.style_profile.tone || "деловой"}
+                          </Badge>
+                          <Badge variant="outline">
+                            Длина: {channelWithStyle.settings.style_profile.avg_length || "средняя"}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Последний анализ: {channelWithStyle.settings.style_profile.generated_at 
+                            ? format(new Date(channelWithStyle.settings.style_profile.generated_at), "dd.MM.yyyy HH:mm", { locale: ru })
+                            : "—"}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        Стиль ещё не изучен. Нажмите "Обучить" для анализа.
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => channelWithStyle && learnStyleMutation.mutate(channelWithStyle.id)}
+                    disabled={learnStyleMutation.isPending || !channelWithStyle}
+                  >
+                    {learnStyleMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Zap className="h-4 w-4 mr-2" />
+                    )}
+                    Обучить стилю
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
             {/* Health Status Overview */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <Card>

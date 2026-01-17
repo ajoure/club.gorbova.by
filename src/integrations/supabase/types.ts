@@ -2639,6 +2639,8 @@ export type Database = {
           id: string
           is_active: boolean | null
           last_error: string | null
+          last_error_code: string | null
+          last_error_details: Json | null
           last_scraped_at: string | null
           name: string
           priority: number | null
@@ -2654,6 +2656,8 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           last_error?: string | null
+          last_error_code?: string | null
+          last_error_details?: Json | null
           last_scraped_at?: string | null
           name: string
           priority?: number | null
@@ -2669,6 +2673,8 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           last_error?: string | null
+          last_error_code?: string | null
+          last_error_details?: Json | null
           last_scraped_at?: string | null
           name?: string
           priority?: number | null
@@ -4109,6 +4115,57 @@ export type Database = {
           description?: string | null
           id?: string
           name?: string
+        }
+        Relationships: []
+      }
+      scrape_logs: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          errors: Json | null
+          id: string
+          news_duplicates: number | null
+          news_found: number | null
+          news_saved: number | null
+          sources_failed: number | null
+          sources_success: number | null
+          sources_total: number | null
+          started_at: string
+          status: string
+          summary: string | null
+          triggered_by: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          errors?: Json | null
+          id?: string
+          news_duplicates?: number | null
+          news_found?: number | null
+          news_saved?: number | null
+          sources_failed?: number | null
+          sources_success?: number | null
+          sources_total?: number | null
+          started_at?: string
+          status?: string
+          summary?: string | null
+          triggered_by?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          errors?: Json | null
+          id?: string
+          news_duplicates?: number | null
+          news_found?: number | null
+          news_saved?: number | null
+          sources_failed?: number | null
+          sources_success?: number | null
+          sources_total?: number | null
+          started_at?: string
+          status?: string
+          summary?: string | null
+          triggered_by?: string | null
         }
         Relationships: []
       }
