@@ -100,8 +100,8 @@ export function AudienceInsightsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5 text-amber-600" />
             Анализ аудитории
@@ -143,8 +143,8 @@ export function AudienceInsightsDialog({
         </div>
 
         {/* Инсайты по категориям */}
-        <ScrollArea className="flex-1 max-h-[400px]">
-          <div className="space-y-4 pr-4">
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="space-y-4 pr-4 pb-4">
             {Object.entries(groupedInsights).map(([type, insights]) => {
               const config = insightTypeConfig[type as keyof typeof insightTypeConfig] || insightTypeConfig.topic;
               const Icon = config.icon;
@@ -183,7 +183,7 @@ export function AudienceInsightsDialog({
           </div>
         </ScrollArea>
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="gap-2 shrink-0 pt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Закрыть
           </Button>
