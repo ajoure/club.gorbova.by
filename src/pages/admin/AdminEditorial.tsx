@@ -41,7 +41,10 @@ import {
   Zap,
   Upload,
   FileJson,
+  Download,
+  MessageSquare,
 } from "lucide-react";
+import { StyleProfileDialog } from "@/components/admin/StyleProfileDialog";
 
 interface NewsItem {
   id: string;
@@ -167,6 +170,16 @@ const AdminEditorial = () => {
   // Publication options
   const [publishToSite, setPublishToSite] = useState(true);
   const [publishToTelegram, setPublishToTelegram] = useState(true);
+
+  // Style profile dialog state
+  const [styleResultDialogOpen, setStyleResultDialogOpen] = useState(false);
+  const [styleResult, setStyleResult] = useState<{
+    success: boolean;
+    posts_analyzed: number;
+    katerina_messages: number;
+    data_source: string;
+    style_profile: Record<string, unknown>;
+  } | null>(null);
 
   // Sources management state
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
@@ -315,14 +328,14 @@ const AdminEditorial = () => {
       return data;
     },
     onSuccess: (data) => {
-      toast.success("Стиль канала изучен", {
-        description: `Тон: ${data.style_profile?.tone || "деловой"}, проанализировано ${data.posts_analyzed || 0} постов`,
-      });
+      // Show dialog with detailed results instead of toast
+      setStyleResult(data);
+      setStyleResultDialogOpen(true);
       queryClient.invalidateQueries({ queryKey: ["channel-style-profile"] });
     },
     onError: (error: Error) => {
       // Check if error is about insufficient posts
-      if (error.message.includes("at least 5")) {
+      if (error.message.includes("at least 5") || error.message.includes("минимум 5")) {
         toast.error("Недостаточно постов для анализа", {
           description: "Опубликуйте минимум 5 новостей в Telegram, затем попробуйте снова.",
         });
@@ -386,7 +399,7 @@ const AdminEditorial = () => {
   });
 
   // Fetch Katerina Gorbova's message count (from_tg_user_id = 99340019)
-  const { data: katerinaMessagesCount } = useQuery({
+  const { data: katerinaMessagesCount, refetch: refetchKaterinaCount } = useQuery({
     queryKey: ["katerina-messages-count"],
     queryFn: async () => {
       const { count, error } = await supabase
@@ -397,6 +410,23 @@ const AdminEditorial = () => {
       
       if (error) return 0;
       return count || 0;
+    },
+  });
+
+  // Fetch earliest message date from Katerina
+  const { data: katerinaDateRange, refetch: refetchKaterinaDateRange } = useQuery({
+    queryKey: ["katerina-messages-date-range"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("tg_chat_messages")
+        .select("message_ts")
+        .eq("from_tg_user_id", 99340019)
+        .not("text", "is", null)
+        .order("message_ts", { ascending: true })
+        .limit(1);
+      
+      if (error || !data || data.length === 0) return null;
+      return { earliest: data[0].message_ts };
     },
   });
 
@@ -1085,48 +1115,93 @@ const AdminEditorial = () => {
             {/* Import Channel History Card */}
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2">
-                  <Upload className="h-5 w-5" />
-                  Импорт истории канала
-                </CardTitle>
-                <CardDescription>
-                  Загрузите JSON-экспорт из Telegram Desktop для обучения ИИ на основе существующих постов
-                </CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Upload className="h-5 w-5" />
+                      Импорт истории канала
+                    </CardTitle>
+                    <CardDescription>
+                      Загрузите историю для обучения ИИ стилю
+                    </CardDescription>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      refetchKaterinaCount();
+                      refetchKaterinaDateRange();
+                      queryClient.invalidateQueries({ queryKey: ["archived-posts-count"] });
+                      toast.success("Данные обновлены");
+                    }}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <p className="text-sm">
-                        Постов в архиве: <span className="font-medium">{archivedPostsCount || 0}</span>
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Telegram Desktop → Канал → ⋮ → Экспорт данных → JSON
-                      </p>
+                  {/* Statistics Section */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="rounded-md border p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <FileJson className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">Архив (JSON)</span>
+                      </div>
+                      <p className="text-2xl font-bold">{archivedPostsCount || 0}</p>
+                      <p className="text-xs text-muted-foreground">постов</p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="file"
-                        accept=".json"
-                        onChange={handleHistoryFileUpload}
-                        className="hidden"
-                        id="history-file-input"
-                        disabled={importHistoryMutation.isPending}
-                      />
-                      <Label
-                        htmlFor="history-file-input"
-                        className={`inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 cursor-pointer ${importHistoryMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        {importHistoryMutation.isPending ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <FileJson className="h-4 w-4" />
-                        )}
-                        Загрузить JSON
-                      </Label>
+                    <div className="rounded-md border p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">Сообщения бота</span>
+                      </div>
+                      <p className="text-2xl font-bold">{katerinaMessagesCount || 0}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {katerinaDateRange?.earliest 
+                          ? `с ${format(new Date(katerinaDateRange.earliest), "dd.MM.yyyy", { locale: ru })}`
+                          : "нет данных"
+                        }
+                      </p>
                     </div>
                   </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={handleHistoryFileUpload}
+                      className="hidden"
+                      id="history-file-input"
+                      disabled={importHistoryMutation.isPending}
+                    />
+                    <Label
+                      htmlFor="history-file-input"
+                      className={`inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 cursor-pointer ${importHistoryMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      {importHistoryMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <FileJson className="h-4 w-4" />
+                      )}
+                      Загрузить JSON
+                    </Label>
+                  </div>
                   
+                  {/* Info about bot messages */}
+                  {(katerinaMessagesCount || 0) > 0 && (
+                    <div className="rounded-md bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900 p-3 text-sm">
+                      <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
+                        <CheckCircle className="h-4 w-4" />
+                        <span className="font-medium">Сообщения бота доступны для анализа</span>
+                      </div>
+                      <p className="text-green-600 dark:text-green-500 mt-1 text-xs">
+                        {katerinaMessagesCount} сообщений @katerinagorbova будут использованы при обучении стилю
+                      </p>
+                    </div>
+                  )}
+
                   {/* Instructions */}
                   <div className="rounded-md bg-muted p-3 text-sm">
                     <p className="font-medium mb-2">Как экспортировать историю:</p>
@@ -1669,6 +1744,15 @@ const AdminEditorial = () => {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Style Profile Result Dialog */}
+        <StyleProfileDialog
+          open={styleResultDialogOpen}
+          onOpenChange={setStyleResultDialogOpen}
+          result={styleResult as any}
+          onRelearn={() => channelWithStyle && learnStyleMutation.mutate(channelWithStyle.id)}
+          isRelearning={learnStyleMutation.isPending}
+        />
       </div>
     </AdminLayout>
   );
