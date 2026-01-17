@@ -1,0 +1,1 @@
+UPDATE public.news_sources SET is_active = false WHERE name = 'iLex Private';
