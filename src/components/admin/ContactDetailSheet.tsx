@@ -95,6 +95,7 @@ import { EditDealDialog } from "./EditDealDialog";
 import { ComposeEmailDialog } from "./ComposeEmailDialog";
 import { AdminChargeDialog } from "./AdminChargeDialog";
 import { AvatarZoomDialog } from "./AvatarZoomDialog";
+import { LoyaltyPulse } from "./LoyaltyPulse";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 
@@ -227,14 +228,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     }
   };
 
-  // Fetch full profile data for Telegram info
+  // Fetch full profile data for Telegram info + loyalty score
   const { data: profileData } = useQuery({
     queryKey: ["contact-profile-details", contact?.id],
     queryFn: async () => {
       if (!contact?.id) return null;
       const { data, error } = await supabase
         .from("profiles")
-        .select("telegram_linked_at, telegram_link_status")
+        .select("telegram_linked_at, telegram_link_status, loyalty_score, loyalty_updated_at, loyalty_auto_update")
         .eq("id", contact.id)
         .single();
       if (error) throw error;
@@ -1044,6 +1045,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               </div>
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0 mt-1">
+              {/* Loyalty Pulse */}
+              {profileData?.loyalty_score && (
+                <LoyaltyPulse score={profileData.loyalty_score} size="sm" />
+              )}
               {!contact.user_id && (
                 <Badge variant="outline" className="text-xs gap-1">
                   <Ghost className="w-3 h-3" />

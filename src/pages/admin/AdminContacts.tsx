@@ -62,6 +62,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { LoyaltyBadge } from "@/components/admin/LoyaltyPulse";
 import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
@@ -110,6 +111,7 @@ interface Contact {
   deals_count: number;
   last_deal_at: string | null;
   role?: { code: string; name: string; assigned_at: string };
+  loyalty_score?: number | null;
 }
 
 // Helper function to format contact name as "Фамилия Имя"
@@ -149,13 +151,14 @@ const CONTACT_FILTER_FIELDS: FilterField[] = [
 const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
   { key: "name_email", label: "Имя / Email", visible: true, width: 250, order: 1 },
-  { key: "phone", label: "Телефон", visible: true, width: 140, order: 2 },
-  { key: "telegram", label: "Telegram", visible: true, width: 150, order: 3 },
-  { key: "tg_linked", label: "TG", visible: true, width: 50, order: 4 },
-  { key: "account", label: "", visible: true, width: 50, order: 5 },
-  { key: "deals_count", label: "Сделок", visible: true, width: 80, order: 6 },
-  { key: "last_deal_at", label: "Последняя", visible: true, width: 130, order: 7 },
-  { key: "status", label: "Статус", visible: true, width: 120, order: 8 },
+  { key: "loyalty", label: "💚", visible: true, width: 50, order: 2 },
+  { key: "phone", label: "Телефон", visible: true, width: 140, order: 3 },
+  { key: "telegram", label: "Telegram", visible: true, width: 150, order: 4 },
+  { key: "tg_linked", label: "TG", visible: true, width: 50, order: 5 },
+  { key: "account", label: "", visible: true, width: 50, order: 6 },
+  { key: "deals_count", label: "Сделок", visible: true, width: 80, order: 7 },
+  { key: "last_deal_at", label: "Последняя", visible: true, width: 130, order: 8 },
+  { key: "status", label: "Статус", visible: true, width: 120, order: 9 },
 ];
 
 // Global search result interfaces
@@ -527,6 +530,7 @@ export default function AdminContacts() {
           deals_count: dealsCount,
           last_deal_at: lastDealAt,
           role: profile.user_id ? rolesByUserId.get(profile.user_id) : undefined,
+          loyalty_score: (profile as any).loyalty_score,
         };
       });
 
@@ -1270,6 +1274,17 @@ export default function AdminContacts() {
                                 <div className="text-sm text-muted-foreground truncate">{contact.email || "—"}</div>
                               </div>
                             </div>
+                          </TableCell>
+                        );
+                      }
+                      if (col.key === 'loyalty') {
+                        return (
+                          <TableCell key={col.key} className="text-center">
+                            {contact.loyalty_score ? (
+                              <LoyaltyBadge score={contact.loyalty_score} />
+                            ) : (
+                              <span className="text-muted-foreground/30">—</span>
+                            )}
                           </TableCell>
                         );
                       }
