@@ -2354,6 +2354,88 @@ export type Database = {
           },
         ]
       }
+      marketing_insights: {
+        Row: {
+          content: string
+          created_at: string
+          extracted_by: string | null
+          id: string
+          insight_type: string
+          is_actionable: boolean | null
+          is_processed: boolean | null
+          keywords: string[] | null
+          processed_at: string | null
+          profile_id: string | null
+          related_news_id: string | null
+          related_product_id: string | null
+          sentiment_score: number | null
+          source_chat_id: string | null
+          source_message_id: string | null
+          source_type: string
+          updated_at: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          extracted_by?: string | null
+          id?: string
+          insight_type: string
+          is_actionable?: boolean | null
+          is_processed?: boolean | null
+          keywords?: string[] | null
+          processed_at?: string | null
+          profile_id?: string | null
+          related_news_id?: string | null
+          related_product_id?: string | null
+          sentiment_score?: number | null
+          source_chat_id?: string | null
+          source_message_id?: string | null
+          source_type?: string
+          updated_at?: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          extracted_by?: string | null
+          id?: string
+          insight_type?: string
+          is_actionable?: boolean | null
+          is_processed?: boolean | null
+          keywords?: string[] | null
+          processed_at?: string | null
+          profile_id?: string | null
+          related_news_id?: string | null
+          related_product_id?: string | null
+          sentiment_score?: number | null
+          source_chat_id?: string | null
+          source_message_id?: string | null
+          source_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "marketing_insights_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "marketing_insights_related_news_id_fkey"
+            columns: ["related_news_id"]
+            isOneToOne: false
+            referencedRelation: "news_content"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "marketing_insights_related_product_id_fkey"
+            columns: ["related_product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       merge_history: {
         Row: {
           case_id: string | null
@@ -2486,7 +2568,9 @@ export type Database = {
       }
       news_content: {
         Row: {
+          ai_persona: string | null
           ai_summary: string | null
+          audience_mood: string | null
           category: string
           country: string
           created_at: string
@@ -2496,6 +2580,7 @@ export type Database = {
           is_published: boolean
           is_resonant: boolean | null
           keywords: string[] | null
+          linked_insight_id: string | null
           news_priority: string | null
           raw_content: string | null
           resonance_topics: string[] | null
@@ -2512,7 +2597,9 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          ai_persona?: string | null
           ai_summary?: string | null
+          audience_mood?: string | null
           category: string
           country: string
           created_at?: string
@@ -2522,6 +2609,7 @@ export type Database = {
           is_published?: boolean
           is_resonant?: boolean | null
           keywords?: string[] | null
+          linked_insight_id?: string | null
           news_priority?: string | null
           raw_content?: string | null
           resonance_topics?: string[] | null
@@ -2538,7 +2626,9 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          ai_persona?: string | null
           ai_summary?: string | null
+          audience_mood?: string | null
           category?: string
           country?: string
           created_at?: string
@@ -2548,6 +2638,7 @@ export type Database = {
           is_published?: boolean
           is_resonant?: boolean | null
           keywords?: string[] | null
+          linked_insight_id?: string | null
           news_priority?: string | null
           raw_content?: string | null
           resonance_topics?: string[] | null
@@ -2564,6 +2655,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "news_content_linked_insight_id_fkey"
+            columns: ["linked_insight_id"]
+            isOneToOne: false
+            referencedRelation: "marketing_insights"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "news_content_source_id_fkey"
             columns: ["source_id"]
@@ -3885,6 +3983,9 @@ export type Database = {
           is_archived: boolean | null
           last_name: string | null
           last_seen_at: string | null
+          loyalty_auto_update: boolean | null
+          loyalty_score: number | null
+          loyalty_updated_at: string | null
           marketing_consent: boolean | null
           merged_to_profile_id: string | null
           onboarding_completed_at: string | null
@@ -3896,6 +3997,7 @@ export type Database = {
           reentry_penalty_waived: boolean
           reentry_penalty_waived_at: string | null
           reentry_penalty_waived_by: string | null
+          sentiment_history: Json | null
           source: string | null
           status: string
           telegram_last_check_at: string | null
@@ -3931,6 +4033,9 @@ export type Database = {
           is_archived?: boolean | null
           last_name?: string | null
           last_seen_at?: string | null
+          loyalty_auto_update?: boolean | null
+          loyalty_score?: number | null
+          loyalty_updated_at?: string | null
           marketing_consent?: boolean | null
           merged_to_profile_id?: string | null
           onboarding_completed_at?: string | null
@@ -3942,6 +4047,7 @@ export type Database = {
           reentry_penalty_waived?: boolean
           reentry_penalty_waived_at?: string | null
           reentry_penalty_waived_by?: string | null
+          sentiment_history?: Json | null
           source?: string | null
           status?: string
           telegram_last_check_at?: string | null
@@ -3977,6 +4083,9 @@ export type Database = {
           is_archived?: boolean | null
           last_name?: string | null
           last_seen_at?: string | null
+          loyalty_auto_update?: boolean | null
+          loyalty_score?: number | null
+          loyalty_updated_at?: string | null
           marketing_consent?: boolean | null
           merged_to_profile_id?: string | null
           onboarding_completed_at?: string | null
@@ -3988,6 +4097,7 @@ export type Database = {
           reentry_penalty_waived?: boolean
           reentry_penalty_waived_at?: string | null
           reentry_penalty_waived_by?: string | null
+          sentiment_history?: Json | null
           source?: string | null
           status?: string
           telegram_last_check_at?: string | null

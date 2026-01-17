@@ -1111,7 +1111,7 @@ const AdminEditorial = () => {
 
         {/* Edit News Dialog */}
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Редактировать новость</DialogTitle>
             </DialogHeader>
@@ -1131,9 +1131,66 @@ const AdminEditorial = () => {
                   rows={5}
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  Поддерживается HTML: &lt;b&gt;жирный&lt;/b&gt;, &lt;i&gt;курсив&lt;/i&gt;, &lt;u&gt;подчёркнутый&lt;/u&gt;
+                  HTML: &lt;b&gt;жирный&lt;/b&gt;, &lt;i&gt;курсив&lt;/i&gt;, &lt;u&gt;подчёркнутый&lt;/u&gt;
                 </p>
               </div>
+              
+              {/* AI Persona Styling Buttons */}
+              <div className="border rounded-lg p-3 bg-muted/30">
+                <label className="text-sm font-medium mb-2 block">🎭 Стилизация ИИ</label>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      if (!editForm.summary) return;
+                      toast.info("Стилизация...");
+                      const { data, error } = await supabase.functions.invoke("stylize-sarcasm", {
+                        body: { text: editForm.summary, persona: "official" },
+                      });
+                      if (error) { toast.error(error.message); return; }
+                      setEditForm({ ...editForm, summary: data.stylized });
+                      toast.success("Официальный стиль применён");
+                    }}
+                  >
+                    📋 Официально
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      if (!editForm.summary) return;
+                      toast.info("Стилизация...");
+                      const { data, error } = await supabase.functions.invoke("stylize-sarcasm", {
+                        body: { text: editForm.summary, persona: "club" },
+                      });
+                      if (error) { toast.error(error.message); return; }
+                      setEditForm({ ...editForm, summary: data.stylized });
+                      toast.success("Клубный стиль применён");
+                    }}
+                  >
+                    👥 Для Клуба
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30"
+                    onClick={async () => {
+                      if (!editForm.summary) return;
+                      toast.info("Добавляем перчинку...");
+                      const { data, error } = await supabase.functions.invoke("stylize-sarcasm", {
+                        body: { text: editForm.summary, persona: "sarcastic" },
+                      });
+                      if (error) { toast.error(error.message); return; }
+                      setEditForm({ ...editForm, summary: data.stylized });
+                      toast.success("🔥 Горбова + Сарказм применён!");
+                    }}
+                  >
+                    🔥 Горбова (Сарказм)
+                  </Button>
+                </div>
+              </div>
+
               <div>
                 <label className="text-sm font-medium">Дата вступления в силу</label>
                 <Input

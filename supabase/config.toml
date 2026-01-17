@@ -219,3 +219,6 @@ verify_jwt = false
 
 [functions.telegram-learn-style]
 verify_jwt = false
+
+[functions.stylize-sarcasm]
+verify_jwt = false
