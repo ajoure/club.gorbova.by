@@ -247,7 +247,10 @@ ${postsText.slice(0, 25000)}
       try {
         const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          styleProfile = JSON.parse(jsonMatch[0]);
+          const parsed = JSON.parse(jsonMatch[0]);
+          // Handle nested style_profile - AI sometimes returns { style_profile: {...} }
+          styleProfile = parsed.style_profile || parsed;
+          console.log('[learn-style] Parsed profile keys:', Object.keys(styleProfile));
         } else {
           throw new Error('No JSON found in response');
         }

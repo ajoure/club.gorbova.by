@@ -16,12 +16,12 @@ import {
   RefreshCw,
   Loader2,
   MessageSquare,
-  Calendar,
   Database,
   Sparkles,
   Quote,
   ListChecks,
   User,
+  FileText,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -127,6 +127,45 @@ export const StyleProfileDialog: React.FC<StyleProfileDialogProps> = ({
                   <div className="text-xs text-muted-foreground">Источник</div>
                 </CardContent>
               </Card>
+            </div>
+
+            {/* Summary Section */}
+            <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 space-y-3">
+              <h4 className="font-medium flex items-center gap-2">
+                <FileText className="h-4 w-4 text-primary" />
+                Итоговое резюме
+              </h4>
+              
+              <div className="text-sm text-muted-foreground space-y-3">
+                <p>
+                  <strong>Стиль Екатерины:</strong>{" "}
+                  {profile.tone_details || 
+                    `${profile.tone || 'Экспертный'}, с характерным использованием профессиональной терминологии и эмпатичным подходом к аудитории.`}
+                </p>
+                
+                <div>
+                  <strong>ИИ будет использовать:</strong>
+                  <ul className="list-disc list-inside mt-1 ml-2 space-y-0.5">
+                    <li>Тон: {profile.tone || 'экспертный'}</li>
+                    <li>Длина сообщений: {profile.avg_length || 'средняя'}</li>
+                    <li>Эмодзи: {profile.emojis?.used ? 
+                      `да, ${profile.emojis.frequency || 'умеренно'}` : 'не используются'}</li>
+                    <li>Структура: {profile.structure?.typical_structure || 'с абзацами'}</li>
+                    <li>Лексика: {profile.vocabulary_level || 'профессиональная'}</li>
+                  </ul>
+                </div>
+                
+                {profile.writing_guidelines && profile.writing_guidelines.length > 0 && (
+                  <div>
+                    <strong>Ключевые правила:</strong>
+                    <ol className="list-decimal list-inside mt-1 ml-2 space-y-0.5">
+                      {profile.writing_guidelines.slice(0, 3).map((g, i) => (
+                        <li key={i}>{g}</li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Tone Section */}
