@@ -68,7 +68,7 @@ async function sendToGetCourse(
         // CRITICAL: Pass our own deal_number so we can update this deal later
         deal_number: dealNumber,
         offer_code: offerId.toString(),
-        deal_cost: amount / 100, // Convert from kopecks
+        deal_cost: amount, // Already in BYN (rubles)
         deal_status: 'payed',
         deal_is_paid: 1,
         payment_type: 'CARD',
