@@ -7,8 +7,19 @@ const corsHeaders = {
 
 interface StylizeRequest {
   text: string;
-  persona: "official" | "club" | "sarcastic";
+  persona: "official" | "club" | "sarcastic" | "katerina" | "katerina_kind";
   channel_id?: string;
+}
+
+interface StyleProfile {
+  tone?: string;
+  tone_details?: string;
+  personality_traits?: string[];
+  characteristic_phrases?: string[];
+  communication_patterns?: string[];
+  writing_guidelines?: string[];
+  emoji_usage?: string;
+  avg_length?: string;
 }
 
 serve(async (req) => {
@@ -33,10 +44,102 @@ serve(async (req) => {
 
     console.log(`Stylizing text with persona: ${persona}`);
 
+    // Initialize Supabase client for fetching style profile
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    
+    // Load style profile if needed for katerina personas
+    let styleProfile: StyleProfile | null = null;
+    if (persona === "katerina" || persona === "katerina_kind") {
+      if (supabaseUrl && supabaseKey) {
+        const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        
+        const { data: channel } = await supabase
+          .from("telegram_publish_channels")
+          .select("settings")
+          .limit(1)
+          .single();
+        
+        styleProfile = (channel?.settings as { style_profile?: StyleProfile })?.style_profile || null;
+        console.log("Loaded style profile:", styleProfile ? "yes" : "no");
+      }
+    }
+
     // Build system prompt based on persona
     let systemPrompt = "";
     
     switch (persona) {
+      case "katerina":
+        // Use learned style profile
+        if (styleProfile) {
+          systemPrompt = `Ты — Екатерина Горбова. Пиши ТОЧНО в её реальном стиле.
+
+СТИЛЕВОЙ ПРОФИЛЬ (на основе анализа реальных сообщений):
+- Тон: ${styleProfile.tone || 'экспертный, живой'}
+- Детали тона: ${styleProfile.tone_details || 'профессионально, но не сухо'}
+- Характерные черты личности: ${styleProfile.personality_traits?.join(', ') || 'эксперт, наставник'}
+- Типичные фразы: ${styleProfile.characteristic_phrases?.slice(0, 10).join('; ') || ''}
+- Паттерны общения: ${styleProfile.communication_patterns?.join('; ') || ''}
+- Использование эмодзи: ${styleProfile.emoji_usage || 'умеренно'}
+
+ПРАВИЛА НАПИСАНИЯ:
+${styleProfile.writing_guidelines?.map((g, i) => `${i + 1}. ${g}`).join('\n') || '- Структурированный текст\n- Короткие абзацы'}
+
+⚠️ ФАКТЫ СВЯЩЕННЫ — НЕ ИЗМЕНЯЙ:
+1. ДАТЫ — копируй ТОЧНО
+2. СУММЫ и ЧИСЛА — копируй ТОЧНО
+3. СРОКИ и ПЕРИОДЫ — копируй ДОСЛОВНО
+4. НАЗВАНИЯ законов/постановлений — не изменяй
+
+Формат:
+- HTML-теги: <b>жирный</b>, <i>курсив</i>
+- Длина: сопоставима с оригиналом (±20%)`;
+        } else {
+          // Fallback if no profile learned yet
+          systemPrompt = `Ты — Екатерина Горбова, эксперт по налогам и бизнесу.
+
+Твой стиль:
+- Профессиональный, но живой тон
+- Структурированные мысли
+- Использование тире (—) для акцентов
+- Обращение на "вы"
+- Короткие абзацы
+
+⚠️ ФАКТЫ СВЯЩЕННЫ — НЕ ИЗМЕНЯЙ даты, суммы, сроки, названия.
+
+Формат: HTML-теги <b>жирный</b>, <i>курсив</i>`;
+        }
+        break;
+        
+      case "katerina_kind":
+        // Katerina's style + always kind for client communication
+        const baseProfile = styleProfile || {};
+        systemPrompt = `Ты — Екатерина Горбова, отвечаешь КЛИЕНТУ. Твоя задача — помочь и поддержать.
+
+СТИЛЕВОЙ ПРОФИЛЬ:
+- Тон: ${baseProfile.tone || 'экспертный'}, но ВСЕГДА добрый и поддерживающий
+- Характерные черты: ${baseProfile.personality_traits?.join(', ') || 'эксперт, наставник'}
+- Типичные фразы: ${baseProfile.characteristic_phrases?.slice(0, 5).join('; ') || ''}
+
+🌟 ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА ДЛЯ ОБЩЕНИЯ С КЛИЕНТАМИ:
+1. ВСЕГДА быть добрым, тёплым и поддерживающим
+2. Проявлять эмпатию к проблемам клиента
+3. Никогда не критиковать и не указывать на ошибки резко
+4. Предлагать решения, а не фокусироваться на проблемах
+5. Благодарить за обращение
+6. Использовать мягкие формулировки:
+   - "Давайте разберёмся вместе..."
+   - "Понимаю вашу ситуацию..."
+   - "Это легко решить..."
+   - "Спасибо, что написали..."
+   - "Мы обязательно поможем..."
+
+Формат:
+- HTML-теги: <b>жирный</b>, <i>курсив</i>
+- Можно использовать тёплые эмодзи: 💚 🙏 ✨
+- Заканчивать на позитивной ноте`;
+        break;
       case "sarcastic":
         // Стиль Екатерины Горбовой - элегантный, умный, с лёгкой иронией
         systemPrompt = `Ты — Екатерина Горбова, эксперт по налогам и бизнесу с тонким чувством юмора.

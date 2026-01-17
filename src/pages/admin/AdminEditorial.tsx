@@ -1579,19 +1579,52 @@ const AdminEditorial = () => {
                   <Button
                     variant="secondary"
                     size="sm"
-                    className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30"
+                    className="bg-gradient-to-r from-primary/20 to-accent/20 hover:from-primary/30 hover:to-accent/30"
                     onClick={async () => {
                       if (!editForm.summary) return;
-                      toast.info("Добавляем перчинку...");
+                      toast.info("Применяем стиль Екатерины...");
+                      const { data, error } = await supabase.functions.invoke("stylize-sarcasm", {
+                        body: { text: editForm.summary, persona: "katerina" },
+                      });
+                      if (error) { toast.error(error.message); return; }
+                      setEditForm({ ...editForm, summary: data.stylized });
+                      toast.success("✍️ Стиль Екатерины применён!");
+                    }}
+                  >
+                    ✍️ Стиль Екатерины
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="bg-gradient-to-r from-green-500/20 to-emerald-500/20 hover:from-green-500/30 hover:to-emerald-500/30"
+                    onClick={async () => {
+                      if (!editForm.summary) return;
+                      toast.info("Добавляем доброту...");
+                      const { data, error } = await supabase.functions.invoke("stylize-sarcasm", {
+                        body: { text: editForm.summary, persona: "katerina_kind" },
+                      });
+                      if (error) { toast.error(error.message); return; }
+                      setEditForm({ ...editForm, summary: data.stylized });
+                      toast.success("💚 Добрый стиль для клиента применён!");
+                    }}
+                  >
+                    💚 Для клиента (добрый)
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      if (!editForm.summary) return;
+                      toast.info("Добавляем иронию...");
                       const { data, error } = await supabase.functions.invoke("stylize-sarcasm", {
                         body: { text: editForm.summary, persona: "sarcastic" },
                       });
                       if (error) { toast.error(error.message); return; }
                       setEditForm({ ...editForm, summary: data.stylized });
-                      toast.success("🔥 Горбова + Сарказм применён!");
+                      toast.success("🔥 С иронией применён!");
                     }}
                   >
-                    🔥 Горбова (Сарказм)
+                    🔥 С иронией
                   </Button>
                 </div>
               </div>
