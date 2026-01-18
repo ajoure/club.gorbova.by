@@ -93,6 +93,13 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
+interface CommunicationStyle {
+  tone: string;
+  keywords_to_use: string[];
+  topics_to_avoid: string[];
+  recommendations: string;
+}
+
 interface Contact {
   id: string;
   user_id: string;
@@ -112,6 +119,12 @@ interface Contact {
   last_deal_at: string | null;
   role?: { code: string; name: string; assigned_at: string };
   loyalty_score?: number | null;
+  loyalty_ai_summary?: string | null;
+  loyalty_status_reason?: string | null;
+  loyalty_proofs?: unknown[] | null;
+  loyalty_analyzed_messages_count?: number | null;
+  loyalty_updated_at?: string | null;
+  communication_style?: CommunicationStyle | null;
 }
 
 // Helper function to format contact name as "Фамилия Имя"
@@ -531,6 +544,12 @@ export default function AdminContacts() {
           last_deal_at: lastDealAt,
           role: profile.user_id ? rolesByUserId.get(profile.user_id) : undefined,
           loyalty_score: (profile as any).loyalty_score,
+          loyalty_ai_summary: (profile as any).loyalty_ai_summary,
+          loyalty_status_reason: (profile as any).loyalty_status_reason,
+          loyalty_proofs: (profile as any).loyalty_proofs,
+          loyalty_analyzed_messages_count: (profile as any).loyalty_analyzed_messages_count,
+          loyalty_updated_at: (profile as any).loyalty_updated_at,
+          communication_style: (profile as any).communication_style,
         };
       });
 

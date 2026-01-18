@@ -115,6 +115,13 @@ function formatContactName(contact: {
   return "Без имени";
 }
 
+interface CommunicationStyle {
+  tone: string;
+  keywords_to_use: string[];
+  topics_to_avoid: string[];
+  recommendations: string;
+}
+
 interface Contact {
   id: string;
   user_id: string | null;
@@ -132,6 +139,13 @@ interface Contact {
   duplicate_flag: string | null;
   deals_count: number;
   last_deal_at: string | null;
+  loyalty_score?: number | null;
+  loyalty_ai_summary?: string | null;
+  loyalty_status_reason?: string | null;
+  loyalty_proofs?: unknown[] | null;
+  loyalty_analyzed_messages_count?: number | null;
+  loyalty_updated_at?: string | null;
+  communication_style?: CommunicationStyle | null;
 }
 
 interface ContactDetailSheetProps {
