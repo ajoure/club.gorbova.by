@@ -408,14 +408,14 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">Статус заказа</Label>
             <Select
-              value={(filters.status as string) || ''}
-              onValueChange={(val) => handleFilterChange(entityType, { status: val || undefined })}
+              value={(filters.status as string) || '__all__'}
+              onValueChange={(val) => handleFilterChange(entityType, { status: val === '__all__' ? undefined : val })}
             >
               <SelectTrigger className="bg-background/80 backdrop-blur-sm border-border/50">
                 <SelectValue placeholder="Все статусы" />
               </SelectTrigger>
               <SelectContent className="bg-background/95 backdrop-blur-xl border-border/50">
-                <SelectItem value="">Все статусы</SelectItem>
+                <SelectItem value="__all__">Все статусы</SelectItem>
                 {ORDER_STATUSES.map((s) => (
                   <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
                 ))}
@@ -429,14 +429,14 @@ export function IntegrationSyncSettingsDialog({ instance, open, onOpenChange }: 
           <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">Тип платежа</Label>
             <Select
-              value={(filters.payment_type as string) || ''}
-              onValueChange={(val) => handleFilterChange(entityType, { payment_type: val || undefined })}
+              value={(filters.payment_type as string) || '__all__'}
+              onValueChange={(val) => handleFilterChange(entityType, { payment_type: val === '__all__' ? undefined : val })}
             >
               <SelectTrigger className="bg-background/80 backdrop-blur-sm border-border/50">
                 <SelectValue placeholder="Все типы" />
               </SelectTrigger>
               <SelectContent className="bg-background/95 backdrop-blur-xl border-border/50">
-                <SelectItem value="">Все типы</SelectItem>
+                <SelectItem value="__all__">Все типы</SelectItem>
                 {PAYMENT_TYPES.map((t) => (
                   <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
                 ))}

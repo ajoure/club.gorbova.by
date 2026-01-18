@@ -363,14 +363,14 @@ export function FieldMappingDialog({ instance, open, onOpenChange }: FieldMappin
                             <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
                             <Select
-                              value={mappings[field.id] || ""}
-                              onValueChange={(v) => handleMappingChange(field.id, v)}
+                              value={mappings[field.id] || "__none__"}
+                              onValueChange={(v) => handleMappingChange(field.id, v === "__none__" ? "" : v)}
                             >
                               <SelectTrigger className="h-8">
                                 <SelectValue placeholder="Выберите поле..." />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="">— Не сопоставлено —</SelectItem>
+                                <SelectItem value="__none__">— Не сопоставлено —</SelectItem>
                                 {filteredExternalFields.map((ef) => (
                                   <SelectItem key={ef.id} value={String(ef.id)}>
                                     <div className="flex items-center gap-2">

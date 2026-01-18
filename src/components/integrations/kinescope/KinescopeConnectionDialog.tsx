@@ -281,12 +281,12 @@ export function KinescopeConnectionDialog({
           {validationResult?.success && validationResult.projects && validationResult.projects.length > 0 && (
             <div className="space-y-2">
               <Label>Проект по умолчанию</Label>
-              <Select value={defaultProjectId} onValueChange={setDefaultProjectId}>
+              <Select value={defaultProjectId || "__none__"} onValueChange={(v) => setDefaultProjectId(v === "__none__" ? "" : v)}>
                 <SelectTrigger>
                   <SelectValue placeholder="Выберите проект (опционально)" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Не выбран</SelectItem>
+                  <SelectItem value="__none__">Не выбран</SelectItem>
                   {validationResult.projects.map((project) => (
                     <SelectItem key={project.id} value={project.id}>
                       {project.name}
