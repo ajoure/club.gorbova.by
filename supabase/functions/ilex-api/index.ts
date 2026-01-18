@@ -62,11 +62,140 @@ function getHeaders(sessionCookie?: string): Record<string, string> {
   return headers;
 }
 
+// Extract page diagnostics for debugging
+function extractPageDiagnostics(html: string): {
+  title: string | null;
+  isLikelyAntibot: boolean;
+  isLikelySPA: boolean;
+  hasAnyFormTag: boolean;
+  hasLoginForm: boolean;
+  htmlSnippet: string;
+  metaTags: string[];
+  scriptSources: string[];
+} {
+  // Extract title
+  const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  const title = titleMatch ? titleMatch[1].trim() : null;
+  
+  // Check for anti-bot markers
+  const antibotMarkers = ['cloudflare', 'attention required', 'captcha', 'enable javascript', 'ddos', 'please wait', 'checking your browser', 'recaptcha'];
+  const lowerHtml = html.toLowerCase();
+  const isLikelyAntibot = antibotMarkers.some(marker => lowerHtml.includes(marker));
+  
+  // Check if it's likely an SPA (lots of JS, minimal HTML content)
+  const scriptCount = (html.match(/<script/gi) || []).length;
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  const bodyContent = bodyMatch ? bodyMatch[1].replace(/<script[\s\S]*?<\/script>/gi, '').trim() : '';
+  const isLikelySPA = scriptCount > 3 && bodyContent.length < 500;
+  
+  // Check for form tags
+  const hasAnyFormTag = /<form\b/i.test(html);
+  const hasLoginForm = /<form[^>]*>[\s\S]*?(login|password|пароль|вход)/i.test(html);
+  
+  // Get HTML snippet (first 800 chars, cleaned)
+  const htmlSnippet = html.substring(0, 800).replace(/\s+/g, ' ').trim();
+  
+  // Extract meta tags
+  const metaTags: string[] = [];
+  const metaRegex = /<meta[^>]+>/gi;
+  let metaMatch;
+  while ((metaMatch = metaRegex.exec(html)) !== null && metaTags.length < 10) {
+    metaTags.push(metaMatch[0]);
+  }
+  
+  // Extract script sources
+  const scriptSources: string[] = [];
+  const srcRegex = /<script[^>]+src=["']([^"']+)["']/gi;
+  let srcMatch;
+  while ((srcMatch = srcRegex.exec(html)) !== null && scriptSources.length < 5) {
+    scriptSources.push(srcMatch[1]);
+  }
+  
+  return {
+    title,
+    isLikelyAntibot,
+    isLikelySPA,
+    hasAnyFormTag,
+    hasLoginForm,
+    htmlSnippet,
+    metaTags,
+    scriptSources,
+  };
+}
+
+// Extract CSRF token from HTML using multiple methods
+function extractCsrfToken(html: string): { token: string | null; source: string } {
+  // Method 1: ASP.NET MVC __RequestVerificationToken in hidden input
+  const aspPatterns = [
+    /<input[^>]*name=["']__RequestVerificationToken["'][^>]*value=["']([^"']+)["']/i,
+    /<input[^>]*value=["']([^"']+)["'][^>]*name=["']__RequestVerificationToken["']/i,
+    /name=["']?__RequestVerificationToken["']?\s+[^>]*value=["']([^"']+)["']/i,
+    /__RequestVerificationToken["']?[^>]*value=["']([^"']+)["']/i,
+    /value=["']([^"']+)["'][^>]*__RequestVerificationToken/i,
+  ];
+  
+  for (const pattern of aspPatterns) {
+    const match = html.match(pattern);
+    if (match && match[1] && match[1].length > 20) {
+      return { token: match[1], source: 'asp_hidden_input' };
+    }
+  }
+  
+  // Method 2: Meta tag csrf-token (Rails, Laravel style)
+  const metaPatterns = [
+    /<meta[^>]*name=["']csrf-token["'][^>]*content=["']([^"']+)["']/i,
+    /<meta[^>]*content=["']([^"']+)["'][^>]*name=["']csrf-token["']/i,
+    /<meta[^>]*name=["']xsrf-token["'][^>]*content=["']([^"']+)["']/i,
+    /<meta[^>]*name=["']_token["'][^>]*content=["']([^"']+)["']/i,
+  ];
+  
+  for (const pattern of metaPatterns) {
+    const match = html.match(pattern);
+    if (match && match[1]) {
+      return { token: match[1], source: 'meta_tag' };
+    }
+  }
+  
+  // Method 3: JavaScript variables
+  const jsPatterns = [
+    /csrfToken\s*[:=]\s*["']([^"']+)["']/i,
+    /csrf_token\s*[:=]\s*["']([^"']+)["']/i,
+    /XSRF\s*[:=]\s*["']([^"']+)["']/i,
+    /"__RequestVerificationToken"\s*:\s*"([^"]+)"/i,
+    /antiForgeryToken\s*[:=]\s*["']([^"']+)["']/i,
+  ];
+  
+  for (const pattern of jsPatterns) {
+    const match = html.match(pattern);
+    if (match && match[1] && match[1].length > 10) {
+      return { token: match[1], source: 'js_variable' };
+    }
+  }
+  
+  return { token: null, source: 'not_found' };
+}
+
+// Extract form action URL from HTML
+function extractFormAction(html: string): string | null {
+  const formMatch = html.match(/<form[^>]*action=["']([^"']+)["'][^>]*>/i);
+  if (formMatch && formMatch[1]) {
+    return formMatch[1];
+  }
+  return null;
+}
+
 // Authenticate and get session cookie using ASP.NET MVC flow
 async function authenticate(login: string, password: string): Promise<{ 
   success: boolean; 
   sessionCookie?: string; 
   error?: string;
+  debugHints?: {
+    title: string | null;
+    isLikelyAntibot: boolean;
+    isLikelySPA: boolean;
+    hasAnyFormTag: boolean;
+    tokenSource?: string;
+  };
 }> {
   try {
     console.log('Attempting iLex ASP.NET authentication...');
@@ -92,57 +221,161 @@ async function authenticate(login: string, password: string): Promise<{
     }
     
     const html = await loginPageResponse.text();
+    console.log('Login page HTML length:', html.length);
     
-    // Step 2: Extract __RequestVerificationToken from HTML
-    const tokenPatterns = [
-      /<input[^>]*name="__RequestVerificationToken"[^>]*value="([^"]+)"/i,
-      /name="__RequestVerificationToken"\s+type="hidden"\s+value="([^"]+)"/i,
-      /value="([^"]+)"[^>]*name="__RequestVerificationToken"/i,
-      /__RequestVerificationToken[^>]*value="([^"]+)"/i,
-    ];
+    // Get diagnostics for debugging
+    const diagnostics = extractPageDiagnostics(html);
+    console.log('Page diagnostics:', JSON.stringify({
+      title: diagnostics.title,
+      isLikelyAntibot: diagnostics.isLikelyAntibot,
+      isLikelySPA: diagnostics.isLikelySPA,
+      hasAnyFormTag: diagnostics.hasAnyFormTag,
+      hasLoginForm: diagnostics.hasLoginForm,
+      metaTagsCount: diagnostics.metaTags.length,
+      scriptSourcesCount: diagnostics.scriptSources.length,
+    }));
     
-    let verificationToken: string | null = null;
-    for (const pattern of tokenPatterns) {
-      const match = html.match(pattern);
-      if (match) {
-        verificationToken = match[1];
-        break;
-      }
+    // Check for anti-bot protection
+    if (diagnostics.isLikelyAntibot) {
+      console.log('Anti-bot protection detected');
+      console.log('HTML snippet:', diagnostics.htmlSnippet);
+      return { 
+        success: false, 
+        error: 'iLex возвращает страницу защиты/капчи. Автоматическая авторизация невозможна.',
+        debugHints: {
+          title: diagnostics.title,
+          isLikelyAntibot: true,
+          isLikelySPA: diagnostics.isLikelySPA,
+          hasAnyFormTag: diagnostics.hasAnyFormTag,
+        },
+      };
     }
     
-    if (!verificationToken) {
-      console.log('Could not find __RequestVerificationToken in login page');
-      console.log('Login page HTML length:', html.length);
-      console.log('Contains form:', html.includes('<form'));
-      console.log('Contains RequestVerification:', html.includes('RequestVerification'));
+    // Step 2: Extract CSRF token
+    const tokenResult = extractCsrfToken(html);
+    console.log('Token extraction result:', tokenResult.source);
+    
+    // Check if already authenticated
+    if (html.includes('logout') || html.includes('Выйти') || html.includes('/Account/LogOff')) {
+      console.log('Appears already authenticated');
+      return { 
+        success: true, 
+        sessionCookie: cookies.join('; '),
+      };
+    }
+    
+    if (!tokenResult.token) {
+      console.log('Could not find CSRF token');
+      console.log('HTML snippet for debugging:', diagnostics.htmlSnippet);
       
-      // Maybe already authenticated?
-      if (html.includes('logout') || html.includes('Выйти') || html.includes('/Account/LogOff')) {
-        console.log('Appears already authenticated');
+      // Try Scenario B: POST without token if form exists
+      if (diagnostics.hasAnyFormTag || diagnostics.hasLoginForm) {
+        console.log('Form found but no token - attempting POST without CSRF');
+        
+        const formAction = extractFormAction(html) || '/Account/Login';
+        const postUrl = formAction.startsWith('/') ? `${ILEX_BASE_URL}${formAction}` : formAction;
+        
+        const formData = new URLSearchParams({
+          UserName: login,
+          Password: password,
+          RememberMe: 'true',
+        });
+        
+        await humanDelay(300, 600);
+        
+        const loginResponse = await fetch(postUrl, {
+          method: 'POST',
+          headers: {
+            ...getHeaders(cookies.join('; ')),
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Referer': loginPageUrl,
+            'Origin': ILEX_BASE_URL,
+          },
+          body: formData.toString(),
+          redirect: 'manual',
+        });
+        
+        console.log('No-token POST status:', loginResponse.status);
+        
+        const newCookies = loginResponse.headers.getSetCookie?.() || [];
+        if (newCookies.length > 0) {
+          cookies.push(...newCookies.map(c => c.split(';')[0]));
+        }
+        
+        const hasAuthCookie = cookies.some(c => 
+          c.includes('.ASPXAUTH') || 
+          c.includes('.AspNet.ApplicationCookie') || 
+          c.includes('auth')
+        );
+        
+        const location = loginResponse.headers.get('location');
+        const isRedirectToHome = loginResponse.status >= 300 && 
+                                 loginResponse.status < 400 &&
+                                 location && !location.toLowerCase().includes('login');
+        
+        if (hasAuthCookie || isRedirectToHome) {
+          console.log('Authentication succeeded without CSRF token');
+          return { 
+            success: true, 
+            sessionCookie: cookies.join('; '),
+          };
+        }
+        
+        // Check if anti-forgery error
+        const responseText = await loginResponse.text();
+        if (responseText.toLowerCase().includes('antiforgery') || responseText.toLowerCase().includes('verification')) {
+          console.log('Server requires CSRF token - cannot authenticate');
+        }
+      }
+      
+      // Check if SPA
+      if (diagnostics.isLikelySPA) {
         return { 
-          success: true, 
-          sessionCookie: cookies.join('; '),
+          success: false, 
+          error: 'Страница логина рендерится JavaScript. Требуется определить API авторизации.',
+          debugHints: {
+            title: diagnostics.title,
+            isLikelyAntibot: false,
+            isLikelySPA: true,
+            hasAnyFormTag: diagnostics.hasAnyFormTag,
+            tokenSource: 'not_found',
+          },
         };
       }
       
-      return { success: false, error: 'CSRF токен не найден на странице входа' };
+      return { 
+        success: false, 
+        error: 'CSRF токен не найден на странице входа',
+        debugHints: {
+          title: diagnostics.title,
+          isLikelyAntibot: diagnostics.isLikelyAntibot,
+          isLikelySPA: diagnostics.isLikelySPA,
+          hasAnyFormTag: diagnostics.hasAnyFormTag,
+          tokenSource: 'not_found',
+        },
+      };
     }
     
-    console.log('Found verification token:', verificationToken.substring(0, 30) + '...');
+    console.log('Found verification token via:', tokenResult.source);
+    console.log('Token preview:', tokenResult.token.substring(0, 30) + '...');
     
     await humanDelay();
     
     // Step 3: POST login form with token
+    const formAction = extractFormAction(html) || '/Account/Login';
+    const postUrl = formAction.startsWith('/') ? `${ILEX_BASE_URL}${formAction}` : 
+                    formAction.startsWith('http') ? formAction : loginPageUrl;
+    
     const formData = new URLSearchParams({
-      __RequestVerificationToken: verificationToken,
+      __RequestVerificationToken: tokenResult.token,
       UserName: login,
       Password: password,
       RememberMe: 'true',
     });
     
-    console.log('Submitting login form...');
+    console.log('Submitting login form to:', postUrl);
     
-    const loginResponse = await fetch(loginPageUrl, {
+    const loginResponse = await fetch(postUrl, {
       method: 'POST',
       headers: {
         ...getHeaders(cookies.join('; ')),
@@ -156,7 +389,6 @@ async function authenticate(login: string, password: string): Promise<{
     });
     
     console.log('Login POST status:', loginResponse.status);
-    console.log('Login POST headers:', Object.fromEntries(loginResponse.headers.entries()));
     
     // Collect new cookies (including auth cookie)
     const newCookies = loginResponse.headers.getSetCookie?.() || [];
@@ -240,7 +472,11 @@ async function authenticate(login: string, password: string): Promise<{
 }
 
 // Get or refresh authenticated session
-async function getAuthenticatedSession(): Promise<{ cookie: string | null; error?: string }> {
+async function getAuthenticatedSession(): Promise<{ 
+  cookie: string | null; 
+  error?: string;
+  debugHints?: any;
+}> {
   // Check cache first
   if (sessionCache && sessionCache.expiresAt > Date.now() && sessionCache.authenticated) {
     console.log('Using cached session');
@@ -267,7 +503,11 @@ async function getAuthenticatedSession(): Promise<{ cookie: string | null; error
     return { cookie: authResult.sessionCookie };
   }
   
-  return { cookie: null, error: authResult.error || 'Ошибка авторизации' };
+  return { 
+    cookie: null, 
+    error: authResult.error || 'Ошибка авторизации',
+    debugHints: authResult.debugHints,
+  };
 }
 
 // Browse URL with authentication
@@ -581,6 +821,7 @@ async function checkAuthStatus(): Promise<{
   authenticated: boolean; 
   message: string;
   hasCredentials: boolean;
+  debugHints?: any;
 }> {
   const login = Deno.env.get('ILEX_LOGIN');
   const password = Deno.env.get('ILEX_PASSWORD');
@@ -609,6 +850,7 @@ async function checkAuthStatus(): Promise<{
     authenticated: !!session.cookie, 
     message: session.cookie ? 'Авторизован' : (session.error || 'Ошибка авторизации'),
     hasCredentials: true,
+    debugHints: session.debugHints,
   };
 }
 
@@ -743,6 +985,7 @@ Deno.serve(async (req) => {
         result = { 
           success: !!refreshResult.cookie, 
           error: refreshResult.error,
+          debugHints: refreshResult.debugHints,
         };
         break;
         
