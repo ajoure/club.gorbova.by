@@ -30,8 +30,10 @@ interface ServerStats {
 export type UnifiedDashboardFilter = 'successful' | 'refunded' | 'cancelled' | 'failed' | null;
 
 // Constants for status classification
-const FAILED_STATUSES = ['failed', 'canceled', 'cancelled', 'expired', 'declined', 'error', 'voided'];
+// Note: cancelled/voided are NOT in failed - they are separate category
+const FAILED_STATUSES = ['failed', 'expired', 'declined', 'error', 'incomplete'];
 const SUCCESSFUL_STATUSES = ['successful', 'succeeded'];
+const CANCELLED_TX_TYPES = ['отмена', 'void', 'cancellation', 'authorization_void', 'canceled', 'cancelled'];
 
 interface UnifiedPaymentsDashboardProps {
   payments: UnifiedPayment[];
@@ -251,9 +253,12 @@ export default function UnifiedPaymentsDashboard({
         || txType === 'refund'
         || txType.includes('возврат')
         || statusNormalized === 'refunded';
+        
+      // Check if this is a cancellation/void transaction
+      const isCancelledTx = CANCELLED_TX_TYPES.some(ct => txType.includes(ct));
       
-      // Only count successful if it's NOT a refund
-      if (SUCCESSFUL_STATUSES.includes(statusNormalized) && !isRefundTx && p.amount > 0) {
+      // Only count successful if it's NOT a refund and NOT a cancellation
+      if (SUCCESSFUL_STATUSES.includes(statusNormalized) && !isRefundTx && !isCancelledTx && p.amount > 0) {
         result.successful[currency] = (result.successful[currency] || 0) + p.amount;
         result.successful.count++;
         
@@ -316,7 +321,8 @@ export default function UnifiedPaymentsDashboard({
         }
       }
 
-      if (FAILED_STATUSES.includes(statusNormalized)) {
+      // Count failed - but NOT if it's a cancellation
+      if (FAILED_STATUSES.includes(statusNormalized) && !isCancelledTx) {
         result.failed[currency] = (result.failed[currency] || 0) + Math.abs(p.amount);
         result.failed.count++;
       }
