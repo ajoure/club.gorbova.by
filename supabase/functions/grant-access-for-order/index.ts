@@ -302,32 +302,56 @@ Deno.serve(async (req) => {
         }
       } catch (getcourseError) {
         console.error("GetCourse sync error (non-critical):", getcourseError);
-        results.getcourse = { error: String(getcourseError) };
-      }
+      results.getcourse = { error: String(getcourseError) };
     }
+  }
 
-    // 5. Add audit log
-    try {
-      await supabase.from("audit_logs").insert({
-        actor_type: "admin",
-        actor_label: "grant-access-for-order",
-        action: "admin.grant_access",
-        target_user_id: userId,
-        meta: {
-          order_id: orderId,
-          product_id: productId,
-          tariff_id: tariffId,
-          duration_days: durationDays,
-          access_start_at: accessStartAt.toISOString(),
-          access_end_at: accessEndAt.toISOString(),
-          extended_from: existingProductSub?.id || null,
-          grant_telegram: grantTelegram,
-          grant_getcourse: grantGetcourse,
-        },
-      });
-    } catch (auditError) {
-      console.error("Audit log error (non-critical):", auditError);
+  // 5. Convert any preregistrations to "converted" status
+  try {
+    const { data: convertedPrereg, error: preregError } = await supabase
+      .from("course_preregistrations")
+      .update({ 
+        status: "converted",
+        updated_at: now.toISOString(),
+      })
+      .eq("user_id", userId)
+      .eq("product_code", productCode)
+      .in("status", ["new", "contacted"])
+      .select("id");
+
+    if (preregError) {
+      console.error("Error converting preregistrations (non-critical):", preregError);
+    } else if (convertedPrereg?.length) {
+      console.log(`Converted ${convertedPrereg.length} preregistrations for user ${userId}`);
+      results.preregistrations_converted = convertedPrereg.length;
     }
+  } catch (preregConvertError) {
+    console.error("Preregistration convert error (non-critical):", preregConvertError);
+  }
+
+  // 6. Add audit log
+  try {
+    await supabase.from("audit_logs").insert({
+      actor_type: "admin",
+      actor_label: "grant-access-for-order",
+      action: "admin.grant_access",
+      target_user_id: userId,
+      meta: {
+        order_id: orderId,
+        product_id: productId,
+        tariff_id: tariffId,
+        duration_days: durationDays,
+        access_start_at: accessStartAt.toISOString(),
+        access_end_at: accessEndAt.toISOString(),
+        extended_from: existingProductSub?.id || null,
+        grant_telegram: grantTelegram,
+        grant_getcourse: grantGetcourse,
+        preregistrations_converted: results.preregistrations_converted || 0,
+      },
+    });
+  } catch (auditError) {
+    console.error("Audit log error (non-critical):", auditError);
+  }
 
     return new Response(
       JSON.stringify({ 

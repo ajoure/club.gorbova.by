@@ -1,13 +1,15 @@
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
+import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
+import { toast } from "sonner";
 import { 
   Calendar, 
   CheckCircle, 
@@ -21,7 +23,10 @@ import {
   TrendingUp,
   Clock,
   Check,
-  ArrowLeft
+  ArrowLeft,
+  XCircle,
+  Loader2,
+  ShoppingCart
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -61,8 +66,10 @@ const whatIncluded = [
 
 export default function BusinessTraining() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const [showPreregistration, setShowPreregistration] = useState(false);
+  const [showPayment, setShowPayment] = useState(false);
 
   // Fetch dynamic product data from API
   const { data: productData } = usePublicProduct("business-training.gorbova.by", user?.id);
@@ -117,7 +124,7 @@ export default function BusinessTraining() {
   const { data: existingAccess } = useQuery({
     queryKey: ["buh-business-landing-access", user?.id],
     queryFn: async () => {
-      if (!user?.id) return { hasPreregistration: false, hasActiveSubscription: false };
+      if (!user?.id) return { hasPreregistration: false, hasActiveSubscription: false, preregistrationId: null };
       
       // Check preregistration
       const { data: preregistration } = await supabase
@@ -140,12 +147,46 @@ export default function BusinessTraining() {
       return {
         hasPreregistration: !!preregistration,
         hasActiveSubscription: !!entitlement,
+        preregistrationId: preregistration?.id || null,
       };
     },
     enabled: !!user?.id,
   });
 
-  const hasAccess = existingAccess?.hasPreregistration || existingAccess?.hasActiveSubscription;
+  // Cancel booking mutation
+  const cancelBookingMutation = useMutation({
+    mutationFn: async (preregistrationId: string) => {
+      const { data, error } = await supabase.functions.invoke("cancel-preregistration", {
+        body: { preregistrationId },
+      });
+      
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Бронь отменена");
+      queryClient.invalidateQueries({ queryKey: ["buh-business-access", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["buh-business-landing-access", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["public-product"] });
+    },
+    onError: (error: Error) => {
+      console.error("Cancel error:", error);
+      toast.error(error.message || "Не удалось отменить бронь");
+    },
+  });
+
+  const handleCancelBooking = () => {
+    if (existingAccess?.preregistrationId) {
+      cancelBookingMutation.mutate(existingAccess.preregistrationId);
+    }
+  };
+
+  // Get payment offer for dialog
+  const payNowOffer = productData?.tariffs?.[0]?.offers?.find(
+    (o) => o.offer_type === "pay_now" && o.is_primary
+  );
+  const tariff = productData?.tariffs?.[0];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
@@ -209,28 +250,32 @@ export default function BusinessTraining() {
                 ))}
               </div>
 
-              {/* Existing access badge */}
-              {hasAccess && (
+              {/* Status badges */}
+              {existingAccess?.hasActiveSubscription && (
                 <div className="flex items-center gap-2">
                   <Badge 
                     variant="outline" 
-                    className={existingAccess?.hasActiveSubscription 
-                      ? "bg-emerald-500/10 text-emerald-600 border-0 px-3 py-1.5" 
-                      : "bg-amber-500/20 text-amber-600 border-0 px-3 py-1.5"
-                    }
+                    className="bg-emerald-500/10 text-emerald-600 border-0 px-3 py-1.5"
                   >
-                    {existingAccess?.hasActiveSubscription ? (
-                      <><Check className="h-3.5 w-3.5 mr-1.5" /> Активный доступ</>
-                    ) : (
-                      <><Clock className="h-3.5 w-3.5 mr-1.5" /> У вас есть бронь</>
-                    )}
+                    <Check className="h-3.5 w-3.5 mr-1.5" /> Активный доступ
+                  </Badge>
+                </div>
+              )}
+              {existingAccess?.hasPreregistration && !existingAccess?.hasActiveSubscription && (
+                <div className="flex items-center gap-2">
+                  <Badge 
+                    variant="outline" 
+                    className="bg-amber-500/20 text-amber-600 border-0 px-3 py-1.5"
+                  >
+                    <Clock className="h-3.5 w-3.5 mr-1.5" /> У вас есть бронь
                   </Badge>
                 </div>
               )}
 
-              {/* CTA */}
-              <div className="flex flex-col sm:flex-row gap-4 pt-4">
-                {hasAccess ? (
+              {/* CTA - Always show Pay Now, conditionally show other buttons */}
+              <div className="flex flex-col sm:flex-row gap-3 pt-4">
+                {existingAccess?.hasActiveSubscription ? (
+                  // Active subscription - go to content
                   <Button 
                     size="lg" 
                     className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
@@ -240,22 +285,46 @@ export default function BusinessTraining() {
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
                 ) : (
-                  <Button 
-                    size="lg" 
-                    className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
-                    onClick={() => setShowPreregistration(true)}
-                  >
-                    Забронировать место
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
+                  <>
+                    {/* Pay Now - always available */}
+                    <Button 
+                      size="lg" 
+                      className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+                      onClick={() => setShowPayment(true)}
+                    >
+                      <ShoppingCart className="mr-2 h-4 w-4" />
+                      Оплатить — {dynamicSettings.price} BYN
+                    </Button>
+                    
+                    {existingAccess?.hasPreregistration ? (
+                      // Has preregistration - show cancel button
+                      <Button 
+                        variant="outline" 
+                        size="lg"
+                        onClick={handleCancelBooking}
+                        disabled={cancelBookingMutation.isPending}
+                        className="border-destructive/30 text-destructive hover:bg-destructive/10"
+                      >
+                        {cancelBookingMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <XCircle className="h-4 w-4 mr-2" />
+                        )}
+                        Отменить бронь
+                      </Button>
+                    ) : (
+                      // No preregistration - show book button
+                      <Button 
+                        variant="outline" 
+                        size="lg"
+                        onClick={() => setShowPreregistration(true)}
+                      >
+                        Забронировать место
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    )}
+                  </>
                 )}
-                <Button 
-                  variant="outline" 
-                  size="lg"
-                  onClick={() => navigate("/auth")}
-                >
-                  Войти в кабинет
-                </Button>
               </div>
             </div>
 
@@ -350,7 +419,7 @@ export default function BusinessTraining() {
 
               {/* CTA */}
               <div className="text-center space-y-4">
-                {hasAccess ? (
+                {existingAccess?.hasActiveSubscription ? (
                   <Button 
                     size="lg" 
                     className="w-full sm:w-auto px-12 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
@@ -360,14 +429,27 @@ export default function BusinessTraining() {
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
                 ) : (
-                  <Button 
-                    size="lg" 
-                    className="w-full sm:w-auto px-12 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
-                    onClick={() => setShowPreregistration(true)}
-                  >
-                    Забронировать место
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
+                  <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                    <Button 
+                      size="lg" 
+                      className="px-12 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+                      onClick={() => setShowPayment(true)}
+                    >
+                      <ShoppingCart className="mr-2 h-4 w-4" />
+                      Оплатить — {dynamicSettings.price} BYN
+                    </Button>
+                    {!existingAccess?.hasPreregistration && (
+                      <Button 
+                        variant="outline"
+                        size="lg" 
+                        className="px-8"
+                        onClick={() => setShowPreregistration(true)}
+                      >
+                        Забронировать место
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 )}
                 <p className="text-xs text-muted-foreground">
                   Нажимая кнопку, вы соглашаетесь с{" "}
@@ -388,6 +470,20 @@ export default function BusinessTraining() {
         tariffName={`${dynamicSettings.tariffName} — ${dynamicSettings.price} BYN/мес`}
         productCode="buh_business"
       />
+
+      {/* Payment Dialog */}
+      {productData?.product && payNowOffer && tariff && (
+        <PaymentDialog
+          open={showPayment}
+          onOpenChange={setShowPayment}
+          productId={productData.product.id}
+          productName={productData.product.name}
+          offerId={payNowOffer.id}
+          tariffCode={tariff.code}
+          price={`${payNowOffer.amount} BYN`}
+          isSubscription={true}
+        />
+      )}
     </div>
   );
 }

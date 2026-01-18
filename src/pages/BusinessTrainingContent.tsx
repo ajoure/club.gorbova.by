@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -8,6 +9,8 @@ import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
+import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { usePublicProduct } from "@/hooks/usePublicProduct";
 import { toast } from "sonner";
 import { 
   Calendar, 
@@ -22,7 +25,8 @@ import {
   BookOpen,
   Info,
   XCircle,
-  CreditCard
+  CreditCard,
+  ShoppingCart
 } from "lucide-react";
 
 const TOTAL_LESSONS = 12;
@@ -33,6 +37,11 @@ export default function BusinessTrainingContent() {
   const { user, loading: authLoading } = useAuth();
   const { data: telegramStatus } = useTelegramLinkStatus();
   const startTelegramLink = useStartTelegramLink();
+  
+  const [paymentOpen, setPaymentOpen] = useState(false);
+
+  // Fetch product data for payment
+  const { data: productData } = usePublicProduct("business-training.gorbova.by", user?.id);
 
   // Check access
   const { data: accessData, isLoading: accessLoading } = useQuery({
@@ -81,24 +90,28 @@ export default function BusinessTrainingContent() {
     enabled: !!user?.id,
   });
 
-  // Cancel booking mutation
+  // Cancel booking mutation - using edge function
   const cancelBookingMutation = useMutation({
     mutationFn: async (preregistrationId: string) => {
-      const { error } = await supabase
-        .from("course_preregistrations")
-        .update({ status: "cancelled" })
-        .eq("id", preregistrationId);
+      const { data, error } = await supabase.functions.invoke("cancel-preregistration", {
+        body: { preregistrationId },
+      });
       
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
     },
     onSuccess: () => {
       toast.success("Бронь отменена");
-      queryClient.invalidateQueries({ queryKey: ["buh-business-access"] });
-      queryClient.invalidateQueries({ queryKey: ["buh-business-landing-access"] });
+      // Invalidate all relevant queries
+      queryClient.invalidateQueries({ queryKey: ["buh-business-access", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["buh-business-landing-access", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["public-product"] });
       navigate("/business-training");
     },
-    onError: () => {
-      toast.error("Не удалось отменить бронь");
+    onError: (error: Error) => {
+      console.error("Cancel error:", error);
+      toast.error(error.message || "Не удалось отменить бронь");
     },
   });
 
@@ -118,6 +131,13 @@ export default function BusinessTrainingContent() {
       console.error("Error starting telegram link:", error);
     }
   };
+
+  // Get payment offer
+  const payNowOffer = productData?.tariffs?.[0]?.offers?.find(
+    (o) => o.offer_type === "pay_now" && o.is_primary
+  );
+  const tariff = productData?.tariffs?.[0];
+  const price = payNowOffer?.amount || 250;
 
   // Loading state
   if (authLoading || accessLoading) {
@@ -139,13 +159,33 @@ export default function BusinessTrainingContent() {
             <Lock className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
             <h2 className="text-xl font-semibold mb-2">Доступ закрыт</h2>
             <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-              Для доступа к тренингу необходимо забронировать место
+              Для доступа к тренингу необходимо забронировать место или оплатить
             </p>
-            <Button onClick={() => navigate("/business-training")}>
-              Забронировать место
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <Button onClick={() => navigate("/business-training")}>
+                Забронировать место
+              </Button>
+              <Button variant="outline" onClick={() => setPaymentOpen(true)}>
+                <ShoppingCart className="h-4 w-4 mr-2" />
+                Оплатить сейчас — {price} BYN
+              </Button>
+            </div>
           </GlassCard>
         </div>
+        
+        {/* Payment Dialog */}
+        {productData?.product && payNowOffer && tariff && (
+          <PaymentDialog
+            open={paymentOpen}
+            onOpenChange={setPaymentOpen}
+            productId={productData.product.id}
+            productName={productData.product.name}
+            offerId={payNowOffer.id}
+            tariffCode={tariff.code}
+            price={`${payNowOffer.amount} BYN`}
+            isSubscription={true}
+          />
+        )}
       </DashboardLayout>
     );
   }
@@ -195,6 +235,27 @@ export default function BusinessTrainingContent() {
           </div>
         </GlassCard>
 
+        {/* Pay Now CTA for preregistrations */}
+        {accessData.type === "preregistration" && (
+          <GlassCard className="p-5 border-primary/30 bg-primary/5">
+            <div className="flex items-start gap-4">
+              <div className="h-12 w-12 rounded-xl bg-primary/20 flex items-center justify-center shrink-0">
+                <ShoppingCart className="h-6 w-6 text-primary" />
+              </div>
+              <div className="flex-1">
+                <h4 className="font-semibold text-foreground mb-1">Оплатите сейчас, не дожидаясь автосписания</h4>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Вы можете оплатить доступ прямо сейчас и получить полный доступ к тренингу сразу после старта
+                </p>
+                <Button onClick={() => setPaymentOpen(true)}>
+                  <CreditCard className="h-4 w-4 mr-2" />
+                  Оплатить — {price} BYN
+                </Button>
+              </div>
+            </div>
+          </GlassCard>
+        )}
+
         {/* Telegram CTA if not linked */}
         {telegramStatus?.status !== "active" && (
           <GlassCard className="p-4 border-amber-500/20 bg-amber-500/5">
@@ -240,8 +301,8 @@ export default function BusinessTrainingContent() {
                 <p className="text-sm text-muted-foreground mb-4">
                   Чтобы продолжить обучение, продлите подписку на следующий месяц
                 </p>
-                <Button onClick={() => navigate("/business-training")}>
-                  Продлить доступ — 250 BYN
+                <Button onClick={() => setPaymentOpen(true)}>
+                  Продлить доступ — {price} BYN
                 </Button>
               </div>
             </div>
@@ -271,7 +332,7 @@ export default function BusinessTrainingContent() {
                 </Badge>
                 <Badge variant="outline" className="bg-muted/50">
                   <CreditCard className="h-3 w-3 mr-1" />
-                  250 BYN/мес
+                  {price} BYN/мес
                 </Badge>
               </div>
             </div>
@@ -327,6 +388,20 @@ export default function BusinessTrainingContent() {
           )}
         </div>
       </div>
+
+      {/* Payment Dialog */}
+      {productData?.product && payNowOffer && tariff && (
+        <PaymentDialog
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          productId={productData.product.id}
+          productName={productData.product.name}
+          offerId={payNowOffer.id}
+          tariffCode={tariff.code}
+          price={`${payNowOffer.amount} BYN`}
+          isSubscription={true}
+        />
+      )}
     </DashboardLayout>
   );
 }

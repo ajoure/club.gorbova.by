@@ -246,3 +246,6 @@ verify_jwt = false
 
 [functions.scan-card-duplicates]
 verify_jwt = false
+
+[functions.cancel-preregistration]
+verify_jwt = false
