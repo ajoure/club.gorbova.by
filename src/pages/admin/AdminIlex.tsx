@@ -59,7 +59,9 @@ export default function AdminIlex() {
   const { 
     isLoading, 
     connectionStatus, 
+    authStatus,
     checkConnection, 
+    refreshSession,
     search,
     advancedSearch,
     fetchDocument,
@@ -278,6 +280,16 @@ export default function AdminIlex() {
   };
 
   const getConnectionStatusBadge = () => {
+    if (authStatus) {
+      if (authStatus.authenticated) {
+        return <Badge variant="default" className="bg-green-500"><Wifi className="h-3 w-3 mr-1" />Авторизован</Badge>;
+      } else if (!authStatus.hasCredentials) {
+        return <Badge variant="outline" className="text-amber-600 border-amber-600"><WifiOff className="h-3 w-3 mr-1" />Нет учётных данных</Badge>;
+      } else {
+        return <Badge variant="destructive"><WifiOff className="h-3 w-3 mr-1" />Не авторизован</Badge>;
+      }
+    }
+    
     switch (connectionStatus) {
       case 'online':
         return <Badge variant="default" className="bg-green-500"><Wifi className="h-3 w-3 mr-1" />Онлайн</Badge>;
@@ -314,6 +326,17 @@ export default function AdminIlex() {
           </div>
           <div className="flex items-center gap-3">
             {getConnectionStatusBadge()}
+            {authStatus && !authStatus.authenticated && authStatus.hasCredentials && (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={refreshSession}
+                disabled={isLoading}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                Переавторизоваться
+              </Button>
+            )}
             <Button 
               variant="outline" 
               size="sm" 

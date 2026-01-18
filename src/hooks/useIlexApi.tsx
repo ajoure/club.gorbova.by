@@ -6,6 +6,8 @@ export interface IlexSearchResult {
   url: string;
   title: string;
   description: string;
+  date?: string;
+  type?: string;
 }
 
 export interface IlexDocument {
@@ -38,6 +40,7 @@ export interface BrowseResult {
   html: string;
   title: string;
   links: Array<{ url: string; text: string }>;
+  requiresAuth?: boolean;
 }
 
 export interface LegalTextResult {
@@ -47,10 +50,17 @@ export interface LegalTextResult {
   url: string;
 }
 
+export interface AuthStatus {
+  authenticated: boolean;
+  message: string;
+  hasCredentials: boolean;
+}
+
 export function useIlexApi() {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'online' | 'offline' | 'checking' | 'unknown'>('unknown');
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
 
   const checkConnection = useCallback(async () => {
     setConnectionStatus('checking');
@@ -58,37 +68,72 @@ export function useIlexApi() {
     
     try {
       const { data, error } = await supabase.functions.invoke('ilex-api', {
-        body: { action: 'check_connection' },
+        body: { action: 'check_auth' },
       });
       
       if (error) {
         console.error('Connection check error:', error);
         setConnectionStatus('offline');
-        toast({
-          title: 'Ошибка проверки',
-          description: error.message,
-          variant: 'destructive',
-        });
+        setAuthStatus({ authenticated: false, message: error.message, hasCredentials: false });
         return false;
       }
       
-      const isOnline = data?.online === true;
-      setConnectionStatus(isOnline ? 'online' : 'offline');
+      const isAuthenticated = data?.authenticated === true;
+      setConnectionStatus(isAuthenticated ? 'online' : 'offline');
+      setAuthStatus({
+        authenticated: isAuthenticated,
+        message: data?.message || '',
+        hasCredentials: data?.hasCredentials ?? false,
+      });
       
       // Update settings in database
       await supabase
         .from('ilex_settings')
         .update({
           last_connection_check: new Date().toISOString(),
-          connection_status: isOnline ? 'online' : 'offline',
+          connection_status: isAuthenticated ? 'online' : 'offline',
           updated_at: new Date().toISOString(),
         })
         .eq('id', '00000000-0000-0000-0000-000000000001');
       
-      return isOnline;
+      return isAuthenticated;
     } catch (error) {
       console.error('Connection check failed:', error);
       setConnectionStatus('offline');
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const refreshSession = useCallback(async (): Promise<boolean> => {
+    setIsLoading(true);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('ilex-api', {
+        body: { action: 'refresh_session' },
+      });
+      
+      if (error || !data?.success) {
+        toast({
+          title: 'Ошибка авторизации',
+          description: data?.error || error?.message || 'Не удалось обновить сессию',
+          variant: 'destructive',
+        });
+        setAuthStatus({ authenticated: false, message: data?.error || 'Ошибка', hasCredentials: true });
+        return false;
+      }
+      
+      toast({
+        title: 'Сессия обновлена',
+        description: 'Авторизация в iLex успешна',
+      });
+      
+      setAuthStatus({ authenticated: true, message: 'Авторизован', hasCredentials: true });
+      setConnectionStatus('online');
+      return true;
+    } catch (error) {
+      console.error('Refresh session failed:', error);
       return false;
     } finally {
       setIsLoading(false);
@@ -422,7 +467,9 @@ export function useIlexApi() {
   return {
     isLoading,
     connectionStatus,
+    authStatus,
     checkConnection,
+    refreshSession,
     search,
     advancedSearch,
     fetchDocument,

@@ -5,13 +5,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// iLex base URL
+const ILEX_BASE_URL = 'https://ilex-private.ilex.by';
+
 // User agents for human-like behavior
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
 ];
 
 // Document types for advanced search
@@ -26,10 +27,16 @@ const DOCUMENT_TYPES = {
   regulation: 'положение',
 };
 
-// Random delay to simulate human behavior (2-5 seconds)
-async function humanDelay(min = 2000, max = 5000): Promise<void> {
+// Session cache (in-memory for edge function instance)
+let sessionCache: { 
+  cookie: string; 
+  expiresAt: number;
+  authenticated: boolean;
+} | null = null;
+
+// Random delay to simulate human behavior
+async function humanDelay(min = 500, max = 1500): Promise<void> {
   const delay = min + Math.random() * (max - min);
-  console.log(`Human delay: ${Math.round(delay)}ms`);
   await new Promise(r => setTimeout(r, delay));
 }
 
@@ -44,10 +51,8 @@ function getHeaders(sessionCookie?: string): Record<string, string> {
     'User-Agent': getRandomUserAgent(),
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
-    'Cache-Control': 'max-age=0',
   };
   
   if (sessionCookie) {
@@ -58,217 +63,256 @@ function getHeaders(sessionCookie?: string): Record<string, string> {
 }
 
 // Authenticate and get session cookie
-async function authenticate(login: string, password: string): Promise<{ success: boolean; sessionCookie?: string; error?: string }> {
+async function authenticate(login: string, password: string): Promise<{ 
+  success: boolean; 
+  sessionCookie?: string; 
+  error?: string;
+  authUrl?: string;
+}> {
   try {
-    console.log('Attempting authentication...');
+    console.log('Attempting iLex authentication...');
     
-    // First, get the login page to get any required cookies/tokens
-    await humanDelay(1000, 2000);
-    
-    const loginPageResponse = await fetch('https://ilex-private.ilex.by/login', {
+    // Step 1: Get the login page to obtain initial cookies and CSRF token
+    const loginPageResponse = await fetch(`${ILEX_BASE_URL}/`, {
       method: 'GET',
       headers: getHeaders(),
+      redirect: 'manual',
     });
     
-    const loginPageCookies = loginPageResponse.headers.get('set-cookie') || '';
-    console.log('Got login page, cookies:', loginPageCookies ? 'present' : 'none');
+    let cookies: string[] = [];
+    const setCookieHeaders = loginPageResponse.headers.getSetCookie?.() || [];
+    if (setCookieHeaders.length > 0) {
+      cookies = setCookieHeaders.map(c => c.split(';')[0]);
+    }
+    console.log('Initial cookies:', cookies.length);
     
     await humanDelay();
     
-    // Attempt login
-    const loginResponse = await fetch('https://ilex-private.ilex.by/api/auth/login', {
-      method: 'POST',
-      headers: {
-        ...getHeaders(loginPageCookies),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ login, password }),
-    });
+    // Step 2: Try different authentication endpoints
+    const authEndpoints = [
+      '/api/auth/login',
+      '/auth/login',
+      '/login',
+      '/api/login',
+    ];
     
-    if (!loginResponse.ok) {
-      console.error('Login failed with status:', loginResponse.status);
-      return { success: false, error: `Ошибка авторизации: ${loginResponse.status}` };
+    let authSuccess = false;
+    let finalCookies = cookies.join('; ');
+    
+    for (const endpoint of authEndpoints) {
+      try {
+        console.log(`Trying auth endpoint: ${endpoint}`);
+        
+        const loginResponse = await fetch(`${ILEX_BASE_URL}${endpoint}`, {
+          method: 'POST',
+          headers: {
+            ...getHeaders(finalCookies),
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            login,
+            password,
+            username: login,
+            email: login,
+          }).toString(),
+          redirect: 'manual',
+        });
+        
+        console.log(`Auth response status: ${loginResponse.status}`);
+        
+        // Collect new cookies
+        const newCookies = loginResponse.headers.getSetCookie?.() || [];
+        if (newCookies.length > 0) {
+          const cookieValues = newCookies.map(c => c.split(';')[0]);
+          cookies.push(...cookieValues);
+          finalCookies = cookies.join('; ');
+          console.log('Got new cookies from auth');
+        }
+        
+        // Check if we got a redirect to authenticated area
+        if (loginResponse.status >= 300 && loginResponse.status < 400) {
+          const location = loginResponse.headers.get('location');
+          console.log('Redirect to:', location);
+          if (location && !location.includes('login')) {
+            authSuccess = true;
+            break;
+          }
+        }
+        
+        // Check response body for success indicators
+        if (loginResponse.status === 200) {
+          const responseText = await loginResponse.text();
+          if (!responseText.includes('login') && !responseText.includes('пароль') && 
+              !responseText.includes('Войти') && !responseText.includes('авторизац')) {
+            authSuccess = true;
+            break;
+          }
+        }
+      } catch (e) {
+        console.log(`Endpoint ${endpoint} failed:`, e);
+      }
+      
+      await humanDelay(200, 500);
     }
     
-    const setCookie = loginResponse.headers.get('set-cookie');
-    if (setCookie) {
-      console.log('Authentication successful, got session cookie');
-      return { success: true, sessionCookie: setCookie };
+    // Try JSON login as well
+    if (!authSuccess) {
+      try {
+        console.log('Trying JSON auth...');
+        const jsonAuthResponse = await fetch(`${ILEX_BASE_URL}/api/auth/login`, {
+          method: 'POST',
+          headers: {
+            ...getHeaders(finalCookies),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ login, password }),
+          redirect: 'manual',
+        });
+        
+        const newCookies = jsonAuthResponse.headers.getSetCookie?.() || [];
+        if (newCookies.length > 0) {
+          const cookieValues = newCookies.map(c => c.split(';')[0]);
+          cookies.push(...cookieValues);
+          finalCookies = cookies.join('; ');
+        }
+        
+        if (jsonAuthResponse.ok) {
+          const jsonData = await jsonAuthResponse.json();
+          if (jsonData.success || jsonData.token || jsonData.user) {
+            authSuccess = true;
+            if (jsonData.token) {
+              finalCookies += `; token=${jsonData.token}`;
+            }
+          }
+        }
+      } catch (e) {
+        console.log('JSON auth failed:', e);
+      }
     }
     
-    // Try to get session from response body
-    const responseText = await loginResponse.text();
-    console.log('Login response:', responseText.substring(0, 200));
+    if (authSuccess || finalCookies.length > 50) {
+      console.log('Authentication appears successful');
+      return { 
+        success: true, 
+        sessionCookie: finalCookies,
+      };
+    }
     
-    return { success: true, sessionCookie: loginPageCookies };
+    // Return partial success with cookies even if we're not sure
+    return { 
+      success: cookies.length > 0, 
+      sessionCookie: finalCookies,
+      error: cookies.length === 0 ? 'Не удалось получить сессию' : undefined,
+    };
   } catch (error) {
     console.error('Authentication error:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Ошибка подключения' };
   }
 }
 
-// Check connection status using Firecrawl
-async function checkConnection(): Promise<{ online: boolean; message: string }> {
-  try {
-    const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
-    
-    if (!firecrawlApiKey) {
-      return { online: false, message: 'Firecrawl API не настроен' };
-    }
-    
-    console.log('Checking iLex connection via Firecrawl...');
-    
-    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${firecrawlApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url: 'https://ilex-private.ilex.by',
-        formats: ['markdown'],
-        onlyMainContent: true,
-        waitFor: 2000,
-      }),
-    });
-    
-    if (response.ok) {
-      const data = await response.json();
-      if (data.success) {
-        return { online: true, message: 'Подключение успешно' };
-      }
-    }
-    
-    return { online: false, message: 'Сайт недоступен' };
-  } catch (error) {
-    console.error('Connection check error:', error);
-    return { online: false, message: error instanceof Error ? error.message : 'Ошибка проверки' };
+// Get or refresh authenticated session
+async function getAuthenticatedSession(): Promise<{ cookie: string | null; error?: string }> {
+  // Check cache first
+  if (sessionCache && sessionCache.expiresAt > Date.now() && sessionCache.authenticated) {
+    console.log('Using cached session');
+    return { cookie: sessionCache.cookie };
   }
+  
+  const login = Deno.env.get('ILEX_LOGIN');
+  const password = Deno.env.get('ILEX_PASSWORD');
+  
+  if (!login || !password) {
+    console.log('No iLex credentials configured');
+    return { cookie: null, error: 'Учетные данные iLex не настроены' };
+  }
+  
+  console.log('Authenticating with iLex...');
+  const authResult = await authenticate(login, password);
+  
+  if (authResult.success && authResult.sessionCookie) {
+    sessionCache = {
+      cookie: authResult.sessionCookie,
+      expiresAt: Date.now() + 30 * 60 * 1000, // 30 minutes
+      authenticated: true,
+    };
+    return { cookie: authResult.sessionCookie };
+  }
+  
+  return { cookie: null, error: authResult.error || 'Ошибка авторизации' };
 }
 
-// Fetch document content using Firecrawl
-async function fetchDocument(url: string): Promise<{ success: boolean; content?: string; title?: string; html?: string; error?: string }> {
-  try {
-    const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
-    
-    if (!firecrawlApiKey) {
-      return { success: false, error: 'Firecrawl API не настроен' };
-    }
-    
-    // Format URL
-    let formattedUrl = url.trim();
-    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
-      formattedUrl = `https://ilex-private.ilex.by${formattedUrl.startsWith('/') ? '' : '/'}${formattedUrl}`;
-    }
-    
-    console.log('Fetching document:', formattedUrl);
-    
-    await humanDelay();
-    
-    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${firecrawlApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url: formattedUrl,
-        formats: ['markdown', 'html'],
-        onlyMainContent: false,
-        waitFor: 3000,
-      }),
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Firecrawl error:', errorText);
-      return { success: false, error: `Ошибка получения документа: ${response.status}` };
-    }
-    
-    const data = await response.json();
-    
-    if (!data.success) {
-      return { success: false, error: data.error || 'Не удалось получить документ' };
-    }
-    
-    const content = data.data?.markdown || data.markdown || '';
-    const html = data.data?.html || data.html || '';
-    const title = data.data?.metadata?.title || data.metadata?.title || 'Документ';
-    
-    return { success: true, content, title, html };
-  } catch (error) {
-    console.error('Fetch document error:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Ошибка получения документа' };
-  }
-}
-
-// Browse URL and get HTML for proxy browser
-async function browseUrl(url: string): Promise<{ 
+// Browse URL with authentication
+async function browseUrlAuthenticated(url: string): Promise<{ 
   success: boolean; 
   html?: string; 
   title?: string; 
   links?: Array<{url: string; text: string}>; 
-  error?: string 
+  error?: string;
+  requiresAuth?: boolean;
 }> {
   try {
-    const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
-    
-    if (!firecrawlApiKey) {
-      return { success: false, error: 'Firecrawl API не настроен' };
-    }
+    // Get authenticated session
+    const session = await getAuthenticatedSession();
     
     // Format URL
     let formattedUrl = url.trim();
     if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
-      formattedUrl = `https://ilex-private.ilex.by${formattedUrl.startsWith('/') ? '' : '/'}${formattedUrl}`;
+      formattedUrl = `${ILEX_BASE_URL}${formattedUrl.startsWith('/') ? '' : '/'}${formattedUrl}`;
     }
     
-    console.log('Browsing URL:', formattedUrl);
+    console.log('Browsing URL with auth:', formattedUrl);
     
-    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${firecrawlApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url: formattedUrl,
-        formats: ['html', 'links'],
-        onlyMainContent: false,
-        waitFor: 3000,
-      }),
+    const response = await fetch(formattedUrl, {
+      method: 'GET',
+      headers: getHeaders(session.cookie || undefined),
+      redirect: 'follow',
     });
     
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Firecrawl browse error:', errorText);
-      return { success: false, error: `Ошибка загрузки страницы: ${response.status}` };
+      return { success: false, error: `Ошибка загрузки: ${response.status}` };
     }
     
-    const data = await response.json();
+    const html = await response.text();
     
-    if (!data.success) {
-      return { success: false, error: data.error || 'Не удалось загрузить страницу' };
+    // Check if we got login page
+    const isLoginPage = html.includes('login') && 
+                        (html.includes('пароль') || html.includes('password') || html.includes('Войти'));
+    
+    if (isLoginPage) {
+      // Invalidate session cache
+      sessionCache = null;
+      return { 
+        success: false, 
+        error: 'Требуется авторизация',
+        requiresAuth: true,
+        html,
+      };
     }
     
-    const html = data.data?.html || data.html || '';
-    const title = data.data?.metadata?.title || data.metadata?.title || 'Страница';
+    // Extract title
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].trim() : 'Страница';
     
-    // Extract links and convert relative to absolute
-    const rawLinks = data.data?.links || data.links || [];
-    const links = rawLinks.map((link: string | { url: string; text?: string }) => {
-      const linkUrl = typeof link === 'string' ? link : link.url;
-      const linkText = typeof link === 'string' ? link : (link.text || link.url);
+    // Extract links
+    const links: Array<{url: string; text: string}> = [];
+    const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>([^<]*(?:<[^/a][^<]*)*)<\/a>/gi;
+    let match;
+    while ((match = linkRegex.exec(html)) !== null) {
+      let linkUrl = match[1];
+      const linkText = match[2].replace(/<[^>]+>/g, '').trim() || linkUrl;
       
-      let absoluteUrl = linkUrl;
+      // Convert relative to absolute
       if (linkUrl.startsWith('/')) {
-        absoluteUrl = `https://ilex-private.ilex.by${linkUrl}`;
+        linkUrl = `${ILEX_BASE_URL}${linkUrl}`;
       } else if (!linkUrl.startsWith('http')) {
-        absoluteUrl = `https://ilex-private.ilex.by/${linkUrl}`;
+        linkUrl = `${ILEX_BASE_URL}/${linkUrl}`;
       }
       
-      return { url: absoluteUrl, text: linkText };
-    });
+      // Only include iLex links
+      if (linkUrl.includes('ilex')) {
+        links.push({ url: linkUrl, text: linkText });
+      }
+    }
     
     return { success: true, html, title, links };
   } catch (error) {
@@ -277,62 +321,8 @@ async function browseUrl(url: string): Promise<{
   }
 }
 
-// Search for documents
-async function searchDocuments(query: string): Promise<{ success: boolean; results?: any[]; error?: string }> {
-  try {
-    const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
-    
-    if (!firecrawlApiKey) {
-      return { success: false, error: 'Firecrawl API не настроен' };
-    }
-    
-    console.log('Searching iLex for:', query);
-    
-    await humanDelay();
-    
-    // Use Firecrawl search with site restriction
-    const response = await fetch('https://api.firecrawl.dev/v1/search', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${firecrawlApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        query: `site:ilex-private.ilex.by ${query}`,
-        limit: 20,
-        lang: 'ru',
-        country: 'BY',
-      }),
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Firecrawl search error:', errorText);
-      return { success: false, error: `Ошибка поиска: ${response.status}` };
-    }
-    
-    const data = await response.json();
-    
-    if (!data.success) {
-      return { success: false, error: data.error || 'Поиск не дал результатов' };
-    }
-    
-    const results = (data.data || []).map((item: any) => ({
-      url: item.url,
-      title: item.title || 'Без названия',
-      description: item.description || '',
-    }));
-    
-    return { success: true, results };
-  } catch (error) {
-    console.error('Search error:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Ошибка поиска' };
-  }
-}
-
-// Advanced search with filters
-async function advancedSearch(params: {
-  query?: string;
+// Search iLex directly with authentication
+async function searchIlexDirect(query: string, filters?: {
   docType?: string;
   docNumber?: string;
   organ?: string;
@@ -341,97 +331,184 @@ async function advancedSearch(params: {
   status?: string;
 }): Promise<{ success: boolean; results?: any[]; error?: string }> {
   try {
-    const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
+    const session = await getAuthenticatedSession();
     
-    if (!firecrawlApiKey) {
-      return { success: false, error: 'Firecrawl API не настроен' };
+    if (!session.cookie) {
+      return { success: false, error: session.error || 'Не авторизован' };
     }
     
-    // Build search query with filters
-    const queryParts: string[] = ['site:ilex-private.ilex.by'];
+    console.log('Searching iLex directly for:', query);
     
-    // Add document type
-    if (params.docType && params.docType !== 'all') {
-      const docTypeLabel = DOCUMENT_TYPES[params.docType as keyof typeof DOCUMENT_TYPES];
-      if (docTypeLabel) {
-        queryParts.push(docTypeLabel);
+    // Try iLex internal search API endpoints
+    const searchEndpoints = [
+      '/api/search',
+      '/api/documents/search',
+      '/search',
+      '/api/v1/search',
+    ];
+    
+    for (const endpoint of searchEndpoints) {
+      try {
+        // Try GET first
+        const searchUrl = new URL(`${ILEX_BASE_URL}${endpoint}`);
+        searchUrl.searchParams.set('q', query);
+        searchUrl.searchParams.set('query', query);
+        if (filters?.docType && filters.docType !== 'all') {
+          searchUrl.searchParams.set('type', filters.docType);
+        }
+        if (filters?.docNumber) {
+          searchUrl.searchParams.set('number', filters.docNumber);
+        }
+        
+        const response = await fetch(searchUrl.toString(), {
+          method: 'GET',
+          headers: getHeaders(session.cookie),
+        });
+        
+        if (response.ok) {
+          const contentType = response.headers.get('content-type') || '';
+          
+          if (contentType.includes('application/json')) {
+            const data = await response.json();
+            if (data.results || data.items || data.documents || Array.isArray(data)) {
+              const items = data.results || data.items || data.documents || data;
+              const results = items.slice(0, 30).map((item: any) => ({
+                url: item.url || item.link || `${ILEX_BASE_URL}/document/${item.id}`,
+                title: item.title || item.name || 'Документ',
+                description: item.description || item.snippet || '',
+                date: item.date || item.doc_date,
+                type: item.type || item.doc_type,
+              }));
+              return { success: true, results };
+            }
+          } else {
+            // HTML response - parse search results from page
+            const html = await response.text();
+            const results = parseSearchResultsFromHtml(html);
+            if (results.length > 0) {
+              return { success: true, results };
+            }
+          }
+        }
+      } catch (e) {
+        console.log(`Search endpoint ${endpoint} failed:`, e);
       }
+      
+      await humanDelay(100, 300);
     }
     
-    // Add document number
-    if (params.docNumber) {
-      queryParts.push(`№${params.docNumber}`);
-    }
-    
-    // Add issuing organ
-    if (params.organ) {
-      queryParts.push(`"${params.organ}"`);
-    }
-    
-    // Add date range
-    if (params.dateFrom) {
-      queryParts.push(`от ${params.dateFrom}`);
-    }
-    
-    // Add status
-    if (params.status && params.status !== 'all') {
-      if (params.status === 'active') {
-        queryParts.push('действующий');
-      } else if (params.status === 'inactive') {
-        queryParts.push('утратил силу');
-      }
-    }
-    
-    // Add main query
-    if (params.query) {
-      queryParts.push(params.query);
-    }
-    
-    const fullQuery = queryParts.join(' ');
-    console.log('Advanced search query:', fullQuery);
-    
-    await humanDelay();
-    
-    const response = await fetch('https://api.firecrawl.dev/v1/search', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${firecrawlApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        query: fullQuery,
-        limit: 30,
-        lang: 'ru',
-        country: 'BY',
-      }),
+    // Fallback: search via page scraping
+    const searchPageUrl = `${ILEX_BASE_URL}/search?q=${encodeURIComponent(query)}`;
+    const pageResponse = await fetch(searchPageUrl, {
+      method: 'GET',
+      headers: getHeaders(session.cookie),
     });
     
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Firecrawl advanced search error:', errorText);
-      return { success: false, error: `Ошибка поиска: ${response.status}` };
+    if (pageResponse.ok) {
+      const html = await pageResponse.text();
+      const results = parseSearchResultsFromHtml(html);
+      return { success: true, results };
     }
     
-    const data = await response.json();
-    
-    if (!data.success) {
-      return { success: false, error: data.error || 'Поиск не дал результатов' };
-    }
-    
-    const results = (data.data || []).map((item: any) => ({
-      url: item.url,
-      title: item.title || 'Без названия',
-      description: item.description || '',
-    }));
-    
-    return { success: true, results };
+    return { success: false, error: 'Не удалось выполнить поиск' };
   } catch (error) {
-    console.error('Advanced search error:', error);
+    console.error('Search error:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Ошибка поиска' };
   }
 }
 
-// Find legal text by query (for automated API)
+// Parse search results from HTML page
+function parseSearchResultsFromHtml(html: string): any[] {
+  const results: any[] = [];
+  
+  // Try to find result items using various patterns
+  const patterns = [
+    // Pattern 1: links with document titles
+    /<a[^>]+href=["']([^"']*document[^"']*)["'][^>]*>([^<]+)<\/a>/gi,
+    // Pattern 2: search result divs
+    /<div[^>]*class=["'][^"']*result[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi,
+    // Pattern 3: list items with links
+    /<li[^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["'][^>]*>([^<]+)<\/a>[\s\S]*?<\/li>/gi,
+  ];
+  
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(html)) !== null && results.length < 30) {
+      let url = match[1];
+      const title = match[2]?.replace(/<[^>]+>/g, '').trim();
+      
+      if (url && title && title.length > 5) {
+        if (url.startsWith('/')) {
+          url = `${ILEX_BASE_URL}${url}`;
+        }
+        
+        // Avoid duplicates
+        if (!results.some(r => r.url === url)) {
+          results.push({
+            url,
+            title,
+            description: '',
+          });
+        }
+      }
+    }
+  }
+  
+  return results;
+}
+
+// Fetch document with authentication
+async function fetchDocumentAuthenticated(url: string): Promise<{ 
+  success: boolean; 
+  content?: string; 
+  title?: string; 
+  html?: string;
+  cleanText?: string;
+  error?: string 
+}> {
+  try {
+    const session = await getAuthenticatedSession();
+    
+    // Format URL
+    let formattedUrl = url.trim();
+    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+      formattedUrl = `${ILEX_BASE_URL}${formattedUrl.startsWith('/') ? '' : '/'}${formattedUrl}`;
+    }
+    
+    console.log('Fetching document with auth:', formattedUrl);
+    
+    const response = await fetch(formattedUrl, {
+      method: 'GET',
+      headers: getHeaders(session.cookie || undefined),
+    });
+    
+    if (!response.ok) {
+      return { success: false, error: `Ошибка загрузки: ${response.status}` };
+    }
+    
+    const html = await response.text();
+    
+    // Check if we got login page
+    if (html.includes('login') && (html.includes('пароль') || html.includes('Войти'))) {
+      sessionCache = null;
+      return { success: false, error: 'Требуется авторизация' };
+    }
+    
+    // Extract title
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].trim() : 'Документ';
+    
+    // Extract clean text
+    const cleanText = extractCleanText(html);
+    
+    return { success: true, html, title, cleanText, content: cleanText };
+  } catch (error) {
+    console.error('Fetch document error:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Ошибка загрузки' };
+  }
+}
+
+// Find legal text by query
 async function findLegalText(query: string): Promise<{ 
   success: boolean; 
   text?: string; 
@@ -442,7 +519,7 @@ async function findLegalText(query: string): Promise<{
 }> {
   try {
     // First, search for the document
-    const searchResult = await searchDocuments(query);
+    const searchResult = await searchIlexDirect(query);
     
     if (!searchResult.success || !searchResult.results?.length) {
       return { success: false, error: 'Документ не найден' };
@@ -451,17 +528,15 @@ async function findLegalText(query: string): Promise<{
     const firstResult = searchResult.results[0];
     
     // Fetch the document content
-    const docResult = await fetchDocument(firstResult.url);
+    const docResult = await fetchDocumentAuthenticated(firstResult.url);
     
     if (!docResult.success) {
       return { success: false, error: docResult.error || 'Не удалось загрузить документ' };
     }
     
-    const cleanText = docResult.html ? extractCleanText(docResult.html) : (docResult.content || '');
-    
     return {
       success: true,
-      text: cleanText,
+      text: docResult.cleanText || docResult.content,
       title: docResult.title || firstResult.title,
       source: 'iLex Private',
       url: firstResult.url,
@@ -472,12 +547,51 @@ async function findLegalText(query: string): Promise<{
   }
 }
 
-// Extract text from HTML for clean document export
+// Check authentication status
+async function checkAuthStatus(): Promise<{ 
+  authenticated: boolean; 
+  message: string;
+  hasCredentials: boolean;
+}> {
+  const login = Deno.env.get('ILEX_LOGIN');
+  const password = Deno.env.get('ILEX_PASSWORD');
+  
+  if (!login || !password) {
+    return { 
+      authenticated: false, 
+      message: 'Учетные данные iLex не настроены',
+      hasCredentials: false,
+    };
+  }
+  
+  // Check cached session
+  if (sessionCache && sessionCache.expiresAt > Date.now() && sessionCache.authenticated) {
+    return { 
+      authenticated: true, 
+      message: 'Авторизован',
+      hasCredentials: true,
+    };
+  }
+  
+  // Try to authenticate
+  const session = await getAuthenticatedSession();
+  
+  return { 
+    authenticated: !!session.cookie, 
+    message: session.cookie ? 'Авторизован' : (session.error || 'Ошибка авторизации'),
+    hasCredentials: true,
+  };
+}
+
+// Extract text from HTML
 function extractCleanText(html: string): string {
   // Remove script and style tags
   let text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
   text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
   text = text.replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '');
+  text = text.replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '');
+  text = text.replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '');
+  text = text.replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '');
   
   // Convert common tags to newlines
   text = text.replace(/<\/?(p|div|br|h[1-6]|li|tr)[^>]*>/gi, '\n');
@@ -517,7 +631,8 @@ Deno.serve(async (req) => {
     
     switch (action) {
       case 'check_connection':
-        result = await checkConnection();
+      case 'check_auth':
+        result = await checkAuthStatus();
         break;
         
       case 'fetch_document':
@@ -527,10 +642,7 @@ Deno.serve(async (req) => {
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
-        result = await fetchDocument(params.url);
-        if (result.success && result.html) {
-          result.cleanText = extractCleanText(result.html);
-        }
+        result = await fetchDocumentAuthenticated(params.url);
         break;
         
       case 'browse':
@@ -540,7 +652,7 @@ Deno.serve(async (req) => {
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
-        result = await browseUrl(params.url);
+        result = await browseUrlAuthenticated(params.url);
         break;
         
       case 'search':
@@ -550,12 +662,11 @@ Deno.serve(async (req) => {
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
-        result = await searchDocuments(params.query);
+        result = await searchIlexDirect(params.query);
         break;
         
       case 'advanced_search':
-        result = await advancedSearch({
-          query: params.query,
+        result = await searchIlexDirect(params.query || '', {
           docType: params.docType,
           docNumber: params.docNumber,
           organ: params.organ,
@@ -587,6 +698,23 @@ Deno.serve(async (req) => {
         }
         
         result = await authenticate(login, password);
+        if (result.success && result.sessionCookie) {
+          sessionCache = {
+            cookie: result.sessionCookie,
+            expiresAt: Date.now() + 30 * 60 * 1000,
+            authenticated: true,
+          };
+        }
+        break;
+        
+      case 'refresh_session':
+        // Force re-authentication
+        sessionCache = null;
+        const refreshResult = await getAuthenticatedSession();
+        result = { 
+          success: !!refreshResult.cookie, 
+          error: refreshResult.error,
+        };
         break;
         
       default:
