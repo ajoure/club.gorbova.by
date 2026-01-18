@@ -243,3 +243,6 @@ verify_jwt = false
 
 [functions.diagnose-admin-notifications]
 verify_jwt = false
+
+[functions.scan-card-duplicates]
+verify_jwt = false

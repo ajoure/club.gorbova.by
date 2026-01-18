@@ -15,7 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { 
   Users, Phone, Search, GitMerge, AlertTriangle, 
-  CheckCircle, Clock, Eye, XCircle, Loader2
+  CheckCircle, Clock, Eye, XCircle, Loader2, Mail, CreditCard
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -28,6 +28,7 @@ interface DuplicateCase {
   profile_count: number;
   master_profile_id: string | null;
   notes: string | null;
+  duplicate_type: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -297,7 +298,13 @@ export default function AdminDuplicates() {
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-3">
                           <div className="p-2 rounded-lg bg-muted">
-                            <Phone className="h-5 w-5 text-muted-foreground" />
+                            {caseItem.duplicate_type === 'card' ? (
+                              <CreditCard className="h-5 w-5 text-muted-foreground" />
+                            ) : caseItem.duplicate_type === 'email' ? (
+                              <Mail className="h-5 w-5 text-muted-foreground" />
+                            ) : (
+                              <Phone className="h-5 w-5 text-muted-foreground" />
+                            )}
                           </div>
                           <div>
                             <CardTitle className="text-base font-medium">

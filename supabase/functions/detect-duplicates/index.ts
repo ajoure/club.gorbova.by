@@ -10,6 +10,9 @@ interface DetectDuplicatesRequest {
   phone?: string;
   email?: string;
   profileId?: string;
+  // Card fingerprint matching
+  cardMask?: string;      // e.g. "4444...1111"
+  cardHolder?: string;    // e.g. "IVAN IVANOV"
 }
 
 interface Profile {
@@ -36,16 +39,24 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { phone, email, profileId } = await req.json() as DetectDuplicatesRequest;
+    const { phone, email, profileId, cardMask, cardHolder } = await req.json() as DetectDuplicatesRequest;
 
-    if (!phone && !email) {
-      return new Response(JSON.stringify({ error: "Phone or email is required" }), {
+    if (!phone && !email && !cardMask) {
+      return new Response(JSON.stringify({ error: "Phone, email, or cardMask is required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    console.log(`Detecting duplicates for phone: ${phone}, email: ${email}, profileId: ${profileId}`);
+    console.log(`Detecting duplicates for phone: ${phone}, email: ${email}, cardMask: ${cardMask}, profileId: ${profileId}`);
+
+    // Detect by card fingerprint (mask + holder)
+    if (cardMask) {
+      const result = await detectByCard(supabase, cardMask, cardHolder, profileId);
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // Detect by email
     if (email) {
@@ -254,6 +265,130 @@ async function detectByPhone(supabase: SupabaseClient<any>, phone: string, profi
 
   for (const pId of allProfileIds) {
     await linkProfileToCase(supabase, newCase.id, pId, "phone");
+  }
+
+  return { 
+    isDuplicate: true, 
+    caseId: newCase.id,
+    duplicates: duplicates.map(d => ({ id: d.id, email: d.email, name: d.full_name })),
+  };
+}
+
+// Normalize card holder name for fuzzy matching
+function normalizeHolderName(name: string): string {
+  if (!name) return "";
+  return name
+    .toUpperCase()
+    .replace(/[^A-ZА-ЯЁ\s]/g, "") // Keep only letters
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Check if two names are similar (fuzzy match)
+function areNamesSimilar(name1: string, name2: string): boolean {
+  const n1 = normalizeHolderName(name1);
+  const n2 = normalizeHolderName(name2);
+  
+  if (!n1 || !n2) return false;
+  if (n1 === n2) return true;
+  
+  // Check if one name contains the other
+  if (n1.includes(n2) || n2.includes(n1)) return true;
+  
+  // Check if first/last names match in different order
+  const parts1 = n1.split(" ").filter(Boolean);
+  const parts2 = n2.split(" ").filter(Boolean);
+  
+  const matchingParts = parts1.filter(p => parts2.includes(p));
+  return matchingParts.length >= 1 && matchingParts.length >= Math.min(parts1.length, parts2.length) / 2;
+}
+
+// deno-lint-ignore no-explicit-any
+async function detectByCard(supabase: SupabaseClient<any>, cardMask: string, cardHolder?: string, profileId?: string) {
+  console.log(`Detecting duplicates by card: mask=${cardMask}, holder=${cardHolder}`);
+  
+  // Find profiles with matching card mask
+  const { data: profiles, error: profilesError } = await supabase
+    .from("profiles")
+    .select("id, user_id, email, phone, full_name, created_at, card_masks, card_holder_names")
+    .eq("is_archived", false)
+    .contains("card_masks", [cardMask]);
+
+  if (profilesError) {
+    console.error("Error fetching profiles by card:", profilesError);
+    throw profilesError;
+  }
+
+  console.log(`Found ${profiles?.length || 0} profiles with matching card mask`);
+
+  // Filter by holder name similarity if provided
+  let duplicates = (profiles || []).filter(p => {
+    if (profileId && p.id === profileId) return false;
+    
+    if (cardHolder) {
+      const holders = p.card_holder_names as string[] || [];
+      return holders.some(h => areNamesSimilar(h, cardHolder));
+    }
+    return true;
+  });
+
+  if (duplicates.length === 0) {
+    console.log("No card duplicates found");
+    return { isDuplicate: false, duplicates: [] };
+  }
+
+  console.log(`Found ${duplicates.length} duplicate profiles by card`);
+
+  // Create case identifier
+  const caseIdentifier = `card:${cardMask}:${normalizeHolderName(cardHolder || "")}`;
+
+  // Check if case already exists
+  const { data: existingCase } = await supabase
+    .from("duplicate_cases")
+    .select("id, status")
+    .eq("phone", caseIdentifier)
+    .eq("duplicate_type", "card")
+    .in("status", ["new", "in_progress"])
+    .maybeSingle();
+
+  if (existingCase) {
+    if (profileId) {
+      await linkProfileToCase(supabase, existingCase.id, profileId, "card");
+    }
+    console.log(`Added to existing card case: ${existingCase.id}`);
+    return { 
+      isDuplicate: true, 
+      caseId: existingCase.id,
+      duplicates: duplicates.map(d => ({ id: d.id, email: d.email, name: d.full_name })),
+    };
+  }
+
+  // Create new duplicate case
+  const { data: newCase, error: caseError } = await supabase
+    .from("duplicate_cases")
+    .insert({
+      phone: caseIdentifier,
+      duplicate_type: "card",
+      status: "new",
+      profile_count: duplicates.length + (profileId ? 1 : 0),
+      notes: `Card: ${cardMask}${cardHolder ? `, Holder: ${cardHolder}` : ""}`,
+    })
+    .select()
+    .single();
+
+  if (caseError) {
+    console.error("Error creating card case:", caseError);
+    throw caseError;
+  }
+
+  console.log(`Created new card duplicate case: ${newCase.id}`);
+
+  // Link all profiles to the case
+  const allProfileIds = [...duplicates.map(d => d.id)];
+  if (profileId) allProfileIds.push(profileId);
+
+  for (const pId of allProfileIds) {
+    await linkProfileToCase(supabase, newCase.id, pId, "card");
   }
 
   return { 

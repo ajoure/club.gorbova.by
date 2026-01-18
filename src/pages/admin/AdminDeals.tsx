@@ -40,6 +40,7 @@ import {
   XCircle,
   AlertTriangle,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
@@ -54,6 +55,7 @@ import { useTableSort } from "@/hooks/useTableSort";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { DealsStatsBar } from "@/components/admin/deals/DealsStatsBar";
+import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -79,6 +81,7 @@ export default function AdminDeals() {
   const [showImportWizard, setShowImportWizard] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showBulkEditDialog, setShowBulkEditDialog] = useState(false);
+  const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
   const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
   const queryClient = useQueryClient();
 
@@ -554,9 +557,19 @@ export default function AdminDeals() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <PeriodSelector value={dateFilter} onChange={setDateFilter} />
+          {isSuperAdmin() && presetCounts.imported > 0 && (
+            <Button 
+              variant="outline" 
+              onClick={() => setShowArchiveCleanupDialog(true)}
+              className="text-destructive hover:text-destructive gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span className="hidden sm:inline">Удалить архив</span>
+            </Button>
+          )}
           <Button variant="outline" onClick={() => setShowImportWizard(true)}>
-            <Sparkles className="h-4 w-4 mr-2" />
-            Умный импорт
+            <Sparkles className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Умный импорт</span>
           </Button>
           <Button variant="outline" onClick={() => {
             queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
@@ -564,8 +577,8 @@ export default function AdminDeals() {
             queryClient.invalidateQueries({ queryKey: ["products-filter"] });
             toast.success("Данные обновлены");
           }}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Обновить
+            <RefreshCw className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Обновить</span>
           </Button>
         </div>
       </div>
@@ -857,6 +870,12 @@ export default function AdminDeals() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Archive Cleanup Dialog */}
+      <ArchiveCleanupDialog 
+        open={showArchiveCleanupDialog} 
+        onOpenChange={setShowArchiveCleanupDialog} 
+      />
     </div>
   );
 }
