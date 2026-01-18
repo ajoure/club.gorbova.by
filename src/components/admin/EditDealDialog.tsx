@@ -133,6 +133,24 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
     enabled: !!deal?.id && open,
   });
 
+  // Load user's payment method
+  const { data: userPaymentMethod } = useQuery({
+    queryKey: ["user-payment-method", deal?.user_id],
+    queryFn: async () => {
+      if (!deal?.user_id) return null;
+      const { data } = await supabase
+        .from("payment_methods")
+        .select("id, brand, last4")
+        .eq("user_id", deal.user_id)
+        .eq("status", "active")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!deal?.user_id && open,
+  });
+
   // Load profile info for display
   const { data: profile } = useQuery({
     queryKey: ["deal-profile-edit", deal?.user_id],
@@ -199,6 +217,14 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         const subscriptionUpdate: any = {
           auto_renew: formData.auto_renew,
         };
+        
+        // When enabling auto_renew, link user's payment method
+        if (formData.auto_renew && userPaymentMethod?.id) {
+          subscriptionUpdate.payment_method_id = userPaymentMethod.id;
+        } else if (!formData.auto_renew) {
+          // When disabling, clear payment_method_id
+          subscriptionUpdate.payment_method_id = null;
+        }
         
         if (formData.access_start_at) {
           subscriptionUpdate.access_start_at = formData.access_start_at.toISOString();
@@ -624,7 +650,12 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                     />
                   </PopoverContent>
                 </Popover>
-                {formData.auto_renew && !subscription?.payment_method_id && (
+                {formData.auto_renew && userPaymentMethod && (
+                  <p className="text-xs text-green-600">
+                    ✓ Карта привязана: {userPaymentMethod.brand || 'Карта'} •••• {userPaymentMethod.last4}
+                  </p>
+                )}
+                {formData.auto_renew && !userPaymentMethod && !subscription?.payment_method_id && (
                   <p className="text-xs text-amber-600">
                     ⚠️ У клиента нет привязанной карты. Автосписание не будет работать.
                   </p>
