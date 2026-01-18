@@ -33,6 +33,8 @@ export type UnifiedDashboardFilter = 'successful' | 'refunded' | 'cancelled' | '
 // Note: cancelled/voided are NOT in failed - they are separate category
 const FAILED_STATUSES = ['failed', 'expired', 'declined', 'error', 'incomplete'];
 const SUCCESSFUL_STATUSES = ['successful', 'succeeded'];
+// Pending statuses should NOT be counted as successful
+const PENDING_STATUSES = ['pending', 'processing'];
 const CANCELLED_TX_TYPES = ['отмена', 'void', 'cancellation', 'authorization_void', 'canceled', 'cancelled'];
 
 interface UnifiedPaymentsDashboardProps {
@@ -257,8 +259,11 @@ export default function UnifiedPaymentsDashboard({
       // Check if this is a cancellation/void transaction
       const isCancelledTx = CANCELLED_TX_TYPES.some(ct => txType.includes(ct));
       
-      // Only count successful if it's NOT a refund and NOT a cancellation
-      if (SUCCESSFUL_STATUSES.includes(statusNormalized) && !isRefundTx && !isCancelledTx && p.amount > 0) {
+      // Check if this is a pending/processing transaction (not completed yet)
+      const isPendingTx = PENDING_STATUSES.includes(statusNormalized);
+      
+      // Only count successful if it's NOT a refund, NOT a cancellation, and NOT pending
+      if (SUCCESSFUL_STATUSES.includes(statusNormalized) && !isRefundTx && !isCancelledTx && !isPendingTx && p.amount > 0) {
         result.successful[currency] = (result.successful[currency] || 0) + p.amount;
         result.successful.count++;
         
