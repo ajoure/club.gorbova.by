@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { PreregistrationDialog } from "@/components/course/PreregistrationDialog";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
+import { ProductLandingHeader } from "@/components/landing/ProductLandingHeader";
+import { ProductLandingFooter } from "@/components/landing/ProductLandingFooter";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
@@ -23,7 +25,6 @@ import {
   TrendingUp,
   Clock,
   Check,
-  ArrowLeft,
   XCircle,
   Loader2,
   ShoppingCart
@@ -189,19 +190,15 @@ export default function BusinessTraining() {
   const tariff = productData?.tariffs?.[0];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
-      {/* Back to Dashboard Button */}
-      <div className="container mx-auto px-4 pt-4">
-        <Button 
-          variant="ghost" 
-          size="sm"
-          onClick={() => navigate("/products")}
-          className="hover:bg-card/50"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          В личный кабинет
-        </Button>
-      </div>
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex flex-col">
+      {/* Standard Header */}
+      <ProductLandingHeader 
+        productName="Бухгалтерия как бизнес"
+        subtitle="Бизнес-тренинг"
+        navItems={[
+          { label: "Тарифы", sectionId: "pricing" },
+        ]}
+      />
 
       {/* Hero Section */}
       <section className="relative overflow-hidden">
@@ -484,6 +481,9 @@ export default function BusinessTraining() {
           isSubscription={true}
         />
       )}
+
+      {/* Standard Footer */}
+      <ProductLandingFooter />
     </div>
   );
 }
