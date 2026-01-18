@@ -102,7 +102,7 @@ export function parseAmount(value: string | number | undefined): number {
   
   const str = String(value);
   // Remove currency symbols and whitespace
-  let cleaned = str.replace(/[^\\d.,\\-]/g, '');
+  let cleaned = str.replace(/[^\d.,\-]/g, '');
   
   // Handle comma as decimal separator (European format)
   // If there's only one comma and it's followed by 1-2 digits, treat as decimal
