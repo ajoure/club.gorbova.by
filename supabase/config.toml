@@ -237,3 +237,6 @@ verify_jwt = false
 
 [functions.analyze-all-loyalty]
 verify_jwt = false
+
+[functions.telegram-notify-admins]
+verify_jwt = false
