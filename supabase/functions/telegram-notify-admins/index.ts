@@ -25,31 +25,37 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Optionally verify caller is admin (skip for internal calls without auth header)
+    // Optionally verify caller is admin (skip for internal calls with service role key)
     const authHeader = req.headers.get('Authorization');
     if (authHeader) {
       const token = authHeader.replace('Bearer ', '');
-      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
       
-      if (authError || !user) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
+      // Skip auth check if it's the service role key (internal call from other edge functions)
+      const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      if (token !== serviceRoleKey) {
+        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+        
+        if (authError || !user) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
 
-      // Check if caller has admin permission
-      const { data: hasPermission } = await supabase.rpc('has_permission', {
-        _user_id: user.id,
-        _permission_code: 'entitlements.manage',
-      });
-
-      if (!hasPermission) {
-        return new Response(JSON.stringify({ error: 'Forbidden' }), {
-          status: 403,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        // Check if caller has admin permission
+        const { data: hasPermission } = await supabase.rpc('has_permission', {
+          _user_id: user.id,
+          _permission_code: 'entitlements.manage',
         });
+
+        if (!hasPermission) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), {
+            status: 403,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
       }
+      // If token === serviceRoleKey, allow the request (internal call)
     }
 
     const { message, parse_mode = 'HTML', source, order_id, order_number, payment_id }: NotifyRequest = await req.json();
