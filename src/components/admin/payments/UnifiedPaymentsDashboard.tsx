@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
-import { TrendingUp, RotateCcw, Ban, Percent, Wallet, Filter } from "lucide-react";
+import { TrendingUp, RotateCcw, Ban, Percent, Wallet, Filter, XCircle } from "lucide-react";
 import { UnifiedPayment, DateFilter } from "@/hooks/useUnifiedPayments";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,6 +18,8 @@ interface ServerStats {
   successful_count: number;
   refunded_amount: number;
   refunded_count: number;
+  cancelled_amount: number;
+  cancelled_count: number;
   failed_amount: number;
   failed_count: number;
   pending_amount: number;
@@ -25,7 +27,7 @@ interface ServerStats {
   total_count: number;
 }
 
-export type UnifiedDashboardFilter = 'successful' | 'refunded' | 'failed' | null;
+export type UnifiedDashboardFilter = 'successful' | 'refunded' | 'cancelled' | 'failed' | null;
 
 // Constants for status classification
 const FAILED_STATUSES = ['failed', 'canceled', 'cancelled', 'expired', 'declined', 'error', 'voided'];
@@ -212,6 +214,7 @@ export default function UnifiedPaymentsDashboard({
       return {
         successful: { amount: 0, count: 0 },
         refunded: { amount: 0, count: 0 },
+        cancelled: { amount: 0, count: 0 },
         failed: { amount: 0, count: 0 },
         fees: { amount: 0, count: 0 },
         feesUnknown: 0,
@@ -376,11 +379,16 @@ export default function UnifiedPaymentsDashboard({
       : (result.failed[primaryCurrency] || 0);
     const finalFailedCount = serverStats?.failed_count ?? result.failed.count;
     
+    // Get cancelled stats from server
+    const finalCancelledAmount = serverStats?.cancelled_amount ?? 0;
+    const finalCancelledCount = serverStats?.cancelled_count ?? 0;
+    
     const finalNetRevenue = finalSuccessfulAmount - finalRefundedAmount - feesAmount;
 
     return { 
       successful: { amount: finalSuccessfulAmount, count: finalSuccessfulCount },
       refunded: { amount: finalRefundedAmount, count: finalRefundedCount },
+      cancelled: { amount: finalCancelledAmount, count: finalCancelledCount },
       failed: { amount: finalFailedAmount, count: finalFailedCount },
       fees: { amount: feesAmount, count: result.feesKnown + result.feesFallback },
       feesUnknown: result.feesUnknown,
@@ -399,8 +407,8 @@ export default function UnifiedPaymentsDashboard({
 
   if (isLoading || isLoadingRules || isLoadingStats) {
     return (
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
-        {[...Array(5)].map((_, i) => (
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+        {[...Array(6)].map((_, i) => (
           <div key={i} className="rounded-2xl p-5 backdrop-blur-2xl bg-card/60 border border-border/30 min-h-[140px] flex flex-col items-center justify-center gap-2">
             <Skeleton className="h-10 w-10 rounded-xl" />
             <Skeleton className="h-3 w-16" />
@@ -446,7 +454,7 @@ export default function UnifiedPaymentsDashboard({
         )}
       </div>
       
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
         <DashboardCard
           title="Успешные"
           amount={analytics.successful.amount}
@@ -475,6 +483,21 @@ export default function UnifiedPaymentsDashboard({
           isActive={activeFilter === 'refunded'}
           onClick={() => handleFilterClick('refunded')}
           tooltip="Клик для фильтрации по возвратам"
+        />
+        
+        <DashboardCard
+          title="Отмены"
+          amount={analytics.cancelled.amount}
+          count={analytics.cancelled.count}
+          countLabel={pluralize(analytics.cancelled.count, 'отмена', 'отмены', 'отмен')}
+          currency={primaryCurrency}
+          icon={<XCircle className="h-5 w-5" />}
+          colorClass="text-orange-500"
+          glowColor="bg-orange-500"
+          isClickable={!!onFilterChange}
+          isActive={activeFilter === 'cancelled'}
+          onClick={() => handleFilterClick('cancelled')}
+          tooltip="Клик для фильтрации по отменённым платежам"
         />
         
         <DashboardCard

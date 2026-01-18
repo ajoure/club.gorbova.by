@@ -153,9 +153,13 @@ export default function AdminPayments() {
           const isRefundType = normalizeType(p.transaction_type) === 'refund';
           const isNegativeAmount = p.amount < 0; // Negative amount = refund
           if (!isSuccessful && !isRefundStatus && !isRefundType && !isNegativeAmount) return false;
+        } else if (filters.status === "cancelled") {
+          // Show cancelled statuses
+          const cancelledStatuses = ['cancel', 'cancelled'];
+          if (!cancelledStatuses.includes(p.status_normalized)) return false;
         } else if (filters.status === "failed") {
-          // Show all failed statuses (failed, declined, expired, error, canceled)
-          const failedStatuses = ['failed', 'declined', 'expired', 'error', 'canceled', 'cancelled'];
+          // Show all failed statuses (failed, declined, expired, error - not cancelled)
+          const failedStatuses = ['failed', 'declined', 'expired', 'error'];
           if (!failedStatuses.includes(p.status_normalized)) return false;
         } else if (filters.status !== p.status_normalized) {
           return false;
