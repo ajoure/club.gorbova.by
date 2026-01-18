@@ -62,148 +62,177 @@ function getHeaders(sessionCookie?: string): Record<string, string> {
   return headers;
 }
 
-// Authenticate and get session cookie
+// Authenticate and get session cookie using ASP.NET MVC flow
 async function authenticate(login: string, password: string): Promise<{ 
   success: boolean; 
   sessionCookie?: string; 
   error?: string;
-  authUrl?: string;
 }> {
   try {
-    console.log('Attempting iLex authentication...');
+    console.log('Attempting iLex ASP.NET authentication...');
     
-    // Step 1: Get the login page to obtain initial cookies and CSRF token
-    const loginPageResponse = await fetch(`${ILEX_BASE_URL}/`, {
+    // Step 1: GET login page to get cookies and CSRF token
+    const loginPageUrl = `${ILEX_BASE_URL}/Account/Login`;
+    console.log('Fetching login page:', loginPageUrl);
+    
+    const loginPageResponse = await fetch(loginPageUrl, {
       method: 'GET',
       headers: getHeaders(),
       redirect: 'manual',
     });
     
+    console.log('Login page status:', loginPageResponse.status);
+    
+    // Collect initial cookies
     let cookies: string[] = [];
     const setCookieHeaders = loginPageResponse.headers.getSetCookie?.() || [];
     if (setCookieHeaders.length > 0) {
       cookies = setCookieHeaders.map(c => c.split(';')[0]);
+      console.log('Initial cookies:', cookies.map(c => c.split('=')[0]).join(', '));
     }
-    console.log('Initial cookies:', cookies.length);
+    
+    const html = await loginPageResponse.text();
+    
+    // Step 2: Extract __RequestVerificationToken from HTML
+    const tokenPatterns = [
+      /<input[^>]*name="__RequestVerificationToken"[^>]*value="([^"]+)"/i,
+      /name="__RequestVerificationToken"\s+type="hidden"\s+value="([^"]+)"/i,
+      /value="([^"]+)"[^>]*name="__RequestVerificationToken"/i,
+      /__RequestVerificationToken[^>]*value="([^"]+)"/i,
+    ];
+    
+    let verificationToken: string | null = null;
+    for (const pattern of tokenPatterns) {
+      const match = html.match(pattern);
+      if (match) {
+        verificationToken = match[1];
+        break;
+      }
+    }
+    
+    if (!verificationToken) {
+      console.log('Could not find __RequestVerificationToken in login page');
+      console.log('Login page HTML length:', html.length);
+      console.log('Contains form:', html.includes('<form'));
+      console.log('Contains RequestVerification:', html.includes('RequestVerification'));
+      
+      // Maybe already authenticated?
+      if (html.includes('logout') || html.includes('Выйти') || html.includes('/Account/LogOff')) {
+        console.log('Appears already authenticated');
+        return { 
+          success: true, 
+          sessionCookie: cookies.join('; '),
+        };
+      }
+      
+      return { success: false, error: 'CSRF токен не найден на странице входа' };
+    }
+    
+    console.log('Found verification token:', verificationToken.substring(0, 30) + '...');
     
     await humanDelay();
     
-    // Step 2: Try different authentication endpoints
-    const authEndpoints = [
-      '/api/auth/login',
-      '/auth/login',
-      '/login',
-      '/api/login',
-    ];
+    // Step 3: POST login form with token
+    const formData = new URLSearchParams({
+      __RequestVerificationToken: verificationToken,
+      UserName: login,
+      Password: password,
+      RememberMe: 'true',
+    });
     
-    let authSuccess = false;
-    let finalCookies = cookies.join('; ');
+    console.log('Submitting login form...');
     
-    for (const endpoint of authEndpoints) {
-      try {
-        console.log(`Trying auth endpoint: ${endpoint}`);
+    const loginResponse = await fetch(loginPageUrl, {
+      method: 'POST',
+      headers: {
+        ...getHeaders(cookies.join('; ')),
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Referer': loginPageUrl,
+        'Origin': ILEX_BASE_URL,
+        'Cache-Control': 'no-cache',
+      },
+      body: formData.toString(),
+      redirect: 'manual',
+    });
+    
+    console.log('Login POST status:', loginResponse.status);
+    console.log('Login POST headers:', Object.fromEntries(loginResponse.headers.entries()));
+    
+    // Collect new cookies (including auth cookie)
+    const newCookies = loginResponse.headers.getSetCookie?.() || [];
+    if (newCookies.length > 0) {
+      const cookieValues = newCookies.map(c => c.split(';')[0]);
+      cookies.push(...cookieValues);
+      console.log('New cookies after login:', cookieValues.map(c => c.split('=')[0]).join(', '));
+    }
+    const finalCookies = cookies.join('; ');
+    
+    // Step 4: Check for successful auth
+    const hasAuthCookie = finalCookies.includes('.ASPXAUTH') || 
+                          finalCookies.includes('.AspNet.ApplicationCookie') ||
+                          finalCookies.includes('ARRAffinity') ||
+                          finalCookies.includes('auth');
+    
+    const location = loginResponse.headers.get('location');
+    const isRedirectToHome = loginResponse.status >= 300 && 
+                             loginResponse.status < 400 &&
+                             location && !location.toLowerCase().includes('login');
+    
+    console.log('Has auth cookie:', hasAuthCookie);
+    console.log('Redirect location:', location);
+    console.log('Is redirect to home:', isRedirectToHome);
+    
+    if (hasAuthCookie || isRedirectToHome) {
+      console.log('Authentication successful');
+      
+      // Follow redirect to confirm auth
+      if (isRedirectToHome && location) {
+        let redirectUrl = location;
+        if (redirectUrl.startsWith('/')) {
+          redirectUrl = ILEX_BASE_URL + redirectUrl;
+        }
         
-        const loginResponse = await fetch(`${ILEX_BASE_URL}${endpoint}`, {
-          method: 'POST',
-          headers: {
-            ...getHeaders(finalCookies),
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            login,
-            password,
-            username: login,
-            email: login,
-          }).toString(),
-          redirect: 'manual',
+        await humanDelay(300, 600);
+        
+        const confirmResponse = await fetch(redirectUrl, {
+          method: 'GET',
+          headers: getHeaders(finalCookies),
+          redirect: 'follow',
         });
         
-        console.log(`Auth response status: ${loginResponse.status}`);
-        
-        // Collect new cookies
-        const newCookies = loginResponse.headers.getSetCookie?.() || [];
-        if (newCookies.length > 0) {
-          const cookieValues = newCookies.map(c => c.split(';')[0]);
-          cookies.push(...cookieValues);
-          finalCookies = cookies.join('; ');
-          console.log('Got new cookies from auth');
+        // Collect any additional cookies
+        const confirmCookies = confirmResponse.headers.getSetCookie?.() || [];
+        if (confirmCookies.length > 0) {
+          cookies.push(...confirmCookies.map(c => c.split(';')[0]));
         }
         
-        // Check if we got a redirect to authenticated area
-        if (loginResponse.status >= 300 && loginResponse.status < 400) {
-          const location = loginResponse.headers.get('location');
-          console.log('Redirect to:', location);
-          if (location && !location.includes('login')) {
-            authSuccess = true;
-            break;
-          }
+        const confirmHtml = await confirmResponse.text();
+        if (confirmHtml.includes('login') && confirmHtml.includes('пароль')) {
+          console.log('Redirect led back to login - auth failed');
+          return { success: false, error: 'Неверные учетные данные' };
         }
-        
-        // Check response body for success indicators
-        if (loginResponse.status === 200) {
-          const responseText = await loginResponse.text();
-          if (!responseText.includes('login') && !responseText.includes('пароль') && 
-              !responseText.includes('Войти') && !responseText.includes('авторизац')) {
-            authSuccess = true;
-            break;
-          }
-        }
-      } catch (e) {
-        console.log(`Endpoint ${endpoint} failed:`, e);
       }
       
-      await humanDelay(200, 500);
-    }
-    
-    // Try JSON login as well
-    if (!authSuccess) {
-      try {
-        console.log('Trying JSON auth...');
-        const jsonAuthResponse = await fetch(`${ILEX_BASE_URL}/api/auth/login`, {
-          method: 'POST',
-          headers: {
-            ...getHeaders(finalCookies),
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ login, password }),
-          redirect: 'manual',
-        });
-        
-        const newCookies = jsonAuthResponse.headers.getSetCookie?.() || [];
-        if (newCookies.length > 0) {
-          const cookieValues = newCookies.map(c => c.split(';')[0]);
-          cookies.push(...cookieValues);
-          finalCookies = cookies.join('; ');
-        }
-        
-        if (jsonAuthResponse.ok) {
-          const jsonData = await jsonAuthResponse.json();
-          if (jsonData.success || jsonData.token || jsonData.user) {
-            authSuccess = true;
-            if (jsonData.token) {
-              finalCookies += `; token=${jsonData.token}`;
-            }
-          }
-        }
-      } catch (e) {
-        console.log('JSON auth failed:', e);
-      }
-    }
-    
-    if (authSuccess || finalCookies.length > 50) {
-      console.log('Authentication appears successful');
       return { 
         success: true, 
-        sessionCookie: finalCookies,
+        sessionCookie: cookies.join('; '),
       };
     }
     
-    // Return partial success with cookies even if we're not sure
+    // Check response body for error messages
+    const responseText = await loginResponse.text();
+    if (responseText.includes('неверн') || responseText.includes('incorrect') || 
+        responseText.includes('Invalid') || responseText.includes('ошибка')) {
+      console.log('Login response indicates invalid credentials');
+      return { success: false, error: 'Неверные учетные данные' };
+    }
+    
+    console.log('Authentication failed - no auth indicators');
     return { 
-      success: cookies.length > 0, 
-      sessionCookie: finalCookies,
-      error: cookies.length === 0 ? 'Не удалось получить сессию' : undefined,
+      success: false, 
+      error: 'Не удалось авторизоваться. Проверьте учетные данные.',
     };
+    
   } catch (error) {
     console.error('Authentication error:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Ошибка подключения' };
