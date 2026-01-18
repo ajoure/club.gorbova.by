@@ -2,12 +2,13 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, LifeBuoy, Inbox } from "lucide-react";
+import { MessageCircle, Send, LifeBuoy, Inbox, Settings } from "lucide-react";
 
 // Import tab contents
 import { SupportTabContent } from "@/components/admin/communication/SupportTabContent";
 import { BroadcastsTabContent } from "@/components/admin/communication/BroadcastsTabContent";
 import { InboxTabContent } from "@/components/admin/communication/InboxTabContent";
+import { CommunicationSettingsTabContent } from "@/components/admin/communication/CommunicationSettingsTabContent";
 
 export default function AdminCommunication() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -40,25 +41,29 @@ export default function AdminCommunication() {
             <div>
               <h1 className="text-xl md:text-2xl font-bold">Общение</h1>
               <p className="text-sm text-muted-foreground">
-                Почта, техподдержка и рассылки
+                Почта, техподдержка, рассылки и настройки
               </p>
             </div>
           </div>
 
           {/* Tabs */}
           <Tabs value={activeTab} onValueChange={handleTabChange}>
-            <TabsList className="grid w-full max-w-lg grid-cols-3">
+            <TabsList className="grid w-full max-w-2xl grid-cols-4">
               <TabsTrigger value="inbox" className="gap-2">
                 <Inbox className="h-4 w-4" />
-                Почта
+                <span className="hidden sm:inline">Почта</span>
               </TabsTrigger>
               <TabsTrigger value="support" className="gap-2">
                 <LifeBuoy className="h-4 w-4" />
-                Техподдержка
+                <span className="hidden sm:inline">Техподдержка</span>
               </TabsTrigger>
               <TabsTrigger value="broadcasts" className="gap-2">
                 <Send className="h-4 w-4" />
-                Рассылки
+                <span className="hidden sm:inline">Рассылки</span>
+              </TabsTrigger>
+              <TabsTrigger value="settings" className="gap-2">
+                <Settings className="h-4 w-4" />
+                <span className="hidden sm:inline">Настройки</span>
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -69,6 +74,7 @@ export default function AdminCommunication() {
           {activeTab === "inbox" && <InboxTabContent />}
           {activeTab === "support" && <SupportTabContent />}
           {activeTab === "broadcasts" && <BroadcastsTabContent />}
+          {activeTab === "settings" && <CommunicationSettingsTabContent />}
         </div>
       </div>
     </AdminLayout>

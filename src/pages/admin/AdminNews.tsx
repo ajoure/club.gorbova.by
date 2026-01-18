@@ -23,6 +23,7 @@ interface NewsItem {
   id: string;
   title: string;
   summary: string | null;
+  content: string | null;
   source: string;
   source_url: string | null;
   country: string;
@@ -35,6 +36,7 @@ export default function AdminNews() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
+  const [content, setContent] = useState("");
   const [source, setSource] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [country, setCountry] = useState<string>("by");
@@ -69,6 +71,7 @@ export default function AdminNews() {
         .insert({
           title,
           summary: summary || null,
+          content: content || null,
           source,
           source_url: sourceUrl || null,
           country,
@@ -129,6 +132,7 @@ export default function AdminNews() {
   const resetForm = () => {
     setTitle("");
     setSummary("");
+    setContent("");
     setSource("");
     setSourceUrl("");
     setCountry("by");
@@ -216,14 +220,29 @@ export default function AdminNews() {
                   </div>
                   
                   <div className="space-y-2">
-                    <Label htmlFor="summary">Краткое описание</Label>
+                    <Label htmlFor="summary">Краткое описание (анонс)</Label>
                     <Textarea
                       id="summary"
                       value={summary}
                       onChange={(e) => setSummary(e.target.value)}
                       placeholder="Внесены уточнения в порядок..."
-                      rows={3}
+                      rows={2}
                     />
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="content">Полный текст новости</Label>
+                    <Textarea
+                      id="content"
+                      value={content}
+                      onChange={(e) => setContent(e.target.value)}
+                      placeholder="Подробное содержимое новости..."
+                      rows={6}
+                      className="resize-y"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Если заполнено — будет показано при клике на новость
+                    </p>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-4">

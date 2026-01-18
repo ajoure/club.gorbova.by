@@ -2829,6 +2829,7 @@ export type Database = {
           ai_summary: string | null
           audience_mood: string | null
           category: string
+          content: string | null
           country: string
           created_at: string
           created_by: string | null
@@ -2858,6 +2859,7 @@ export type Database = {
           ai_summary?: string | null
           audience_mood?: string | null
           category: string
+          content?: string | null
           country: string
           created_at?: string
           created_by?: string | null
@@ -2887,6 +2889,7 @@ export type Database = {
           ai_summary?: string | null
           audience_mood?: string | null
           category?: string
+          content?: string | null
           country?: string
           created_at?: string
           created_by?: string | null
