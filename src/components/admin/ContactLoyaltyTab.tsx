@@ -6,7 +6,6 @@ import { ru } from "date-fns/locale";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import {
@@ -132,8 +131,30 @@ export function ContactLoyaltyTab({ contact }: ContactLoyaltyTabProps) {
       return data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["contact", contact.id] });
-      queryClient.invalidateQueries({ queryKey: ["contacts"] });
+      // Optimistically update the contact in admin-contacts cache
+      queryClient.setQueryData(["admin-contacts"], (oldData: any) => {
+        if (!oldData) return oldData;
+        return oldData.map((c: any) => {
+          if (c.id === contact.id) {
+            return {
+              ...c,
+              loyalty_score: data?.score,
+              loyalty_ai_summary: data?.ai_summary,
+              loyalty_status_reason: data?.reason,
+              loyalty_proofs: data?.proofs || [],
+              loyalty_analyzed_messages_count: data?.messages_analyzed,
+              loyalty_updated_at: data?.loyalty_updated_at || new Date().toISOString(),
+              communication_style: data?.communication_style,
+            };
+          }
+          return c;
+        });
+      });
+
+      // Also invalidate to ensure fresh data
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["contact-profile-details", contact.id] });
+      
       if (data?.score === null) {
         toast.info("Нет сообщений для анализа");
       } else {
@@ -225,7 +246,7 @@ export function ContactLoyaltyTab({ contact }: ContactLoyaltyTabProps) {
       </Card>
 
       {/* Communication Style Recommendations */}
-      {commStyle && (
+      {commStyle && commStyle.tone && (
         <Card className="bg-blue-50/50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
@@ -296,6 +317,23 @@ export function ContactLoyaltyTab({ contact }: ContactLoyaltyTabProps) {
                 </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* UX Fallback: Style not yet defined */}
+      {hasData && !commStyle && (
+        <Card className="bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-3">
+              <MessageCircle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+              <div>
+                <p className="font-medium mb-1 text-sm">Стиль общения не определён</p>
+                <p className="text-sm text-muted-foreground">
+                  Нажмите «Пересчитать оценку», чтобы получить рекомендации по общению с клиентом
+                </p>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}

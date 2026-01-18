@@ -33,9 +33,98 @@ interface LoyaltyAnalysisResult {
   reason: string;
   proofs: LoyaltyProof[];
   messages_analyzed: number;
-  communication_style?: CommunicationStyle;
+  communication_style: CommunicationStyle;
   pain_points?: PainPoint[];
 }
+
+// Tool schema for structured output
+const loyaltyAnalysisTool = {
+  type: "function",
+  function: {
+    name: "analyze_loyalty",
+    description: "Analyze customer loyalty based on their messages and return structured results",
+    parameters: {
+      type: "object",
+      properties: {
+        score: {
+          type: "number",
+          description: "Loyalty score from 1 to 10"
+        },
+        status_label: {
+          type: "string",
+          enum: ["Хейтер", "Недоволен", "Нейтрально", "Лояльный", "Адепт/Фанат"],
+          description: "Status label based on score"
+        },
+        ai_summary: {
+          type: "string",
+          description: "Brief summary of customer attitude (2-3 sentences)"
+        },
+        reason: {
+          type: "string",
+          description: "Explanation for the score"
+        },
+        proofs: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              quote: { type: "string", description: "Exact quote from message" },
+              date: { type: "string", description: "Message date in ISO format" },
+              sentiment: { type: "string", enum: ["positive", "negative", "neutral"] },
+              context: { type: "string", description: "Brief context (optional)" }
+            },
+            required: ["quote", "date", "sentiment"],
+            additionalProperties: false
+          },
+          description: "Up to 10 key quotes as evidence"
+        },
+        communication_style: {
+          type: "object",
+          properties: {
+            tone: { 
+              type: "string", 
+              enum: ["Деловой", "Дружеский", "Экспертный", "Неформальный"],
+              description: "Preferred communication tone"
+            },
+            keywords_to_use: {
+              type: "array",
+              items: { type: "string" },
+              description: "Words/phrases the customer uses and responds to"
+            },
+            topics_to_avoid: {
+              type: "array",
+              items: { type: "string" },
+              description: "Topics that caused negative reactions"
+            },
+            recommendations: {
+              type: "string",
+              description: "Brief recommendations for manager (1-2 sentences)"
+            }
+          },
+          required: ["tone", "keywords_to_use", "topics_to_avoid", "recommendations"],
+          additionalProperties: false,
+          description: "Communication style recommendations"
+        },
+        pain_points: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              description: { type: "string" },
+              keywords: { type: "array", items: { type: "string" } },
+              sentiment_score: { type: "number" }
+            },
+            required: ["description", "keywords", "sentiment_score"],
+            additionalProperties: false
+          },
+          description: "Customer pain points"
+        }
+      },
+      required: ["score", "status_label", "ai_summary", "reason", "proofs", "communication_style"],
+      additionalProperties: false
+    }
+  }
+};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -140,11 +229,8 @@ serve(async (req) => {
       .map(m => `[${m.message_ts || m.created_at}] ${m.from_display_name || "User"}: ${m.text}`)
       .join("\n");
 
-    // Enhanced system prompt with communication style and pain points
-    const systemPrompt = `Ты эксперт по анализу клиентской лояльности и коммуникаций. Проанализируй сообщения клиента и определи:
-1. Уровень лояльности к бренду/продукту
-2. Рекомендации по стилю общения с этим клиентом
-3. Болевые точки и проблемы клиента
+    // System prompt for tool calling
+    const systemPrompt = `Ты эксперт по анализу клиентской лояльности и коммуникаций. Проанализируй сообщения клиента и вызови функцию analyze_loyalty с результатами.
 
 Твоя задача:
 1. Оценить общий тон сообщений (позитивный/негативный/нейтральный)
@@ -152,39 +238,12 @@ serve(async (req) => {
 3. Найти признаки недовольства (жалобы, критика, негатив)
 4. Выбрать до 10 ключевых цитат-доказательств
 5. Выставить итоговый балл от 1 до 10
-6. Определить предпочтительный стиль общения клиента
+6. ОБЯЗАТЕЛЬНО определить предпочтительный стиль общения клиента (communication_style)
 7. Выявить болевые точки для сохранения в аналитику
 
-ВАЖНО: Детектируй сарказм! Если клиент пишет "Ну спасибо, очень 'быстро' ответили" - это негатив, не позитив.
-
-Ответь СТРОГО в формате JSON:
-{
-  "score": число от 1 до 10,
-  "status_label": "Хейтер" | "Недоволен" | "Нейтрально" | "Лояльный" | "Адепт/Фанат",
-  "ai_summary": "Краткое резюме об отношении клиента (2-3 предложения)",
-  "reason": "Почему выставлен такой балл (объяснение для админа)",
-  "proofs": [
-    {
-      "quote": "точная цитата из сообщения",
-      "date": "дата сообщения в ISO формате",
-      "sentiment": "positive" | "negative" | "neutral",
-      "context": "краткий контекст (опционально)"
-    }
-  ],
-  "communication_style": {
-    "tone": "Деловой" | "Дружеский" | "Экспертный" | "Неформальный",
-    "keywords_to_use": ["слова", "которые", "использует", "клиент"],
-    "topics_to_avoid": ["темы", "которые", "вызывали", "негатив"],
-    "recommendations": "Краткие рекомендации для менеджера (1-2 предложения)"
-  },
-  "pain_points": [
-    {
-      "description": "Описание болевой точки",
-      "keywords": ["ключевые", "слова"],
-      "sentiment_score": -0.5
-    }
-  ]
-}
+ВАЖНО: 
+- Детектируй сарказм! Если клиент пишет "Ну спасибо, очень 'быстро' ответили" - это негатив, не позитив.
+- ОБЯЗАТЕЛЬНО заполни communication_style с рекомендациями по общению!
 
 Шкала оценок:
 1-2: Хейтер (активно критикует, негативные отзывы)
@@ -193,7 +252,7 @@ serve(async (req) => {
 7-8: Лояльный (позитивные отзывы, благодарности)
 9-10: Адепт/Фанат (восторженные отзывы, рекомендует другим)`;
 
-    const userPrompt = `Проанализируй эти ${messagesCount} сообщений клиента:\n\n${messagesText}`;
+    const userPrompt = `Проанализируй эти ${messagesCount} сообщений клиента и вызови функцию analyze_loyalty:\n\n${messagesText}`;
 
     if (!lovableApiKey) {
       console.error("[analyze-contact-loyalty] LOVABLE_API_KEY not configured");
@@ -203,6 +262,7 @@ serve(async (req) => {
       );
     }
 
+    // Use tool calling for structured output
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -210,11 +270,13 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
+        model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
+        tools: [loyaltyAnalysisTool],
+        tool_choice: { type: "function", function: { name: "analyze_loyalty" } },
         temperature: 0.3,
       }),
     });
@@ -227,6 +289,12 @@ serve(async (req) => {
         return new Response(
           JSON.stringify({ error: "Rate limit exceeded, please try again later" }),
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (aiResponse.status === 402) {
+        return new Response(
+          JSON.stringify({ error: "Payment required, please add credits" }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
       
@@ -245,44 +313,84 @@ serve(async (req) => {
       throw new Error("Failed to parse AI response");
     }
 
-    const aiContent = aiData.choices?.[0]?.message?.content || "";
-    console.log("[analyze-contact-loyalty] AI response length:", aiContent.length);
-
-    // Parse AI response
+    // Extract tool call result
     let analysisResult: LoyaltyAnalysisResult;
-    try {
-      // Clean up the response - remove markdown code blocks if present
-      let cleanContent = aiContent.trim();
-      if (cleanContent.startsWith("```json")) {
-        cleanContent = cleanContent.slice(7);
+    
+    const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+    if (toolCall && toolCall.function?.arguments) {
+      try {
+        analysisResult = JSON.parse(toolCall.function.arguments);
+        console.log(`[analyze-contact-loyalty] Tool call success: score=${analysisResult.score}, hasCommunicationStyle=${!!analysisResult.communication_style}, keywordsCount=${analysisResult.communication_style?.keywords_to_use?.length || 0}`);
+      } catch (parseError) {
+        console.error("[analyze-contact-loyalty] Failed to parse tool call arguments:", parseError);
+        throw new Error("Failed to parse tool call result");
       }
-      if (cleanContent.startsWith("```")) {
-        cleanContent = cleanContent.slice(3);
+    } else {
+      // Fallback: try to parse content as JSON (legacy mode)
+      const aiContent = aiData.choices?.[0]?.message?.content || "";
+      console.log("[analyze-contact-loyalty] No tool call, trying content parse. Length:", aiContent.length);
+      
+      try {
+        let cleanContent = aiContent.trim();
+        if (cleanContent.startsWith("```json")) {
+          cleanContent = cleanContent.slice(7);
+        }
+        if (cleanContent.startsWith("```")) {
+          cleanContent = cleanContent.slice(3);
+        }
+        if (cleanContent.endsWith("```")) {
+          cleanContent = cleanContent.slice(0, -3);
+        }
+        
+        analysisResult = JSON.parse(cleanContent.trim());
+      } catch (parseError) {
+        console.error("[analyze-contact-loyalty] Failed to parse AI JSON content:", parseError);
+        
+        // Create fallback result with default communication_style
+        const scoreMatch = aiContent.match(/score["\s:]+(\d+)/i);
+        const extractedScore = scoreMatch ? parseInt(scoreMatch[1]) : 5;
+        
+        analysisResult = {
+          score: extractedScore,
+          status_label: extractedScore <= 4 ? "Недоволен" : extractedScore >= 7 ? "Лояльный" : "Нейтрально",
+          ai_summary: "Не удалось получить полный анализ от AI",
+          reason: "Требуется повторный анализ",
+          proofs: [],
+          messages_analyzed: messagesCount,
+          communication_style: {
+            tone: "Деловой",
+            keywords_to_use: [],
+            topics_to_avoid: [],
+            recommendations: "Рекомендуется повторно запустить анализ для получения рекомендаций по общению"
+          }
+        };
       }
-      if (cleanContent.endsWith("```")) {
-        cleanContent = cleanContent.slice(0, -3);
-      }
-      
-      analysisResult = JSON.parse(cleanContent.trim());
-    } catch (parseError) {
-      console.error("[analyze-contact-loyalty] Failed to parse AI JSON:", parseError, aiContent);
-      
-      // Fallback: extract score from text if possible
-      const scoreMatch = aiContent.match(/score["\s:]+(\d+)/i);
-      const extractedScore = scoreMatch ? parseInt(scoreMatch[1]) : 5;
-      
-      analysisResult = {
-        score: extractedScore,
-        status_label: extractedScore <= 4 ? "Недоволен" : extractedScore >= 7 ? "Лояльный" : "Нейтрально",
-        ai_summary: "Не удалось получить полный анализ от AI",
-        reason: "Требуется повторный анализ",
-        proofs: [],
-        messages_analyzed: messagesCount,
+    }
+
+    // Ensure communication_style exists (fallback)
+    if (!analysisResult.communication_style) {
+      console.log("[analyze-contact-loyalty] communication_style missing, adding fallback");
+      analysisResult.communication_style = {
+        tone: "Деловой",
+        keywords_to_use: [],
+        topics_to_avoid: [],
+        recommendations: "Стиль общения не определён, рекомендуется повторный анализ"
       };
     }
 
+    // Normalize communication_style keys (handle camelCase/snake_case variations)
+    const commStyle = analysisResult.communication_style as any;
+    const normalizedCommStyle: CommunicationStyle = {
+      tone: commStyle.tone || commStyle.Tone || "Деловой",
+      keywords_to_use: commStyle.keywords_to_use || commStyle.keywordsToUse || commStyle.keywords || [],
+      topics_to_avoid: commStyle.topics_to_avoid || commStyle.topicsToAvoid || commStyle.avoid || [],
+      recommendations: commStyle.recommendations || commStyle.recommendation || ""
+    };
+
     // Validate and clamp score
     const validScore = Math.min(10, Math.max(1, Math.round(analysisResult.score || 5)));
+
+    console.log(`[analyze-contact-loyalty] Saving: score=${validScore}, commStyleTone=${normalizedCommStyle.tone}, keywordsCount=${normalizedCommStyle.keywords_to_use.length}, topicsCount=${normalizedCommStyle.topics_to_avoid.length}`);
 
     // Update profile with analysis results including communication_style
     const { error: updateError } = await supabase
@@ -294,7 +402,7 @@ serve(async (req) => {
         loyalty_proofs: analysisResult.proofs || [],
         loyalty_analyzed_messages_count: messagesCount,
         loyalty_updated_at: new Date().toISOString(),
-        communication_style: analysisResult.communication_style || null,
+        communication_style: normalizedCommStyle,
       })
       .eq("id", targetProfileId);
 
@@ -338,10 +446,13 @@ serve(async (req) => {
         score: validScore,
         status_label: analysisResult.status_label,
         ai_summary: analysisResult.ai_summary,
+        reason: analysisResult.reason,
+        proofs: analysisResult.proofs || [],
         proofs_count: analysisResult.proofs?.length || 0,
         messages_analyzed: messagesCount,
-        communication_style: analysisResult.communication_style || null,
+        communication_style: normalizedCommStyle,
         pain_points_saved: analysisResult.pain_points?.length || 0,
+        loyalty_updated_at: new Date().toISOString(),
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
