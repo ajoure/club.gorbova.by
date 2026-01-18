@@ -3,8 +3,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
-import { Pencil, Trash2, Check, X, Star, CreditCard } from "lucide-react";
-import type { PaymentMethod } from "@/hooks/useTariffOffers";
+import { Pencil, Trash2, Check, X, Star, CreditCard, Calendar } from "lucide-react";
+import type { PaymentMethod, OfferMetaConfig } from "@/hooks/useTariffOffers";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
 
 interface OfferRowCompactProps {
   offer: {
@@ -21,6 +23,7 @@ interface OfferRowCompactProps {
     payment_method?: PaymentMethod;
     installment_count?: number | null;
     installment_interval_days?: number | null;
+    meta?: OfferMetaConfig | null;
   };
   onToggleActive: (id: string, isActive: boolean) => void;
   onUpdateLabel: (id: string, label: string) => void;
@@ -151,6 +154,12 @@ export function OfferRowCompact({
                       </span>
                     )}
                   </>
+                )}
+                {offer.offer_type === "preregistration" && offer.meta?.preregistration?.first_charge_date && (
+                  <span className="text-emerald-600 inline-flex items-center gap-1">
+                    <Calendar className="h-3 w-3" />
+                    {format(new Date(offer.meta.preregistration.first_charge_date), "d MMM yyyy", { locale: ru })}
+                  </span>
                 )}
                 {installmentInfo && (
                   <span className="text-amber-600">

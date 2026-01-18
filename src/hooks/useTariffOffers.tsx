@@ -4,6 +4,24 @@ import { toast } from "sonner";
 
 export type PaymentMethod = "full_payment" | "internal_installment" | "bank_installment";
 
+// Preregistration settings for auto-charge after specific date
+export interface PreregistrationConfig {
+  first_charge_date?: string;           // "2026-02-05" - дата первого списания
+  charge_offer_id?: string;             // UUID кнопки pay_now для списания
+  notify_before_days?: number;          // За сколько дней уведомлять (default: 1)
+  auto_convert_after_date?: boolean;    // Автоматически заменить на кнопку оплаты после даты
+  charge_window_start?: number;         // День месяца начала окна списания (1-28)
+  charge_window_end?: number;           // День месяца конца окна списания (1-28)
+}
+
+// Subscription/recurring settings
+export interface RecurringConfig {
+  is_recurring?: boolean;               // Это подписка с автопродлением
+  recurring_interval_days?: number;     // Интервал списания в днях (30 = месяц)
+  charge_window_start?: number;         // День месяца начала окна списания
+  charge_window_end?: number;           // День месяца конца окна списания
+}
+
 export interface OfferMetaConfig {
   welcome_message?: {
     enabled: boolean;
@@ -19,6 +37,15 @@ export interface OfferMetaConfig {
       filename?: string;
     };
   };
+  // Preregistration settings
+  preregistration?: PreregistrationConfig;
+  // Recurring/subscription settings
+  recurring?: RecurringConfig;
+  // Legacy fields (for backwards compatibility)
+  is_recurring?: boolean;
+  recurring_interval_days?: number;
+  charge_window_start?: number;
+  charge_window_end?: number;
 }
 
 export interface TariffOffer {

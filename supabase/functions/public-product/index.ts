@@ -186,7 +186,8 @@ Deno.serve(async (req) => {
           is_primary,
           payment_method,
           installment_count,
-          sort_order
+          sort_order,
+          meta
         `)
         .in("tariff_id", tariffIds)
         .eq("is_active", true)
@@ -197,7 +198,28 @@ Deno.serve(async (req) => {
       if (offersError) {
         console.error("[public-product] Error fetching offers:", offersError);
       } else {
-        offers = offersData || [];
+        // Process offers - auto-convert preregistration after date if configured
+        const nowDate = new Date();
+        offers = (offersData || []).map(offer => {
+          if (offer.offer_type === 'preregistration' && offer.meta?.preregistration) {
+            const prereg = offer.meta.preregistration;
+            const chargeDate = prereg.first_charge_date ? new Date(prereg.first_charge_date) : null;
+            
+            // Check if we should auto-convert to pay_now button
+            if (chargeDate && nowDate >= chargeDate && prereg.auto_convert_after_date) {
+              const linkedOfferId = prereg.charge_offer_id;
+              if (linkedOfferId) {
+                const linkedOffer = offersData.find(o => o.id === linkedOfferId);
+                if (linkedOffer) {
+                  console.log(`[public-product] Auto-converting preregistration to pay_now: ${linkedOfferId}`);
+                  return { ...linkedOffer, replaced_preregistration: true };
+                }
+              }
+              return null; // Hide if no linked offer
+            }
+          }
+          return offer;
+        }).filter(Boolean);
       }
     }
 

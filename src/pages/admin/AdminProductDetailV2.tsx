@@ -12,9 +12,10 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { 
-  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard
+  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell
 } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
@@ -22,9 +23,10 @@ import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact"
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffPreviewCard } from "@/components/admin/product/TariffPreviewCard";
 import { TariffWelcomeMessageEditor, type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
-import { OfferWelcomeMessageEditor, type OfferMetaConfig } from "@/components/admin/product/OfferWelcomeMessageEditor";
+import { OfferWelcomeMessageEditor } from "@/components/admin/product/OfferWelcomeMessageEditor";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import {
   useProductV2,
   useTariffs, useCreateTariff, useUpdateTariff, useDeleteTariff,
@@ -39,7 +41,7 @@ import {
   type TariffOffer,
   type TariffOfferInsert,
   type PaymentMethod,
-  type OfferMetaConfig as OfferMetaConfigFromHook,
+  type OfferMetaConfig,
 } from "@/hooks/useTariffOffers";
 import { isFeatureVisible, type TariffFeature } from "@/hooks/useTariffFeatures";
 
@@ -142,7 +144,17 @@ export default function AdminProductDetailV2() {
     first_payment_delay_days: 0,
     // Meta for welcome message
     meta: {} as OfferMetaConfig,
+    // Preregistration fields (stored in meta.preregistration)
+    preregistration_first_charge_date: "",
+    preregistration_charge_offer_id: "",
+    preregistration_notify_before_days: 1,
+    preregistration_auto_convert: false,
+    preregistration_charge_window_start: 1,
+    preregistration_charge_window_end: 4,
   });
+  
+  // Advanced settings visibility
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
   // Flow form
   const [flowForm, setFlowForm] = useState({
@@ -240,6 +252,7 @@ export default function AdminProductDetailV2() {
     if (offer) {
       // Parse meta from offer
       const meta = (offer.meta || {}) as OfferMetaConfig;
+      const prereg = meta.preregistration || {};
       setOfferForm({
         tariff_id: offer.tariff_id,
         offer_type: offer.offer_type,
@@ -260,6 +273,13 @@ export default function AdminProductDetailV2() {
         installment_interval_days: offer.installment_interval_days || 30,
         first_payment_delay_days: offer.first_payment_delay_days || 0,
         meta,
+        // Preregistration fields from meta
+        preregistration_first_charge_date: prereg.first_charge_date || "",
+        preregistration_charge_offer_id: prereg.charge_offer_id || "",
+        preregistration_notify_before_days: prereg.notify_before_days ?? 1,
+        preregistration_auto_convert: prereg.auto_convert_after_date ?? false,
+        preregistration_charge_window_start: prereg.charge_window_start ?? 1,
+        preregistration_charge_window_end: prereg.charge_window_end ?? 4,
       });
       setOfferDialog({ open: true, editing: offer });
     } else {
@@ -283,6 +303,13 @@ export default function AdminProductDetailV2() {
         installment_interval_days: 30,
         first_payment_delay_days: 0,
         meta: {},
+        // Preregistration defaults
+        preregistration_first_charge_date: "",
+        preregistration_charge_offer_id: "",
+        preregistration_notify_before_days: 1,
+        preregistration_auto_convert: false,
+        preregistration_charge_window_start: 1,
+        preregistration_charge_window_end: 4,
       });
       setOfferDialog({ open: false, editing: null });
       setTimeout(() => setOfferDialog({ open: true, editing: null }), 0);
@@ -300,8 +327,25 @@ export default function AdminProductDetailV2() {
       return;
     }
     const isInstallment = offerForm.payment_method === "internal_installment";
-    // Build data with meta field
-    const { meta, ...formWithoutMeta } = offerForm;
+    const isPreregistration = offerForm.offer_type === "preregistration";
+    
+    // Build meta object with preregistration settings if applicable
+    let metaToSave: OfferMetaConfig = { ...offerForm.meta };
+    
+    if (isPreregistration) {
+      metaToSave.preregistration = {
+        first_charge_date: offerForm.preregistration_first_charge_date || undefined,
+        charge_offer_id: offerForm.preregistration_charge_offer_id || undefined,
+        notify_before_days: offerForm.preregistration_notify_before_days,
+        auto_convert_after_date: offerForm.preregistration_auto_convert,
+        charge_window_start: offerForm.preregistration_charge_window_start,
+        charge_window_end: offerForm.preregistration_charge_window_end,
+      };
+    } else {
+      // Remove preregistration if switching to different type
+      delete metaToSave.preregistration;
+    }
+    
     const data: TariffOfferInsert = {
       tariff_id: offerForm.tariff_id,
       offer_type: offerForm.offer_type,
@@ -313,12 +357,12 @@ export default function AdminProductDetailV2() {
       auto_charge_amount: null, // Deprecated, use auto_charge_offer_id instead
       auto_charge_delay_days: offerForm.offer_type === "trial" ? offerForm.auto_charge_delay_days : null,
       auto_charge_offer_id: offerForm.offer_type === "trial" && offerForm.auto_charge_after_trial ? (offerForm.auto_charge_offer_id || null) : null,
-      requires_card_tokenization: offerForm.offer_type === "trial" ? true : (isInstallment || offerForm.requires_card_tokenization),
+      requires_card_tokenization: offerForm.offer_type === "trial" || isPreregistration ? true : (isInstallment || offerForm.requires_card_tokenization),
       is_active: offerForm.is_active,
       is_primary: offerForm.offer_type === "pay_now" ? offerForm.is_primary : false,
       visible_from: null,
       visible_to: null,
-      sort_order: offerForm.offer_type === "trial" ? 1 : 0,
+      sort_order: offerForm.offer_type === "trial" ? 1 : (isPreregistration ? 2 : 0),
       getcourse_offer_id: offerForm.getcourse_offer_id || null,
       reject_virtual_cards: offerForm.reject_virtual_cards,
       // Installment fields
@@ -326,8 +370,8 @@ export default function AdminProductDetailV2() {
       installment_count: isInstallment ? offerForm.installment_count : null,
       installment_interval_days: isInstallment ? offerForm.installment_interval_days : null,
       first_payment_delay_days: isInstallment ? offerForm.first_payment_delay_days : null,
-      // Meta field for welcome message
-      meta: Object.keys(meta).length > 0 ? meta : null,
+      // Meta field for welcome message + preregistration settings
+      meta: Object.keys(metaToSave).length > 0 ? metaToSave : null,
     };
     if (offerDialog.editing) {
       await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
@@ -1076,15 +1120,109 @@ export default function AdminProductDetailV2() {
                               {offer.is_primary && " (основная)"}
                             </SelectItem>
                           ))
+            )}
+
+            {/* Preregistration settings */}
+            {offerForm.offer_type === "preregistration" && (
+              <div className="border-t pt-4 space-y-4">
+                <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+                  <Calendar className="h-4 w-4" />
+                  <h4 className="font-medium text-sm">Настройки Предзаписи</h4>
+                </div>
+                
+                <div className="space-y-4 p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-1.5">
+                        <Calendar className="h-3.5 w-3.5" />
+                        Дата первого списания
+                      </Label>
+                      <Input
+                        type="date"
+                        value={offerForm.preregistration_first_charge_date}
+                        onChange={(e) => setOfferForm({ ...offerForm, preregistration_first_charge_date: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-1.5">
+                        <Bell className="h-3.5 w-3.5" />
+                        Уведомить за (дней)
+                      </Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={30}
+                        value={offerForm.preregistration_notify_before_days}
+                        onChange={(e) => setOfferForm({ ...offerForm, preregistration_notify_before_days: parseInt(e.target.value) || 1 })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Кнопка для списания</Label>
+                    <Select
+                      value={offerForm.preregistration_charge_offer_id}
+                      onValueChange={(v) => setOfferForm({ ...offerForm, preregistration_charge_offer_id: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите кнопку оплаты" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {payNowOffersForTariff.length === 0 ? (
+                          <div className="p-2 text-sm text-muted-foreground">
+                            Сначала создайте кнопку "Оплата" для этого тарифа
+                          </div>
+                        ) : (
+                          payNowOffersForTariff.map((offer: any) => (
+                            <SelectItem key={offer.id} value={offer.id}>
+                              {offer.button_label} — {offer.amount} BYN
+                            </SelectItem>
+                          ))
                         )}
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                      После окончания trial будет выполнено списание по выбранной кнопке (сумма и условия из неё)
+                      После даты старта будет выполнено списание по этой кнопке
                     </p>
                   </div>
-                )}
-              </>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Окно списания (с числа)</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={28}
+                        value={offerForm.preregistration_charge_window_start}
+                        onChange={(e) => setOfferForm({ ...offerForm, preregistration_charge_window_start: parseInt(e.target.value) || 1 })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>по (число месяца)</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={28}
+                        value={offerForm.preregistration_charge_window_end}
+                        onChange={(e) => setOfferForm({ ...offerForm, preregistration_charge_window_end: parseInt(e.target.value) || 4 })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2 pt-2">
+                    <Switch
+                      checked={offerForm.preregistration_auto_convert}
+                      onCheckedChange={(checked) => setOfferForm({ ...offerForm, preregistration_auto_convert: checked })}
+                    />
+                    <div>
+                      <Label>Автоматически скрыть после даты старта</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Показывать вместо предзаписи связанную кнопку оплаты
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* Virtual card blocking - show when tokenization is required or installment */}
