@@ -8,7 +8,6 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -40,9 +39,7 @@ import {
   CheckCircle,
   XCircle,
   AlertTriangle,
-  TrendingUp,
   Sparkles,
-  Trash2,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
@@ -56,6 +53,7 @@ import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
+import { DealsStatsBar } from "@/components/admin/deals/DealsStatsBar";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -180,18 +178,6 @@ export default function AdminDeals() {
     { key: "created_at", label: "Дата создания", type: "date" },
   ], [products]);
 
-  // Calculate stats
-  const stats = useMemo(() => {
-    if (!deals) return { total: 0, paid: 0, pending: 0, revenue: 0 };
-    const total = deals.length;
-    const paid = deals.filter(d => d.status === "paid").length;
-    const pending = deals.filter(d => d.status === "pending").length;
-    const revenue = deals
-      .filter(d => d.status === "paid")
-      .reduce((sum, d) => sum + Number(d.final_price || 0), 0);
-    return { total, paid, pending, revenue };
-  }, [deals]);
-
   // Subscription Health stats
   const { data: healthStats } = useQuery({
     queryKey: ["subscription-health-stats"],
@@ -215,6 +201,27 @@ export default function AdminDeals() {
       }).length || 0;
       
       return { activeWithoutCard, trialsExpiring72h };
+    },
+  });
+
+  // Auto-payment stats
+  const { data: autoPaymentStats } = useQuery({
+    queryKey: ["auto-payment-stats"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("subscriptions_v2")
+        .select("id, order_id, orders_v2(final_price)")
+        .eq("status", "active")
+        .eq("auto_renew", true)
+        .not("payment_method_id", "is", null);
+      
+      const count = data?.length || 0;
+      const totalPlanned = data?.reduce((sum, s) => {
+        const price = (s.orders_v2 as any)?.final_price;
+        return sum + Number(price || 0);
+      }, 0) || 0;
+      
+      return { count, totalPlanned };
     },
   });
 
@@ -260,6 +267,39 @@ export default function AdminDeals() {
     // Then apply filters
     return applyFilters(result, activeFilters, getDealFieldValue);
   }, [deals, search, activeFilters, profilesMap, getDealFieldValue]);
+
+  // Calculate stats from filtered deals (after filteredDeals is defined)
+  const stats = useMemo(() => {
+    const source = activeFilters.length > 0 || search ? filteredDeals : deals;
+    if (!source || source.length === 0) {
+      return { total: 0, paid: 0, pending: 0, revenue: 0 };
+    }
+    const total = source.length;
+    const paid = source.filter(d => d.status === "paid").length;
+    const pending = source.filter(d => d.status === "pending").length;
+    const revenue = source
+      .filter(d => d.status === "paid")
+      .reduce((sum, d) => sum + Number(d.final_price || 0), 0);
+    return { total, paid, pending, revenue };
+  }, [deals, filteredDeals, activeFilters, search]);
+
+  // Handle stat click to apply filters
+  const handleStatClick = useCallback((filter: string) => {
+    switch (filter) {
+      case "all":
+        setActiveFilters([]);
+        setActivePreset("all");
+        break;
+      case "paid":
+        setActiveFilters([{ field: "status", operator: "equals", value: "paid" }]);
+        setActivePreset("paid");
+        break;
+      case "pending":
+        setActiveFilters([{ field: "status", operator: "equals", value: "pending" }]);
+        setActivePreset("pending");
+        break;
+    }
+  }, []);
 
   // Sorting
   const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
@@ -530,109 +570,14 @@ export default function AdminDeals() {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Package className="h-4 w-4" />
-              Всего сделок
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.total}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <CheckCircle className="h-4 w-4 text-green-600" />
-              Оплачено
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats.paid}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Clock className="h-4 w-4 text-amber-600" />
-              Ожидает оплаты
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-amber-600">{stats.pending}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-primary" />
-              Выручка
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {new Intl.NumberFormat("ru-BY", { style: "currency", currency: "BYN" }).format(stats.revenue)}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Subscription Health Widget */}
-      {healthStats && (healthStats.activeWithoutCard > 0 || healthStats.trialsExpiring72h > 0) && (
-        <div className="grid gap-4 md:grid-cols-2">
-          <Card className="border-amber-500/50 bg-amber-500/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-amber-600 flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4" />
-                Под угрозой (Активные)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-amber-600">
-                {healthStats.activeWithoutCard}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Активные подписки без привязанной карты
-              </p>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                className="mt-3 w-full"
-                onClick={() => navigate("/admin/subscriptions-v2?filter=active_no_card")}
-              >
-                Показать пользователей
-              </Button>
-            </CardContent>
-          </Card>
-          <Card className="border-red-500/50 bg-red-500/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-red-600 flex items-center gap-2">
-                <XCircle className="h-4 w-4" />
-                Срочно (72ч)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-red-600">
-                {healthStats.trialsExpiring72h}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Триалы без карты истекут в ближ. 3 дня
-              </p>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                className="mt-3 w-full"
-                onClick={() => navigate("/admin/subscriptions-v2?filter=trial_no_card")}
-              >
-                Показать триалы
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      {/* Compact Stats Bar */}
+      <DealsStatsBar
+        stats={stats}
+        healthStats={healthStats}
+        autoPaymentStats={autoPaymentStats}
+        onStatClick={handleStatClick}
+        isLoading={isLoading}
+      />
 
       {/* Filters */}
       <div className="flex flex-col gap-4">
