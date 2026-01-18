@@ -20,6 +20,31 @@ export interface IlexDocument {
   saved_by: string;
   created_at: string;
   updated_at: string;
+  source_url?: string | null;
+  search_query?: string | null;
+}
+
+export interface AdvancedSearchParams {
+  query?: string;
+  docType?: string;
+  docNumber?: string;
+  organ?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  status?: string;
+}
+
+export interface BrowseResult {
+  html: string;
+  title: string;
+  links: Array<{ url: string; text: string }>;
+}
+
+export interface LegalTextResult {
+  text: string;
+  title: string;
+  source: string;
+  url: string;
 }
 
 export function useIlexApi() {
@@ -111,6 +136,47 @@ export function useIlexApi() {
     }
   }, [toast]);
 
+  const advancedSearch = useCallback(async (params: AdvancedSearchParams): Promise<IlexSearchResult[]> => {
+    setIsLoading(true);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('ilex-api', {
+        body: { action: 'advanced_search', ...params },
+      });
+      
+      if (error) {
+        console.error('Advanced search error:', error);
+        toast({
+          title: 'Ошибка поиска',
+          description: error.message,
+          variant: 'destructive',
+        });
+        return [];
+      }
+      
+      if (!data?.success) {
+        toast({
+          title: 'Поиск не удался',
+          description: data?.error || 'Неизвестная ошибка',
+          variant: 'destructive',
+        });
+        return [];
+      }
+      
+      return data.results || [];
+    } catch (error) {
+      console.error('Advanced search failed:', error);
+      toast({
+        title: 'Ошибка',
+        description: 'Не удалось выполнить поиск',
+        variant: 'destructive',
+      });
+      return [];
+    } finally {
+      setIsLoading(false);
+    }
+  }, [toast]);
+
   const fetchDocument = useCallback(async (url: string): Promise<{ content: string; title: string; cleanText: string } | null> => {
     setIsLoading(true);
     
@@ -156,6 +222,97 @@ export function useIlexApi() {
     }
   }, [toast]);
 
+  const browseUrl = useCallback(async (url: string): Promise<BrowseResult | null> => {
+    setIsLoading(true);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('ilex-api', {
+        body: { action: 'browse', url },
+      });
+      
+      if (error) {
+        console.error('Browse error:', error);
+        toast({
+          title: 'Ошибка загрузки',
+          description: error.message,
+          variant: 'destructive',
+        });
+        return null;
+      }
+      
+      if (!data?.success) {
+        toast({
+          title: 'Не удалось загрузить страницу',
+          description: data?.error || 'Неизвестная ошибка',
+          variant: 'destructive',
+        });
+        return null;
+      }
+      
+      return {
+        html: data.html || '',
+        title: data.title || 'Страница',
+        links: data.links || [],
+      };
+    } catch (error) {
+      console.error('Browse failed:', error);
+      toast({
+        title: 'Ошибка',
+        description: 'Не удалось загрузить страницу',
+        variant: 'destructive',
+      });
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [toast]);
+
+  const findLegalText = useCallback(async (query: string): Promise<LegalTextResult | null> => {
+    setIsLoading(true);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('ilex-api', {
+        body: { action: 'find_legal_text', query },
+      });
+      
+      if (error) {
+        console.error('Find legal text error:', error);
+        toast({
+          title: 'Ошибка поиска',
+          description: error.message,
+          variant: 'destructive',
+        });
+        return null;
+      }
+      
+      if (!data?.success) {
+        toast({
+          title: 'Документ не найден',
+          description: data?.error || 'Неизвестная ошибка',
+          variant: 'destructive',
+        });
+        return null;
+      }
+      
+      return {
+        text: data.text || '',
+        title: data.title || 'Документ',
+        source: data.source || 'iLex Private',
+        url: data.url || '',
+      };
+    } catch (error) {
+      console.error('Find legal text failed:', error);
+      toast({
+        title: 'Ошибка',
+        description: 'Не удалось найти текст',
+        variant: 'destructive',
+      });
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [toast]);
+
   const saveDocument = useCallback(async (doc: {
     ilex_id: string;
     title: string;
@@ -164,6 +321,8 @@ export function useIlexApi() {
     doc_date?: string;
     doc_number?: string;
     metadata?: Record<string, any>;
+    source_url?: string;
+    search_query?: string;
   }): Promise<boolean> => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -187,6 +346,8 @@ export function useIlexApi() {
           doc_number: doc.doc_number || null,
           metadata: doc.metadata || {},
           saved_by: user.id,
+          source_url: doc.source_url || null,
+          search_query: doc.search_query || null,
         });
       
       if (error) {
@@ -263,7 +424,10 @@ export function useIlexApi() {
     connectionStatus,
     checkConnection,
     search,
+    advancedSearch,
     fetchDocument,
+    browseUrl,
+    findLegalText,
     saveDocument,
     getSavedDocuments,
     deleteDocument,

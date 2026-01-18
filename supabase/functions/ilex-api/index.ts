@@ -14,6 +14,18 @@ const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
 ];
 
+// Document types for advanced search
+const DOCUMENT_TYPES = {
+  all: '',
+  law: 'закон',
+  decree: 'указ',
+  resolution: 'постановление',
+  decision: 'решение',
+  order: 'приказ',
+  instruction: 'инструкция',
+  regulation: 'положение',
+};
+
 // Random delay to simulate human behavior (2-5 seconds)
 async function humanDelay(min = 2000, max = 5000): Promise<void> {
   const delay = min + Math.random() * (max - min);
@@ -190,6 +202,81 @@ async function fetchDocument(url: string): Promise<{ success: boolean; content?:
   }
 }
 
+// Browse URL and get HTML for proxy browser
+async function browseUrl(url: string): Promise<{ 
+  success: boolean; 
+  html?: string; 
+  title?: string; 
+  links?: Array<{url: string; text: string}>; 
+  error?: string 
+}> {
+  try {
+    const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
+    
+    if (!firecrawlApiKey) {
+      return { success: false, error: 'Firecrawl API не настроен' };
+    }
+    
+    // Format URL
+    let formattedUrl = url.trim();
+    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+      formattedUrl = `https://ilex-private.ilex.by${formattedUrl.startsWith('/') ? '' : '/'}${formattedUrl}`;
+    }
+    
+    console.log('Browsing URL:', formattedUrl);
+    
+    const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${firecrawlApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url: formattedUrl,
+        formats: ['html', 'links'],
+        onlyMainContent: false,
+        waitFor: 3000,
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Firecrawl browse error:', errorText);
+      return { success: false, error: `Ошибка загрузки страницы: ${response.status}` };
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success) {
+      return { success: false, error: data.error || 'Не удалось загрузить страницу' };
+    }
+    
+    const html = data.data?.html || data.html || '';
+    const title = data.data?.metadata?.title || data.metadata?.title || 'Страница';
+    
+    // Extract links and convert relative to absolute
+    const rawLinks = data.data?.links || data.links || [];
+    const links = rawLinks.map((link: string | { url: string; text?: string }) => {
+      const linkUrl = typeof link === 'string' ? link : link.url;
+      const linkText = typeof link === 'string' ? link : (link.text || link.url);
+      
+      let absoluteUrl = linkUrl;
+      if (linkUrl.startsWith('/')) {
+        absoluteUrl = `https://ilex-private.ilex.by${linkUrl}`;
+      } else if (!linkUrl.startsWith('http')) {
+        absoluteUrl = `https://ilex-private.ilex.by/${linkUrl}`;
+      }
+      
+      return { url: absoluteUrl, text: linkText };
+    });
+    
+    return { success: true, html, title, links };
+  } catch (error) {
+    console.error('Browse error:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Ошибка загрузки' };
+  }
+}
+
 // Search for documents
 async function searchDocuments(query: string): Promise<{ success: boolean; results?: any[]; error?: string }> {
   try {
@@ -239,6 +326,148 @@ async function searchDocuments(query: string): Promise<{ success: boolean; resul
     return { success: true, results };
   } catch (error) {
     console.error('Search error:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Ошибка поиска' };
+  }
+}
+
+// Advanced search with filters
+async function advancedSearch(params: {
+  query?: string;
+  docType?: string;
+  docNumber?: string;
+  organ?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  status?: string;
+}): Promise<{ success: boolean; results?: any[]; error?: string }> {
+  try {
+    const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
+    
+    if (!firecrawlApiKey) {
+      return { success: false, error: 'Firecrawl API не настроен' };
+    }
+    
+    // Build search query with filters
+    const queryParts: string[] = ['site:ilex-private.ilex.by'];
+    
+    // Add document type
+    if (params.docType && params.docType !== 'all') {
+      const docTypeLabel = DOCUMENT_TYPES[params.docType as keyof typeof DOCUMENT_TYPES];
+      if (docTypeLabel) {
+        queryParts.push(docTypeLabel);
+      }
+    }
+    
+    // Add document number
+    if (params.docNumber) {
+      queryParts.push(`№${params.docNumber}`);
+    }
+    
+    // Add issuing organ
+    if (params.organ) {
+      queryParts.push(`"${params.organ}"`);
+    }
+    
+    // Add date range
+    if (params.dateFrom) {
+      queryParts.push(`от ${params.dateFrom}`);
+    }
+    
+    // Add status
+    if (params.status && params.status !== 'all') {
+      if (params.status === 'active') {
+        queryParts.push('действующий');
+      } else if (params.status === 'inactive') {
+        queryParts.push('утратил силу');
+      }
+    }
+    
+    // Add main query
+    if (params.query) {
+      queryParts.push(params.query);
+    }
+    
+    const fullQuery = queryParts.join(' ');
+    console.log('Advanced search query:', fullQuery);
+    
+    await humanDelay();
+    
+    const response = await fetch('https://api.firecrawl.dev/v1/search', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${firecrawlApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: fullQuery,
+        limit: 30,
+        lang: 'ru',
+        country: 'BY',
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Firecrawl advanced search error:', errorText);
+      return { success: false, error: `Ошибка поиска: ${response.status}` };
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success) {
+      return { success: false, error: data.error || 'Поиск не дал результатов' };
+    }
+    
+    const results = (data.data || []).map((item: any) => ({
+      url: item.url,
+      title: item.title || 'Без названия',
+      description: item.description || '',
+    }));
+    
+    return { success: true, results };
+  } catch (error) {
+    console.error('Advanced search error:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Ошибка поиска' };
+  }
+}
+
+// Find legal text by query (for automated API)
+async function findLegalText(query: string): Promise<{ 
+  success: boolean; 
+  text?: string; 
+  title?: string;
+  source?: string; 
+  url?: string;
+  error?: string 
+}> {
+  try {
+    // First, search for the document
+    const searchResult = await searchDocuments(query);
+    
+    if (!searchResult.success || !searchResult.results?.length) {
+      return { success: false, error: 'Документ не найден' };
+    }
+    
+    const firstResult = searchResult.results[0];
+    
+    // Fetch the document content
+    const docResult = await fetchDocument(firstResult.url);
+    
+    if (!docResult.success) {
+      return { success: false, error: docResult.error || 'Не удалось загрузить документ' };
+    }
+    
+    const cleanText = docResult.html ? extractCleanText(docResult.html) : (docResult.content || '');
+    
+    return {
+      success: true,
+      text: cleanText,
+      title: docResult.title || firstResult.title,
+      source: 'iLex Private',
+      url: firstResult.url,
+    };
+  } catch (error) {
+    console.error('Find legal text error:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Ошибка поиска' };
   }
 }
@@ -304,6 +533,16 @@ Deno.serve(async (req) => {
         }
         break;
         
+      case 'browse':
+        if (!params.url) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'URL обязателен' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        result = await browseUrl(params.url);
+        break;
+        
       case 'search':
         if (!params.query) {
           return new Response(
@@ -312,6 +551,28 @@ Deno.serve(async (req) => {
           );
         }
         result = await searchDocuments(params.query);
+        break;
+        
+      case 'advanced_search':
+        result = await advancedSearch({
+          query: params.query,
+          docType: params.docType,
+          docNumber: params.docNumber,
+          organ: params.organ,
+          dateFrom: params.dateFrom,
+          dateTo: params.dateTo,
+          status: params.status,
+        });
+        break;
+        
+      case 'find_legal_text':
+        if (!params.query) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Запрос обязателен' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        result = await findLegalText(params.query);
         break;
         
       case 'authenticate':

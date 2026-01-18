@@ -1972,10 +1972,13 @@ export type Database = {
           doc_date: string | null
           doc_number: string | null
           doc_type: string | null
+          extracted_articles: Json | null
           id: string
           ilex_id: string
           metadata: Json | null
           saved_by: string
+          search_query: string | null
+          source_url: string | null
           title: string
           updated_at: string | null
         }
@@ -1985,10 +1988,13 @@ export type Database = {
           doc_date?: string | null
           doc_number?: string | null
           doc_type?: string | null
+          extracted_articles?: Json | null
           id?: string
           ilex_id: string
           metadata?: Json | null
           saved_by: string
+          search_query?: string | null
+          source_url?: string | null
           title: string
           updated_at?: string | null
         }
@@ -1998,10 +2004,13 @@ export type Database = {
           doc_date?: string | null
           doc_number?: string | null
           doc_type?: string | null
+          extracted_articles?: Json | null
           id?: string
           ilex_id?: string
           metadata?: Json | null
           saved_by?: string
+          search_query?: string | null
+          source_url?: string | null
           title?: string
           updated_at?: string | null
         }

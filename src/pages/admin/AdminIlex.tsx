@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { AdminLayout } from '@/components/layout/AdminLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   Search, 
   FileText, 
@@ -22,20 +24,46 @@ import {
   ExternalLink,
   RefreshCw,
   BookOpen,
-  Eye
+  Eye,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Globe,
+  Filter,
+  Home
 } from 'lucide-react';
-import { useIlexApi, IlexSearchResult, IlexDocument } from '@/hooks/useIlexApi';
+import { useIlexApi, IlexSearchResult, IlexDocument, AdvancedSearchParams } from '@/hooks/useIlexApi';
 import { exportToDocx, exportToPdf } from '@/utils/exportDocument';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
+import DOMPurify from 'dompurify';
+
+const DOCUMENT_TYPES = [
+  { value: 'all', label: 'Все типы' },
+  { value: 'law', label: 'Закон' },
+  { value: 'decree', label: 'Указ' },
+  { value: 'resolution', label: 'Постановление' },
+  { value: 'decision', label: 'Решение' },
+  { value: 'order', label: 'Приказ' },
+  { value: 'instruction', label: 'Инструкция' },
+  { value: 'regulation', label: 'Положение' },
+];
+
+const DOCUMENT_STATUSES = [
+  { value: 'all', label: 'Все статусы' },
+  { value: 'active', label: 'Действующий' },
+  { value: 'inactive', label: 'Утратил силу' },
+];
 
 export default function AdminIlex() {
   const { 
     isLoading, 
     connectionStatus, 
     checkConnection, 
-    search, 
+    search,
+    advancedSearch,
     fetchDocument,
+    browseUrl,
     saveDocument,
     getSavedDocuments,
     deleteDocument 
@@ -48,6 +76,27 @@ export default function AdminIlex() {
   const [savedDocuments, setSavedDocuments] = useState<IlexDocument[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isFetchingDocument, setIsFetchingDocument] = useState(false);
+  const [lastSearchQuery, setLastSearchQuery] = useState('');
+  
+  // Advanced search state
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
+  const [advancedParams, setAdvancedParams] = useState<AdvancedSearchParams>({
+    docType: 'all',
+    docNumber: '',
+    organ: '',
+    dateFrom: '',
+    dateTo: '',
+    status: 'all',
+  });
+  
+  // Browser state
+  const [browserUrl, setBrowserUrl] = useState('https://ilex-private.ilex.by');
+  const [browserHistory, setBrowserHistory] = useState<string[]>(['https://ilex-private.ilex.by']);
+  const [historyIndex, setHistoryIndex] = useState(0);
+  const [browserHtml, setBrowserHtml] = useState('');
+  const [browserTitle, setBrowserTitle] = useState('');
+  const [isBrowsing, setIsBrowsing] = useState(false);
+  const browserContentRef = useRef<HTMLDivElement>(null);
 
   // Load saved documents on mount
   useEffect(() => {
@@ -64,7 +113,19 @@ export default function AdminIlex() {
     if (!searchQuery.trim()) return;
     
     setIsSearching(true);
-    const results = await search(searchQuery);
+    setLastSearchQuery(searchQuery);
+    
+    let results: IlexSearchResult[];
+    
+    if (showAdvancedSearch) {
+      results = await advancedSearch({
+        query: searchQuery,
+        ...advancedParams,
+      });
+    } else {
+      results = await search(searchQuery);
+    }
+    
     setSearchResults(results);
     setIsSearching(false);
   };
@@ -86,6 +147,8 @@ export default function AdminIlex() {
       ilex_id: selectedDocument.url,
       title: selectedDocument.title,
       content: selectedDocument.cleanText,
+      source_url: selectedDocument.url,
+      search_query: lastSearchQuery,
     });
     
     if (success) {
@@ -112,6 +175,108 @@ export default function AdminIlex() {
     exportToPdf(selectedDocument.cleanText, filename);
   };
 
+  // Browser navigation
+  const navigateTo = async (url: string) => {
+    setIsBrowsing(true);
+    setBrowserUrl(url);
+    
+    const result = await browseUrl(url);
+    if (result) {
+      setBrowserHtml(result.html);
+      setBrowserTitle(result.title);
+      
+      // Update history
+      const newHistory = browserHistory.slice(0, historyIndex + 1);
+      newHistory.push(url);
+      setBrowserHistory(newHistory);
+      setHistoryIndex(newHistory.length - 1);
+    }
+    
+    setIsBrowsing(false);
+  };
+
+  const goBack = () => {
+    if (historyIndex > 0) {
+      const newIndex = historyIndex - 1;
+      setHistoryIndex(newIndex);
+      const url = browserHistory[newIndex];
+      setBrowserUrl(url);
+      navigateWithoutHistory(url);
+    }
+  };
+
+  const goForward = () => {
+    if (historyIndex < browserHistory.length - 1) {
+      const newIndex = historyIndex + 1;
+      setHistoryIndex(newIndex);
+      const url = browserHistory[newIndex];
+      setBrowserUrl(url);
+      navigateWithoutHistory(url);
+    }
+  };
+
+  const navigateWithoutHistory = async (url: string) => {
+    setIsBrowsing(true);
+    const result = await browseUrl(url);
+    if (result) {
+      setBrowserHtml(result.html);
+      setBrowserTitle(result.title);
+    }
+    setIsBrowsing(false);
+  };
+
+  const goHome = () => {
+    navigateTo('https://ilex-private.ilex.by');
+  };
+
+  // Handle link clicks in browser content
+  const handleBrowserClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    const link = target.closest('a');
+    
+    if (link) {
+      e.preventDefault();
+      let href = link.getAttribute('href');
+      
+      if (href) {
+        // Convert relative URLs to absolute
+        if (href.startsWith('/')) {
+          href = `https://ilex-private.ilex.by${href}`;
+        } else if (!href.startsWith('http')) {
+          href = `https://ilex-private.ilex.by/${href}`;
+        }
+        
+        // Only navigate to ilex-private.ilex.by URLs
+        if (href.includes('ilex-private.ilex.by')) {
+          navigateTo(href);
+        } else {
+          window.open(href, '_blank');
+        }
+      }
+    }
+  };
+
+  // Save document from browser
+  const handleSaveFromBrowser = async () => {
+    if (!browserHtml || !browserTitle) return;
+    
+    // Extract clean text from HTML
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = browserHtml;
+    const cleanText = tempDiv.textContent || tempDiv.innerText || '';
+    
+    const success = await saveDocument({
+      ilex_id: browserUrl,
+      title: browserTitle,
+      content: cleanText,
+      source_url: browserUrl,
+    });
+    
+    if (success) {
+      loadSavedDocuments();
+    }
+  };
+
   const getConnectionStatusBadge = () => {
     switch (connectionStatus) {
       case 'online':
@@ -124,6 +289,14 @@ export default function AdminIlex() {
         return <Badge variant="outline">Неизвестно</Badge>;
     }
   };
+
+  // Sanitize HTML for browser display
+  const sanitizedHtml = DOMPurify.sanitize(browserHtml, {
+    ADD_TAGS: ['style'],
+    ADD_ATTR: ['target'],
+    FORBID_TAGS: ['script', 'iframe', 'form'],
+    FORBID_ATTR: ['onclick', 'onload', 'onerror'],
+  });
 
   return (
     <AdminLayout>
@@ -154,10 +327,14 @@ export default function AdminIlex() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="search" className="flex items-center gap-2">
               <Search className="h-4 w-4" />
               Поиск
+            </TabsTrigger>
+            <TabsTrigger value="browser" className="flex items-center gap-2">
+              <Globe className="h-4 w-4" />
+              Браузер
             </TabsTrigger>
             <TabsTrigger value="document" className="flex items-center gap-2" disabled={!selectedDocument}>
               <FileText className="h-4 w-4" />
@@ -185,7 +362,7 @@ export default function AdminIlex() {
                   Введите запрос для поиска нормативных правовых актов
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
                 <form onSubmit={handleSearch} className="flex gap-2">
                   <Input
                     placeholder="Например: закон о предпринимательстве"
@@ -202,6 +379,94 @@ export default function AdminIlex() {
                     <span className="ml-2">Найти</span>
                   </Button>
                 </form>
+
+                {/* Advanced Search */}
+                <Collapsible open={showAdvancedSearch} onOpenChange={setShowAdvancedSearch}>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" className="flex items-center gap-2 text-muted-foreground">
+                      <Filter className="h-4 w-4" />
+                      Расширенный поиск
+                      <ChevronDown className={`h-4 w-4 transition-transform ${showAdvancedSearch ? 'rotate-180' : ''}`} />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 bg-muted/50 rounded-lg">
+                      <div className="space-y-2">
+                        <Label>Тип документа</Label>
+                        <Select 
+                          value={advancedParams.docType} 
+                          onValueChange={(value) => setAdvancedParams(prev => ({ ...prev, docType: value }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Выберите тип" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {DOCUMENT_TYPES.map(type => (
+                              <SelectItem key={type.value} value={type.value}>
+                                {type.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Номер документа</Label>
+                        <Input
+                          placeholder="№ документа"
+                          value={advancedParams.docNumber}
+                          onChange={(e) => setAdvancedParams(prev => ({ ...prev, docNumber: e.target.value }))}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Принявший орган</Label>
+                        <Input
+                          placeholder="Например: Совет Министров"
+                          value={advancedParams.organ}
+                          onChange={(e) => setAdvancedParams(prev => ({ ...prev, organ: e.target.value }))}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Дата от</Label>
+                        <Input
+                          type="date"
+                          value={advancedParams.dateFrom}
+                          onChange={(e) => setAdvancedParams(prev => ({ ...prev, dateFrom: e.target.value }))}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Дата до</Label>
+                        <Input
+                          type="date"
+                          value={advancedParams.dateTo}
+                          onChange={(e) => setAdvancedParams(prev => ({ ...prev, dateTo: e.target.value }))}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Статус</Label>
+                        <Select 
+                          value={advancedParams.status} 
+                          onValueChange={(value) => setAdvancedParams(prev => ({ ...prev, status: value }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Выберите статус" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {DOCUMENT_STATUSES.map(status => (
+                              <SelectItem key={status.value} value={status.value}>
+                                {status.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               </CardContent>
             </Card>
 
@@ -264,6 +529,78 @@ export default function AdminIlex() {
                 </CardContent>
               </Card>
             )}
+          </TabsContent>
+
+          {/* Browser Tab */}
+          <TabsContent value="browser" className="space-y-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-2">
+                  <Button size="icon" variant="outline" onClick={goBack} disabled={historyIndex <= 0 || isBrowsing}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button size="icon" variant="outline" onClick={goForward} disabled={historyIndex >= browserHistory.length - 1 || isBrowsing}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button size="icon" variant="outline" onClick={() => navigateTo(browserUrl)} disabled={isBrowsing}>
+                    {isBrowsing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button size="icon" variant="outline" onClick={goHome} disabled={isBrowsing}>
+                    <Home className="h-4 w-4" />
+                  </Button>
+                  <Input
+                    className="flex-1"
+                    value={browserUrl}
+                    onChange={(e) => setBrowserUrl(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        navigateTo(browserUrl);
+                      }
+                    }}
+                    placeholder="URL..."
+                  />
+                  <Button variant="outline" onClick={handleSaveFromBrowser} disabled={!browserHtml || isBrowsing}>
+                    <Star className="h-4 w-4 mr-2" />
+                    Сохранить
+                  </Button>
+                </div>
+                {browserTitle && (
+                  <CardDescription className="mt-2 truncate">
+                    {browserTitle}
+                  </CardDescription>
+                )}
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[600px] border rounded-lg">
+                  {isBrowsing ? (
+                    <div className="flex items-center justify-center h-full">
+                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : browserHtml ? (
+                    <div 
+                      ref={browserContentRef}
+                      className="p-4 prose prose-sm max-w-none dark:prose-invert"
+                      onClick={handleBrowserClick}
+                      dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
+                      <Globe className="h-12 w-12 mb-4 opacity-50" />
+                      <p className="text-center">
+                        Нажмите кнопку обновления или введите URL для начала просмотра
+                      </p>
+                      <Button className="mt-4" onClick={goHome}>
+                        Открыть iLex Private
+                      </Button>
+                    </div>
+                  )}
+                </ScrollArea>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* Document Tab */}
@@ -341,6 +678,11 @@ export default function AdminIlex() {
                               <p className="text-xs text-muted-foreground mt-1">
                                 Сохранено: {format(new Date(doc.created_at), 'dd MMM yyyy, HH:mm', { locale: ru })}
                               </p>
+                              {doc.search_query && (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Поиск: "{doc.search_query}"
+                                </p>
+                              )}
                             </div>
                             <div className="flex gap-2">
                               <Button
@@ -436,22 +778,22 @@ export default function AdminIlex() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Информация</CardTitle>
+                <CardTitle>О модуле</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3 text-sm text-muted-foreground">
+              <CardContent className="prose prose-sm max-w-none dark:prose-invert">
                 <p>
-                  Модуль использует Firecrawl для получения данных с iLex Private с имитацией 
-                  поведения реального пользователя (случайные задержки, разные User-Agent).
+                  Модуль iLex Private предоставляет доступ к правовой информационной системе
+                  для работы с законодательством Республики Беларусь.
                 </p>
-                <Separator />
-                <p>
-                  <strong>Возможности:</strong>
-                </p>
-                <ul className="list-disc list-inside space-y-1">
+                <h4>Возможности:</h4>
+                <ul>
                   <li>Поиск нормативных правовых актов</li>
+                  <li>Расширенный поиск с фильтрами по типу, органу, дате</li>
+                  <li>Встроенный браузер для навигации по iLex</li>
                   <li>Просмотр текста документов</li>
-                  <li>Экспорт в DOCX и PDF</li>
                   <li>Сохранение документов в избранное</li>
+                  <li>Экспорт в DOCX и PDF</li>
+                  <li>API для автоматического поиска текстов НПА</li>
                 </ul>
               </CardContent>
             </Card>
