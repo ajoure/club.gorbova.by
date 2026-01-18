@@ -240,3 +240,6 @@ verify_jwt = false
 
 [functions.telegram-notify-admins]
 verify_jwt = false
+
+[functions.diagnose-admin-notifications]
+verify_jwt = false

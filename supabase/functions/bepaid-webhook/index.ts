@@ -1549,22 +1549,37 @@ Deno.serve(async (req) => {
               `💵 Сумма: ${amountFormatted} ${paymentV2.currency}\n` +
               `🆔 Заказ: ${notifyOrderData.order_number}`;
 
-            const { data: notifyData, error: notifyInvokeError } = await supabase.functions.invoke('telegram-notify-admins', {
-              body: { 
-                message: notifyMessage,
-                source: 'bepaid_webhook',
-                order_id: notifyOrderData.id,
-                order_number: notifyOrderData.order_number,
-                payment_id: paymentV2.id,
-              },
-            });
-            
-            if (notifyInvokeError) {
-              console.error('Admin notification invoke error:', notifyInvokeError);
-            } else if (notifyData?.sent === 0) {
-              console.warn('Admin notification sent=0:', notifyData);
-            } else {
-              console.log('Admin notification sent for payment:', paymentV2.id, notifyData);
+            // Use fetch instead of supabase.functions.invoke (cross-function invoke has issues)
+            try {
+              const notifyResponse = await fetch(
+                `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                  },
+                  body: JSON.stringify({ 
+                    message: notifyMessage,
+                    source: 'bepaid_webhook',
+                    order_id: notifyOrderData.id,
+                    order_number: notifyOrderData.order_number,
+                    payment_id: paymentV2.id,
+                  }),
+                }
+              );
+
+              const notifyData = await notifyResponse.json().catch(() => ({}));
+              
+              if (!notifyResponse.ok) {
+                console.error('Admin notification fetch error:', notifyResponse.status, notifyData);
+              } else if (notifyData?.sent === 0) {
+                console.warn('Admin notification sent=0:', notifyData);
+              } else {
+                console.log('Admin notification sent for payment:', paymentV2.id, notifyData);
+              }
+            } catch (fetchError) {
+              console.error('Admin notification fetch exception:', fetchError);
             }
           }
         } catch (notifyError) {
