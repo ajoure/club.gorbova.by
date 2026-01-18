@@ -1876,6 +1876,95 @@ export type Database = {
           },
         ]
       }
+      habit_challenges: {
+        Row: {
+          color: string | null
+          created_at: string
+          description: string | null
+          duration_days: number
+          icon: string | null
+          id: string
+          is_active: boolean
+          start_date: string
+          target_value: number | null
+          title: string
+          unit_label: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          description?: string | null
+          duration_days?: number
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          start_date?: string
+          target_value?: number | null
+          title: string
+          unit_label?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          description?: string | null
+          duration_days?: number
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          start_date?: string
+          target_value?: number | null
+          title?: string
+          unit_label?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      habit_daily_logs: {
+        Row: {
+          challenge_id: string
+          created_at: string
+          id: string
+          is_completed: boolean
+          log_date: string
+          notes: string | null
+          user_id: string
+          value: number | null
+        }
+        Insert: {
+          challenge_id: string
+          created_at?: string
+          id?: string
+          is_completed?: boolean
+          log_date: string
+          notes?: string | null
+          user_id: string
+          value?: number | null
+        }
+        Update: {
+          challenge_id?: string
+          created_at?: string
+          id?: string
+          is_completed?: boolean
+          log_date?: string
+          notes?: string | null
+          user_id?: string
+          value?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "habit_daily_logs_challenge_id_fkey"
+            columns: ["challenge_id"]
+            isOneToOne: false
+            referencedRelation: "habit_challenges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ilex_documents: {
         Row: {
           content: string | null
@@ -4300,6 +4389,161 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      quest_lessons: {
+        Row: {
+          created_at: string
+          description: string | null
+          duration_minutes: number | null
+          homework_file_url: string | null
+          homework_text: string | null
+          id: string
+          is_active: boolean
+          quest_id: string
+          slug: string
+          sort_order: number
+          title: string
+          updated_at: string
+          video_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number | null
+          homework_file_url?: string | null
+          homework_text?: string | null
+          id?: string
+          is_active?: boolean
+          quest_id: string
+          slug: string
+          sort_order?: number
+          title: string
+          updated_at?: string
+          video_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number | null
+          homework_file_url?: string | null
+          homework_text?: string | null
+          id?: string
+          is_active?: boolean
+          quest_id?: string
+          slug?: string
+          sort_order?: number
+          title?: string
+          updated_at?: string
+          video_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quest_lessons_quest_id_fkey"
+            columns: ["quest_id"]
+            isOneToOne: false
+            referencedRelation: "quests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quest_user_progress: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          homework_response: Json | null
+          id: string
+          is_completed: boolean
+          lesson_id: string
+          quest_id: string
+          updated_at: string
+          user_id: string
+          watched_seconds: number | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          homework_response?: Json | null
+          id?: string
+          is_completed?: boolean
+          lesson_id: string
+          quest_id: string
+          updated_at?: string
+          user_id: string
+          watched_seconds?: number | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          homework_response?: Json | null
+          id?: string
+          is_completed?: boolean
+          lesson_id?: string
+          quest_id?: string
+          updated_at?: string
+          user_id?: string
+          watched_seconds?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quest_user_progress_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "quest_lessons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quest_user_progress_quest_id_fkey"
+            columns: ["quest_id"]
+            isOneToOne: false
+            referencedRelation: "quests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quests: {
+        Row: {
+          color_gradient: string | null
+          cover_image: string | null
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          is_free: boolean
+          slug: string
+          sort_order: number
+          title: string
+          total_lessons: number
+          updated_at: string
+        }
+        Insert: {
+          color_gradient?: string | null
+          cover_image?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          is_free?: boolean
+          slug: string
+          sort_order?: number
+          title: string
+          total_lessons?: number
+          updated_at?: string
+        }
+        Update: {
+          color_gradient?: string | null
+          cover_image?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          is_free?: boolean
+          slug?: string
+          sort_order?: number
+          title?: string
+          total_lessons?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
       rejected_card_attempts: {
         Row: {

@@ -61,10 +61,6 @@ const leaderToolsItems = [{
   title: "Матрица продуктивности",
   url: "/tools/eisenhower",
   icon: LayoutGrid
-}, {
-  title: "Колесо баланса",
-  url: "/tools/balance-wheel",
-  icon: Target
 }];
 
 // Profile menu items (moved from sidebar)
