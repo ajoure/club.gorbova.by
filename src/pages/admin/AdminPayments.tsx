@@ -147,13 +147,15 @@ export default function AdminPayments() {
       // Status filter with combo option for successful + refunds
       if (filters.status !== "all") {
         if (filters.status === "successful_and_refunds") {
-          // Show successful payments AND refund transactions
+          // Show successful payments AND refund transactions (by status, type, or negative amount)
           const isSuccessful = ['successful', 'succeeded'].includes(p.status_normalized);
+          const isRefundStatus = ['refund', 'refunded'].includes(p.status_normalized);
           const isRefundType = normalizeType(p.transaction_type) === 'refund';
-          if (!isSuccessful && !isRefundType) return false;
+          const isNegativeAmount = p.amount < 0; // Negative amount = refund
+          if (!isSuccessful && !isRefundStatus && !isRefundType && !isNegativeAmount) return false;
         } else if (filters.status === "failed") {
           // Show all failed statuses (failed, declined, expired, error, canceled)
-          const failedStatuses = ['failed', 'declined', 'expired', 'error', 'canceled'];
+          const failedStatuses = ['failed', 'declined', 'expired', 'error', 'canceled', 'cancelled'];
           if (!failedStatuses.includes(p.status_normalized)) return false;
         } else if (filters.status !== p.status_normalized) {
           return false;
