@@ -1002,19 +1002,19 @@ export function PaymentDialog({
                 </p>
               </div>
             ) : (
-              <div className="space-y-2">
-                <div className="rounded-lg bg-primary/10 p-3 text-sm">
-                  <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.</p>
-                </div>
-                {(isSubscription || isTrial) && (
-                  <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1.5">
-                    <p className="font-medium text-foreground">Ежемесячная подписка</p>
-                    <p className="text-muted-foreground">Сегодня вы оплачиваете первый месяц обучения ({price}).</p>
-                    <p className="text-muted-foreground">Это даёт вам мгновенный доступ к материалам после старта 5 февраля.</p>
-                    <p className="text-muted-foreground">Следующее автоматическое списание произойдёт через месяц (в начале марта).</p>
-                    <p className="text-muted-foreground">Управление подпиской доступно в вашем профиле 24/7.</p>
-                  </div>
-                )}
+              <div className="rounded-lg bg-primary/10 p-3 text-sm">
+                <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.</p>
+              </div>
+            )}
+            
+            {/* Subscription info - always visible for subscriptions */}
+            {(isSubscription || isTrial) && (
+              <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1.5">
+                <p className="font-medium text-foreground">Ежемесячная подписка</p>
+                <p className="text-muted-foreground">Сегодня вы оплачиваете первый месяц обучения ({price}).</p>
+                <p className="text-muted-foreground">Это даёт вам мгновенный доступ к материалам после старта 5 февраля.</p>
+                <p className="text-muted-foreground">Следующее автоматическое списание произойдёт через месяц (в начале марта).</p>
+                <p className="text-muted-foreground">Управление подпиской доступно в вашем профиле 24/7.</p>
               </div>
             )}
 
