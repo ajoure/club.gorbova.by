@@ -101,19 +101,29 @@ export default function AdminPayments() {
       if (['payment', 'оплата', 'платеж', 'платёж'].includes(v)) return 'payment';
       if (['subscription', 'подписка'].includes(v)) return 'subscription';
       if (['authorization', 'auth', 'авторизация'].includes(v)) return 'authorization';
-      if (['void', 'canceled', 'cancelled', 'отмена'].includes(v)) return 'void';
+      if (['void', 'canceled', 'cancelled', 'отмена', 'cancellation', 'authorization_void'].includes(v)) return 'void';
       if (['chargeback', 'чарджбек'].includes(v)) return 'chargeback';
       return v; // fallback
+    };
+    
+    // Helper to check if transaction is a cancellation/void by type
+    const isCancelledTransaction = (p: UnifiedPayment) => {
+      const txType = normalizeType(p.transaction_type);
+      return txType === 'void';
     };
 
     return payments.filter(p => {
       // Unified dashboard filter (from clickable cards)
       if (dashboardFilter) {
-        const failedStatuses = ['failed', 'canceled', 'expired', 'declined', 'error', 'cancelled', 'voided'];
+        const failedStatuses = ['failed', 'expired', 'declined', 'error', 'incomplete'];
         switch (dashboardFilter) {
-          case 'successful':
-            if (!['successful', 'succeeded'].includes(p.status_normalized)) return false;
+          case 'successful': {
+            // Successful = successful status AND NOT a cancellation/void
+            const isSuccess = ['successful', 'succeeded'].includes(p.status_normalized);
+            const isCancel = isCancelledTransaction(p);
+            if (!isSuccess || isCancel) return false;
             break;
+          }
           case 'refunded': {
             const isRefundTx = normalizeType(p.transaction_type) === 'refund';
             const isNegativeAmount = p.amount < 0;
@@ -121,9 +131,17 @@ export default function AdminPayments() {
             if (!isRefundTx && !isNegativeAmount && !hasRefundedStatus && p.total_refunded <= 0) return false;
             break;
           }
-          case 'failed':
-            if (!failedStatuses.includes(p.status_normalized)) return false;
+          case 'cancelled': {
+            // Cancelled = by transaction_type, not status
+            if (!isCancelledTransaction(p)) return false;
             break;
+          }
+          case 'failed': {
+            // Failed = failed status, but NOT cancellations
+            const isCancel = isCancelledTransaction(p);
+            if (!failedStatuses.includes(p.status_normalized) || isCancel) return false;
+            break;
+          }
         }
       }
 
@@ -154,13 +172,13 @@ export default function AdminPayments() {
           const isNegativeAmount = p.amount < 0; // Negative amount = refund
           if (!isSuccessful && !isRefundStatus && !isRefundType && !isNegativeAmount) return false;
         } else if (filters.status === "cancelled") {
-          // Show cancelled statuses
-          const cancelledStatuses = ['cancel', 'cancelled'];
-          if (!cancelledStatuses.includes(p.status_normalized)) return false;
+          // Show cancelled by transaction_type (not status!)
+          if (!isCancelledTransaction(p)) return false;
         } else if (filters.status === "failed") {
-          // Show all failed statuses (failed, declined, expired, error - not cancelled)
-          const failedStatuses = ['failed', 'declined', 'expired', 'error'];
-          if (!failedStatuses.includes(p.status_normalized)) return false;
+          // Show all failed statuses (failed, declined, expired, error) - NOT cancellations
+          const failedStatuses = ['failed', 'declined', 'expired', 'error', 'incomplete'];
+          const isCancel = isCancelledTransaction(p);
+          if (!failedStatuses.includes(p.status_normalized) || isCancel) return false;
         } else if (filters.status !== p.status_normalized) {
           return false;
         }
