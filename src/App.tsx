@@ -19,6 +19,10 @@ import Audits from "./pages/Audits";
 import SelfDevelopment from "./pages/SelfDevelopment";
 import EisenhowerMatrix from "./pages/tools/EisenhowerMatrix";
 import BalanceWheel from "./pages/tools/BalanceWheel";
+import Quests from "./pages/self-development/Quests";
+import QuestLessons from "./pages/self-development/QuestLessons";
+import QuestLesson from "./pages/self-development/QuestLesson";
+import HabitTracker from "./pages/self-development/HabitTracker";
 import OrderPayment from "./pages/OrderPayment";
 import Offer from "./pages/Offer";
 import Privacy from "./pages/Privacy";
@@ -129,9 +133,14 @@ const App = () => (
               <Route path="/audits/mns-response" element={<ProtectedRoute><MnsResponseService /></ProtectedRoute>} />
               <Route path="/audits/mns-history" element={<ProtectedRoute><MnsDocumentHistory /></ProtectedRoute>} />
               <Route path="/self-development" element={<ProtectedRoute><SelfDevelopment /></ProtectedRoute>} />
+              <Route path="/self-development/quests" element={<ProtectedRoute><Quests /></ProtectedRoute>} />
+              <Route path="/self-development/quests/:questSlug" element={<ProtectedRoute><QuestLessons /></ProtectedRoute>} />
+              <Route path="/self-development/quests/:questSlug/:lessonSlug" element={<ProtectedRoute><QuestLesson /></ProtectedRoute>} />
+              <Route path="/self-development/habits" element={<ProtectedRoute><HabitTracker /></ProtectedRoute>} />
+              <Route path="/self-development/balance-wheel" element={<ProtectedRoute><BalanceWheel /></ProtectedRoute>} />
               <Route path="/tools" element={<Navigate to="/tools/eisenhower" replace />} />
               <Route path="/tools/eisenhower" element={<ProtectedRoute><EisenhowerMatrix /></ProtectedRoute>} />
-              <Route path="/tools/balance-wheel" element={<ProtectedRoute><BalanceWheel /></ProtectedRoute>} />
+              <Route path="/tools/balance-wheel" element={<Navigate to="/self-development/balance-wheel" replace />} />
               <Route path="/support" element={<ProtectedRoute><Support /></ProtectedRoute>} />
               <Route path="/support/:ticketId" element={<ProtectedRoute><SupportTicket /></ProtectedRoute>} />
               <Route path="/docs" element={<ProtectedRoute><Documentation /></ProtectedRoute>} />
