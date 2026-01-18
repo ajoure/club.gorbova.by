@@ -24,7 +24,7 @@ export interface OfferMetaConfig {
 export interface TariffOffer {
   id: string;
   tariff_id: string;
-  offer_type: "pay_now" | "trial";
+  offer_type: "pay_now" | "trial" | "preregistration";
   button_label: string;
   amount: number;
   reentry_amount: number | null; // Price for re-entry (former club members)

@@ -122,7 +122,7 @@ export default function AdminProductDetailV2() {
   // Offer form
   const [offerForm, setOfferForm] = useState({
     tariff_id: "",
-    offer_type: "pay_now" as "pay_now" | "trial",
+    offer_type: "pay_now" as "pay_now" | "trial" | "preregistration",
     button_label: "",
     amount: 0,
     reentry_amount: null as number | null, // Price for re-entry (former club members)
@@ -822,12 +822,12 @@ export default function AdminProductDetailV2() {
               <Label>Тип кнопки *</Label>
               <Select
                 value={offerForm.offer_type}
-                onValueChange={(v: "pay_now" | "trial") => {
+                onValueChange={(v: "pay_now" | "trial" | "preregistration") => {
                   setOfferForm({ 
                     ...offerForm, 
                     offer_type: v,
-                    button_label: v === "trial" ? "Trial 1 BYN / 5 дней" : "Оплатить",
-                    requires_card_tokenization: v === "trial",
+                    button_label: v === "trial" ? "Trial 1 BYN / 5 дней" : v === "preregistration" ? "Забронировать место" : "Оплатить",
+                    requires_card_tokenization: v === "trial" || v === "preregistration",
                   });
                 }}
               >
@@ -837,6 +837,7 @@ export default function AdminProductDetailV2() {
                 <SelectContent>
                   <SelectItem value="pay_now">Оплата (полная стоимость)</SelectItem>
                   <SelectItem value="trial">Trial (пробный период)</SelectItem>
+                  <SelectItem value="preregistration">Предзапись (привязка карты)</SelectItem>
                 </SelectContent>
               </Select>
             </div>

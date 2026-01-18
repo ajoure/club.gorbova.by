@@ -127,10 +127,10 @@ const getBadgeClasses = (badge?: string) => {
       return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-0";
     case "Скоро":
       return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-0";
-    case "Забронировано":
-      return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-0";
+    case "Бронь":
+      return "bg-amber-500/20 text-amber-600 dark:text-amber-400 border-0 font-medium";
     case "Активно":
-      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-0";
+      return "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-0 font-medium";
     case "Старт 5 февраля":
       return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-0";
     default:
@@ -167,28 +167,31 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
   };
 
   return (
-    <GlassCard className="overflow-hidden hover:border-primary/30 transition-all group">
-      <div className="relative h-40 overflow-hidden">
+    <GlassCard className="overflow-hidden hover:border-primary/30 hover:shadow-lg transition-all duration-300 group backdrop-blur-sm bg-card/80">
+      <div className="relative h-44 overflow-hidden">
         <img 
           src={product.image} 
           alt={product.title}
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+          style={product.courseSlug === "buh-business" ? { objectPosition: "center 20%", transform: "scale(1.1)" } : undefined}
         />
+        {/* Gradient overlay for better text contrast */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
         {product.badge && (
           <Badge 
             variant={product.badgeVariant} 
-            className={`absolute top-3 right-3 ${getBadgeClasses(product.badge)}`}
+            className={`absolute top-3 right-3 ${getBadgeClasses(product.badge)} shadow-sm`}
           >
             {product.badge === "Хит" && <Star className="h-3 w-3 mr-1" />}
             {product.badge === "Новинка" && <Sparkles className="h-3 w-3 mr-1" />}
             {product.badge === "Активно" && <Check className="h-3 w-3 mr-1" />}
-            {product.badge === "Забронировано" && <Clock className="h-3 w-3 mr-1" />}
+            {product.badge === "Бронь" && <Clock className="h-3 w-3 mr-1" />}
             {product.badge === "Старт 5 февраля" && <Clock className="h-3 w-3 mr-1" />}
             {product.badge}
           </Badge>
         )}
         {variant === "store" && product.isPurchased && (
-          <div className="absolute top-3 left-3 bg-emerald-500/90 text-white px-2 py-1 rounded-md text-xs font-medium flex items-center gap-1">
+          <div className="absolute top-3 left-3 bg-emerald-500/90 text-white px-2 py-1 rounded-md text-xs font-medium flex items-center gap-1 shadow-sm">
             <Check className="h-3 w-3" />
             Куплено
           </div>
@@ -331,7 +334,7 @@ export default function Learning() {
         ...product,
         isPurchased: hasAccess || false,
         badge: hasAccess 
-          ? (businessTrainingAccess?.hasActiveSubscription ? "Активно" : "Забронировано")
+          ? (businessTrainingAccess?.hasActiveSubscription ? "Активно" : "Бронь")
           : "Старт 5 февраля",
       };
     }
@@ -376,7 +379,7 @@ export default function Learning() {
 
           {/* Store Tab */}
           <TabsContent value="store" className="mt-6">
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               {enrichedProducts.map((product) => (
                 <ProductCard
                   key={product.id}
@@ -403,7 +406,7 @@ export default function Learning() {
                 </Button>
               </GlassCard>
             ) : (
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                 {purchasedProducts.map((product) => (
                   <ProductCard
                     key={product.id}

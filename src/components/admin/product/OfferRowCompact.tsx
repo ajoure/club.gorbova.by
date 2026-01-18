@@ -9,7 +9,7 @@ import type { PaymentMethod } from "@/hooks/useTariffOffers";
 interface OfferRowCompactProps {
   offer: {
     id: string;
-    offer_type: "pay_now" | "trial";
+    offer_type: "pay_now" | "trial" | "preregistration";
     button_label: string;
     amount: number;
     reentry_amount?: number | null;
@@ -87,10 +87,10 @@ export function OfferRowCompact({
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <div className="flex items-center gap-1.5 flex-wrap">
           <Badge 
-            variant={offer.offer_type === "trial" ? "secondary" : "default"}
-            className="shrink-0"
+            variant={offer.offer_type === "trial" ? "secondary" : offer.offer_type === "preregistration" ? "outline" : "default"}
+            className={offer.offer_type === "preregistration" ? "shrink-0 border-amber-500 text-amber-600" : "shrink-0"}
           >
-            {offer.offer_type === "trial" ? "Trial" : "Оплата"}
+            {offer.offer_type === "trial" ? "Trial" : offer.offer_type === "preregistration" ? "Предзапись" : "Оплата"}
           </Badge>
           {isPrimary && (
             <Badge variant="outline" className="shrink-0 border-primary text-primary gap-1">

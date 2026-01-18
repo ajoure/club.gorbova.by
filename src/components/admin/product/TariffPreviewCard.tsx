@@ -12,7 +12,7 @@ interface TariffFeature {
 
 interface TariffOffer {
   id: string;
-  offer_type: "pay_now" | "trial";
+  offer_type: "pay_now" | "trial" | "preregistration";
   button_label: string;
   amount: number;
   is_active: boolean;

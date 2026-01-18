@@ -91,6 +91,7 @@ import Money from "./pages/Money";
 import AI from "./pages/AI";
 import Knowledge from "./pages/Knowledge";
 import BusinessTraining from "./pages/BusinessTraining";
+import BusinessTrainingContent from "./pages/BusinessTrainingContent";
 
 const queryClient = new QueryClient();
 
@@ -147,6 +148,7 @@ const App = () => (
               <Route path="/support/:ticketId" element={<ProtectedRoute><SupportTicket /></ProtectedRoute>} />
               <Route path="/docs" element={<ProtectedRoute><Documentation /></ProtectedRoute>} />
               <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
+              <Route path="/library/buh-business" element={<ProtectedRoute><BusinessTrainingContent /></ProtectedRoute>} />
               <Route path="/library/:moduleSlug" element={<ProtectedRoute><LibraryModule /></ProtectedRoute>} />
               <Route path="/library/:moduleSlug/:lessonSlug" element={<ProtectedRoute><LibraryLesson /></ProtectedRoute>} />
               

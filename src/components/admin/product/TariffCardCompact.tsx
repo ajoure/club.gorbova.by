@@ -12,7 +12,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 
 interface TariffOffer {
   id: string;
-  offer_type: "pay_now" | "trial";
+  offer_type: "pay_now" | "trial" | "preregistration";
   button_label: string;
   amount: number;
   trial_days: number | null;
