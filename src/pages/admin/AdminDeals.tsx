@@ -712,9 +712,17 @@ export default function AdminDeals() {
                         <Calendar className="h-3 w-3 text-muted-foreground" />
                         {format(new Date(deal.created_at), "dd.MM.yy")}
                       </div>
-                      <div className="text-xs text-muted-foreground font-mono mt-0.5">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(deal.order_number);
+                          toast.success("Номер скопирован");
+                        }}
+                        className="text-xs text-muted-foreground font-mono mt-0.5 hover:text-primary flex items-center gap-1 transition-colors"
+                        title="Скопировать номер"
+                      >
                         {deal.order_number}
-                      </div>
+                      </button>
                     </TableCell>
                     <TableCell 
                       onClick={(e) => {

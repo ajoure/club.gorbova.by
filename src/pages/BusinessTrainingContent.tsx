@@ -94,6 +94,7 @@ export default function BusinessTrainingContent() {
     onSuccess: () => {
       toast.success("Бронь отменена");
       queryClient.invalidateQueries({ queryKey: ["buh-business-access"] });
+      queryClient.invalidateQueries({ queryKey: ["buh-business-landing-access"] });
       navigate("/business-training");
     },
     onError: () => {
@@ -158,7 +159,7 @@ export default function BusinessTrainingContent() {
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/products?tab=library")}>
+          <Button variant="ghost" size="icon" onClick={() => navigate("/learning")}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="flex-1">
@@ -302,9 +303,8 @@ export default function BusinessTrainingContent() {
         {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row gap-3">
           <Button 
-            variant="outline" 
             onClick={() => navigate("/business-training")}
-            className="flex-1"
+            className="flex-1 bg-gradient-to-r from-primary/80 to-primary hover:from-primary hover:to-primary/80"
           >
             <ExternalLink className="h-4 w-4 mr-2" />
             Подробнее о тренинге

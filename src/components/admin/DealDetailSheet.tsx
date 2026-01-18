@@ -404,7 +404,19 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 <Handshake className="w-5 h-5 sm:w-7 sm:h-7 text-primary" />
               </div>
               <div className="min-w-0">
-                <SheetTitle className="text-lg sm:text-xl truncate">Сделка #{deal.order_number}</SheetTitle>
+                <SheetTitle className="text-lg sm:text-xl flex items-center gap-2">
+                  Сделка 
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyToClipboard(deal.order_number, "Номер сделки");
+                    }}
+                    className="font-mono hover:bg-primary/10 px-1.5 py-0.5 rounded transition-colors cursor-pointer"
+                    title="Скопировать номер без #"
+                  >
+                    #{deal.order_number}
+                  </button>
+                </SheetTitle>
                 <p className="text-xs sm:text-sm text-muted-foreground">
                   {format(new Date(deal.created_at), "dd MMMM yyyy, HH:mm", { locale: ru })}
                 </p>

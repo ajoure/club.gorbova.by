@@ -111,19 +111,8 @@ export function AppSidebar() {
   };
 
   const handleLogoClick = () => {
-    const hostname = window.location.hostname;
-    const isProductDomain = hostname !== "localhost" && 
-                            hostname !== "127.0.0.1" &&
-                            hostname !== "club.gorbova.by" && 
-                            hostname !== "gorbova.by" &&
-                            !hostname.includes(".lovable.app") &&
-                            !hostname.includes(".lovableproject.com");
-    
-    if (isProductDomain) {
-      window.location.href = "https://club.gorbova.by";
-    } else {
-      navigate("/");
-    }
+    // Always navigate to personal account (home)
+    navigate("/");
   };
 
   const getRoleLabel = () => {

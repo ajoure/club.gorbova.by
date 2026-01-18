@@ -19,7 +19,8 @@ import {
   Briefcase,
   TrendingUp,
   Clock,
-  Check
+  Check,
+  ArrowLeft
 } from "lucide-react";
 
 import katerinaImage from "@/assets/katerina-business.jpg";
@@ -102,6 +103,19 @@ export default function BusinessTraining() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
+      {/* Back to Dashboard Button */}
+      <div className="container mx-auto px-4 pt-4">
+        <Button 
+          variant="ghost" 
+          size="sm"
+          onClick={() => navigate("/learning")}
+          className="hover:bg-card/50"
+        >
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          В личный кабинет
+        </Button>
+      </div>
+
       {/* Hero Section */}
       <section className="relative overflow-hidden">
         {/* Background decoration */}

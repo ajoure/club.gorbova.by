@@ -128,7 +128,7 @@ const getBadgeClasses = (badge?: string) => {
     case "Скоро":
       return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-0";
     case "Бронь":
-      return "bg-amber-500/20 text-amber-600 dark:text-amber-400 border-0 font-medium";
+      return "bg-amber-500 text-white border-0 font-medium shadow-md";
     case "Активно":
       return "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-0 font-medium";
     case "Старт 5 февраля":
@@ -190,8 +190,8 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
             {product.badge}
           </Badge>
         )}
-        {variant === "store" && product.isPurchased && (
-          <div className="absolute top-3 left-3 bg-emerald-500/90 text-white px-2 py-1 rounded-md text-xs font-medium flex items-center gap-1 shadow-sm">
+        {variant === "store" && product.isPurchased && product.badge !== "Бронь" && (
+          <div className="absolute top-3 left-3 bg-emerald-500 text-white px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1 shadow-md">
             <Check className="h-3 w-3" />
             Куплено
           </div>
