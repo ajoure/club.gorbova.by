@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -7,6 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Progress } from "@/components/ui/progress";
 import { useTrainingModules } from "@/hooks/useTrainingModules";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from "@tanstack/react-query";
 import { 
   ShoppingBag, 
   BookOpen, 
@@ -74,14 +77,16 @@ const products: Product[] = [
     id: "5",
     title: "Бухгалтерия как бизнес",
     description: "Ежемесячный тренинг: от бухгалтера в найме к владельцу своего бизнеса",
-    badge: "Новинка",
+    badge: "Старт 5 февраля",
     badgeVariant: "secondary",
     price: "250 BYN/мес",
     image: katerinaBusinessImage,
     isPurchased: false,
     purchaseLink: "/business-training",
     courseSlug: "buh-business",
-    duration: "Подписка",
+    lessonCount: 12,
+    completedCount: 0,
+    duration: "Квест",
   },
   {
     id: "3",
@@ -121,6 +126,12 @@ const getBadgeClasses = (badge?: string) => {
     case "Услуга":
       return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-0";
     case "Скоро":
+      return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-0";
+    case "Забронировано":
+      return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-0";
+    case "Активно":
+      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-0";
+    case "Старт 5 февраля":
       return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-0";
     default:
       return "bg-primary/10 text-primary border-0";
@@ -170,6 +181,9 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
           >
             {product.badge === "Хит" && <Star className="h-3 w-3 mr-1" />}
             {product.badge === "Новинка" && <Sparkles className="h-3 w-3 mr-1" />}
+            {product.badge === "Активно" && <Check className="h-3 w-3 mr-1" />}
+            {product.badge === "Забронировано" && <Clock className="h-3 w-3 mr-1" />}
+            {product.badge === "Старт 5 февраля" && <Clock className="h-3 w-3 mr-1" />}
             {product.badge}
           </Badge>
         )}
@@ -268,14 +282,59 @@ export default function Learning() {
   const [searchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") === "library" ? "library" : "store";
   const [activeTab, setActiveTab] = useState(initialTab);
+  const { user } = useAuth();
   
   const { modules, loading } = useTrainingModules();
   
+  // Check if user has preregistration or active subscription for buh_business
+  const { data: businessTrainingAccess } = useQuery({
+    queryKey: ["buh-business-access", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return { hasPreregistration: false, hasActiveSubscription: false };
+      
+      // Check preregistration
+      const { data: preregistration } = await supabase
+        .from("course_preregistrations")
+        .select("id, status")
+        .eq("user_id", user.id)
+        .eq("product_code", "buh_business")
+        .in("status", ["new", "contacted"])
+        .maybeSingle();
+      
+      // Check entitlements
+      const { data: entitlement } = await supabase
+        .from("entitlements")
+        .select("id, status")
+        .eq("user_id", user.id)
+        .eq("product_code", "buh_business")
+        .eq("status", "active")
+        .maybeSingle();
+      
+      return {
+        hasPreregistration: !!preregistration,
+        hasActiveSubscription: !!entitlement,
+      };
+    },
+    enabled: !!user?.id,
+  });
+  
   // Merge real module data with mock products
-  const enrichedProducts = products.map(product => {
+  const enrichedProducts = useMemo(() => products.map(product => {
     const matchingModule = modules.find(m => 
       m.slug === product.courseSlug || m.title.includes(product.title)
     );
+    
+    // Special handling for buh-business product
+    if (product.courseSlug === "buh-business") {
+      const hasAccess = businessTrainingAccess?.hasPreregistration || businessTrainingAccess?.hasActiveSubscription;
+      return {
+        ...product,
+        isPurchased: hasAccess || false,
+        badge: hasAccess 
+          ? (businessTrainingAccess?.hasActiveSubscription ? "Активно" : "Забронировано")
+          : "Старт 5 февраля",
+      };
+    }
     
     if (matchingModule) {
       return {
@@ -286,7 +345,7 @@ export default function Learning() {
       };
     }
     return product;
-  });
+  }), [modules, businessTrainingAccess]);
 
   const purchasedProducts = enrichedProducts.filter(p => p.isPurchased && p.courseSlug);
 

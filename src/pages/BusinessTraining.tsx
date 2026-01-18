@@ -44,16 +44,16 @@ const benefits = [
 
 const whatIncluded = [
   "1 обучающий вебинар в месяц (live + запись)",
-  "Доступ к материалам прошлых тренингов",
   "Чат с участниками и экспертом",
   "Домашние задания с обратной связью",
-  "Шаблоны и чек-листы для старта",
+  "Шаблоны и чек-листы для старта бизнеса",
+  "Прогресс-трекер вашего пути",
 ];
 
 const paymentTerms = [
   { icon: CreditCard, text: "Привязка карты в личном кабинете" },
   { icon: Bell, text: "Уведомление за день до списания" },
-  { icon: Calendar, text: "Автосписание с 1 по 3 число месяца" },
+  { icon: Calendar, text: "Автосписание с 1 по 4 число месяца" },
 ];
 
 export default function BusinessTraining() {
@@ -79,7 +79,7 @@ export default function BusinessTraining() {
                 className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-0 px-4 py-1.5"
               >
                 <Calendar className="h-3.5 w-3.5 mr-1.5" />
-                Старт 3 февраля
+                Старт 5 февраля 2026
               </Badge>
 
               <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-foreground leading-tight">
@@ -116,7 +116,7 @@ export default function BusinessTraining() {
                   className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
                   onClick={() => setShowPreregistration(true)}
                 >
-                  Записаться — 250 BYN/мес
+                  Забронировать место
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
                 <Button 
@@ -136,7 +136,8 @@ export default function BusinessTraining() {
                   <img 
                     src={katerinaImage} 
                     alt="Катерина Горбова — эксперт по бухгалтерии" 
-                    className="w-full h-auto max-h-[500px] object-cover object-top rounded-lg"
+                    className="w-full h-auto max-h-[500px] object-cover rounded-lg"
+                    style={{ objectPosition: "center 15%", transform: "scale(1.2)" }}
                   />
                 </GlassCard>
                 
@@ -224,7 +225,7 @@ export default function BusinessTraining() {
                   className="w-full sm:w-auto px-12 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
                   onClick={() => setShowPreregistration(true)}
                 >
-                  Записаться на тренинг
+                  Забронировать место
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
                 <p className="text-xs text-muted-foreground">
