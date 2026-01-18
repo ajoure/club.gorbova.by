@@ -104,6 +104,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       
       // Fetch from payment_reconcile_queue (queue items) - NO STATUS FILTER, show all
       // IMPORTANT: Filter by paid_at (actual payment date), not created_at (import date)
+      // Build queue query with date filter
       let queueQuery = supabase
         .from("payment_reconcile_queue")
         .select(`
@@ -119,13 +120,16 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         `)
         .eq("is_fee", false)
         .not("bepaid_uid", "is", null)
-        .gte("paid_at", `${fromDate}T00:00:00Z`)
-        .range(0, 9999) // Load up to 10,000 records to avoid Supabase default 1000 limit
-        .order("paid_at", { ascending: false, nullsFirst: false });
+        .gte("paid_at", `${fromDate}T00:00:00Z`);
       
       if (dateFilter.to) {
         queueQuery = queueQuery.lte("paid_at", `${dateFilter.to}T23:59:59Z`);
       }
+      
+      // IMPORTANT: order() must come before range() for proper pagination
+      queueQuery = queueQuery
+        .order("paid_at", { ascending: false, nullsFirst: false })
+        .limit(10000); // Explicit limit to load all records
       
       // Fetch from payments_v2 (processed payments)
       // IMPORTANT: Filter by paid_at (actual payment date), not created_at (import date)
@@ -140,13 +144,16 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           profiles:profile_id(id, full_name, email, phone, user_id)
         `)
         .eq("provider", "bepaid")
-        .gte("paid_at", `${fromDate}T00:00:00Z`)
-        .range(0, 9999) // Load up to 10,000 records to avoid Supabase default 1000 limit
-        .order("paid_at", { ascending: false, nullsFirst: false });
+        .gte("paid_at", `${fromDate}T00:00:00Z`);
       
       if (dateFilter.to) {
         paymentsQuery = paymentsQuery.lte("paid_at", `${dateFilter.to}T23:59:59Z`);
       }
+      
+      // IMPORTANT: order() must come before limit() for proper pagination
+      paymentsQuery = paymentsQuery
+        .order("paid_at", { ascending: false, nullsFirst: false })
+        .limit(10000); // Explicit limit to load all records
       
       const [queueResult, paymentsResult] = await Promise.all([
         queueQuery,
