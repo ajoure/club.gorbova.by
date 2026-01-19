@@ -16,7 +16,8 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, AlertTriangle, CheckCircle, Download } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Loader2, AlertTriangle, CheckCircle, Download, Search, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface Discrepancy {
@@ -31,6 +32,13 @@ interface Discrepancy {
   customer_email: string | null;
 }
 
+interface NotFoundDetail {
+  payment_id: string;
+  provider_payment_id: string;
+  endpoints_tried: string[];
+  last_http_status: number;
+}
+
 interface ReconcileResult {
   success: boolean;
   dry_run: boolean;
@@ -38,8 +46,10 @@ interface ReconcileResult {
   discrepancies_found: number;
   fixed: number;
   skipped: number;
+  not_found: number;
   errors: number;
   discrepancies: Discrepancy[];
+  not_found_details: NotFoundDetail[];
   error_details: Array<{ payment_id: string; error: string }>;
 }
 
@@ -86,7 +96,8 @@ export function BepaidReconcileDialog({ open, onOpenChange }: Props) {
 
       if (response.data.success) {
         if (dryRun) {
-          toast.info(`Проверено ${response.data.checked} платежей, найдено ${response.data.discrepancies_found} расхождений`);
+          const notFoundMsg = response.data.not_found > 0 ? `, не найдено в API: ${response.data.not_found}` : '';
+          toast.info(`Проверено ${response.data.checked} платежей, найдено ${response.data.discrepancies_found} расхождений${notFoundMsg}`);
         } else {
           toast.success(`Исправлено ${response.data.fixed} платежей`);
           queryClient.invalidateQueries({ queryKey: ['payments'] });
@@ -188,8 +199,9 @@ export function BepaidReconcileDialog({ open, onOpenChange }: Props) {
 
         {result && (
           <div className="space-y-4 flex-1 min-h-0">
-            <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap">
               <Badge variant="outline">Проверено: {result.checked}</Badge>
+              
               {result.discrepancies_found > 0 ? (
                 <Badge variant="destructive" className="flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" />
@@ -201,68 +213,173 @@ export function BepaidReconcileDialog({ open, onOpenChange }: Props) {
                   Расхождений нет
                 </Badge>
               )}
+              
               {result.fixed > 0 && (
                 <Badge variant="default" className="bg-blue-600">
                   Исправлено: {result.fixed}
                 </Badge>
               )}
+              
               {result.skipped > 0 && (
-                <Badge variant="secondary">Пропущено: {result.skipped}</Badge>
+                <Badge variant="secondary">Без UID: {result.skipped}</Badge>
               )}
+              
+              {result.not_found > 0 && (
+                <Badge variant="outline" className="border-orange-500 text-orange-600 flex items-center gap-1">
+                  <Search className="h-3 w-3" />
+                  Не найдено в API: {result.not_found}
+                </Badge>
+              )}
+              
               {result.errors > 0 && (
-                <Badge variant="destructive">Ошибок: {result.errors}</Badge>
+                <Badge variant="destructive" className="flex items-center gap-1">
+                  <XCircle className="h-3 w-3" />
+                  Ошибок: {result.errors}
+                </Badge>
               )}
             </div>
 
-            {result.discrepancies.length > 0 && (
-              <ScrollArea className="h-[300px] border rounded-md">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted sticky top-0">
-                    <tr>
-                      <th className="p-2 text-left">Платёж</th>
-                      <th className="p-2 text-right">У нас</th>
-                      <th className="p-2 text-right">bePaid</th>
-                      <th className="p-2 text-right">Разница</th>
-                      <th className="p-2 text-left">Тип</th>
-                      <th className="p-2 text-left">Дата</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.discrepancies.map((d, i) => (
-                      <tr key={i} className="border-t hover:bg-muted/50">
-                        <td className="p-2">
-                          <div className="font-mono text-xs truncate max-w-[150px]" title={d.provider_payment_id || ''}>
-                            {d.provider_payment_id?.slice(0, 12)}...
-                          </div>
-                          {d.customer_email && (
-                            <div className="text-xs text-muted-foreground truncate max-w-[150px]">
-                              {d.customer_email}
-                            </div>
-                          )}
-                        </td>
-                        <td className="p-2 text-right font-mono text-destructive">
-                          {d.our_amount.toFixed(2)}
-                        </td>
-                        <td className="p-2 text-right font-mono text-green-600">
-                          {d.bepaid_amount.toFixed(2)}
-                        </td>
-                        <td className="p-2 text-right font-mono font-bold">
-                          +{(d.bepaid_amount - d.our_amount).toFixed(2)}
-                        </td>
-                        <td className="p-2">
-                          <Badge variant="outline" className="text-xs">
-                            {d.transaction_type}
-                          </Badge>
-                        </td>
-                        <td className="p-2 text-xs text-muted-foreground">
-                          {format(new Date(d.paid_at), 'dd.MM.yy HH:mm')}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </ScrollArea>
-            )}
+            <Tabs defaultValue="discrepancies" className="flex-1 min-h-0">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="discrepancies">
+                  Расхождения ({result.discrepancies.length})
+                </TabsTrigger>
+                <TabsTrigger value="not_found">
+                  Не найдено ({result.not_found_details.length})
+                </TabsTrigger>
+                <TabsTrigger value="errors">
+                  Ошибки ({result.error_details.length})
+                </TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="discrepancies" className="mt-2">
+                {result.discrepancies.length > 0 ? (
+                  <ScrollArea className="h-[280px] border rounded-md">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted sticky top-0">
+                        <tr>
+                          <th className="p-2 text-left">Платёж</th>
+                          <th className="p-2 text-right">У нас</th>
+                          <th className="p-2 text-right">bePaid</th>
+                          <th className="p-2 text-right">Разница</th>
+                          <th className="p-2 text-left">Тип</th>
+                          <th className="p-2 text-left">Дата</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {result.discrepancies.map((d, i) => (
+                          <tr key={i} className="border-t hover:bg-muted/50">
+                            <td className="p-2">
+                              <div className="font-mono text-xs truncate max-w-[150px]" title={d.provider_payment_id || ''}>
+                                {d.provider_payment_id?.slice(0, 12)}...
+                              </div>
+                              {d.customer_email && (
+                                <div className="text-xs text-muted-foreground truncate max-w-[150px]">
+                                  {d.customer_email}
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-2 text-right font-mono text-destructive">
+                              {d.our_amount.toFixed(2)}
+                            </td>
+                            <td className="p-2 text-right font-mono text-green-600">
+                              {d.bepaid_amount.toFixed(2)}
+                            </td>
+                            <td className="p-2 text-right font-mono font-bold">
+                              +{(d.bepaid_amount - d.our_amount).toFixed(2)}
+                            </td>
+                            <td className="p-2">
+                              <Badge variant="outline" className="text-xs">
+                                {d.transaction_type}
+                              </Badge>
+                            </td>
+                            <td className="p-2 text-xs text-muted-foreground">
+                              {format(new Date(d.paid_at), 'dd.MM.yy HH:mm')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </ScrollArea>
+                ) : (
+                  <div className="h-[280px] flex items-center justify-center text-muted-foreground">
+                    Расхождений не найдено
+                  </div>
+                )}
+              </TabsContent>
+              
+              <TabsContent value="not_found" className="mt-2">
+                {result.not_found_details.length > 0 ? (
+                  <ScrollArea className="h-[280px] border rounded-md">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted sticky top-0">
+                        <tr>
+                          <th className="p-2 text-left">Payment ID</th>
+                          <th className="p-2 text-left">bePaid UID</th>
+                          <th className="p-2 text-left">Endpoints</th>
+                          <th className="p-2 text-right">HTTP</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {result.not_found_details.map((d, i) => (
+                          <tr key={i} className="border-t hover:bg-muted/50">
+                            <td className="p-2 font-mono text-xs truncate max-w-[120px]" title={d.payment_id}>
+                              {d.payment_id.slice(0, 8)}...
+                            </td>
+                            <td className="p-2 font-mono text-xs truncate max-w-[150px]" title={d.provider_payment_id}>
+                              {d.provider_payment_id.slice(0, 12)}...
+                            </td>
+                            <td className="p-2 text-xs text-muted-foreground">
+                              {d.endpoints_tried.length} tried
+                            </td>
+                            <td className="p-2 text-right">
+                              <Badge variant="outline" className="text-xs">
+                                {d.last_http_status || '?'}
+                              </Badge>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </ScrollArea>
+                ) : (
+                  <div className="h-[280px] flex items-center justify-center text-muted-foreground">
+                    Все транзакции найдены в bePaid API
+                  </div>
+                )}
+              </TabsContent>
+              
+              <TabsContent value="errors" className="mt-2">
+                {result.error_details.length > 0 ? (
+                  <ScrollArea className="h-[280px] border rounded-md">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted sticky top-0">
+                        <tr>
+                          <th className="p-2 text-left">Payment ID</th>
+                          <th className="p-2 text-left">Ошибка</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {result.error_details.map((d, i) => (
+                          <tr key={i} className="border-t hover:bg-muted/50">
+                            <td className="p-2 font-mono text-xs truncate max-w-[150px]" title={d.payment_id}>
+                              {d.payment_id.slice(0, 8)}...
+                            </td>
+                            <td className="p-2 text-xs text-destructive">
+                              {d.error}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </ScrollArea>
+                ) : (
+                  <div className="h-[280px] flex items-center justify-center text-muted-foreground">
+                    Ошибок нет
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
           </div>
         )}
 

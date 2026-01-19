@@ -111,9 +111,22 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const navigate = useNavigate();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteWithPayments, setDeleteWithPayments] = useState(false); // dangerous mode
   const [fetchingDocs, setFetchingDocs] = useState(false);
   const [linkPaymentDialogOpen, setLinkPaymentDialogOpen] = useState(false);
   const [grantAccessDialogOpen, setGrantAccessDialogOpen] = useState(false);
+  
+  // Check if current user is super_admin
+  const { data: isSuperAdmin } = useQuery({
+    queryKey: ['is-super-admin'],
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return false;
+      const { data } = await supabase.rpc('is_super_admin', { _user_id: user.id });
+      return !!data;
+    },
+    staleTime: 60000,
+  });
   
   // Fetch bePaid docs mutation
   const fetchBepaidDocsMutation = useMutation({
@@ -349,16 +362,53 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         })
         .catch(console.error);
 
-      // 5. Delete payments
-      const { error: paymentsError } = await supabase
+      // 5. Handle payments - DETACH by default, delete only if deleteWithPayments is true
+      const { data: linkedPayments } = await supabase
         .from("payments_v2")
-        .delete()
+        .select("id, meta")
         .eq("order_id", order.id);
       
-      if (paymentsError) {
-        console.error("[DealDetailSheet] Error deleting payments:", paymentsError);
-      } else {
-        console.log(`[DealDetailSheet] Deleted payments`);
+      const paymentsCount = linkedPayments?.length || 0;
+      
+      if (deleteWithPayments && paymentsCount > 0) {
+        // DANGEROUS: Actually delete payments (super_admin only)
+        console.log(`[DealDetailSheet] Deleting ${paymentsCount} payments (dangerous mode)`);
+        const { error: paymentsError } = await supabase
+          .from("payments_v2")
+          .delete()
+          .eq("order_id", order.id);
+        
+        if (paymentsError) {
+          console.error("[DealDetailSheet] Error deleting payments:", paymentsError);
+          throw new Error(`Ошибка удаления платежей: ${paymentsError.message}`);
+        }
+      } else if (paymentsCount > 0) {
+        // SAFE DEFAULT: Detach payments (set order_id = NULL, preserve metadata)
+        console.log(`[DealDetailSheet] Detaching ${paymentsCount} payments (safe mode)`);
+        
+        for (const pmt of linkedPayments || []) {
+          const updatedMeta = {
+            ...(pmt.meta as object || {}),
+            deleted_order_id: order.id,
+            deleted_order_number: order.order_number,
+            detached_at: new Date().toISOString(),
+          };
+          
+          const { error: detachError } = await supabase
+            .from("payments_v2")
+            .update({
+              order_id: null,
+              meta: updatedMeta,
+            })
+            .eq("id", pmt.id);
+          
+          if (detachError) {
+            console.error("[DealDetailSheet] Error detaching payment:", detachError);
+            // HARD GUARD: If detaching fails, STOP and do NOT delete the deal
+            throw new Error(`Не удалось отвязать платёж ${pmt.id}: ${detachError.message}. Сделка НЕ удалена.`);
+          }
+        }
+        console.log(`[DealDetailSheet] Successfully detached ${paymentsCount} payments`);
       }
 
       // 6. Delete order - CRITICAL STEP
@@ -376,8 +426,10 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       console.log(`[DealDetailSheet] Successfully deleted order ${order.order_number}`);
     },
     onSuccess: () => {
-      toast.success("Сделка удалена");
+      toast.success(deleteWithPayments ? "Сделка и платежи удалены" : "Сделка удалена (платежи сохранены)");
+      setDeleteWithPayments(false); // Reset dangerous mode
       queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+      queryClient.invalidateQueries({ queryKey: ["payments"] }); // Refresh payments list
       onOpenChange(false);
       onDeleted?.();
     },
@@ -969,21 +1021,47 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       />
       
       {/* Delete Confirmation */}
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <AlertDialog open={deleteDialogOpen} onOpenChange={(open) => {
+        setDeleteDialogOpen(open);
+        if (!open) setDeleteWithPayments(false); // Reset on close
+      }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Удалить сделку?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Это действие нельзя отменить. Будут удалены: сделка #{deal.order_number}, связанные платежи и подписки.
+            <AlertDialogDescription className="space-y-2">
+              <p>
+                Будут удалены: сделка #{deal.order_number}, связанные подписки и права доступа.
+              </p>
+              <p className="font-medium text-foreground">
+                Платежи будут отвязаны, но сохранены в системе для возможности пересоздания сделки.
+              </p>
+              {isSuperAdmin && (
+                <div className="mt-4 p-3 border border-destructive/50 rounded-md bg-destructive/5">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={deleteWithPayments}
+                      onChange={(e) => setDeleteWithPayments(e.target.checked)}
+                      className="w-4 h-4"
+                    />
+                    <span className="text-sm text-destructive font-medium">
+                      ⚠️ Удалить также платежи (необратимо)
+                    </span>
+                  </label>
+                </div>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
             <AlertDialogAction 
               onClick={() => deleteMutation.mutate()}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className={cn(
+                "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+                deleteWithPayments && "bg-red-700 hover:bg-red-800"
+              )}
             >
-              Удалить
+              {deleteWithPayments ? "Удалить всё" : "Удалить сделку"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -48,23 +48,40 @@ interface SubscriptionWithLink {
   is_orphan: boolean;
 }
 
-async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; secretKey: string } | null> {
+interface CredentialsResult {
+  shopId: string;
+  secretKey: string;
+  source: 'integration_instance' | 'env_vars';
+  instanceStatus?: string;
+}
+
+async function getBepaidCredentials(supabase: any): Promise<CredentialsResult | null> {
+  // Check both 'active' and 'connected' statuses
   const { data: instance } = await supabase
     .from('integration_instances')
-    .select('config')
+    .select('config, status')
     .eq('provider', 'bepaid')
-    .eq('status', 'active')
+    .in('status', ['active', 'connected'])
     .maybeSingle();
 
   const shopIdFromInstance = instance?.config?.shop_id;
   const secretFromInstance = instance?.config?.secret_key;
   if (shopIdFromInstance && secretFromInstance) {
-    return { shopId: String(shopIdFromInstance), secretKey: String(secretFromInstance) };
+    console.log(`[bepaid-list-subs] Using creds from integration_instances: shop_id=${shopIdFromInstance}, status=${instance?.status}`);
+    return { 
+      shopId: String(shopIdFromInstance), 
+      secretKey: String(secretFromInstance),
+      source: 'integration_instance',
+      instanceStatus: instance?.status
+    };
   }
 
   const shopId = Deno.env.get('BEPAID_SHOP_ID');
   const secretKey = Deno.env.get('BEPAID_SECRET_KEY');
-  if (shopId && secretKey) return { shopId, secretKey };
+  if (shopId && secretKey) {
+    console.log(`[bepaid-list-subs] Using creds from env vars: shop_id=${shopId}`);
+    return { shopId, secretKey, source: 'env_vars' };
+  }
 
   return null;
 }
@@ -111,7 +128,17 @@ Deno.serve(async (req) => {
 
     const credentials = await getBepaidCredentials(supabase);
     if (!credentials) {
-      return new Response(JSON.stringify({ subscriptions: [], stats: { total: 0, active: 0, trial: 0, cancelled: 0, orphans: 0, linked: 0 }, error: 'bePaid credentials not configured' }), {
+      console.error('[bepaid-list-subs] No credentials found');
+      return new Response(JSON.stringify({ 
+        subscriptions: [], 
+        stats: { total: 0, active: 0, trial: 0, cancelled: 0, orphans: 0, linked: 0 }, 
+        error: 'bePaid credentials not configured',
+        debug: {
+          checked_statuses: ['active', 'connected'],
+          integration_found: false,
+          has_secret: false
+        }
+      }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
