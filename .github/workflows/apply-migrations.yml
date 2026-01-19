@@ -1,11 +1,25 @@
-name: Apply Supabase Migrations
+name: Supabase Migration & Deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'migrate'
+        type: choice
+        options:
+          - migrate
+          - deploy-functions
+          - full-deploy
+
+env:
+  SUPABASE_PROJECT_REF: ypwsuumurrtkxatoyqhk
 
 jobs:
   migrate:
     runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.action == 'migrate' || github.event.inputs.action == 'full-deploy' }}
     
     steps:
       - name: Checkout repository
@@ -21,7 +35,37 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: |
-          supabase link --project-ref ypwsuumurrtkxatoyqhk
+          supabase link --project-ref ${{ env.SUPABASE_PROJECT_REF }}
           echo "Applying migrations to database..."
           supabase db push
           echo "Migrations applied successfully!"
+
+  deploy-functions:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.action == 'deploy-functions' || github.event.inputs.action == 'full-deploy' }}
+    needs: [migrate]
+    # Allow to run even if migrate was skipped
+    if: ${{ always() && (github.event.inputs.action == 'deploy-functions' || github.event.inputs.action == 'full-deploy') }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v1
+        with:
+          deno-version: v1.40.x
+
+      - name: Deploy Edge Functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase link --project-ref ${{ env.SUPABASE_PROJECT_REF }}
+          echo "Deploying all edge functions..."
+          supabase functions deploy --all
+          echo "Edge functions deployed successfully!"
