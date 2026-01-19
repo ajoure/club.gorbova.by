@@ -11,6 +11,27 @@ interface CancelResult {
   total_requested: number;
 }
 
+async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; secretKey: string } | null> {
+  const { data: instance } = await supabase
+    .from('integration_instances')
+    .select('config')
+    .eq('provider', 'bepaid')
+    .eq('status', 'active')
+    .maybeSingle();
+
+  const shopIdFromInstance = instance?.config?.shop_id;
+  const secretFromInstance = instance?.config?.secret_key;
+  if (shopIdFromInstance && secretFromInstance) {
+    return { shopId: String(shopIdFromInstance), secretKey: String(secretFromInstance) };
+  }
+
+  const shopId = Deno.env.get('BEPAID_SHOP_ID');
+  const secretKey = Deno.env.get('BEPAID_SECRET_KEY');
+  if (shopId && secretKey) return { shopId, secretKey };
+
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -19,8 +40,6 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY');
-    
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // Auth check
@@ -41,11 +60,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { data: hasAdminRole } = await supabase.rpc('has_role', { 
-      _user_id: user.id, 
-      _role: 'admin' 
+    const { data: hasAdminRole } = await supabase.rpc('has_role', {
+      _user_id: user.id,
+      _role: 'admin',
     });
-    
+
     if (!hasAdminRole) {
       return new Response(JSON.stringify({ error: 'Admin access required' }), {
         status: 403,
@@ -53,8 +72,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (!bepaidSecretKey) {
-      return new Response(JSON.stringify({ error: 'BEPAID_SECRET_KEY not configured' }), {
+    const credentials = await getBepaidCredentials(supabase);
+    if (!credentials) {
+      return new Response(JSON.stringify({ error: 'bePaid credentials not configured' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -62,7 +82,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     const subscriptionIds: string[] = body.subscription_ids || [];
-    
+
     if (!Array.isArray(subscriptionIds) || subscriptionIds.length === 0) {
       return new Response(JSON.stringify({ error: 'subscription_ids array is required' }), {
         status: 400,
@@ -70,37 +90,35 @@ Deno.serve(async (req) => {
       });
     }
 
-    const bepaidAuth = btoa(`${bepaidSecretKey}:`);
+    const authString = btoa(`${credentials.shopId}:${credentials.secretKey}`);
+
     const result: CancelResult = {
       cancelled: [],
       failed: [],
       total_requested: subscriptionIds.length,
     };
 
-    // Cancel each subscription
     for (const subId of subscriptionIds) {
       try {
-        const response = await fetch(
-          `https://api.bepaid.by/subscriptions/${subId}/cancel`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Basic ${bepaidAuth}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
+        const response = await fetch(`https://api.bepaid.by/subscriptions/${subId}/cancel`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${authString}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ cancel_reason: 'cancelled_by_admin' }),
+        });
 
         if (response.ok) {
           result.cancelled.push(subId);
           console.log(`Cancelled subscription ${subId}`);
-          
-          // Update our database if we have a linked subscription
+
           const { data: linkedSubs } = await supabase
             .from('subscriptions_v2')
             .select('id, meta')
             .eq('meta->bepaid_subscription_id', subId);
-          
+
           for (const linked of linkedSubs || []) {
             await supabase
               .from('subscriptions_v2')
@@ -109,7 +127,7 @@ Deno.serve(async (req) => {
                 status: 'cancelled',
                 canceled_at: new Date().toISOString(),
                 meta: {
-                  ...(linked.meta as object || {}),
+                  ...((linked.meta as object) || {}),
                   bepaid_cancelled_at: new Date().toISOString(),
                   bepaid_cancelled_by: user.id,
                 },
@@ -127,7 +145,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Create audit log
     await supabase.from('audit_logs').insert({
       actor_user_id: user.id,
       action: 'bepaid_subscriptions.bulk_cancel',
@@ -141,12 +158,9 @@ Deno.serve(async (req) => {
       },
     });
 
-    console.log(`Cancel complete: ${result.cancelled.length}/${subscriptionIds.length} succeeded`);
-
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
-
   } catch (e: any) {
     console.error('Error cancelling subscriptions:', e);
     return new Response(JSON.stringify({ error: e.message }), {
