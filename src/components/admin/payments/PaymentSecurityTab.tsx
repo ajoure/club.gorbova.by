@@ -20,12 +20,14 @@ import {
   FileWarning,
   ClipboardList,
   ExternalLink,
+  Calculator,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import BepaidSubscriptionsList from "./BepaidSubscriptionsList";
+import { BepaidReconcileDialog } from "./BepaidReconcileDialog";
 
 interface BepaidSubscription {
   id: string;
@@ -62,6 +64,7 @@ export default function PaymentSecurityTab() {
   const [isRunningAudit, setIsRunningAudit] = useState(false);
   const [auditMode, setAuditMode] = useState<'report' | 'cancel_all'>('report');
   const [auditResult, setAuditResult] = useState<AuditReport | null>(null);
+  const [showReconcileDialog, setShowReconcileDialog] = useState(false);
   const queryClient = useQueryClient();
 
   // Fetch at-risk subscriptions (ghost tokens, missing payment methods, etc.)
@@ -532,6 +535,30 @@ export default function PaymentSecurityTab() {
 
       {/* bePaid Subscriptions List (External) */}
       <BepaidSubscriptionsList />
+
+      {/* Reconcile Amounts Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Calculator className="h-5 w-5" />
+            Сверка сумм с bePaid
+          </CardTitle>
+          <CardDescription>
+            Проверить и исправить расхождения сумм платежей (1 BYN вместо реальной)
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button onClick={() => setShowReconcileDialog(true)}>
+            <Calculator className="h-4 w-4 mr-2" />
+            Открыть сверку
+          </Button>
+        </CardContent>
+      </Card>
+
+      <BepaidReconcileDialog 
+        open={showReconcileDialog} 
+        onOpenChange={setShowReconcileDialog} 
+      />
     </div>
   );
 }
