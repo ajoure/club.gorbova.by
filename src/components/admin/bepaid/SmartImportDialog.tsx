@@ -489,7 +489,16 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
         
         // Check if statuses conflict (e.g., DB says succeeded, CSV says failed)
         const statusConflict = dbStatusNormalized !== csvStatus;
-        const amountDiff = Math.abs((existingPayment.amount || 0) - tx.amount) > 0.01;
+        
+        // FIX: Handle sign differences for refunds/cancellations
+        // DB stores negative amounts for refunds/cancellations, CSV may store positive
+        const dbAmount = existingPayment.amount || 0;
+        const csvAmount = tx.amount;
+        
+        // If either amount is negative, compare absolute values to avoid false conflicts
+        const amountDiff = (dbAmount < 0 || csvAmount < 0) 
+          ? Math.abs(Math.abs(dbAmount) - Math.abs(csvAmount)) > 0.01
+          : Math.abs(dbAmount - csvAmount) > 0.01;
         
         if (statusConflict || amountDiff) {
           // CRITICAL CONFLICT: payments_v2 has different status than CSV
@@ -504,7 +513,14 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
         tx.existing_record = existingQueue;
         
         const statusDiff = existingQueue.status_normalized !== tx.status_normalized;
-        const amountDiff = Math.abs((existingQueue.amount || 0) - tx.amount) > 0.01;
+        
+        // FIX: Handle sign differences for refunds/cancellations in queue as well
+        const queueAmount = existingQueue.amount || 0;
+        const csvAmount = tx.amount;
+        const amountDiff = (queueAmount < 0 || csvAmount < 0)
+          ? Math.abs(Math.abs(queueAmount) - Math.abs(csvAmount)) > 0.01
+          : Math.abs(queueAmount - csvAmount) > 0.01;
+          
         const profileDiff = existingQueue.matched_profile_id !== tx.matched_profile_id && tx.matched_profile_id;
         
         if (statusDiff || amountDiff) {

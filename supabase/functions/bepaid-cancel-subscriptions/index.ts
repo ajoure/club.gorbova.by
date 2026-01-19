@@ -12,22 +12,27 @@ interface CancelResult {
 }
 
 async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; secretKey: string } | null> {
+  // Check both 'active' and 'connected' statuses
   const { data: instance } = await supabase
     .from('integration_instances')
-    .select('config')
+    .select('config, status')
     .eq('provider', 'bepaid')
-    .eq('status', 'active')
+    .in('status', ['active', 'connected'])
     .maybeSingle();
 
   const shopIdFromInstance = instance?.config?.shop_id;
   const secretFromInstance = instance?.config?.secret_key;
   if (shopIdFromInstance && secretFromInstance) {
+    console.log(`[bepaid-cancel-subs] Using creds from integration_instances: shop_id=${shopIdFromInstance}, status=${instance?.status}`);
     return { shopId: String(shopIdFromInstance), secretKey: String(secretFromInstance) };
   }
 
   const shopId = Deno.env.get('BEPAID_SHOP_ID');
   const secretKey = Deno.env.get('BEPAID_SECRET_KEY');
-  if (shopId && secretKey) return { shopId, secretKey };
+  if (shopId && secretKey) {
+    console.log(`[bepaid-cancel-subs] Using creds from env vars: shop_id=${shopId}`);
+    return { shopId, secretKey };
+  }
 
   return null;
 }
@@ -74,7 +79,14 @@ Deno.serve(async (req) => {
 
     const credentials = await getBepaidCredentials(supabase);
     if (!credentials) {
-      return new Response(JSON.stringify({ error: 'bePaid credentials not configured' }), {
+      console.error('[bepaid-cancel-subs] No credentials found');
+      return new Response(JSON.stringify({ 
+        error: 'bePaid credentials not configured',
+        debug: {
+          checked_statuses: ['active', 'connected'],
+          integration_found: false
+        }
+      }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

@@ -28,21 +28,38 @@ interface Discrepancy {
   bepaid_endpoint?: string;
 }
 
+interface NotFoundDetail {
+  payment_id: string;
+  provider_payment_id: string;
+  endpoints_tried: string[];
+  last_http_status: number;
+}
+
 interface ReconcileResult {
   checked: number;
   discrepancies_found: number;
   fixed: number;
-  skipped: number;
-  errors: number;
+  skipped: number;      // missing provider_payment_id
+  not_found: number;    // uid present but API 404/null on all endpoints
+  errors: number;       // non-404 failures
   discrepancies: Discrepancy[];
+  not_found_details: NotFoundDetail[];  // first 20
   error_details: Array<{ payment_id: string; error: string }>;
+}
+
+interface FetchResult {
+  tx: any | null;
+  endpoint?: string;
+  status?: number;
+  endpoints_tried: string[];
+  last_http_status: number;
 }
 
 async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; secretKey: string } | null> {
   // integration_instances first (preferred) - check both 'active' and 'connected' statuses
   const { data: instance } = await supabase
     .from('integration_instances')
-    .select('config')
+    .select('config, status')
     .eq('provider', 'bepaid')
     .in('status', ['active', 'connected'])
     .maybeSingle();
@@ -51,7 +68,7 @@ async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; se
   const secretFromInstance = instance?.config?.secret_key;
 
   if (shopIdFromInstance && secretFromInstance) {
-    console.log(`[Reconcile] Using credentials from integration_instances: shop_id=${shopIdFromInstance}`);
+    console.log(`[Reconcile] Using credentials from integration_instances: shop_id=${shopIdFromInstance}, status=${instance?.status}`);
     return { shopId: String(shopIdFromInstance), secretKey: String(secretFromInstance) };
   }
 
@@ -66,36 +83,57 @@ async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; se
   return null;
 }
 
-async function fetchTransaction(uid: string, authString: string): Promise<{ tx: any; endpoint: string; status: number } | null> {
+async function fetchTransaction(uid: string, authString: string): Promise<FetchResult> {
+  // Canonical endpoint first, then fallbacks
   const endpoints = [
+    `https://gateway.bepaid.by/transactions/${uid}`,  // Canonical
     `https://api.bepaid.by/beyag/transactions/${uid}`,
     `https://api.bepaid.by/v2/transactions/${uid}`,
   ];
 
+  const tried: string[] = [];
+  let lastStatus = 0;
+
   for (const endpoint of endpoints) {
-    const res = await fetch(endpoint, {
-      method: 'GET',
-      headers: {
-        Authorization: `Basic ${authString}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-    });
+    tried.push(endpoint);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          Authorization: `Basic ${authString}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'X-Api-Version': '3',
+        },
+      });
 
-    if (res.ok) {
-      const data = await res.json();
-      const tx = data?.transaction;
-      if (tx) return { tx, endpoint, status: res.status };
-      return null;
+      lastStatus = res.status;
+
+      if (res.ok) {
+        const data = await res.json();
+        // Handle different response shapes
+        const tx = data?.transaction ?? data?.data?.transaction ?? data;
+        if (tx && (tx.uid || tx.id)) {
+          return { tx, endpoint, status: res.status, endpoints_tried: tried, last_http_status: lastStatus };
+        }
+      }
+
+      if (res.status === 404) {
+        // Try next endpoint
+        continue;
+      }
+
+      // Non-404 error - stop trying
+      const errText = await res.text();
+      console.error(`[Reconcile] API error ${res.status} for ${endpoint}: ${errText}`);
+      break;
+    } catch (err) {
+      console.error(`[Reconcile] Network error for ${endpoint}:`, err);
+      break;
     }
-
-    if (res.status === 404) continue;
-
-    const errText = await res.text();
-    throw new Error(`bePaid API error ${res.status} for ${endpoint}: ${errText}`);
   }
 
-  return null;
+  return { tx: null, endpoints_tried: tried, last_http_status: lastStatus };
 }
 
 serve(async (req) => {
@@ -145,7 +183,14 @@ serve(async (req) => {
 
     const credentials = await getBepaidCredentials(supabase);
     if (!credentials) {
-      return new Response(JSON.stringify({ success: false, error: 'bePaid credentials not configured' }), {
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: 'bePaid credentials not configured',
+        debug: {
+          checked_statuses: ['active', 'connected'],
+          integration_found: false
+        }
+      }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -191,8 +236,10 @@ serve(async (req) => {
       discrepancies_found: 0,
       fixed: 0,
       skipped: 0,
+      not_found: 0,
       errors: 0,
       discrepancies: [],
+      not_found_details: [],
       error_details: [],
     };
 
@@ -203,14 +250,25 @@ serve(async (req) => {
 
       const uid = payment.provider_payment_id as string | null;
       if (!uid) {
+        // No UID - truly skipped
         result.skipped++;
         continue;
       }
 
       try {
         const fetched = await fetchTransaction(uid, authString);
-        if (!fetched?.tx) {
-          result.skipped++;
+        
+        if (!fetched.tx) {
+          // API returned 404 or null on all endpoints - NOT_FOUND (not skipped!)
+          result.not_found++;
+          if (result.not_found_details.length < 20) {
+            result.not_found_details.push({
+              payment_id: payment.id,
+              provider_payment_id: uid,
+              endpoints_tried: fetched.endpoints_tried,
+              last_http_status: fetched.last_http_status,
+            });
+          }
           continue;
         }
 
@@ -301,7 +359,7 @@ serve(async (req) => {
     }
 
     console.log(
-      `[Reconcile] Complete: checked=${result.checked}, discrepancies=${result.discrepancies_found}, fixed=${result.fixed}, skipped=${result.skipped}, errors=${result.errors}`
+      `[Reconcile] Complete: checked=${result.checked}, discrepancies=${result.discrepancies_found}, fixed=${result.fixed}, skipped=${result.skipped}, not_found=${result.not_found}, errors=${result.errors}`
     );
 
     return new Response(
