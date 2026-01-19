@@ -37,6 +37,10 @@ interface NotFoundDetail {
   endpoints_tried: string[];
   last_http_status: number;
   uid_kind_guess: UidKindGuess;
+  /** When we have a specific endpoint/status worth surfacing (e.g. 200 but unparseable) */
+  endpoint_used?: string;
+  http_status?: number;
+  matched_shape?: string;
   last_error_body_excerpt?: string;
 }
 
@@ -46,6 +50,9 @@ interface ErrorFetchDetail {
   endpoints_tried: string[];
   last_http_status: number;
   uid_kind_guess: UidKindGuess;
+  endpoint_used?: string;
+  http_status?: number;
+  matched_shape?: string;
   last_error_body_excerpt?: string;
 }
 
@@ -56,6 +63,7 @@ interface FetchedDetail {
   last_http_status: number;
   bepaid_endpoint: string;
   bepaid_http_status: number;
+  matched_shape?: string;
   tx_uid: string | null;
   tx_id: string | null;
   uid_kind_guess: UidKindGuess;
@@ -77,10 +85,18 @@ interface ReconcileResult {
 
 interface FetchResult {
   tx: any | null;
-  endpoint?: string;
-  status?: number;
+  endpoint?: string; // only set when tx was successfully parsed
+  status?: number; // only set when tx was successfully parsed
+  matched_shape?: string; // which response shape matched for tx
+
   endpoints_tried: string[];
   last_http_status: number;
+
+  // When last_http_status is 200 but tx could not be parsed, these explain why
+  endpoint_used?: string;
+  http_status?: number;
+
+  // Diagnostics: for 400 -> text excerpt; for 200-but-unparseable -> JSON excerpt
   last_error_body_excerpt?: string;
 }
 
@@ -135,7 +151,46 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
   const tried: string[] = [];
   let lastStatus = 0;
   let lastNon404Status: number | null = null;
-  let lastErrorBodyExcerpt400 = '';
+
+  // Diagnostics: track the last meaningful error context.
+  // - For 400: excerpt of response body text
+  // - For 200-but-unparseable: excerpt of JSON-stringified response
+  let lastErrorBodyExcerpt = '';
+  let lastErrorEndpoint: string | undefined;
+  let lastErrorStatus: number | undefined;
+  let lastMatchedShape: string | undefined;
+
+  const extractTxFromKnownShapes = (data: any): { tx: any | null; matched_shape?: string } => {
+    // 1) data.transaction
+    if (data?.transaction && typeof data.transaction === 'object') {
+      return { tx: data.transaction, matched_shape: 'data.transaction' };
+    }
+
+    // 2) data.data.transaction
+    if (data?.data?.transaction && typeof data.data.transaction === 'object') {
+      return { tx: data.data.transaction, matched_shape: 'data.data.transaction' };
+    }
+
+    // 3) data.data (if it is the transaction)
+    if (data?.data && typeof data.data === 'object') {
+      const d = data.data;
+      const hasTxnFields = d?.uid || d?.id || d?.amount || d?.type || d?.status;
+      if (hasTxnFields) return { tx: d, matched_shape: 'data.data' };
+    }
+
+    // 4) data (if it is the transaction)
+    if (data && typeof data === 'object') {
+      // Some endpoints may return { transactions: [...] }
+      if (Array.isArray(data?.transactions) && data.transactions.length) {
+        return { tx: data.transactions[0], matched_shape: 'data.transactions[0]' };
+      }
+
+      const hasTxnFields = data?.uid || data?.id || data?.amount || data?.type || data?.status;
+      if (hasTxnFields) return { tx: data, matched_shape: 'data' };
+    }
+
+    return { tx: null, matched_shape: 'no_match' };
+  };
 
   for (const endpoint of endpoints) {
     tried.push(endpoint);
@@ -155,18 +210,15 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
 
       if (res.ok) {
         const data = await res.json();
-
-        // Handle multiple response shapes
-        const candidate = data?.transaction ?? data?.data?.transaction ?? data?.data ?? data;
-        let tx: any = candidate;
-        if (Array.isArray(data?.transactions) && data.transactions.length) tx = data.transactions[0];
-        if (Array.isArray(candidate) && candidate.length) tx = candidate[0];
+        const extracted = extractTxFromKnownShapes(data);
+        const tx = extracted.tx;
+        const matchedShape = extracted.matched_shape;
 
         const txUid = tx?.uid ?? tx?.transaction_uid ?? tx?.transactionUid ?? null;
         const txId = tx?.id ?? tx?.transaction_id ?? tx?.transactionId ?? null;
 
         if (tx && (txUid || txId)) {
-          // Ensure extracted uid/id are present even if API uses alternative field names
+          // Normalize uid/id presence for downstream usage
           if (txUid && !tx.uid) tx.uid = txUid;
           if (txId && !tx.id) tx.id = txId;
 
@@ -174,16 +226,27 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
             tx,
             endpoint,
             status: res.status,
+            matched_shape: matchedShape,
             endpoints_tried: tried,
             last_http_status: lastStatus,
           };
         }
+
+        // res.ok but we couldn't extract a valid transaction object (or it lacks uid/id)
+        lastErrorBodyExcerpt = JSON.stringify(data).substring(0, 200);
+        lastErrorEndpoint = endpoint;
+        lastErrorStatus = res.status;
+        lastMatchedShape = tx ? `${matchedShape || 'unknown'}_missing_uid_or_id` : matchedShape || 'no_match';
+        continue;
       }
 
-      // Capture error body excerpt ONLY for 400s (safe diagnostics, no secrets)
-      if (res.status === 400 && !lastErrorBodyExcerpt400) {
+      // Capture diagnostics for 400s (safe excerpt; no secrets)
+      if (res.status === 400 && !lastErrorBodyExcerpt) {
         const errText = await res.text();
-        lastErrorBodyExcerpt400 = errText.substring(0, 200);
+        lastErrorBodyExcerpt = errText.substring(0, 200);
+        lastErrorEndpoint = endpoint;
+        lastErrorStatus = 400;
+        lastMatchedShape = 'http_400';
       } else {
         // Drain body to avoid resource leaks
         try {
@@ -193,13 +256,15 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
         }
       }
 
-      // Continue trying other endpoints on all non-OK responses
       continue;
     } catch (err: any) {
       // Network or parsing error
       lastNon404Status = lastNon404Status ?? 0;
-      if (!lastErrorBodyExcerpt400) {
-        lastErrorBodyExcerpt400 = String(err?.message ?? err).substring(0, 200);
+      if (!lastErrorBodyExcerpt) {
+        lastErrorBodyExcerpt = String(err?.message ?? err).substring(0, 200);
+        lastErrorEndpoint = endpoint;
+        lastErrorStatus = 0;
+        lastMatchedShape = 'exception';
       }
       continue;
     }
@@ -209,7 +274,10 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
     tx: null,
     endpoints_tried: tried,
     last_http_status: lastNon404Status ?? lastStatus,
-    last_error_body_excerpt: lastErrorBodyExcerpt400 || undefined,
+    endpoint_used: lastErrorEndpoint,
+    http_status: lastErrorStatus,
+    matched_shape: lastMatchedShape,
+    last_error_body_excerpt: lastErrorBodyExcerpt || undefined,
   };
 }
 
@@ -358,6 +426,9 @@ serve(async (req) => {
                 endpoints_tried: fetched.endpoints_tried,
                 last_http_status: fetched.last_http_status,
                 uid_kind_guess: uidKind,
+                endpoint_used: fetched.endpoint_used,
+                http_status: fetched.http_status,
+                matched_shape: fetched.matched_shape,
                 last_error_body_excerpt: fetched.last_error_body_excerpt,
               });
             }
@@ -370,6 +441,9 @@ serve(async (req) => {
                 endpoints_tried: fetched.endpoints_tried,
                 last_http_status: fetched.last_http_status,
                 uid_kind_guess: uidKind,
+                endpoint_used: fetched.endpoint_used,
+                http_status: fetched.http_status,
+                matched_shape: fetched.matched_shape,
                 last_error_body_excerpt: fetched.last_error_body_excerpt,
               });
             }
@@ -391,6 +465,7 @@ serve(async (req) => {
             last_http_status: fetched.last_http_status,
             bepaid_endpoint: fetched.endpoint,
             bepaid_http_status: fetched.status,
+            matched_shape: fetched.matched_shape,
             tx_uid: txUid ? String(txUid) : null,
             tx_id: txId ? String(txId) : null,
             uid_kind_guess: uidKind,
