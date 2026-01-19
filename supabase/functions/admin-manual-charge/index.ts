@@ -230,11 +230,12 @@ Deno.serve(async (req) => {
       }
 
       // Check if card supports recurring (was tokenized with contract: ["recurring"])
-      if (paymentMethod.supports_recurring === false) {
-        console.log(`Card ${paymentMethod.id} does not support recurring - was tokenized before the fix`);
+      // Cards tokenized BEFORE the fix have supports_recurring = NULL, so check !== true
+      if (paymentMethod.supports_recurring !== true) {
+        console.log(`Card ${paymentMethod.id} does not support recurring (supports_recurring=${paymentMethod.supports_recurring}) - was tokenized before the fix`);
         return new Response(JSON.stringify({ 
           success: false, 
-          error: 'Эта карта была привязана до обновления системы и не поддерживает автоматические списания. Попросите клиента перепривязать карту.',
+          error: 'Эта карта была привязана до обновления системы и не поддерживает автоматические списания. Попросите клиента перепривязать карту в Личном кабинете.',
           requires_rebind: true,
         }), {
           status: 400,
