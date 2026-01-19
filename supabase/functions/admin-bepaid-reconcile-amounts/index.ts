@@ -6,12 +6,15 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+type UidKindGuess = 'transaction_uid' | 'tracking_id' | 'unknown';
+
 interface ReconcileParams {
   from_date?: string; // YYYY-MM-DD
   to_date?: string;
   dry_run?: boolean;
   filter_only_amount_1?: boolean;
   batch_size?: number;
+  max_payments_to_check?: number; // hard stop, independent from batch_size
 }
 
 interface Discrepancy {
@@ -33,17 +36,42 @@ interface NotFoundDetail {
   provider_payment_id: string;
   endpoints_tried: string[];
   last_http_status: number;
+  uid_kind_guess: UidKindGuess;
+  last_error_body_excerpt?: string;
+}
+
+interface ErrorFetchDetail {
+  payment_id: string;
+  provider_payment_id: string;
+  endpoints_tried: string[];
+  last_http_status: number;
+  uid_kind_guess: UidKindGuess;
+  last_error_body_excerpt?: string;
+}
+
+interface FetchedDetail {
+  payment_id: string;
+  provider_payment_id: string;
+  endpoints_tried: string[];
+  last_http_status: number;
+  bepaid_endpoint: string;
+  bepaid_http_status: number;
+  tx_uid: string | null;
+  tx_id: string | null;
+  uid_kind_guess: UidKindGuess;
 }
 
 interface ReconcileResult {
   checked: number;
   discrepancies_found: number;
   fixed: number;
-  skipped: number;      // missing provider_payment_id
-  not_found: number;    // uid present but API 404/null on all endpoints
-  errors: number;       // non-404 failures
+  skipped: number; // missing provider_payment_id
+  not_found: number; // uid present but API 404/null on all endpoints
+  errors: number; // non-404 failures
   discrepancies: Discrepancy[];
-  not_found_details: NotFoundDetail[];  // first 20
+  fetched_details: FetchedDetail[]; // first 20 fetched transactions (even if no discrepancy)
+  not_found_details: NotFoundDetail[]; // first 20
+  error_fetch_details: ErrorFetchDetail[]; // first 20
   error_details: Array<{ payment_id: string; error: string }>;
 }
 
@@ -53,6 +81,7 @@ interface FetchResult {
   status?: number;
   endpoints_tried: string[];
   last_http_status: number;
+  last_error_body_excerpt?: string;
 }
 
 async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; secretKey: string } | null> {
@@ -83,23 +112,33 @@ async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; se
   return null;
 }
 
+function guessUidKind(uid: string): UidKindGuess {
+  const isTransactionUid = /^\d{4}-[0-9a-f]{10}$/i.test(uid);
+  if (isTransactionUid) return 'transaction_uid';
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uid);
+  if (isUuid) return 'tracking_id';
+
+  return 'unknown';
+}
+
 async function fetchTransaction(uid: string, authString: string): Promise<FetchResult> {
   // Try multiple endpoint patterns - the uid might be a transaction uid or a tracking_id
-  // bePaid uses format like "4107-310b0da80b" for transaction UIDs
-  // Our provider_payment_id might be a tracking_id (UUID format) instead
+  // Keep max_endpoints_per_payment = 4
   const endpoints = [
-    `https://gateway.bepaid.by/transactions/${uid}`,  // Canonical - if uid is transaction uid
-    `https://gateway.bepaid.by/v2/transactions/tracking_id/${uid}`,  // If uid is actually tracking_id
+    `https://gateway.bepaid.by/transactions/${uid}`,
+    `https://gateway.bepaid.by/v2/transactions/tracking_id/${uid}`,
     `https://api.bepaid.by/beyag/transactions/${uid}`,
     `https://api.bepaid.by/v2/transactions/${uid}`,
   ];
 
   const tried: string[] = [];
   let lastStatus = 0;
-  let lastError = '';
+  let lastErrorBodyExcerpt = '';
 
   for (const endpoint of endpoints) {
     tried.push(endpoint);
+
     try {
       const res = await fetch(endpoint, {
         method: 'GET',
@@ -118,31 +157,38 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
         // Handle different response shapes
         const tx = data?.transaction ?? data?.data?.transaction ?? data;
         if (tx && (tx.uid || tx.id)) {
-          return { tx, endpoint, status: res.status, endpoints_tried: tried, last_http_status: lastStatus };
+          return {
+            tx,
+            endpoint,
+            status: res.status,
+            endpoints_tried: tried,
+            last_http_status: lastStatus,
+          };
         }
       }
 
-      // For 400/404 errors, continue trying other endpoints
-      if (res.status === 400 || res.status === 404) {
-        const errText = await res.text();
-        lastError = `${res.status}: ${errText.substring(0, 100)}`;
-        // Continue to next endpoint
-        continue;
+      const errText = await res.text();
+      if (res.status === 400) {
+        lastErrorBodyExcerpt = errText.substring(0, 200);
+      } else if (!lastErrorBodyExcerpt) {
+        lastErrorBodyExcerpt = errText.substring(0, 200);
       }
 
-      // Other errors (500, etc.) - still try other endpoints but log
-      const errText = await res.text();
-      lastError = `${res.status}: ${errText.substring(0, 100)}`;
-      console.warn(`[Reconcile] API error ${res.status} for ${endpoint}, trying next...`);
+      // Continue trying other endpoints on all non-OK responses
       continue;
     } catch (err: any) {
-      lastError = `Network: ${err.message}`;
-      console.warn(`[Reconcile] Network error for ${endpoint}:`, err.message);
-      continue; // Try next endpoint on network errors too
+      lastStatus = lastStatus || 0;
+      lastErrorBodyExcerpt = String(err?.message ?? err).substring(0, 200);
+      continue;
     }
   }
 
-  return { tx: null, endpoints_tried: tried, last_http_status: lastStatus };
+  return {
+    tx: null,
+    endpoints_tried: tried,
+    last_http_status: lastStatus,
+    last_error_body_excerpt: lastErrorBodyExcerpt || undefined,
+  };
 }
 
 serve(async (req) => {
@@ -212,10 +258,13 @@ serve(async (req) => {
       dry_run = true,
       filter_only_amount_1 = false,
       batch_size = 200,
+      max_payments_to_check = 20,
     } = params;
 
+    const effectiveLimit = Math.min(batch_size, max_payments_to_check);
+
     console.log(
-      `[Reconcile] Starting reconciliation: ${from_date} to ${to_date}, dry_run=${dry_run}, filter_amount_1=${filter_only_amount_1}`
+      `[Reconcile] Starting reconciliation: ${from_date} to ${to_date}, dry_run=${dry_run}, filter_amount_1=${filter_only_amount_1}, batch_size=${batch_size}, max_payments_to_check=${max_payments_to_check}, effective_limit=${effectiveLimit}`
     );
 
     let query = supabase
@@ -224,9 +273,8 @@ serve(async (req) => {
       .eq('provider', 'bepaid')
       .gte('paid_at', `${from_date}T00:00:00Z`)
       .lte('paid_at', `${to_date}T23:59:59Z`)
-      .not('provider_payment_id', 'is', null)
       .order('paid_at', { ascending: false })
-      .limit(batch_size);
+      .limit(effectiveLimit);
 
     if (filter_only_amount_1) {
       query = query.eq('amount', 1);
@@ -248,40 +296,84 @@ serve(async (req) => {
       not_found: 0,
       errors: 0,
       discrepancies: [],
+      fetched_details: [],
       not_found_details: [],
+      error_fetch_details: [],
       error_details: [],
     };
 
     const authString = btoa(`${credentials.shopId}:${credentials.secretKey}`);
 
     for (const payment of payments || []) {
+      if (result.checked >= max_payments_to_check) {
+        break;
+      }
+
       result.checked++;
 
       const uid = payment.provider_payment_id as string | null;
+      const uidKind: UidKindGuess = uid ? guessUidKind(uid) : 'unknown';
+
       if (!uid) {
-        // No UID - truly skipped
         result.skipped++;
         continue;
       }
+
 
       try {
         const fetched = await fetchTransaction(uid, authString);
         
         if (!fetched.tx) {
-          // API returned 404 or null on all endpoints - NOT_FOUND (not skipped!)
-          result.not_found++;
-          if (result.not_found_details.length < 20) {
-            result.not_found_details.push({
-              payment_id: payment.id,
-              provider_payment_id: uid,
-              endpoints_tried: fetched.endpoints_tried,
-              last_http_status: fetched.last_http_status,
-            });
+          // Split not_found (404) vs errors (non-404 / network)
+          const isNotFound = fetched.last_http_status === 404;
+
+          if (isNotFound) {
+            result.not_found++;
+            if (result.not_found_details.length < 20) {
+              result.not_found_details.push({
+                payment_id: payment.id,
+                provider_payment_id: uid,
+                endpoints_tried: fetched.endpoints_tried,
+                last_http_status: fetched.last_http_status,
+                uid_kind_guess: uidKind,
+                last_error_body_excerpt: fetched.last_error_body_excerpt,
+              });
+            }
+          } else {
+            result.errors++;
+            if (result.error_fetch_details.length < 20) {
+              result.error_fetch_details.push({
+                payment_id: payment.id,
+                provider_payment_id: uid,
+                endpoints_tried: fetched.endpoints_tried,
+                last_http_status: fetched.last_http_status,
+                uid_kind_guess: uidKind,
+                last_error_body_excerpt: fetched.last_error_body_excerpt,
+              });
+            }
           }
+
           continue;
         }
 
         const tx = fetched.tx;
+
+        if (result.fetched_details.length < 20 && fetched.endpoint && fetched.status) {
+          const txUid = tx?.uid ? String(tx.uid) : null;
+          const txId = tx?.id ? String(tx.id) : null;
+
+          result.fetched_details.push({
+            payment_id: payment.id,
+            provider_payment_id: uid,
+            endpoints_tried: fetched.endpoints_tried,
+            last_http_status: fetched.last_http_status,
+            bepaid_endpoint: fetched.endpoint,
+            bepaid_http_status: fetched.status,
+            tx_uid: txUid,
+            tx_id: txId,
+            uid_kind_guess: uidKind,
+          });
+        }
 
         // bePaid stores in cents/kopecks
         let bepaidAmount = (tx.amount ?? 0) / 100;
@@ -356,7 +448,9 @@ serve(async (req) => {
           }
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        if (max_payments_to_check > 20) {
+          await new Promise((resolve) => setTimeout(resolve, 80));
+        }
       } catch (error) {
         console.error(`[Reconcile] Error processing payment ${payment.id}:`, error);
         result.errors++;
