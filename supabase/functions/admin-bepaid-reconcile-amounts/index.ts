@@ -134,7 +134,8 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
 
   const tried: string[] = [];
   let lastStatus = 0;
-  let lastErrorBodyExcerpt = '';
+  let lastNon404Status: number | null = null;
+  let lastErrorBodyExcerpt400 = '';
 
   for (const endpoint of endpoints) {
     tried.push(endpoint);
@@ -144,19 +145,31 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
         method: 'GET',
         headers: {
           Authorization: `Basic ${authString}`,
-          'Content-Type': 'application/json',
           Accept: 'application/json',
           'X-Api-Version': '3',
         },
       });
 
       lastStatus = res.status;
+      if (res.status !== 404) lastNon404Status = res.status;
 
       if (res.ok) {
         const data = await res.json();
-        // Handle different response shapes
-        const tx = data?.transaction ?? data?.data?.transaction ?? data;
-        if (tx && (tx.uid || tx.id)) {
+
+        // Handle multiple response shapes
+        const candidate = data?.transaction ?? data?.data?.transaction ?? data?.data ?? data;
+        let tx: any = candidate;
+        if (Array.isArray(data?.transactions) && data.transactions.length) tx = data.transactions[0];
+        if (Array.isArray(candidate) && candidate.length) tx = candidate[0];
+
+        const txUid = tx?.uid ?? tx?.transaction_uid ?? tx?.transactionUid ?? null;
+        const txId = tx?.id ?? tx?.transaction_id ?? tx?.transactionId ?? null;
+
+        if (tx && (txUid || txId)) {
+          // Ensure extracted uid/id are present even if API uses alternative field names
+          if (txUid && !tx.uid) tx.uid = txUid;
+          if (txId && !tx.id) tx.id = txId;
+
           return {
             tx,
             endpoint,
@@ -167,18 +180,27 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
         }
       }
 
-      const errText = await res.text();
-      if (res.status === 400) {
-        lastErrorBodyExcerpt = errText.substring(0, 200);
-      } else if (!lastErrorBodyExcerpt) {
-        lastErrorBodyExcerpt = errText.substring(0, 200);
+      // Capture error body excerpt ONLY for 400s (safe diagnostics, no secrets)
+      if (res.status === 400 && !lastErrorBodyExcerpt400) {
+        const errText = await res.text();
+        lastErrorBodyExcerpt400 = errText.substring(0, 200);
+      } else {
+        // Drain body to avoid resource leaks
+        try {
+          await res.arrayBuffer();
+        } catch {
+          // ignore
+        }
       }
 
       // Continue trying other endpoints on all non-OK responses
       continue;
     } catch (err: any) {
-      lastStatus = lastStatus || 0;
-      lastErrorBodyExcerpt = String(err?.message ?? err).substring(0, 200);
+      // Network or parsing error
+      lastNon404Status = lastNon404Status ?? 0;
+      if (!lastErrorBodyExcerpt400) {
+        lastErrorBodyExcerpt400 = String(err?.message ?? err).substring(0, 200);
+      }
       continue;
     }
   }
@@ -186,8 +208,8 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
   return {
     tx: null,
     endpoints_tried: tried,
-    last_http_status: lastStatus,
-    last_error_body_excerpt: lastErrorBodyExcerpt || undefined,
+    last_http_status: lastNon404Status ?? lastStatus,
+    last_error_body_excerpt: lastErrorBodyExcerpt400 || undefined,
   };
 }
 
@@ -359,8 +381,8 @@ serve(async (req) => {
         const tx = fetched.tx;
 
         if (result.fetched_details.length < 20 && fetched.endpoint && fetched.status) {
-          const txUid = tx?.uid ? String(tx.uid) : null;
-          const txId = tx?.id ? String(tx.id) : null;
+          const txUid = tx?.uid ?? tx?.transaction_uid ?? tx?.transactionUid ?? null;
+          const txId = tx?.id ?? tx?.transaction_id ?? tx?.transactionId ?? null;
 
           result.fetched_details.push({
             payment_id: payment.id,
@@ -369,8 +391,8 @@ serve(async (req) => {
             last_http_status: fetched.last_http_status,
             bepaid_endpoint: fetched.endpoint,
             bepaid_http_status: fetched.status,
-            tx_uid: txUid,
-            tx_id: txId,
+            tx_uid: txUid ? String(txUid) : null,
+            tx_id: txId ? String(txId) : null,
             uid_kind_guess: uidKind,
           });
         }
