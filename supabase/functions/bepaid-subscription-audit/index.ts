@@ -132,8 +132,6 @@ Deno.serve(async (req) => {
       report.external_audit.api_error = 'BEPAID_SECRET_KEY not configured';
     } else {
       try {
-        // Fetch all subscriptions from bePaid
-        // Note: bePaid API endpoint for subscriptions may vary - check their docs
         const bepaidAuth = btoa(`${bepaidSecretKey}:`);
         
         // Try multiple possible endpoints for subscriptions
@@ -174,15 +172,72 @@ Deno.serve(async (req) => {
           }
         }
 
+        // FALLBACK: Find subscriptions from our DB with bepaid_subscription_id
         if (!foundEndpoint) {
-          // bePaid might not have a subscription listing API
-          // In this case, report that we can't audit external subscriptions
+          console.log('bePaid listing API not available, falling back to DB lookup...');
+          
+          const { data: dbSubs, error: dbError } = await supabase
+            .from('subscriptions_v2')
+            .select('id, user_id, status, meta')
+            .in('status', ['active', 'trial', 'past_due'])
+            .not('meta->bepaid_subscription_id', 'is', null);
+          
+          if (!dbError && dbSubs?.length) {
+            console.log(`Found ${dbSubs.length} subscriptions with bepaid_subscription_id in DB`);
+            
+            for (const sub of dbSubs) {
+              const bepaidSubId = (sub.meta as any)?.bepaid_subscription_id;
+              if (bepaidSubId) {
+                // Try to fetch individual subscription from bePaid
+                try {
+                  const subResponse = await fetch(
+                    `https://api.bepaid.by/subscriptions/${bepaidSubId}`,
+                    {
+                      method: 'GET',
+                      headers: {
+                        'Authorization': `Basic ${bepaidAuth}`,
+                        'Content-Type': 'application/json',
+                      },
+                    }
+                  );
+                  
+                  if (subResponse.ok) {
+                    const subData = await subResponse.json();
+                    if (subData.subscription) {
+                      subscriptions.push({
+                        id: bepaidSubId,
+                        status: subData.subscription.state || subData.subscription.status || 'unknown',
+                        plan: {
+                          title: subData.subscription.plan?.title,
+                          amount: subData.subscription.plan?.amount,
+                          currency: subData.subscription.plan?.currency,
+                        },
+                        customer: {
+                          email: subData.subscription.customer?.email,
+                        },
+                      });
+                      foundEndpoint = true;
+                    }
+                  }
+                } catch (e) {
+                  console.log(`Failed to fetch subscription ${bepaidSubId}:`, e);
+                }
+              }
+            }
+            
+            if (subscriptions.length > 0) {
+              report.external_audit.message = 
+                `Found ${subscriptions.length} subscriptions via DB fallback (individual API lookups)`;
+            }
+          }
+        }
+
+        if (!foundEndpoint && subscriptions.length === 0) {
           report.external_audit.message = 
-            'bePaid subscription listing API not available. ' +
+            'bePaid subscription listing API not available and no subscriptions found in DB. ' +
             'This may mean: (1) No active auto-subscriptions exist, or ' +
-            '(2) Your shop uses one-off recurring charges (CIT/MIT) which is safer. ' +
-            'Check bePaid dashboard manually if needed.';
-          console.log('Could not fetch subscriptions from bePaid API');
+            '(2) Your shop uses one-off recurring charges (CIT/MIT) which is safer.';
+          console.log('Could not fetch subscriptions from bePaid API or DB fallback');
         } else {
           report.external_audit.subscriptions_found = subscriptions.length;
           report.external_audit.active_subscriptions = subscriptions;
@@ -207,8 +262,21 @@ Deno.serve(async (req) => {
                 if (cancelResponse.ok) {
                   cancelled++;
                   console.log(`Cancelled subscription ${sub.id}`);
+                  
+                  // Also update our DB to mark subscription as cancelled from bePaid side
+                  await supabase
+                    .from('subscriptions_v2')
+                    .update({ 
+                      meta: supabase.rpc('jsonb_set_value', {
+                        target: {},
+                        path: ['bepaid_cancelled_at'],
+                        value: new Date().toISOString(),
+                      })
+                    })
+                    .eq('meta->bepaid_subscription_id', sub.id);
                 } else {
-                  console.error(`Failed to cancel ${sub.id}: ${cancelResponse.status}`);
+                  const errText = await cancelResponse.text();
+                  console.error(`Failed to cancel ${sub.id}: ${cancelResponse.status} - ${errText}`);
                 }
               } catch (e) {
                 console.error(`Error cancelling ${sub.id}:`, e);

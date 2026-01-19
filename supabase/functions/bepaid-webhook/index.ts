@@ -1937,6 +1937,10 @@ ${userName}, к сожалению, не удалось провести опл�
         accessEndAt.setDate(accessEndAt.getDate() + accessDays);
         
         // Create order in orders_v2 for display in "My Purchases"
+        // CRITICAL: Use transaction.amount (actual charged amount) instead of order.amount (may be trial)
+        const actualAmount = transaction?.amount ? transaction.amount / 100 : order.amount;
+        console.log(`[WEBHOOK] Amount: order=${order.amount}, transaction=${transaction?.amount}, using=${actualAmount}`);
+        
         const orderNumber = `ORD-${new Date().getFullYear().toString().slice(-2)}-${Date.now().toString(36).toUpperCase()}`;
         const { data: orderV2, error: orderV2Error } = await supabase
           .from('orders_v2')
@@ -1946,9 +1950,9 @@ ${userName}, к сожалению, не удалось провести опл�
             product_id: productV2.id,
             tariff_id: tariffData.id,
             customer_email: order.customer_email,
-            base_price: order.amount,
-            final_price: order.amount,
-            paid_amount: order.amount,
+            base_price: actualAmount,
+            final_price: actualAmount,
+            paid_amount: actualAmount,
             currency: order.currency,
             status: 'paid',
             is_trial: meta.is_trial || false,
@@ -1979,7 +1983,7 @@ ${userName}, к сожалению, не удалось провести опл�
             .insert({
               order_id: orderV2.id,
               user_id: order.user_id,
-              amount: order.amount,
+              amount: actualAmount,
               currency: order.currency,
               status: 'succeeded',
               provider: 'bepaid',

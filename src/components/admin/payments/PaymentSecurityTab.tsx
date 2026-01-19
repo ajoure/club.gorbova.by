@@ -67,7 +67,7 @@ export default function PaymentSecurityTab() {
     queryKey: ["at-risk-subscriptions"],
     queryFn: async () => {
       // Find subscriptions with auto_renew=true but no payment_method_id
-      const { data, error } = await supabase
+      const { data: subs, error } = await supabase
         .from("subscriptions_v2")
         .select(`
           id,
@@ -77,8 +77,7 @@ export default function PaymentSecurityTab() {
           payment_method_id,
           payment_token,
           next_charge_at,
-          created_at,
-          profiles:profiles!subscriptions_v2_profile_id_fkey(full_name, email)
+          created_at
         `)
         .in("status", ["active", "trial", "past_due"])
         .eq("auto_renew", true)
@@ -87,7 +86,21 @@ export default function PaymentSecurityTab() {
         .limit(50);
 
       if (error) throw error;
-      return data || [];
+      if (!subs?.length) return [];
+      
+      // Fetch profiles separately via user_id
+      const userIds = [...new Set(subs.map(s => s.user_id))];
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", userIds);
+      
+      const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
+      
+      return subs.map(s => ({
+        ...s,
+        profiles: profileMap.get(s.user_id) || null,
+      }));
     },
   });
 
@@ -95,14 +108,13 @@ export default function PaymentSecurityTab() {
   const { data: orphanTokens, isLoading: isLoadingOrphans } = useQuery({
     queryKey: ["orphan-payment-tokens"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data: subs, error } = await supabase
         .from("subscriptions_v2")
         .select(`
           id,
           user_id,
           payment_token,
-          status,
-          profiles:profiles!subscriptions_v2_profile_id_fkey(full_name, email)
+          status
         `)
         .in("status", ["active", "trial"])
         .not("payment_token", "is", null)
@@ -110,7 +122,21 @@ export default function PaymentSecurityTab() {
         .limit(50);
 
       if (error) throw error;
-      return data || [];
+      if (!subs?.length) return [];
+      
+      // Fetch profiles separately via user_id
+      const userIds = [...new Set(subs.map(s => s.user_id))];
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", userIds);
+      
+      const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
+      
+      return subs.map(s => ({
+        ...s,
+        profiles: profileMap.get(s.user_id) || null,
+      }));
     },
   });
 
