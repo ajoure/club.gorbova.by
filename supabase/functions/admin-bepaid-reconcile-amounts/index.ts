@@ -24,6 +24,8 @@ interface Discrepancy {
   status: string;
   paid_at: string;
   customer_email: string | null;
+  bepaid_http_status?: number;
+  bepaid_endpoint?: string;
 }
 
 interface ReconcileResult {
@@ -36,6 +38,62 @@ interface ReconcileResult {
   error_details: Array<{ payment_id: string; error: string }>;
 }
 
+async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; secretKey: string } | null> {
+  // integration_instances first (preferred)
+  const { data: instance } = await supabase
+    .from('integration_instances')
+    .select('config')
+    .eq('provider', 'bepaid')
+    .eq('status', 'active')
+    .maybeSingle();
+
+  const shopIdFromInstance = instance?.config?.shop_id;
+  const secretFromInstance = instance?.config?.secret_key;
+
+  if (shopIdFromInstance && secretFromInstance) {
+    return { shopId: String(shopIdFromInstance), secretKey: String(secretFromInstance) };
+  }
+
+  // fallback: env vars
+  const shopId = Deno.env.get('BEPAID_SHOP_ID');
+  const secretKey = Deno.env.get('BEPAID_SECRET_KEY');
+  if (shopId && secretKey) return { shopId, secretKey };
+
+  return null;
+}
+
+async function fetchTransaction(uid: string, authString: string): Promise<{ tx: any; endpoint: string; status: number } | null> {
+  const endpoints = [
+    `https://api.bepaid.by/beyag/transactions/${uid}`,
+    `https://api.bepaid.by/v2/transactions/${uid}`,
+  ];
+
+  for (const endpoint of endpoints) {
+    const res = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        Authorization: `Basic ${authString}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const tx = data?.transaction;
+      if (tx) return { tx, endpoint, status: res.status };
+      return null;
+    }
+
+    if (res.status === 404) continue;
+
+    const errText = await res.text();
+    throw new Error(`bePaid API error ${res.status} for ${endpoint}: ${errText}`);
+  }
+
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -44,12 +102,6 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY');
-
-    if (!bepaidSecretKey) {
-      throw new Error('BEPAID_SECRET_KEY not configured');
-    }
-
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // Auth check
@@ -62,8 +114,11 @@ serve(async (req) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser(token);
+
     if (authError || !user) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
@@ -84,18 +139,27 @@ serve(async (req) => {
       });
     }
 
+    const credentials = await getBepaidCredentials(supabase);
+    if (!credentials) {
+      return new Response(JSON.stringify({ success: false, error: 'bePaid credentials not configured' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const params: ReconcileParams = await req.json();
     const {
       from_date = '2026-01-01',
       to_date = '2026-12-31',
       dry_run = true,
       filter_only_amount_1 = false,
-      batch_size = 100,
+      batch_size = 200,
     } = params;
 
-    console.log(`[Reconcile] Starting reconciliation: ${from_date} to ${to_date}, dry_run=${dry_run}, filter_amount_1=${filter_only_amount_1}`);
+    console.log(
+      `[Reconcile] Starting reconciliation: ${from_date} to ${to_date}, dry_run=${dry_run}, filter_amount_1=${filter_only_amount_1}`
+    );
 
-    // Build query for payments
     let query = supabase
       .from('payments_v2')
       .select('id, provider_payment_id, order_id, amount, transaction_type, status, paid_at, meta, profile_id, user_id')
@@ -128,66 +192,46 @@ serve(async (req) => {
       error_details: [],
     };
 
-    const bepaidAuth = btoa(`:${bepaidSecretKey}`);
+    const authString = btoa(`${credentials.shopId}:${credentials.secretKey}`);
 
     for (const payment of payments || []) {
       result.checked++;
 
-      if (!payment.provider_payment_id) {
+      const uid = payment.provider_payment_id as string | null;
+      if (!uid) {
         result.skipped++;
         continue;
       }
 
       try {
-        // Fetch transaction from bePaid API
-        const bepaidResponse = await fetch(
-          `https://api.bepaid.by/v2/transactions/${payment.provider_payment_id}`,
-          {
-            method: 'GET',
-            headers: {
-              'Authorization': `Basic ${bepaidAuth}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
-
-        if (!bepaidResponse.ok) {
-          if (bepaidResponse.status === 404) {
-            result.skipped++;
-            continue;
-          }
-          const errorText = await bepaidResponse.text();
-          throw new Error(`bePaid API error ${bepaidResponse.status}: ${errorText}`);
-        }
-
-        const bepaidData = await bepaidResponse.json();
-        const tx = bepaidData.transaction;
-
-        if (!tx) {
+        const fetched = await fetchTransaction(uid, authString);
+        if (!fetched?.tx) {
           result.skipped++;
           continue;
         }
 
-        // Calculate correct amount (bePaid stores in kopecks)
-        let bepaidAmount = tx.amount / 100;
-        
-        // For refunds, amount should be negative
-        const isRefund = tx.type === 'refund' || 
-                         payment.transaction_type?.toLowerCase().includes('refund') ||
-                         payment.transaction_type?.toLowerCase().includes('возврат');
-        
+        const tx = fetched.tx;
+
+        // bePaid stores in cents/kopecks
+        let bepaidAmount = (tx.amount ?? 0) / 100;
+
+        // Refunds should be negative in our system
+        const isRefund =
+          tx.type === 'refund' ||
+          (payment.transaction_type && String(payment.transaction_type).toLowerCase().includes('refund')) ||
+          (payment.transaction_type && String(payment.transaction_type).toLowerCase().includes('возврат'));
+
         if (isRefund && bepaidAmount > 0) {
           bepaidAmount = -bepaidAmount;
         }
 
-        // Compare amounts (with tolerance for floating point)
-        const ourAmount = payment.amount;
+        const ourAmount = Number(payment.amount);
         const diff = Math.abs(ourAmount - bepaidAmount);
 
         if (diff > 0.01) {
           const discrepancy: Discrepancy = {
             payment_id: payment.id,
-            provider_payment_id: payment.provider_payment_id,
+            provider_payment_id: uid,
             order_id: payment.order_id,
             our_amount: ourAmount,
             bepaid_amount: bepaidAmount,
@@ -195,14 +239,14 @@ serve(async (req) => {
             status: payment.status || tx.status || 'unknown',
             paid_at: payment.paid_at,
             customer_email: tx.customer?.email || null,
+            bepaid_http_status: fetched.status,
+            bepaid_endpoint: fetched.endpoint,
           };
 
           result.discrepancies.push(discrepancy);
           result.discrepancies_found++;
 
-          // Fix if not dry run
           if (!dry_run) {
-            // Update payment amount
             const { error: updateError } = await supabase
               .from('payments_v2')
               .update({
@@ -213,6 +257,7 @@ serve(async (req) => {
                   amount_corrected_at: new Date().toISOString(),
                   amount_corrected_source: 'bepaid_api_reconcile_2026',
                   bepaid_raw_amount: tx.amount,
+                  bepaid_transaction_type: tx.type,
                 },
               })
               .eq('id', payment.id);
@@ -221,37 +266,6 @@ serve(async (req) => {
               throw new Error(`Failed to update payment: ${updateError.message}`);
             }
 
-            // Update order if exists and is simple case (single payment)
-            if (payment.order_id) {
-              const { data: orderPayments } = await supabase
-                .from('payments_v2')
-                .select('id, amount, status')
-                .eq('order_id', payment.order_id)
-                .eq('status', 'successful');
-
-              // Only update if single successful payment
-              if (orderPayments && orderPayments.length === 1) {
-                const { error: orderError } = await supabase
-                  .from('orders_v2')
-                  .update({
-                    base_price: Math.abs(bepaidAmount),
-                    final_price: Math.abs(bepaidAmount),
-                    paid_amount: Math.abs(bepaidAmount),
-                    meta: supabase.rpc('jsonb_set', {
-                      target: 'meta',
-                      path: '{amount_corrected_at}',
-                      new_value: `"${new Date().toISOString()}"`,
-                    }),
-                  })
-                  .eq('id', payment.order_id);
-
-                if (orderError) {
-                  console.warn(`Failed to update order ${payment.order_id}: ${orderError.message}`);
-                }
-              }
-            }
-
-            // Audit log
             await supabase.from('audit_logs').insert({
               actor_user_id: user.id,
               actor_type: 'admin',
@@ -259,7 +273,7 @@ serve(async (req) => {
               target_user_id: payment.profile_id,
               meta: {
                 payment_id: payment.id,
-                provider_payment_id: payment.provider_payment_id,
+                provider_payment_id: uid,
                 order_id: payment.order_id,
                 old_amount: ourAmount,
                 new_amount: bepaidAmount,
@@ -271,9 +285,7 @@ serve(async (req) => {
           }
         }
 
-        // Rate limiting - be nice to bePaid API
-        await new Promise(resolve => setTimeout(resolve, 100));
-
+        await new Promise((resolve) => setTimeout(resolve, 80));
       } catch (error) {
         console.error(`[Reconcile] Error processing payment ${payment.id}:`, error);
         result.errors++;
@@ -284,25 +296,32 @@ serve(async (req) => {
       }
     }
 
-    console.log(`[Reconcile] Complete: checked=${result.checked}, discrepancies=${result.discrepancies_found}, fixed=${result.fixed}`);
+    console.log(
+      `[Reconcile] Complete: checked=${result.checked}, discrepancies=${result.discrepancies_found}, fixed=${result.fixed}, skipped=${result.skipped}, errors=${result.errors}`
+    );
 
-    return new Response(JSON.stringify({
-      success: true,
-      dry_run,
-      ...result,
-    }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-
+    return new Response(
+      JSON.stringify({
+        success: true,
+        dry_run,
+        ...result,
+      }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
+    );
   } catch (error) {
     console.error('[Reconcile] Error:', error);
-    return new Response(JSON.stringify({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
+    );
   }
 });
