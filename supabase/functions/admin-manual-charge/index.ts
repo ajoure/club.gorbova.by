@@ -99,6 +99,17 @@ Deno.serve(async (req) => {
     const testMode = settingsMap['bepaid_test_mode'] === 'true';
     const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
 
+    type ChargeCardResult = {
+      success: boolean;
+      uid?: string;
+      error?: string;
+      response?: any;
+      requires_3ds?: boolean;
+      redirect_url?: string | null;
+      status?: string | null;
+      code?: string | null;
+    };
+
     // Helper function to charge a card
     async function chargeCard(
       paymentToken: string,
@@ -106,7 +117,16 @@ Deno.serve(async (req) => {
       currency: string,
       description: string,
       trackingId: string,
-    ): Promise<{ success: boolean; uid?: string; error?: string; response?: any }> {
+      meta?: { order_id?: string; payment_id?: string },
+    ): Promise<ChargeCardResult> {
+      const reqOrigin = req.headers.get('origin');
+      const reqReferer = req.headers.get('referer');
+      const origin = reqOrigin || (reqReferer ? new URL(reqReferer).origin : null) || 'https://club.gorbova.by';
+
+      // bePaid webhook receiver (so we can finalize payment after 3DS)
+      const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
+      const returnUrl = `${origin}/admin/payments?payment=processing&payment=${trackingId}`;
+
       const chargePayload = {
         request: {
           amount: amountKopecks,
@@ -114,6 +134,10 @@ Deno.serve(async (req) => {
           description,
           tracking_id: trackingId,
           test: testMode,
+          return_url: returnUrl,
+          notification_url: notificationUrl,
+          // Try to bypass 3DS for saved-token charges (same as direct-charge)
+          skip_three_d_secure_verification: true,
           credit_card: {
             token: paymentToken,
           },
@@ -124,10 +148,13 @@ Deno.serve(async (req) => {
               initiator: 'merchant',
               type: 'delayed_charge',
             },
+            order_id: meta?.order_id,
+            payment_id: meta?.payment_id ?? trackingId,
           },
         },
       };
 
+      console.log('bePaid gateway URLs:', { origin, returnUrl, notificationUrl });
       console.log('Charging card:', JSON.stringify({ ...chargePayload, request: { ...chargePayload.request, credit_card: { token: '***' } } }));
 
       const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
@@ -145,25 +172,34 @@ Deno.serve(async (req) => {
       console.log('bePaid response:', JSON.stringify(chargeResult));
 
       if (!chargeResponse.ok) {
-        return { 
-          success: false, 
+        return {
+          success: false,
           error: chargeResult.message || chargeResult.error || `bePaid error: ${chargeResponse.status}`,
           response: chargeResult,
+          status: chargeResult.transaction?.status ?? null,
+          code: chargeResult.transaction?.code ?? null,
+          redirect_url: chargeResult.transaction?.redirect_url ?? null,
         };
       }
 
-      const txStatus = chargeResult.transaction?.status;
+      const txStatus = chargeResult.transaction?.status ?? null;
       const txUid = chargeResult.transaction?.uid;
       const txCode = chargeResult.transaction?.code;
+      const redirectUrl = chargeResult.transaction?.redirect_url ?? null;
 
       if (txStatus === 'successful') {
-        return { success: true, uid: txUid, response: chargeResult };
+        return { success: true, uid: txUid, response: chargeResult, status: txStatus, code: txCode, redirect_url: redirectUrl };
       }
 
-      // Handle 3D-Secure / redirect required (incomplete status with P.4011, P.4012, or similar)
+      // Handle 3D-Secure / redirect required
       if (txStatus === 'incomplete' && (txCode === 'P.4011' || txCode === 'P.4012' || txCode?.startsWith('P.40'))) {
-        return { 
-          success: false, 
+        return {
+          success: false,
+          requires_3ds: true,
+          redirect_url: redirectUrl,
+          uid: txUid,
+          status: txStatus,
+          code: txCode,
           error: 'Карта требует 3D-Secure верификацию. Для ручного списания используйте карту без 3DS или попросите клиента оплатить через форму.',
           response: chargeResult,
         };
@@ -171,8 +207,11 @@ Deno.serve(async (req) => {
 
       // Handle other incomplete statuses
       if (txStatus === 'incomplete') {
-        return { 
-          success: false, 
+        return {
+          success: false,
+          status: txStatus,
+          code: txCode,
+          redirect_url: redirectUrl,
           error: `Платёж не завершён: ${chargeResult.transaction?.message || chargeResult.transaction?.friendly_message || 'требуется дополнительная верификация'}`,
           response: chargeResult,
         };
@@ -180,15 +219,21 @@ Deno.serve(async (req) => {
 
       // Handle failed/declined
       if (txStatus === 'failed' || txStatus === 'declined') {
-        return { 
-          success: false, 
+        return {
+          success: false,
+          status: txStatus,
+          code: txCode,
+          redirect_url: redirectUrl,
           error: chargeResult.transaction?.message || 'Платёж отклонён',
           response: chargeResult,
         };
       }
 
-      return { 
-        success: false, 
+      return {
+        success: false,
+        status: txStatus,
+        code: txCode,
+        redirect_url: redirectUrl,
         error: chargeResult.transaction?.message || `Неизвестный статус: ${txStatus}`,
         response: chargeResult,
       };
@@ -233,14 +278,17 @@ Deno.serve(async (req) => {
       // Cards tokenized BEFORE the fix have supports_recurring = NULL, so check !== true
       if (paymentMethod.supports_recurring !== true) {
         console.log(`Card ${paymentMethod.id} does not support recurring (supports_recurring=${paymentMethod.supports_recurring}) - was tokenized before the fix`);
-        return new Response(JSON.stringify({ 
-          success: false, 
-          error: 'Эта карта была привязана до обновления системы и не поддерживает автоматические списания. Попросите клиента перепривязать карту в Личном кабинете.',
-          requires_rebind: true,
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error:
+              'Эта карта была привязана до обновления системы и не поддерживает автоматические списания. Попросите клиента перепривязать карту в Личном кабинете.',
+            requires_rebind: true,
+          }),
+          {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
       }
 
       // Get product and tariff info for order details
@@ -333,6 +381,7 @@ Deno.serve(async (req) => {
         'BYN',
         description || 'Ручное списание',
         payment.id,
+        { order_id: order.id, payment_id: payment.id },
       );
 
       if (chargeResult.success) {
@@ -488,7 +537,60 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       } else {
-        // Update payment as failed
+        // If 3DS is required, keep records in "processing" so the webhook can finalize after verification
+        if (chargeResult.requires_3ds && chargeResult.redirect_url) {
+          await supabase
+            .from('payments_v2')
+            .update({
+              status: 'processing',
+              provider_payment_id: chargeResult.uid || null,
+              provider_response: chargeResult.response,
+              error_message: chargeResult.error,
+            })
+            .eq('id', payment.id);
+
+          await supabase
+            .from('orders_v2')
+            .update({
+              status: 'pending',
+              meta: {
+                ...order.meta,
+                requires_3ds: true,
+                redirect_url: chargeResult.redirect_url,
+                error: chargeResult.error,
+              },
+            })
+            .eq('id', order.id);
+
+          await supabase.from('audit_logs').insert({
+            actor_user_id: user.id,
+            target_user_id: user_id,
+            action: 'payment.admin_manual_charge_requires_3ds',
+            meta: {
+              payment_id: payment.id,
+              order_id: order.id,
+              order_number: orderNumber,
+              code: chargeResult.code,
+              redirect_url: chargeResult.redirect_url,
+            },
+          });
+
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: chargeResult.error,
+              requires_3ds: true,
+              redirect_url: chargeResult.redirect_url,
+              payment_id: payment.id,
+              order_number: orderNumber,
+            }),
+            {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        // Non-3DS failure: mark as failed/cancelled
         await supabase
           .from('payments_v2')
           .update({
@@ -498,7 +600,6 @@ Deno.serve(async (req) => {
           })
           .eq('id', payment.id);
 
-        // Update order status to failed
         await supabase
           .from('orders_v2')
           .update({
@@ -528,15 +629,17 @@ Deno.serve(async (req) => {
           },
         });
 
-        return new Response(JSON.stringify({
-          success: false,
-          error: chargeResult.error,
-          payment_id: payment.id,
-          order_number: orderNumber,
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: chargeResult.error,
+            payment_id: payment.id,
+            order_number: orderNumber,
+          }),
+          {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
       }
     }
 
@@ -634,6 +737,7 @@ Deno.serve(async (req) => {
         currency,
         `Рассрочка ${installment.payment_number}/${installment.total_payments}: ${productName}`,
         payment.id,
+        { order_id: installment.order_id, payment_id: payment.id },
       );
 
       if (chargeResult.success) {
@@ -738,15 +842,19 @@ Deno.serve(async (req) => {
           })
           .eq('id', installment_id);
 
-        return new Response(JSON.stringify({
-          success: false,
-          error: chargeResult.error,
-          payment_id: payment.id,
-          installment_id,
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: chargeResult.error,
+            requires_3ds: !!chargeResult.requires_3ds,
+            redirect_url: chargeResult.redirect_url || null,
+            payment_id: payment.id,
+            installment_id,
+          }),
+          {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
       }
     }
 
