@@ -41,6 +41,16 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   User,
   Mail,
   Phone,
@@ -80,6 +90,7 @@ import {
   DollarSign,
   Sparkles,
   Ghost,
+  RefreshCw,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
@@ -189,6 +200,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const [isFetchingPhoto, setIsFetchingPhoto] = useState(false);
   const [activeTab, setActiveTab] = useState("profile");
   const [createDealOnly, setCreateDealOnly] = useState(false);
+  const [autoRenewConfirmOpen, setAutoRenewConfirmOpen] = useState(false);
+  const [autoRenewTarget, setAutoRenewTarget] = useState<{
+    subscriptionId: string;
+    currentValue: boolean;
+    productName: string;
+    hasPaymentMethod: boolean;
+  } | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Reset scroll position when tab changes
@@ -660,7 +678,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       if (!result.success) throw new Error(result.error);
       return result;
     },
-    onSuccess: (_, variables) => {
+    onSuccess: (result, variables) => {
       const messages: Record<string, string> = {
         cancel: "Подписка отменена",
         resume: "Подписка восстановлена",
@@ -668,10 +686,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         grant_access: "Доступ выдан",
         revoke_access: "Доступ отозван",
         delete: "Подписка удалена",
+        toggle_auto_renew: result.auto_renew 
+          ? "Автопродление включено" + (result.payment_method_linked ? " (карта привязана)" : " (карта не привязана)")
+          : "Автопродление отключено",
       };
       toast.success(messages[variables.action] || "Действие выполнено");
       refetchSubs();
       setSelectedSubscription(null);
+      setAutoRenewConfirmOpen(false);
+      setAutoRenewTarget(null);
     },
     onError: (error) => {
       toast.error("Ошибка: " + (error as Error).message);
@@ -685,6 +708,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  // Handle auto-renew toggle with confirmation
+  const handleToggleAutoRenew = async () => {
+    if (!autoRenewTarget) return;
+    
+    const newValue = !autoRenewTarget.currentValue;
+    await handleSubscriptionAction("toggle_auto_renew", autoRenewTarget.subscriptionId, {
+      auto_renew: newValue,
+      reason: newValue ? "Включено администратором" : "Отключено администратором",
+    });
   };
 
   // Grant new access - performs all the same actions as a regular purchase
@@ -2012,29 +2046,53 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                           )}
                         </div>
                         
-                        {/* Auto-renewal status */}
+                        {/* Auto-renewal status with toggle button */}
                         {isActive && !isCanceled && (
-                          <div className="flex items-center gap-2 mb-3 p-2 rounded-lg bg-muted/50 text-xs">
-                            {sub.payment_method_id && sub.auto_renew ? (
-                              <>
-                                <CheckCircle className="w-3.5 h-3.5 text-green-600" />
-                                <span className="text-green-700">Автопродление включено</span>
-                                {sub.charge_attempts > 0 && (
-                                  <Badge variant="outline" className="text-amber-600 border-amber-200 text-xs ml-auto">
-                                    Попыток: {sub.charge_attempts}/3
-                                  </Badge>
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                <XCircle className="w-3.5 h-3.5 text-muted-foreground" />
-                                <span className="text-muted-foreground">
-                                  {!paymentMethods || paymentMethods.length === 0 
-                                    ? "Нет привязанной карты" 
-                                    : "Автопродление отключено"}
-                                </span>
-                              </>
-                            )}
+                          <div className="flex items-center justify-between gap-2 mb-3 p-2 rounded-lg bg-muted/50 text-xs">
+                            <div className="flex items-center gap-2">
+                              {sub.payment_method_id && sub.auto_renew ? (
+                                <>
+                                  <CheckCircle className="w-3.5 h-3.5 text-green-600" />
+                                  <span className="text-green-700">Автопродление включено</span>
+                                  {sub.charge_attempts > 0 && (
+                                    <Badge variant="outline" className="text-amber-600 border-amber-200 text-xs">
+                                      Попыток: {sub.charge_attempts}/3
+                                    </Badge>
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  <XCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                                  <span className="text-muted-foreground">
+                                    {!paymentMethods || paymentMethods.length === 0 
+                                      ? "Нет привязанной карты" 
+                                      : "Автопродление отключено"}
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                            {/* Toggle button */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className={cn(
+                                "h-6 w-6 p-0",
+                                sub.auto_renew ? "text-green-600 hover:text-green-700" : "text-muted-foreground hover:text-primary"
+                              )}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setAutoRenewTarget({
+                                  subscriptionId: sub.id,
+                                  currentValue: sub.auto_renew || false,
+                                  productName: product?.name || "Продукт",
+                                  hasPaymentMethod: !!(paymentMethods && paymentMethods.length > 0),
+                                });
+                                setAutoRenewConfirmOpen(true);
+                              }}
+                              title={sub.auto_renew ? "Отключить автопродление" : "Включить автопродление"}
+                            >
+                              <RefreshCw className={cn("w-3.5 h-3.5", sub.auto_renew && "animate-pulse")} />
+                            </Button>
                           </div>
                         )}
 
@@ -2527,6 +2585,64 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             userEmail={contact.email || undefined}
           />
         )}
+
+        {/* Auto-renew toggle confirmation dialog */}
+        <AlertDialog open={autoRenewConfirmOpen} onOpenChange={setAutoRenewConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {autoRenewTarget?.currentValue 
+                  ? "Отключить автопродление?" 
+                  : "Включить автопродление?"}
+              </AlertDialogTitle>
+              <AlertDialogDescription className="space-y-2">
+                {autoRenewTarget?.currentValue ? (
+                  <>
+                    <p>
+                      Автопродление для <strong>{autoRenewTarget?.productName}</strong> будет отключено.
+                    </p>
+                    <p className="text-amber-600">
+                      ⚠️ Списание с карты не произойдёт автоматически. Карта будет отвязана от подписки.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p>
+                      Автопродление для <strong>{autoRenewTarget?.productName}</strong> будет включено.
+                    </p>
+                    {autoRenewTarget?.hasPaymentMethod ? (
+                      <p className="text-green-600">
+                        ✅ Карта клиента будет привязана для автоматического списания.
+                      </p>
+                    ) : (
+                      <p className="text-amber-600">
+                        ⚠️ У клиента нет привязанной карты. Списание не будет работать до привязки карты.
+                      </p>
+                    )}
+                  </>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => {
+                setAutoRenewConfirmOpen(false);
+                setAutoRenewTarget(null);
+              }}>
+                Отмена
+              </AlertDialogCancel>
+              <AlertDialogAction 
+                onClick={handleToggleAutoRenew}
+                disabled={isProcessing}
+                className={autoRenewTarget?.currentValue ? "bg-destructive hover:bg-destructive/90" : ""}
+              >
+                {isProcessing ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                ) : null}
+                {autoRenewTarget?.currentValue ? "Отключить" : "Включить"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </SheetContent>
     </Sheet>
   );
