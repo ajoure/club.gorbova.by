@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { Settings, FileText, RotateCcw, Trash2, AlertTriangle, RefreshCw, Download, RefreshCcw } from "lucide-react";
+import { Settings, FileText, RotateCcw, Trash2, AlertTriangle, RefreshCw, RefreshCcw, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,6 +14,7 @@ import RecoverPaymentDialog from "./RecoverPaymentDialog";
 import PurgeImportsDialog from "./PurgeImportsDialog";
 import PaymentDiagnosticsDialog from "./PaymentDiagnosticsDialog";
 import ResyncFromApiDialog from "./ResyncFromApiDialog";
+import { MigrationExportDialog } from "./MigrationExportDialog";
 
 interface PaymentsSettingsDropdownProps {
   selectedIds?: string[];
@@ -144,6 +145,24 @@ export default function PaymentsSettingsDropdown({
             >
               <Trash2 className="h-4 w-4" />
               <span>Удалить CSV-импорт</span>
+            </DropdownMenuItem>
+          )}
+        />
+        
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs text-muted-foreground">
+          Миграция
+        </DropdownMenuLabel>
+        
+        {/* Migration export */}
+        <MigrationExportDialog 
+          renderTrigger={(onClick) => (
+            <DropdownMenuItem 
+              onClick={(e) => { e.preventDefault(); onClick(); }}
+              className="gap-2 cursor-pointer"
+            >
+              <Database className="h-4 w-4" />
+              <span>Экспорт для миграции</span>
             </DropdownMenuItem>
           )}
         />
