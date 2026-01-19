@@ -6743,6 +6743,79 @@ export type Database = {
           priority: number
         }[]
       }
+      get_schema_columns: {
+        Args: never
+        Returns: {
+          column_default: string
+          column_name: string
+          data_type: string
+          is_nullable: string
+          ordinal_position: number
+          table_name: string
+          udt_name: string
+        }[]
+      }
+      get_schema_enums: {
+        Args: never
+        Returns: {
+          enum_name: string
+          enum_values: string[]
+        }[]
+      }
+      get_schema_foreign_keys: {
+        Args: never
+        Returns: {
+          column_name: string
+          constraint_name: string
+          foreign_column: string
+          foreign_table: string
+          on_delete: string
+          on_update: string
+          table_name: string
+        }[]
+      }
+      get_schema_indexes: {
+        Args: never
+        Returns: {
+          indexdef: string
+          indexname: string
+          tablename: string
+        }[]
+      }
+      get_schema_policies: {
+        Args: never
+        Returns: {
+          cmd: string
+          permissive: string
+          policyname: string
+          qual: string
+          roles: string[]
+          tablename: string
+          with_check: string
+        }[]
+      }
+      get_schema_primary_keys: {
+        Args: never
+        Returns: {
+          column_name: string
+          table_name: string
+        }[]
+      }
+      get_schema_rls_tables: {
+        Args: never
+        Returns: {
+          rowsecurity: boolean
+          tablename: string
+        }[]
+      }
+      get_schema_unique_constraints: {
+        Args: never
+        Returns: {
+          column_names: string[]
+          constraint_name: string
+          table_name: string
+        }[]
+      }
       get_user_permissions: { Args: { _user_id: string }; Returns: string[] }
       get_user_role: {
         Args: { _user_id: string }
