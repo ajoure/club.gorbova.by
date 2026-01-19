@@ -80,11 +80,22 @@ serve(async (req) => {
           cancelAt = date.toISOString();
         }
 
+        // Prepare updated meta with cancel source
+        const existingMeta = subscription.meta as Record<string, unknown> || {};
+        const newMeta = {
+          ...existingMeta,
+          cancel_source: 'user',
+          cancel_reason: 'Отменено пользователем в ЛК',
+          canceled_by_user_at: new Date().toISOString(),
+        };
+
         const { error: updateError } = await supabase
           .from('subscriptions_v2')
           .update({
             cancel_at: cancelAt,
             canceled_at: new Date().toISOString(),
+            auto_renew: false, // IMPORTANT: disable auto-renew when user cancels
+            meta: newMeta,
             updated_at: new Date().toISOString(),
           })
           .eq('id', subscription_id);
@@ -101,10 +112,10 @@ serve(async (req) => {
         await supabase.from('audit_logs').insert({
           actor_user_id: userId,
           action: 'subscription.canceled',
-          meta: { subscription_id, cancel_at: cancelAt },
+          meta: { subscription_id, cancel_at: cancelAt, cancel_source: 'user' },
         });
 
-        console.log(`Subscription ${subscription_id} canceled, will end at ${cancelAt}`);
+        console.log(`Subscription ${subscription_id} canceled by user, will end at ${cancelAt}`);
         return new Response(JSON.stringify({ success: true, cancel_at: cancelAt }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -126,13 +137,42 @@ serve(async (req) => {
           });
         }
 
+        // Try to find user's active payment method to enable auto-renewal
+        const { data: paymentMethod } = await supabase
+          .from('payment_methods')
+          .select('id, provider_token')
+          .eq('user_id', userId)
+          .eq('status', 'active')
+          .order('is_default', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        // Prepare updated meta
+        const existingMeta = subscription.meta as Record<string, unknown> || {};
+        const newMeta = {
+          ...existingMeta,
+          cancel_source: null,
+          resumed_at: new Date().toISOString(),
+          resumed_by_user: true,
+        };
+
+        const updateData: Record<string, unknown> = {
+          cancel_at: null,
+          canceled_at: null,
+          auto_renew: true, // IMPORTANT: re-enable auto-renew when user resumes
+          meta: newMeta,
+          updated_at: new Date().toISOString(),
+        };
+
+        // Link payment method if available
+        if (paymentMethod) {
+          updateData.payment_method_id = paymentMethod.id;
+          updateData.payment_token = paymentMethod.provider_token;
+        }
+
         const { error: updateError } = await supabase
           .from('subscriptions_v2')
-          .update({
-            cancel_at: null,
-            canceled_at: null,
-            updated_at: new Date().toISOString(),
-          })
+          .update(updateData)
           .eq('id', subscription_id);
 
         if (updateError) {
@@ -147,11 +187,19 @@ serve(async (req) => {
         await supabase.from('audit_logs').insert({
           actor_user_id: userId,
           action: 'subscription.resumed',
-          meta: { subscription_id },
+          meta: { 
+            subscription_id, 
+            auto_renew: true,
+            payment_method_linked: !!paymentMethod,
+          },
         });
 
-        console.log(`Subscription ${subscription_id} resumed`);
-        return new Response(JSON.stringify({ success: true }), {
+        console.log(`Subscription ${subscription_id} resumed by user, auto_renew enabled`);
+        return new Response(JSON.stringify({ 
+          success: true, 
+          auto_renew: true,
+          payment_method_linked: !!paymentMethod,
+        }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }

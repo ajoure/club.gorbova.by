@@ -864,6 +864,85 @@ Deno.serve(async (req) => {
         break;
       }
 
+      case 'toggle_auto_renew': {
+        const { auto_renew: newAutoRenew, reason } = body;
+
+        if (typeof newAutoRenew !== 'boolean') {
+          return new Response(JSON.stringify({ success: false, error: 'auto_renew must be boolean' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const existingMeta = subscription.meta as Record<string, unknown> || {};
+        const updateData: Record<string, unknown> = {
+          auto_renew: newAutoRenew,
+          meta: {
+            ...existingMeta,
+            auto_renew_changed_by: adminUserId,
+            auto_renew_changed_at: new Date().toISOString(),
+            auto_renew_change_reason: reason || (newAutoRenew ? 'Включено администратором' : 'Отключено администратором'),
+          },
+          updated_at: new Date().toISOString(),
+        };
+
+        // If enabling auto-renew, try to link payment method
+        if (newAutoRenew) {
+          const { data: paymentMethod } = await supabase
+            .from('payment_methods')
+            .select('id, provider_token')
+            .eq('user_id', subscription.user_id)
+            .eq('status', 'active')
+            .order('is_default', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (paymentMethod) {
+            updateData.payment_method_id = paymentMethod.id;
+            updateData.payment_token = paymentMethod.provider_token;
+          }
+          result.payment_method_linked = !!paymentMethod;
+        } else {
+          // If disabling, clear payment method link
+          updateData.payment_method_id = null;
+          updateData.payment_token = null;
+          result.payment_method_linked = false;
+        }
+
+        const { error: updateError } = await supabase
+          .from('subscriptions_v2')
+          .update(updateData)
+          .eq('id', subscription_id);
+
+        if (updateError) {
+          console.error('Error toggling auto-renew:', updateError);
+          return new Response(JSON.stringify({ success: false, error: 'Failed to toggle auto-renew' }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Log the specific action
+        await supabase.from('audit_logs').insert({
+          actor_user_id: adminUserId,
+          target_user_id: subscription.user_id,
+          action: newAutoRenew ? 'admin.subscription.auto_renew_enabled' : 'admin.subscription.auto_renew_disabled',
+          meta: {
+            subscription_id,
+            order_id: subscription.order_id,
+            reason: reason || null,
+            has_payment_method: result.payment_method_linked,
+          },
+        });
+
+        result.auto_renew = newAutoRenew;
+        console.log(`Admin toggled auto-renew to ${newAutoRenew} for subscription ${subscription_id}`);
+        
+        return new Response(JSON.stringify(result), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       default:
         return new Response(JSON.stringify({ success: false, error: 'Unknown action' }), {
           status: 400,
