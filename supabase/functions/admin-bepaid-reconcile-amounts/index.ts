@@ -84,6 +84,8 @@ interface ReconcileResult {
 }
 
 interface FetchResult {
+  outcome: 'fetched' | 'not_found' | 'error';
+
   tx: any | null;
   endpoint?: string; // only set when tx was successfully parsed
   status?: number; // only set when tx was successfully parsed
@@ -92,12 +94,10 @@ interface FetchResult {
   endpoints_tried: string[];
   last_http_status: number;
 
-  // When last_http_status is 200 but tx could not be parsed, these explain why
-  endpoint_used?: string;
-  http_status?: number;
-
-  // Diagnostics: for 400 -> text excerpt; for 200-but-unparseable -> JSON excerpt
-  last_error_body_excerpt?: string;
+  // Diagnostics
+  endpoint_used?: string; // last relevant endpoint for outcome
+  http_status?: number; // http status for endpoint_used
+  last_error_body_excerpt?: string; // first 200 chars (safe)
 }
 
 async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; secretKey: string } | null> {
@@ -138,27 +138,82 @@ function guessUidKind(uid: string): UidKindGuess {
   return 'unknown';
 }
 
-async function fetchTransaction(uid: string, authString: string): Promise<FetchResult> {
+async function fetchTransaction(
+  uid: string,
+  authString: string,
+  opts?: {
+    shopId?: string;
+    paid_at?: string;
+    amount_byn?: number;
+    order_id?: string | null;
+    payment_id?: string;
+  }
+): Promise<FetchResult> {
   // Try multiple endpoint patterns - the uid might be a transaction uid or a tracking_id
   // Keep max_endpoints_per_payment = 4
+
+  const buildListSearchEndpoint = (): string | null => {
+    if (!opts?.paid_at) return null;
+
+    const paidAt = new Date(opts.paid_at);
+    if (Number.isNaN(paidAt.getTime())) return null;
+
+    const from = new Date(paidAt.getTime() - 12 * 60 * 60 * 1000);
+    const to = new Date(paidAt.getTime() + 12 * 60 * 60 * 1000);
+
+    const params = new URLSearchParams({
+      created_at_from: from.toISOString(),
+      created_at_to: to.toISOString(),
+      per_page: '100',
+      ...(opts.shopId ? { shop_id: String(opts.shopId) } : {}),
+    });
+
+    // Use gateway endpoint (most likely to work; used by bepai-fetch probe order)
+    return `https://gateway.bepaid.by/transactions?${params.toString()}`;
+  };
+
+  const listSearchEndpoint = buildListSearchEndpoint();
+
   const endpoints = [
     `https://gateway.bepaid.by/transactions/${uid}`,
     `https://gateway.bepaid.by/v2/transactions/tracking_id/${uid}`,
-    `https://api.bepaid.by/beyag/transactions/${uid}`,
     `https://api.bepaid.by/v2/transactions/${uid}`,
-  ];
+    ...(listSearchEndpoint ? [listSearchEndpoint] : []),
+  ].slice(0, 4);
 
   const tried: string[] = [];
-  let lastStatus = 0;
-  let lastNon404Status: number | null = null;
 
-  // Diagnostics: track the last meaningful error context.
-  // - For 400: excerpt of response body text
-  // - For 200-but-unparseable: excerpt of JSON-stringified response
-  let lastErrorBodyExcerpt = '';
+  // Not-found signals include:
+  // - HTTP 404
+  // - HTTP 200 with {"transactions": []} or transactions.length === 0
+  // - List endpoint returns transactions but none match uid/order/payment/amount
+  let lastNotFoundEndpoint: string | undefined;
+  let lastNotFoundStatus: number | undefined;
+  let lastNotFoundExcerpt: string | undefined;
+  let lastNotFoundShape: string | undefined;
+
+  // Error signals include:
+  // - non-404 non-2xx statuses (401/403/5xx)
+  // - invalid JSON
+  // - network exceptions
   let lastErrorEndpoint: string | undefined;
   let lastErrorStatus: number | undefined;
-  let lastMatchedShape: string | undefined;
+  let lastErrorExcerpt: string | undefined;
+  let lastErrorShape: string | undefined;
+
+  const recordNotFound = (endpoint: string, status: number, shape: string, excerpt?: string) => {
+    lastNotFoundEndpoint = endpoint;
+    lastNotFoundStatus = status;
+    lastNotFoundShape = shape;
+    lastNotFoundExcerpt = excerpt;
+  };
+
+  const recordError = (endpoint: string, status: number, shape: string, excerpt?: string) => {
+    lastErrorEndpoint = endpoint;
+    lastErrorStatus = status;
+    lastErrorShape = shape;
+    lastErrorExcerpt = excerpt;
+  };
 
   const extractTxFromKnownShapes = (data: any): { tx: any | null; matched_shape?: string } => {
     // 1) data.transaction
@@ -180,16 +235,43 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
 
     // 4) data (if it is the transaction)
     if (data && typeof data === 'object') {
-      // Some endpoints may return { transactions: [...] }
-      if (Array.isArray(data?.transactions) && data.transactions.length) {
-        return { tx: data.transactions[0], matched_shape: 'data.transactions[0]' };
-      }
-
       const hasTxnFields = data?.uid || data?.id || data?.amount || data?.type || data?.status;
       if (hasTxnFields) return { tx: data, matched_shape: 'data' };
     }
 
     return { tx: null, matched_shape: 'no_match' };
+  };
+
+  const isEmptyTransactionsList = (data: any): boolean => {
+    return Array.isArray(data?.transactions) && data.transactions.length === 0;
+  };
+
+  const tryMatchFromTransactionsList = (data: any): { tx: any | null; matched_shape?: string } => {
+    const txs: any[] = Array.isArray(data?.transactions) ? data.transactions : [];
+    if (!txs.length) return { tx: null, matched_shape: 'list.empty' };
+
+    const candidates = [uid, opts?.order_id ?? undefined, opts?.payment_id ?? undefined]
+      .filter(Boolean)
+      .map(String);
+
+    // 1) Prefer tracking_id match
+    for (const tx of txs) {
+      const trackingId = tx?.tracking_id ?? tx?.trackingId ?? tx?.additional_data?.order_id ?? null;
+      if (!trackingId) continue;
+      const trackingStr = String(trackingId);
+      if (candidates.some((c) => trackingStr === c || trackingStr.startsWith(c) || trackingStr.includes(c))) {
+        return { tx, matched_shape: 'list.match.tracking_id' };
+      }
+    }
+
+    // 2) Fallback: amount match (kopecks)
+    if (typeof opts?.amount_byn === 'number') {
+      const expected = Math.round(opts.amount_byn * 100);
+      const amountMatch = txs.find((tx) => Number(tx?.amount) === expected);
+      if (amountMatch) return { tx: amountMatch, matched_shape: 'list.match.amount' };
+    }
+
+    return { tx: null, matched_shape: 'list.no_match' };
   };
 
   for (const endpoint of endpoints) {
@@ -205,79 +287,123 @@ async function fetchTransaction(uid: string, authString: string): Promise<FetchR
         },
       });
 
-      lastStatus = res.status;
-      if (res.status !== 404) lastNon404Status = res.status;
+      const status = res.status;
 
-      if (res.ok) {
-        const data = await res.json();
-        const extracted = extractTxFromKnownShapes(data);
-        const tx = extracted.tx;
-        const matchedShape = extracted.matched_shape;
-
-        const txUid = tx?.uid ?? tx?.transaction_uid ?? tx?.transactionUid ?? null;
-        const txId = tx?.id ?? tx?.transaction_id ?? tx?.transactionId ?? null;
-
-        if (tx && (txUid || txId)) {
-          // Normalize uid/id presence for downstream usage
-          if (txUid && !tx.uid) tx.uid = txUid;
-          if (txId && !tx.id) tx.id = txId;
-
-          return {
-            tx,
-            endpoint,
-            status: res.status,
-            matched_shape: matchedShape,
-            endpoints_tried: tried,
-            last_http_status: lastStatus,
-          };
-        }
-
-        // res.ok but we couldn't extract a valid transaction object (or it lacks uid/id)
-        lastErrorBodyExcerpt = JSON.stringify(data).substring(0, 200);
-        lastErrorEndpoint = endpoint;
-        lastErrorStatus = res.status;
-        lastMatchedShape = tx ? `${matchedShape || 'unknown'}_missing_uid_or_id` : matchedShape || 'no_match';
+      // 404 is always not-found
+      if (status === 404) {
+        recordNotFound(endpoint, status, 'http_404');
+        // drain body
+        try { await res.arrayBuffer(); } catch {}
         continue;
       }
 
-      // Capture diagnostics for 400s (safe excerpt; no secrets)
-      if (res.status === 400 && !lastErrorBodyExcerpt) {
-        const errText = await res.text();
-        lastErrorBodyExcerpt = errText.substring(0, 200);
-        lastErrorEndpoint = endpoint;
-        lastErrorStatus = 400;
-        lastMatchedShape = 'http_400';
-      } else {
-        // Drain body to avoid resource leaks
-        try {
-          await res.arrayBuffer();
-        } catch {
-          // ignore
-        }
+      const bodyText = await res.text();
+
+      // Non-2xx (excluding 404 already handled) is error
+      if (!res.ok) {
+        recordError(endpoint, status, `http_${status}`, bodyText.substring(0, 200));
+        continue;
       }
 
+      // 2xx: must be valid JSON
+      let data: any;
+      try {
+        data = bodyText ? JSON.parse(bodyText) : {};
+      } catch {
+        recordError(endpoint, status, 'invalid_json', bodyText.substring(0, 200));
+        continue;
+      }
+
+      // Special-case: tracking_id endpoint returns {"transactions": []} with 200 => NOT_FOUND
+      if (isEmptyTransactionsList(data)) {
+        recordNotFound(endpoint, status, 'data.transactions(empty)', JSON.stringify(data).substring(0, 200));
+        continue;
+      }
+
+      // If this is the list-search endpoint, try to match within transactions[]
+      if (endpoint.includes('/transactions?')) {
+        const extracted = tryMatchFromTransactionsList(data);
+        if (!extracted.tx) {
+          recordNotFound(endpoint, status, extracted.matched_shape || 'list.no_match', JSON.stringify(data).substring(0, 200));
+          continue;
+        }
+
+        const tx = extracted.tx;
+        const txUid = tx?.uid ?? tx?.transaction_uid ?? tx?.transactionUid ?? null;
+        const txId = tx?.id ?? tx?.transaction_id ?? tx?.transactionId ?? null;
+
+        if (!txUid && !txId) {
+          recordError(endpoint, status, `${extracted.matched_shape || 'list.match'}_missing_uid_or_id`, JSON.stringify(tx).substring(0, 200));
+          continue;
+        }
+
+        if (txUid && !tx.uid) tx.uid = txUid;
+        if (txId && !tx.id) tx.id = txId;
+
+        return {
+          outcome: 'fetched',
+          tx,
+          endpoint,
+          status,
+          matched_shape: extracted.matched_shape,
+          endpoints_tried: tried,
+          last_http_status: status,
+        };
+      }
+
+      // Normal object endpoints
+      const extracted = extractTxFromKnownShapes(data);
+      const tx = extracted.tx;
+      const txUid = tx?.uid ?? tx?.transaction_uid ?? tx?.transactionUid ?? null;
+      const txId = tx?.id ?? tx?.transaction_id ?? tx?.transactionId ?? null;
+
+      if (tx && (txUid || txId)) {
+        if (txUid && !tx.uid) tx.uid = txUid;
+        if (txId && !tx.id) tx.id = txId;
+
+        return {
+          outcome: 'fetched',
+          tx,
+          endpoint,
+          status,
+          matched_shape: extracted.matched_shape,
+          endpoints_tried: tried,
+          last_http_status: status,
+        };
+      }
+
+      // res.ok but tx missing => ERROR with excerpt (explicit)
+      recordError(endpoint, status, `${extracted.matched_shape || 'no_match'}_unparseable`, JSON.stringify(data).substring(0, 200));
       continue;
     } catch (err: any) {
-      // Network or parsing error
-      lastNon404Status = lastNon404Status ?? 0;
-      if (!lastErrorBodyExcerpt) {
-        lastErrorBodyExcerpt = String(err?.message ?? err).substring(0, 200);
-        lastErrorEndpoint = endpoint;
-        lastErrorStatus = 0;
-        lastMatchedShape = 'exception';
-      }
+      recordError(endpoint, 0, 'exception', String(err?.message ?? err).substring(0, 200));
       continue;
     }
   }
 
+  // Decide final outcome
+  if (lastErrorEndpoint) {
+    return {
+      outcome: 'error',
+      tx: null,
+      endpoints_tried: tried,
+      last_http_status: lastErrorStatus ?? 0,
+      endpoint_used: lastErrorEndpoint,
+      http_status: lastErrorStatus,
+      matched_shape: lastErrorShape,
+      last_error_body_excerpt: lastErrorExcerpt,
+    };
+  }
+
   return {
+    outcome: 'not_found',
     tx: null,
     endpoints_tried: tried,
-    last_http_status: lastNon404Status ?? lastStatus,
-    endpoint_used: lastErrorEndpoint,
-    http_status: lastErrorStatus,
-    matched_shape: lastMatchedShape,
-    last_error_body_excerpt: lastErrorBodyExcerpt || undefined,
+    last_http_status: lastNotFoundStatus ?? 404,
+    endpoint_used: lastNotFoundEndpoint,
+    http_status: lastNotFoundStatus,
+    matched_shape: lastNotFoundShape,
+    last_error_body_excerpt: lastNotFoundExcerpt,
   };
 }
 
@@ -411,13 +537,16 @@ serve(async (req) => {
 
 
       try {
-        const fetched = await fetchTransaction(uid, authString);
+        const fetched = await fetchTransaction(uid, authString, {
+          shopId: credentials.shopId,
+          paid_at: payment.paid_at,
+          amount_byn: Number(payment.amount),
+          order_id: payment.order_id,
+          payment_id: payment.id,
+        });
         
         if (!fetched.tx) {
-          // Split not_found (404) vs errors (non-404 / network)
-          const isNotFound = fetched.last_http_status === 404;
-
-          if (isNotFound) {
+          if (fetched.outcome === 'not_found') {
             result.not_found++;
             if (result.not_found_details.length < 20) {
               result.not_found_details.push({

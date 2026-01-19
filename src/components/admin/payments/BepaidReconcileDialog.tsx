@@ -85,6 +85,7 @@ export function BepaidReconcileDialog({ open, onOpenChange }: Props) {
           dry_run: dryRun,
           filter_only_amount_1: filterAmount1,
           batch_size: batchSize,
+          max_payments_to_check: batchSize,
         },
       });
 
