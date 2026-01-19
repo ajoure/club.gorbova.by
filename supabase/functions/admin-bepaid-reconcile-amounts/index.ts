@@ -39,25 +39,29 @@ interface ReconcileResult {
 }
 
 async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; secretKey: string } | null> {
-  // integration_instances first (preferred)
+  // integration_instances first (preferred) - check both 'active' and 'connected' statuses
   const { data: instance } = await supabase
     .from('integration_instances')
     .select('config')
     .eq('provider', 'bepaid')
-    .eq('status', 'active')
+    .in('status', ['active', 'connected'])
     .maybeSingle();
 
   const shopIdFromInstance = instance?.config?.shop_id;
   const secretFromInstance = instance?.config?.secret_key;
 
   if (shopIdFromInstance && secretFromInstance) {
+    console.log(`[Reconcile] Using credentials from integration_instances: shop_id=${shopIdFromInstance}`);
     return { shopId: String(shopIdFromInstance), secretKey: String(secretFromInstance) };
   }
 
   // fallback: env vars
   const shopId = Deno.env.get('BEPAID_SHOP_ID');
   const secretKey = Deno.env.get('BEPAID_SECRET_KEY');
-  if (shopId && secretKey) return { shopId, secretKey };
+  if (shopId && secretKey) {
+    console.log(`[Reconcile] Using credentials from env vars: shop_id=${shopId}`);
+    return { shopId, secretKey };
+  }
 
   return null;
 }
