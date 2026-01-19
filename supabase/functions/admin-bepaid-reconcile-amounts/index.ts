@@ -98,7 +98,7 @@ serve(async (req) => {
     // Build query for payments
     let query = supabase
       .from('payments_v2')
-      .select('id, provider_payment_id, order_id, amount, transaction_type, status, paid_at, customer_email, meta, profile_id')
+      .select('id, provider_payment_id, order_id, amount, transaction_type, status, paid_at, meta, profile_id, user_id')
       .eq('provider', 'bepaid')
       .gte('paid_at', `${from_date}T00:00:00Z`)
       .lte('paid_at', `${to_date}T23:59:59Z`)
@@ -194,7 +194,7 @@ serve(async (req) => {
             transaction_type: payment.transaction_type || tx.type || 'unknown',
             status: payment.status || tx.status || 'unknown',
             paid_at: payment.paid_at,
-            customer_email: payment.customer_email,
+            customer_email: tx.customer?.email || null,
           };
 
           result.discrepancies.push(discrepancy);
