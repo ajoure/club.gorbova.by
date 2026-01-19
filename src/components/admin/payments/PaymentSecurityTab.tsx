@@ -19,11 +19,13 @@ import {
   Server,
   FileWarning,
   ClipboardList,
+  ExternalLink,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import BepaidSubscriptionsList from "./BepaidSubscriptionsList";
 
 interface BepaidSubscription {
   id: string;
@@ -527,6 +529,9 @@ export default function PaymentSecurityTab() {
           )}
         </CardContent>
       </Card>
+
+      {/* bePaid Subscriptions List (External) */}
+      <BepaidSubscriptionsList />
     </div>
   );
 }
