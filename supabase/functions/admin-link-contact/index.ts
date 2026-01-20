@@ -365,33 +365,68 @@ Deno.serve(async (req) => {
           // Non-critical, continue
         }
 
-        // 2. Update all queue items with same card that don't have a profile
-        const { data: updatedQueue, error: queueError } = await supabaseAdmin
-          .from('payment_reconcile_queue')
-          .update({ matched_profile_id: targetProfileId })
-          .eq('card_last4', cardLast4)
-          .is('matched_profile_id', null)
-          .neq('id', payment_id) // Don't count the current payment
-          .select('id');
+        // 2. Use payments-autolink-by-card for comprehensive linking
+        try {
+          const autolinkResponse = await fetch(`${supabaseUrl}/functions/v1/payments-autolink-by-card`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseServiceKey}`,
+            },
+            body: JSON.stringify({
+              profile_id: targetProfileId,
+              card_last4: cardLast4,
+              card_brand: cardBrand || 'unknown',
+              dry_run: false,
+              limit: 500,
+            }),
+          });
 
-        if (queueError) {
-          console.warn('[Smart Link] Failed to propagate to queue:', queueError);
-        } else {
+          if (autolinkResponse.ok) {
+            const autolinkResult = await autolinkResponse.json();
+            propagatedQueue = autolinkResult?.stats?.updated_queue_profile || 0;
+            propagatedPayments = autolinkResult?.stats?.updated_payments_profile || 0;
+            console.log(`[Smart Link] Autolink result: ${propagatedQueue} queue + ${propagatedPayments} payments`);
+          } else {
+            console.warn('[Smart Link] Autolink failed:', await autolinkResponse.text());
+            // Fallback to direct update
+            const { data: updatedQueue } = await supabaseAdmin
+              .from('payment_reconcile_queue')
+              .update({ matched_profile_id: targetProfileId })
+              .eq('card_last4', cardLast4)
+              .is('matched_profile_id', null)
+              .neq('id', payment_id)
+              .select('id');
+            propagatedQueue = updatedQueue?.length || 0;
+
+            const { data: updatedPayments } = await supabaseAdmin
+              .from('payments_v2')
+              .update({ profile_id: targetProfileId })
+              .eq('card_last4', cardLast4)
+              .is('profile_id', null)
+              .neq('id', payment_id)
+              .select('id');
+            propagatedPayments = updatedPayments?.length || 0;
+          }
+        } catch (autolinkError) {
+          console.warn('[Smart Link] Autolink invocation failed:', autolinkError);
+          // Fallback to direct update
+          const { data: updatedQueue } = await supabaseAdmin
+            .from('payment_reconcile_queue')
+            .update({ matched_profile_id: targetProfileId })
+            .eq('card_last4', cardLast4)
+            .is('matched_profile_id', null)
+            .neq('id', payment_id)
+            .select('id');
           propagatedQueue = updatedQueue?.length || 0;
-        }
 
-        // 3. Update all payments_v2 with same card that don't have a profile
-        const { data: updatedPayments, error: paymentsError } = await supabaseAdmin
-          .from('payments_v2')
-          .update({ profile_id: targetProfileId })
-          .eq('card_last4', cardLast4)
-          .is('profile_id', null)
-          .neq('id', payment_id) // Don't count the current payment
-          .select('id');
-
-        if (paymentsError) {
-          console.warn('[Smart Link] Failed to propagate to payments:', paymentsError);
-        } else {
+          const { data: updatedPayments } = await supabaseAdmin
+            .from('payments_v2')
+            .update({ profile_id: targetProfileId })
+            .eq('card_last4', cardLast4)
+            .is('profile_id', null)
+            .neq('id', payment_id)
+            .select('id');
           propagatedPayments = updatedPayments?.length || 0;
         }
 
