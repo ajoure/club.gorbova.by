@@ -68,7 +68,8 @@ export default function PaymentMethodsSettings() {
           .limit(1)
           .single();
         
-        const autolinkResult = newestCard?.meta?.autolink_result as { 
+        const meta = newestCard?.meta as Record<string, unknown> | null;
+        const autolinkResult = meta?.autolink_result as { 
           updated_payments?: number; 
           updated_queue?: number; 
           status?: string;
