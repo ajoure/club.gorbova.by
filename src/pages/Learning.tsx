@@ -151,73 +151,86 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
     ? Math.round((product.completedCount / product.lessonCount) * 100)
     : 0;
 
-  const handleAction = () => {
-    if (variant === "store") {
-      if (product.isPurchased) {
-        onSwitchToLibrary();
-      } else if (product.purchaseLink.startsWith("http")) {
-        window.open(product.purchaseLink, "_blank");
-      } else {
-        navigate(product.purchaseLink);
-      }
+  const handleGoToSite = () => {
+    if (product.purchaseLink.startsWith("http")) {
+      window.open(product.purchaseLink, "_blank");
     } else {
-      // Library variant - go to course
-      navigate(`/library/${product.courseSlug || product.id}`);
+      navigate(product.purchaseLink);
     }
   };
 
+  const handleOpenCourse = () => {
+    navigate(`/library/${product.courseSlug || product.id}`);
+  };
+
   return (
-    <GlassCard className="overflow-hidden hover:border-primary/30 hover:shadow-lg transition-all duration-300 group backdrop-blur-sm bg-card/80">
-      <div className="relative h-44 overflow-hidden">
+    <GlassCard className="overflow-hidden group relative bg-background/60 backdrop-blur-xl border border-border/30 hover:border-primary/40 shadow-lg hover:shadow-xl transition-all duration-300">
+      {/* Subtle inner glow */}
+      <div className="absolute inset-0 bg-gradient-to-br from-white/5 via-transparent to-black/5 pointer-events-none rounded-2xl" />
+      
+      {/* Image section */}
+      <div className="relative h-48 overflow-hidden">
         <img 
           src={product.image} 
           alt={product.title}
-          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-          style={product.courseSlug === "buh-business" ? { objectPosition: "center 20%", transform: "scale(1.1)" } : undefined}
+          className="w-full h-full object-cover transition-all duration-300 saturate-[0.85] brightness-[0.95] group-hover:saturate-100 group-hover:brightness-100 group-hover:scale-105"
+          style={product.courseSlug === "buh-business" ? { objectPosition: "center 20%" } : undefined}
         />
-        {/* Gradient overlay for better text contrast */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
-        {product.badge && (
-          <Badge 
-            variant={product.badgeVariant} 
-            className={`absolute top-3 right-3 ${getBadgeClasses(product.badge)} shadow-sm`}
-          >
-            {product.badge === "Хит" && <Star className="h-3 w-3 mr-1" />}
-            {product.badge === "Новинка" && <Sparkles className="h-3 w-3 mr-1" />}
-            {product.badge === "Активно" && <Check className="h-3 w-3 mr-1" />}
-            {product.badge === "Бронь" && <Clock className="h-3 w-3 mr-1" />}
-            {product.badge === "Старт 5 февраля" && <Clock className="h-3 w-3 mr-1" />}
-            {product.badge}
-          </Badge>
-        )}
-        {variant === "store" && product.isPurchased && product.badge !== "Бронь" && (
-          <div className="absolute top-3 left-3 bg-emerald-500 text-white px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1 shadow-md">
-            <Check className="h-3 w-3" />
-            Куплено
-          </div>
-        )}
+        {/* Professional overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-background/30 to-transparent" />
+        
+        {/* Badges row */}
+        <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
+          {/* Purchased badge */}
+          {product.isPurchased && product.badge !== "Бронь" && (
+            <div className="bg-emerald-500/90 backdrop-blur-sm text-white px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1 shadow-md">
+              <Check className="h-3 w-3" />
+              Куплено
+            </div>
+          )}
+          {!product.isPurchased && <div />}
+          
+          {/* Status badge */}
+          {product.badge && (
+            <Badge 
+              variant={product.badgeVariant} 
+              className={`${getBadgeClasses(product.badge)} shadow-sm backdrop-blur-sm`}
+            >
+              {product.badge === "Хит" && <Star className="h-3 w-3 mr-1" />}
+              {product.badge === "Новинка" && <Sparkles className="h-3 w-3 mr-1" />}
+              {product.badge === "Активно" && <Check className="h-3 w-3 mr-1" />}
+              {product.badge === "Бронь" && <Clock className="h-3 w-3 mr-1" />}
+              {product.badge === "Старт 5 февраля" && <Clock className="h-3 w-3 mr-1" />}
+              {product.badge}
+            </Badge>
+          )}
+        </div>
       </div>
       
-      <div className="p-5">
-        <h3 className="text-lg font-semibold text-foreground mb-2 group-hover:text-primary transition-colors">
+      {/* Content section */}
+      <div className="relative p-5">
+        <h3 className="text-lg font-semibold text-foreground leading-tight mb-2 group-hover:text-primary transition-colors">
           {product.title}
         </h3>
         
-        <p className="text-sm text-muted-foreground mb-4 line-clamp-3 min-h-[3.75rem]">
+        <p className="text-sm text-muted-foreground leading-relaxed mb-4 line-clamp-4 min-h-[5rem]">
           {product.description}
         </p>
 
+        {/* Separator */}
+        <div className="border-t border-border/50 my-4" />
+
         {/* Meta info */}
-        <div className="flex items-center gap-3 text-xs text-muted-foreground mb-4">
+        <div className="flex items-center gap-4 text-xs text-muted-foreground mb-4">
           {product.duration && (
-            <span className="flex items-center gap-1">
-              <Clock className="h-3 w-3" />
+            <span className="flex items-center gap-1.5">
+              <Clock className="h-3.5 w-3.5" />
               {product.duration}
             </span>
           )}
           {product.lessonCount && (
-            <span className="flex items-center gap-1">
-              <BookOpen className="h-3 w-3" />
+            <span className="flex items-center gap-1.5">
+              <BookOpen className="h-3.5 w-3.5" />
               {product.lessonCount} уроков
             </span>
           )}
@@ -226,49 +239,50 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
         {/* Progress for library view */}
         {variant === "library" && product.lessonCount && product.completedCount !== undefined && (
           <div className="mb-4">
-            <div className="flex justify-between text-xs text-muted-foreground mb-1">
+            <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
               <span>Прогресс</span>
-              <span>{product.completedCount} из {product.lessonCount}</span>
+              <span className="font-medium">{product.completedCount} из {product.lessonCount}</span>
             </div>
             <Progress value={progress} className="h-2" />
           </div>
         )}
         
-        <div className="flex items-center justify-between">
+        {/* Footer with price and buttons */}
+        <div className="space-y-3">
+          {/* Price row */}
           {variant === "store" && (
-            <span className="text-sm font-medium text-foreground">{product.price}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-base font-semibold text-foreground">{product.price}</span>
+            </div>
           )}
           
+          {/* Buttons */}
           {variant === "store" ? (
-            product.isPurchased ? (
+            <div className="flex items-center gap-2">
+              {product.isPurchased && product.courseSlug && (
+                <Button 
+                  size="sm" 
+                  onClick={handleOpenCourse}
+                  className="flex-1"
+                >
+                  <Play className="h-4 w-4 mr-1.5" />
+                  Открыть курс
+                </Button>
+              )}
               <Button 
-                variant="outline" 
                 size="sm" 
-                onClick={handleAction}
-                className="ml-auto"
+                variant={product.isPurchased ? "outline" : "default"}
+                onClick={handleGoToSite}
+                className={product.isPurchased ? "" : "flex-1"}
               >
-                <Check className="h-4 w-4 mr-1" />
-                В библиотеке
+                На сайт
+                <ExternalLink className="ml-1.5 h-4 w-4" />
               </Button>
-            ) : (
-              <Button 
-                size="sm" 
-                onClick={handleAction}
-                className="ml-auto"
-              >
-                {product.purchaseLink.startsWith("http") ? (
-                  <>
-                    Купить <ExternalLink className="ml-1 h-4 w-4" />
-                  </>
-                ) : (
-                  "Подробнее"
-                )}
-              </Button>
-            )
+            </div>
           ) : (
             <Button 
               size="sm" 
-              onClick={handleAction}
+              onClick={handleOpenCourse}
               className="w-full"
             >
               <Play className="h-4 w-4 mr-2" />
