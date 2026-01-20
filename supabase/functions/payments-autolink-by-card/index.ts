@@ -66,10 +66,31 @@ function normalizeBrand(brand: string | null | undefined): string {
     'master': 'mastercard',
     'mc': 'mastercard',
     'belkart': 'belkart',
+    'belcard': 'belkart',
     'maestro': 'maestro',
     'mir': 'mir',
   };
   return brandMap[b] || b;
+}
+
+// Get all brand variants for matching (handles master vs mastercard mismatch)
+function getBrandVariants(brand: string): string[] {
+  const normalized = normalizeBrand(brand);
+  const variants = [normalized];
+  
+  // Add raw input if different from normalized
+  if (brand && brand.toLowerCase().trim() !== normalized) {
+    variants.push(brand.toLowerCase().trim());
+  }
+  
+  // Add known aliases for each brand
+  if (normalized === 'mastercard') {
+    variants.push('master', 'mc');
+  } else if (normalized === 'belkart') {
+    variants.push('belcard');
+  }
+  
+  return [...new Set(variants.filter(Boolean))];
 }
 
 serve(async (req) => {
@@ -116,28 +137,31 @@ serve(async (req) => {
 
     const normalizedBrand = normalizeBrand(card_brand);
     const normalizedLast4 = card_last4.trim();
+    const brandVariants = getBrandVariants(card_brand);
+    
+    console.log(`[payments-autolink-by-card] Brand variants for '${card_brand}': ${JSON.stringify(brandVariants)}`);
 
     // ========== GUARD-CHECK: Collision detection ==========
     // Check if this last4+brand is already linked to a DIFFERENT profile
     
-    // 1) Check card_profile_links table
+    // 1) Check card_profile_links table (using brand variants for matching)
     const { data: existingLinks } = await supabase
       .from('card_profile_links')
       .select('profile_id')
       .eq('card_last4', normalizedLast4)
-      .ilike('card_brand', normalizedBrand);
+      .in('card_brand', brandVariants);
 
     const linkedProfileIds = new Set<string>();
     existingLinks?.forEach(link => {
       if (link.profile_id) linkedProfileIds.add(link.profile_id);
     });
 
-    // 2) Check payment_methods table
+    // 2) Check payment_methods table (using brand variants for matching)
     const { data: existingMethods } = await supabase
       .from('payment_methods')
       .select('user_id')
       .eq('last4', normalizedLast4)
-      .ilike('brand', normalizedBrand)
+      .in('brand', brandVariants)
       .eq('status', 'active');
 
     // Get profile_ids from payment_methods via user_id
@@ -180,11 +204,12 @@ serve(async (req) => {
         });
 
         return new Response(JSON.stringify({
-          ok: false,
+          ok: true,  // Managed stop, not error
           dry_run,
           status: 'stop',
           stats: { candidates_payments: 0, candidates_queue: 0, updated_payments_profile: 0, updated_queue_profile: 0, skipped_already_linked: 0, conflicts: 0 },
           stop_reason: 'card_collision_last4_brand',
+          force_linked: false,
         } as AutolinkResponse), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -204,6 +229,7 @@ serve(async (req) => {
             brand: normalizedBrand,
             dry_run,
             force_ignore_collision: true,
+            force_linked: true,
             other_profiles: Array.from(linkedProfileIds).slice(0, 5),
             warning: 'Admin forced link despite collision - card may be shared',
           },
@@ -244,12 +270,12 @@ serve(async (req) => {
 
     // ========== P1: Match by last4 + brand ==========
     
-    // 1) payments_v2: Find unlinked payments with matching card
+    // 1) payments_v2: Find unlinked payments with matching card (using brand variants)
     const { data: paymentsRaw } = await supabase
       .from('payments_v2')
       .select('id, profile_id, provider_payment_id, amount, paid_at')
       .eq('card_last4', normalizedLast4)
-      .ilike('card_brand', normalizedBrand)
+      .in('card_brand', brandVariants)
       .limit(limit + 100); // Extra buffer for filtering
 
     const paymentsToUpdate: Array<{ id: string; bepaid_uid?: string; amount: number; paid_at?: string }> = [];
@@ -291,12 +317,12 @@ serve(async (req) => {
 
     candidatesPayments = paymentsToUpdate.length;
 
-    // 2) payment_reconcile_queue: Find unlinked queue items
+    // 2) payment_reconcile_queue: Find unlinked queue items (using brand variants)
     const { data: queueRaw } = await supabase
       .from('payment_reconcile_queue')
       .select('id, matched_profile_id, bepaid_uid, amount, paid_at')
       .eq('card_last4', normalizedLast4)
-      .ilike('card_brand', normalizedBrand)
+      .in('card_brand', brandVariants)
       .limit(limit + 100);
 
     const queueToUpdate: Array<{ id: string; bepaid_uid?: string; amount: number; paid_at?: string }> = [];

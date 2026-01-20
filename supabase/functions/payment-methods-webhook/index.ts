@@ -6,6 +6,23 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Normalize card brand for consistent storage and matching
+function normalizeBrand(brand: string | null | undefined): string {
+  if (!brand) return '';
+  const b = brand.toLowerCase().trim();
+  const brandMap: Record<string, string> = {
+    'visa': 'visa',
+    'mastercard': 'mastercard',
+    'master': 'mastercard',
+    'mc': 'mastercard',
+    'belkart': 'belkart',
+    'belcard': 'belkart',
+    'maestro': 'maestro',
+    'mir': 'mir',
+  };
+  return brandMap[b] || b;
+}
+
 // Translate card tokenization errors to Russian
 function translateTokenizationError(error: string): string {
   const errorMap: Record<string, string> = {
@@ -326,6 +343,55 @@ serve(async (req) => {
         card_category: cardCategory,
       },
     });
+
+    // ========== CREATE card_profile_links for future autolink matching ==========
+    try {
+      const { data: profileForLink } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('user_id', userId)
+        .single();
+
+      if (profileForLink?.id && cardLast4) {
+        const normalizedBrandValue = normalizeBrand(cardBrand);
+        
+        // Check if link already exists for this card+profile combination
+        const { data: existingLink } = await supabase
+          .from('card_profile_links')
+          .select('id, card_brand')
+          .eq('card_last4', cardLast4)
+          .eq('profile_id', profileForLink.id)
+          .maybeSingle();
+
+        if (!existingLink) {
+          // Insert new link
+          const { error: linkError } = await supabase.from('card_profile_links').insert({
+            card_last4: cardLast4,
+            card_brand: normalizedBrandValue,
+            card_holder: null,
+            profile_id: profileForLink.id,
+          });
+          
+          if (linkError) {
+            console.error(`[payment-methods-webhook] Error creating card_profile_link:`, linkError);
+          } else {
+            console.log(`[payment-methods-webhook] Created card_profile_link for ${cardLast4}/${normalizedBrandValue} -> profile ${profileForLink.id}`);
+          }
+        } else if (existingLink.card_brand !== normalizedBrandValue) {
+          // Update brand if it changed (e.g., 'master' -> 'mastercard')
+          await supabase.from('card_profile_links')
+            .update({ 
+              card_brand: normalizedBrandValue,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existingLink.id);
+          console.log(`[payment-methods-webhook] Updated card_profile_link brand for ${cardLast4}: ${existingLink.card_brand} -> ${normalizedBrandValue}`);
+        }
+      }
+    } catch (linkError) {
+      // Non-blocking — log and continue (card_profile_links is optional, autolink still works with payment_methods)
+      console.error('[payment-methods-webhook] card_profile_links error (non-blocking):', linkError);
+    }
 
     console.log(`Payment method saved for user ${userId}: ${cardBrand} **** ${cardLast4} (product: ${cardProduct})`);
     
