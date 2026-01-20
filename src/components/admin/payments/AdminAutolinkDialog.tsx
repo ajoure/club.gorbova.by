@@ -47,7 +47,7 @@ interface AdminAutolinkDialogProps {
   prefillBrand?: string;
 }
 
-export function AdminAutolinkDialog({
+function AdminAutolinkDialog({
   onComplete,
   renderTrigger,
   prefillLast4,
