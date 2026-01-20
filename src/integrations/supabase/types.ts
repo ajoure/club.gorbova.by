@@ -6650,6 +6650,44 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_unlinked_cards_details: {
+        Args: {
+          _brand: string
+          _last4: string
+          _limit?: number
+          _offset?: number
+        }
+        Returns: {
+          amount: number
+          card_holder: string
+          customer_email: string
+          id: string
+          paid_at: string
+          source: string
+          status: string
+          total_count: number
+          uid: string
+        }[]
+      }
+      admin_unlinked_cards_report: {
+        Args: {
+          _brand?: string
+          _last4?: string
+          _limit?: number
+          _offset?: number
+        }
+        Returns: {
+          brand: string
+          collision_risk: boolean
+          last_seen_at: string
+          last4: string
+          payments_amount: number
+          queue_amount: number
+          total_amount: number
+          unlinked_payments_v2_count: number
+          unlinked_queue_count: number
+        }[]
+      }
       cleanup_demo_counts: {
         Args: never
         Returns: {

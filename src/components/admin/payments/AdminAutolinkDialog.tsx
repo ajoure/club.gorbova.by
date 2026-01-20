@@ -12,6 +12,7 @@ import { Link2, Search, Loader2, AlertTriangle, CheckCircle2, XCircle, Users } f
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { CARD_BRANDS, normalizeBrand } from "@/lib/card-utils";
 
 interface ProfileSearchResult {
   id: string;
@@ -46,15 +47,7 @@ interface AdminAutolinkDialogProps {
   prefillBrand?: string;
 }
 
-const CARD_BRANDS = [
-  { value: 'visa', label: 'Visa' },
-  { value: 'mastercard', label: 'Mastercard' },
-  { value: 'belkart', label: 'Belkart' },
-  { value: 'maestro', label: 'Maestro' },
-  { value: 'mir', label: 'МИР' },
-];
-
-export default function AdminAutolinkDialog({
+export function AdminAutolinkDialog({
   onComplete,
   renderTrigger,
   prefillLast4,
@@ -462,3 +455,5 @@ export default function AdminAutolinkDialog({
     </>
   );
 }
+
+export default AdminAutolinkDialog;
