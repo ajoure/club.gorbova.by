@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2, RefreshCw, CreditCard, AlertTriangle, Link2, Eye } from "lucide-react";
+import { Loader2, RefreshCw, CreditCard, AlertTriangle, Link2, Eye, Wrench } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -11,7 +11,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import UnlinkedPaymentsDetailDrawer from "./UnlinkedPaymentsDetailDrawer";
 import AdminAutolinkDialog from "./AdminAutolinkDialog";
-
+import AdminRepairCollisionDialog from "./AdminRepairCollisionDialog";
 interface UnlinkedCardAggregation {
   last4: string;
   brand: string;
@@ -227,19 +227,25 @@ export default function UnlinkedPaymentsReport({ onComplete }: UnlinkedPaymentsR
                             <Eye className="h-4 w-4" />
                           </Button>
                           
-                          {/* Collision hard-block: show disabled button with tooltip instead of hiding */}
+                          {/* Collision: show repair button instead of disabled link */}
                           {card.collision_risk ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button variant="ghost" size="sm" disabled>
-                                  <Link2 className="h-4 w-4 text-muted-foreground" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="left" className="max-w-xs">
-                                <p className="font-medium">Коллизия: карта связана с несколькими профилями.</p>
-                                <p className="text-xs mt-1">Автопривязка заблокирована.</p>
-                              </TooltipContent>
-                            </Tooltip>
+                            <AdminRepairCollisionDialog
+                              last4={card.last4}
+                              brand={card.brand}
+                              onComplete={handleAutolinked}
+                              renderTrigger={(onClick) => (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="sm" onClick={onClick} className="text-yellow-600 hover:text-yellow-700">
+                                      <Wrench className="h-4 w-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="left">
+                                    Исправить коллизию
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                            />
                           ) : (
                             <AdminAutolinkDialog
                               onComplete={handleAutolinked}

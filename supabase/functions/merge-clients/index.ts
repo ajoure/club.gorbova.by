@@ -212,6 +212,60 @@ serve(async (req) => {
     }
 
     // ========================================
+    // 6.3.5 card_profile_links transfer/cleanup (CRITICAL for collision fix)
+    // ========================================
+    let transferredCardProfileLinks = 0;
+    let deletedCardProfileLinks = 0;
+
+    if (mergedProfileIds.length > 0) {
+      // Get cards from merged profiles
+      const { data: mergedCards } = await supabase
+        .from("card_profile_links")
+        .select("id, card_last4, card_brand")
+        .in("profile_id", mergedProfileIds);
+      
+      if (mergedCards && mergedCards.length > 0) {
+        // Get master's existing cards (using normalized brand logic)
+        const { data: masterCards } = await supabase
+          .from("card_profile_links")
+          .select("card_last4, card_brand")
+          .eq("profile_id", masterProfileId);
+        
+        // Create a set of normalized card keys master already has
+        const normalizeCardBrand = (brand: string | null): string => {
+          if (!brand) return 'unknown';
+          const lower = brand.toLowerCase().trim();
+          if (lower === 'master' || lower === 'mc') return 'mastercard';
+          return lower;
+        };
+        
+        const masterCardSet = new Set(
+          (masterCards || []).map(c => `${c.card_last4}|${normalizeCardBrand(c.card_brand)}`)
+        );
+        
+        for (const card of mergedCards) {
+          const normalizedKey = `${card.card_last4}|${normalizeCardBrand(card.card_brand)}`;
+          
+          if (masterCardSet.has(normalizedKey)) {
+            // Duplicate - delete the merged one
+            await supabase.from("card_profile_links").delete().eq("id", card.id);
+            deletedCardProfileLinks++;
+          } else {
+            // Transfer to master
+            await supabase
+              .from("card_profile_links")
+              .update({ profile_id: masterProfileId })
+              .eq("id", card.id);
+            transferredCardProfileLinks++;
+            masterCardSet.add(normalizedKey);
+          }
+        }
+      }
+      
+      console.log(`[merge-clients] card_profile_links: transferred=${transferredCardProfileLinks}, deleted=${deletedCardProfileLinks}`);
+    }
+
+    // ========================================
     // 6.4 Auth-based перенос (через profiles.user_id)
     // ========================================
     if (mergedAuthUserIds.length > 0 && masterAuthUserId) {
@@ -350,6 +404,8 @@ serve(async (req) => {
           telegram_access: transferredTelegramAccess,
           telegram_access_grants: transferredTelegramAccessGrants,
           telegram_link_tokens: transferredTelegramLinkTokens,
+          card_profile_links_transferred: transferredCardProfileLinks,
+          card_profile_links_deleted: deletedCardProfileLinks,
         },
         telegram_transferred: telegramTransferred,
         telegram_source_profile_id: withTelegram?.id || null,

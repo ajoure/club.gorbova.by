@@ -6650,6 +6650,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_repair_card_links: {
+        Args: {
+          _brand: string
+          _dry_run?: boolean
+          _last4: string
+          _target_profile_id: string
+        }
+        Returns: Json
+      }
       admin_unlinked_cards_details: {
         Args: {
           _brand: string
@@ -6872,6 +6881,7 @@ export type Database = {
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       is_superadmin: { Args: { check_user_id: string }; Returns: boolean }
+      normalize_card_brand: { Args: { _brand: string }; Returns: string }
       queue_telegram_notification: {
         Args: {
           p_club_id?: string
