@@ -347,54 +347,64 @@ export default function AdminPayments() {
         </div>
 
         {/* Glassmorphism Tabs */}
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "payments" | "unlinked" | "security")} className="space-y-4">
-          <div className="p-1.5 rounded-2xl bg-background/40 backdrop-blur-xl border border-border/30 shadow-lg">
-            <TabsList className="w-full grid grid-cols-3 gap-1 bg-transparent p-0 h-auto">
-              <TabsTrigger 
-                value="payments" 
-                className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all data-[state=active]:bg-background/80 data-[state=active]:shadow-md data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background/40"
-              >
-                Транзакции
-              </TabsTrigger>
-              <TabsTrigger 
-                value="unlinked" 
-                className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all data-[state=active]:bg-background/80 data-[state=active]:shadow-md data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background/40"
-              >
-                Непривязанные
-              </TabsTrigger>
-              <TabsTrigger 
-                value="security" 
-                className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all data-[state=active]:bg-background/80 data-[state=active]:shadow-md data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background/40"
-              >
-                <Shield className="h-4 w-4" />
-                Безопасность
-              </TabsTrigger>
-            </TabsList>
+        <div className="p-1.5 rounded-2xl bg-background/40 backdrop-blur-xl border border-border/30 shadow-lg">
+          <div className="w-full grid grid-cols-3 gap-1 bg-transparent p-0 h-auto">
+            <button 
+              onClick={() => setActiveTab("payments")}
+              className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all ${
+                activeTab === "payments" 
+                  ? "bg-background/80 shadow-md text-foreground" 
+                  : "text-muted-foreground hover:bg-background/40"
+              }`}
+            >
+              Транзакции
+            </button>
+            <button 
+              onClick={() => setActiveTab("unlinked")}
+              className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all ${
+                activeTab === "unlinked" 
+                  ? "bg-background/80 shadow-md text-foreground" 
+                  : "text-muted-foreground hover:bg-background/40"
+              }`}
+            >
+              Непривязанные
+            </button>
+            <button 
+              onClick={() => setActiveTab("security")}
+              className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all ${
+                activeTab === "security" 
+                  ? "bg-background/80 shadow-md text-foreground" 
+                  : "text-muted-foreground hover:bg-background/40"
+              }`}
+            >
+              <Shield className="h-4 w-4" />
+              Безопасность
+            </button>
           </div>
-          
-          {/* Toolbar - only for payments tab */}
-          {activeTab === "payments" && (
-            <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-background/30 backdrop-blur-sm border border-border/20">
-              <DatePeriodSelector value={dateFilter} onChange={setDateFilter} />
-              <div className="flex-1" />
-              <Button variant="outline" onClick={handleBepaidSync} className="gap-2 h-9 bg-background/60">
-                <RefreshCw className="h-4 w-4" />
-                <span className="hidden sm:inline">Синхронизировать</span>
-              </Button>
-              <Button onClick={() => setImportDialogOpen(true)} className="gap-2 h-9">
-                <Upload className="h-4 w-4" />
-                <span className="hidden sm:inline">Импорт</span>
-              </Button>
-              <AutolinkAllCardsButton />
-              <PaymentsSettingsDropdown 
-                selectedIds={selectedItems.size > 0 ? Array.from(selectedItems) : undefined}
-                onRefreshFromApi={handleRefreshFromApi}
-                isRefreshingFromApi={isRefreshingFromApi}
-                onComplete={refetch}
-              />
-            </div>
-          )}
         </div>
+        
+        {/* Toolbar - only for payments tab */}
+        {activeTab === "payments" && (
+          <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-background/30 backdrop-blur-sm border border-border/20">
+            <DatePeriodSelector value={dateFilter} onChange={setDateFilter} />
+            <div className="flex-1" />
+            <Button variant="outline" onClick={handleBepaidSync} className="gap-2 h-9 bg-background/60">
+              <RefreshCw className="h-4 w-4" />
+              <span className="hidden sm:inline">Синхронизировать</span>
+            </Button>
+            <Button onClick={() => setImportDialogOpen(true)} className="gap-2 h-9">
+              <Upload className="h-4 w-4" />
+              <span className="hidden sm:inline">Импорт</span>
+            </Button>
+            <AutolinkAllCardsButton />
+            <PaymentsSettingsDropdown 
+              selectedIds={selectedItems.size > 0 ? Array.from(selectedItems) : undefined}
+              onRefreshFromApi={handleRefreshFromApi}
+              isRefreshingFromApi={isRefreshingFromApi}
+              onComplete={refetch}
+            />
+          </div>
+        )}
         
         {/* Tab Content */}
         {activeTab === "security" ? (
@@ -412,105 +422,105 @@ export default function AdminPayments() {
               dateFilter={dateFilter}
             />
 
-        {/* Main content */}
-        <Card>
-          <CardHeader className="pb-4">
-            <div className="flex items-center justify-between flex-wrap gap-4">
-              <div>
-                <CardTitle>Транзакции</CardTitle>
-                <CardDescription>
-                  {filteredPayments.length} из {payments.length} транзакций
-                </CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                {/* Search */}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Поиск по UID, email, телефону, карте, заказу..."
-                    value={filters.search}
-                    onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                    className="pl-10 w-80"
-                  />
+            {/* Main content */}
+            <Card>
+              <CardHeader className="pb-4">
+                <div className="flex items-center justify-between flex-wrap gap-4">
+                  <div>
+                    <CardTitle>Транзакции</CardTitle>
+                    <CardDescription>
+                      {filteredPayments.length} из {payments.length} транзакций
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {/* Search */}
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Поиск по UID, email, телефону, карте, заказу..."
+                        value={filters.search}
+                        onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                        className="pl-10 w-80"
+                      />
+                    </div>
+                    
+                    {/* Filter toggle */}
+                    <Button 
+                      variant={showFilters ? "secondary" : "outline"} 
+                      onClick={() => setShowFilters(!showFilters)}
+                      className="gap-2"
+                    >
+                      <Filter className="h-4 w-4" />
+                      Фильтры
+                      {activeFiltersCount > 0 && (
+                        <Badge variant="secondary" className="ml-1">{activeFiltersCount}</Badge>
+                      )}
+                    </Button>
+                    
+                    {/* Reset filters */}
+                    {activeFiltersCount > 0 && (
+                      <Button variant="ghost" size="sm" onClick={resetFilters}>
+                        <X className="h-4 w-4 mr-1" />
+                        Сбросить
+                      </Button>
+                    )}
+                    
+                    {/* Export */}
+                    <Button variant="outline" onClick={handleExport} disabled={filteredPayments.length === 0}>
+                      <Download className="h-4 w-4 mr-2" />
+                      CSV
+                    </Button>
+                  </div>
                 </div>
                 
-                {/* Filter toggle */}
-                <Button 
-                  variant={showFilters ? "secondary" : "outline"} 
-                  onClick={() => setShowFilters(!showFilters)}
-                  className="gap-2"
-                >
-                  <Filter className="h-4 w-4" />
-                  Фильтры
-                  {activeFiltersCount > 0 && (
-                    <Badge variant="secondary" className="ml-1">{activeFiltersCount}</Badge>
-                  )}
-                </Button>
-                
-                {/* Reset filters */}
-                {activeFiltersCount > 0 && (
-                  <Button variant="ghost" size="sm" onClick={resetFilters}>
-                    <X className="h-4 w-4 mr-1" />
-                    Сбросить
-                  </Button>
+                {/* Filters panel */}
+                {showFilters && (
+                  <PaymentsFilters filters={filters} setFilters={setFilters} />
+                )}
+              </CardHeader>
+              
+              <CardContent>
+                {/* Batch actions */}
+                {selectedItems.size > 0 && (
+                  <PaymentsBatchActions
+                    selectedPayments={filteredPayments.filter(p => selectedItems.has(p.id))}
+                    onSuccess={() => {
+                      setSelectedItems(new Set());
+                      refetch();
+                    }}
+                    onClearSelection={() => setSelectedItems(new Set())}
+                  />
                 )}
                 
-                {/* Export */}
-                <Button variant="outline" onClick={handleExport} disabled={filteredPayments.length === 0}>
-                  <Download className="h-4 w-4 mr-2" />
-                  CSV
-                </Button>
-              </div>
-            </div>
+                {/* Table */}
+                <PaymentsTable
+                  payments={filteredPayments}
+                  isLoading={isLoading}
+                  selectedItems={selectedItems}
+                  onToggleSelectAll={toggleSelectAll}
+                  onToggleItem={toggleItem}
+                  onRefetch={refetch}
+                />
+              </CardContent>
+            </Card>
             
-            {/* Filters panel */}
-            {showFilters && (
-              <PaymentsFilters filters={filters} setFilters={setFilters} />
-            )}
-          </CardHeader>
-          
-          <CardContent>
-            {/* Batch actions */}
-            {selectedItems.size > 0 && (
-              <PaymentsBatchActions
-                selectedPayments={filteredPayments.filter(p => selectedItems.has(p.id))}
-                onSuccess={() => {
-                  setSelectedItems(new Set());
-                  refetch();
-                }}
-                onClearSelection={() => setSelectedItems(new Set())}
-              />
-            )}
-            
-            {/* Table */}
-            <PaymentsTable
-              payments={filteredPayments}
-              isLoading={isLoading}
-              selectedItems={selectedItems}
-              onToggleSelectAll={toggleSelectAll}
-              onToggleItem={toggleItem}
-              onRefetch={refetch}
+            {/* Import dialog */}
+            <SmartImportDialog
+              open={importDialogOpen}
+              onOpenChange={setImportDialogOpen}
+              onSuccess={() => {
+                refetch();
+                setImportDialogOpen(false);
+              }}
             />
-          </CardContent>
-        </Card>
-        
-        {/* Import dialog */}
-        <SmartImportDialog
-          open={importDialogOpen}
-          onOpenChange={setImportDialogOpen}
-          onSuccess={() => {
-            refetch();
-            setImportDialogOpen(false);
-          }}
-        />
-        
-        {/* Full Sync dialog */}
-        <BepaidFullSyncDialog
-          open={fullSyncDialogOpen}
-          onOpenChange={setFullSyncDialogOpen}
-          onComplete={refetch}
-          defaultFromDate="2026-01-01"
-        />
+            
+            {/* Full Sync dialog */}
+            <BepaidFullSyncDialog
+              open={fullSyncDialogOpen}
+              onOpenChange={setFullSyncDialogOpen}
+              onComplete={refetch}
+              defaultFromDate="2026-01-01"
+            />
           </>
         )}
       </div>
