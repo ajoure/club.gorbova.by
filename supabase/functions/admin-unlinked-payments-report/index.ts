@@ -125,6 +125,7 @@ serve(async (req) => {
       }
 
       const totalCount = details?.[0]?.total_count || 0;
+      const loadedCount = details?.length || 0;
 
       return new Response(JSON.stringify({
         ok: true,
@@ -141,7 +142,12 @@ serve(async (req) => {
           card_holder: d.card_holder,
         })),
         total: totalCount,
-        pagination: { limit, offset, has_more: (details?.length || 0) === limit }
+        pagination: { 
+          limit, 
+          offset, 
+          total: totalCount,
+          has_more: totalCount > (offset + loadedCount) 
+        }
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

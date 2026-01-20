@@ -4,6 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Loader2, RefreshCw, CreditCard, AlertTriangle, Link2, Eye } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -91,7 +92,7 @@ export default function UnlinkedPaymentsReport({ onComplete }: UnlinkedPaymentsR
   const collisionCount = cards.filter(c => c.collision_risk).length;
 
   return (
-    <>
+    <TooltipProvider>
       <Card>
         <CardHeader className="pb-4">
           <div className="flex items-center justify-between flex-wrap gap-4">
@@ -226,7 +227,20 @@ export default function UnlinkedPaymentsReport({ onComplete }: UnlinkedPaymentsR
                             <Eye className="h-4 w-4" />
                           </Button>
                           
-                          {!card.collision_risk && (
+                          {/* Collision hard-block: show disabled button with tooltip instead of hiding */}
+                          {card.collision_risk ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="sm" disabled>
+                                  <Link2 className="h-4 w-4 text-muted-foreground" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="left" className="max-w-xs">
+                                <p className="font-medium">Коллизия: карта связана с несколькими профилями.</p>
+                                <p className="text-xs mt-1">Автопривязка заблокирована.</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : (
                             <AdminAutolinkDialog
                               onComplete={handleAutolinked}
                               prefillLast4={card.last4}
@@ -264,6 +278,6 @@ export default function UnlinkedPaymentsReport({ onComplete }: UnlinkedPaymentsR
           onComplete={handleAutolinked}
         />
       )}
-    </>
+    </TooltipProvider>
   );
 }
