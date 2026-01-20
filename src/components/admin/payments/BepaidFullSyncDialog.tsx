@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, CheckCircle, AlertCircle, Plus, ArrowRight, Clock, CreditCard, RefreshCw } from "lucide-react";
+import { Loader2, CheckCircle, AlertCircle, Plus, ArrowRight, CreditCard, RefreshCw, ShieldCheck, Search } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -28,13 +28,59 @@ interface ReconcileResult {
   ok: boolean;
   dry_run: boolean;
   period: { from_date: string; to_date: string };
-  fetched: {
+  runtime_ms?: number;
+  error?: string;
+  
+  // Mode info
+  mode_used: 'list' | 'uid_verify';
+  fallback_reason?: string;
+  endpoint_used?: string;
+  
+  // LIST mode fields (optional - only present in list mode)
+  fetched?: {
     bepaid_total: number;
     pages: number;
-    cursor_next: string | null;
   };
-  compared: { our_total: number };
-  changes: {
+  db?: {
+    already_in_db: number;
+    missing_in_db: number;
+    mismatched: number;
+  };
+  actions?: {
+    inserted: number;
+    updated: number;
+    skipped: number;
+    errors: number;
+  };
+  
+  // UID_VERIFY mode fields (optional - only present in uid_verify mode)
+  uid_verify_stats?: {
+    checked_uids: number;
+    verified_ok: number;
+    unverifiable: number;
+    updated_amount: number;
+    updated_status: number;
+    updated_paid_at: number;
+    updated_card_fields: number;
+    refunds_card_filled: number;
+    errors: number;
+  };
+  
+  // Samples (structure differs by mode)
+  samples?: {
+    // LIST mode samples
+    inserts?: Array<{ uid: string; amount: number; status: string }>;
+    updates?: Array<{ uid: string; changes: string[] }>;
+    mismatches?: Array<{ uid: string; changes: string[] }>;
+    // UID_VERIFY mode samples
+    verified?: Array<{ uid: string; changes: string[] }>;
+    unverifiable?: Array<{ uid: string; reason: string }>;
+    errors?: Array<{ uid: string; error: string }>;
+  };
+  
+  // Legacy fields for backwards compat
+  compared?: { our_total: number };
+  changes?: {
     added: number;
     updated_amount: number;
     updated_status: number;
@@ -45,15 +91,6 @@ interface ReconcileResult {
     unchanged: number;
     errors: number;
   };
-  samples: {
-    added: Array<{ uid: string; amount: number; status: string; paid_at: string }>;
-    discrepancies_amount: Array<{ uid: string; our_amount: number; bepaid_amount: number; fixed: boolean }>;
-    discrepancies_status: Array<{ uid: string; our_status: string; bepaid_status: string; fixed: boolean }>;
-    discrepancies_paid_at: Array<{ uid: string; our_paid_at: string; bepaid_paid_at: string; fixed: boolean }>;
-    card_backfilled?: Array<{ uid: string; field: string; old_value: string | null; new_value: string }>;
-    errors: Array<{ uid: string; error: string }>;
-  };
-  error?: string;
 }
 
 export default function BepaidFullSyncDialog({ 
@@ -79,6 +116,7 @@ export default function BepaidFullSyncDialog({
           from_date: fromDate,
           to_date: toDate,
           dry_run: true,
+          mode: 'auto',
         },
       });
 
@@ -86,7 +124,11 @@ export default function BepaidFullSyncDialog({
       
       if (data.ok) {
         setResult(data);
-        toast.success(`Найдено ${data.fetched.bepaid_total} транзакций на bePaid`);
+        if (data.mode_used === 'list') {
+          toast.success(`Найдено ${data.fetched?.bepaid_total || 0} транзакций на bePaid`);
+        } else {
+          toast.success(`Проверено ${data.uid_verify_stats?.checked_uids || 0} транзакций по UID`);
+        }
       } else {
         toast.error(data.error || "Ошибка при проверке");
       }
@@ -101,8 +143,7 @@ export default function BepaidFullSyncDialog({
   const handleExecute = async () => {
     if (!result) return;
     
-    const totalChanges = result.changes.added + result.changes.updated_amount + result.changes.updated_status + 
-      (result.changes.updated_card_fields || 0) + (result.changes.brand_normalized || 0);
+    const totalChanges = getTotalChanges(result);
     if (totalChanges === 0) {
       toast.info("Нет изменений для применения");
       return;
@@ -116,6 +157,7 @@ export default function BepaidFullSyncDialog({
           from_date: fromDate,
           to_date: toDate,
           dry_run: false,
+          mode: 'auto',
         },
       });
 
@@ -123,22 +165,15 @@ export default function BepaidFullSyncDialog({
       
       if (data.ok) {
         setResult(data);
-        const { added, updated_amount, updated_status, updated_card_fields, brand_normalized, refunds_card_filled, errors } = data.changes;
-        const parts = [
-          `Добавлено: ${added}`,
-          `сумм: ${updated_amount}`,
-          `статусов: ${updated_status}`,
-        ];
-        if (updated_card_fields > 0 || brand_normalized > 0) {
-          parts.push(`карт: ${(updated_card_fields || 0) + (brand_normalized || 0)}`);
+        
+        if (data.mode_used === 'list') {
+          const { inserted = 0, updated = 0, errors = 0 } = data.actions || {};
+          toast.success(`Готово! Добавлено: ${inserted}, обновлено: ${updated}${errors > 0 ? `, ошибок: ${errors}` : ''}`);
+        } else {
+          const stats = data.uid_verify_stats || {};
+          const updated = (stats.updated_amount || 0) + (stats.updated_status || 0) + (stats.updated_card_fields || 0);
+          toast.success(`Готово! Обновлено: ${updated}, недоступно: ${stats.unverifiable || 0}`);
         }
-        if (refunds_card_filled > 0) {
-          parts.push(`возвратов: ${refunds_card_filled}`);
-        }
-        if (errors > 0) {
-          parts.push(`ошибок: ${errors}`);
-        }
-        toast.success(`Готово! ${parts.join(", ")}`);
         onComplete?.();
       } else {
         toast.error(data.error || "Ошибка при выполнении");
@@ -157,12 +192,17 @@ export default function BepaidFullSyncDialog({
     onOpenChange(false);
   };
 
-  const totalChanges = result ? 
-    result.changes.added + result.changes.updated_amount + result.changes.updated_status + result.changes.updated_paid_at +
-    (result.changes.updated_card_fields || 0) + (result.changes.brand_normalized || 0) : 0;
+  const getTotalChanges = (res: ReconcileResult): number => {
+    if (res.mode_used === 'list') {
+      return (res.actions?.inserted || 0) + (res.actions?.updated || 0);
+    } else {
+      const stats = res.uid_verify_stats;
+      if (!stats) return 0;
+      return stats.updated_amount + stats.updated_status + stats.updated_card_fields;
+    }
+  };
 
-  const cardChanges = result ? 
-    (result.changes.updated_card_fields || 0) + (result.changes.brand_normalized || 0) + (result.changes.refunds_card_filled || 0) : 0;
+  const totalChanges = result ? getTotalChanges(result) : 0;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -170,8 +210,35 @@ export default function BepaidFullSyncDialog({
         <DialogHeader>
           <DialogTitle>Полная сверка с bePaid</DialogTitle>
           <DialogDescription>
-            bePaid — источник истины. Добавляем недостающие платежи, исправляем суммы, статусы и данные карт.
+            bePaid — источник истины. Проверяем и синхронизируем суммы, статусы и данные карт.
           </DialogDescription>
+          
+          {/* Mode indicator */}
+          {result?.mode_used && (
+            <div className="flex items-center gap-2 mt-3 p-2 rounded bg-muted/50">
+              <Badge variant={result.mode_used === 'list' ? 'default' : 'secondary'} className="gap-1">
+                {result.mode_used === 'list' ? (
+                  <>
+                    <Search className="h-3 w-3" />
+                    Полный список
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="h-3 w-3" />
+                    Проверка по UID
+                  </>
+                )}
+              </Badge>
+              {result.fallback_reason && (
+                <span className="text-xs text-muted-foreground">
+                  (ограничение API: {result.fallback_reason.length > 50 ? result.fallback_reason.substring(0, 50) + '...' : result.fallback_reason})
+                </span>
+              )}
+              {result.endpoint_used && result.mode_used === 'list' && (
+                <code className="text-xs bg-muted px-1 rounded ml-auto">{result.endpoint_used}</code>
+              )}
+            </div>
+          )}
         </DialogHeader>
 
         <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
@@ -220,63 +287,89 @@ export default function BepaidFullSyncDialog({
           {/* Results */}
           {result && (
             <div className="flex-1 overflow-hidden flex flex-col space-y-4">
-              {/* Summary cards */}
-              <div className="grid grid-cols-4 gap-2">
-                <div className="p-3 rounded-lg bg-muted/50 text-center">
-                  <div className="text-2xl font-bold">{result.fetched.bepaid_total}</div>
-                  <div className="text-xs text-muted-foreground">На bePaid</div>
-                </div>
-                <div className="p-3 rounded-lg bg-muted/50 text-center">
-                  <div className="text-2xl font-bold">{result.compared.our_total}</div>
-                  <div className="text-xs text-muted-foreground">У нас</div>
-                </div>
-                <div className="p-3 rounded-lg bg-green-500/10 text-center">
-                  <div className="text-2xl font-bold text-green-600">{result.changes.added}</div>
-                  <div className="text-xs text-muted-foreground">Добавить</div>
-                </div>
-                <div className="p-3 rounded-lg bg-yellow-500/10 text-center">
-                  <div className="text-2xl font-bold text-yellow-600">
-                    {result.changes.updated_amount + result.changes.updated_status}
+              {/* Summary cards - conditional rendering by mode */}
+              {result.mode_used === 'list' ? (
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="p-3 rounded-lg bg-muted/50 text-center">
+                    <div className="text-2xl font-bold">{result.fetched?.bepaid_total || 0}</div>
+                    <div className="text-xs text-muted-foreground">На bePaid</div>
                   </div>
-                  <div className="text-xs text-muted-foreground">Исправить</div>
+                  <div className="p-3 rounded-lg bg-muted/50 text-center">
+                    <div className="text-2xl font-bold">{result.db?.already_in_db || 0}</div>
+                    <div className="text-xs text-muted-foreground">Уже есть</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-green-500/10 text-center">
+                    <div className="text-2xl font-bold text-green-600">{result.actions?.inserted || 0}</div>
+                    <div className="text-xs text-muted-foreground">Добавлено</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-yellow-500/10 text-center">
+                    <div className="text-2xl font-bold text-yellow-600">{result.actions?.updated || 0}</div>
+                    <div className="text-xs text-muted-foreground">Обновлено</div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="p-3 rounded-lg bg-muted/50 text-center">
+                    <div className="text-2xl font-bold">{result.uid_verify_stats?.checked_uids || 0}</div>
+                    <div className="text-xs text-muted-foreground">Проверено</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-green-500/10 text-center">
+                    <div className="text-2xl font-bold text-green-600">{result.uid_verify_stats?.verified_ok || 0}</div>
+                    <div className="text-xs text-muted-foreground">Совпали</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-yellow-500/10 text-center">
+                    <div className="text-2xl font-bold text-yellow-600">
+                      {(result.uid_verify_stats?.updated_amount || 0) + 
+                       (result.uid_verify_stats?.updated_status || 0) +
+                       (result.uid_verify_stats?.updated_card_fields || 0)}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Обновлено</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-orange-500/10 text-center">
+                    <div className="text-2xl font-bold text-orange-600">{result.uid_verify_stats?.unverifiable || 0}</div>
+                    <div className="text-xs text-muted-foreground">Недоступно</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Unverifiable warning */}
+              {result.uid_verify_stats && result.uid_verify_stats.unverifiable > 0 && (
+                <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-orange-600 shrink-0" />
+                  <span className="text-sm">
+                    {result.uid_verify_stats.unverifiable} транзакций нельзя подтвердить через bePaid API 
+                    (ограничение доступа). Данные оставлены как в импорте.
+                  </span>
+                </div>
+              )}
 
               {/* Tabs with details */}
               <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
-                <TabsList className="grid grid-cols-6 w-full">
+                <TabsList className="grid grid-cols-4 w-full">
                   <TabsTrigger value="summary" className="gap-1">
                     Итого
                   </TabsTrigger>
-                  <TabsTrigger value="added" className="gap-1">
-                    <Plus className="h-3 w-3" />
-                    {result.changes.added}
-                  </TabsTrigger>
-                  <TabsTrigger value="amounts" className="gap-1">
-                    Суммы
-                    <Badge variant="secondary" className="ml-1 h-5 px-1">
-                      {result.changes.updated_amount}
-                    </Badge>
-                  </TabsTrigger>
-                  <TabsTrigger value="statuses" className="gap-1">
-                    Статусы
-                    <Badge variant="secondary" className="ml-1 h-5 px-1">
-                      {result.changes.updated_status}
-                    </Badge>
-                  </TabsTrigger>
-                  <TabsTrigger value="cards" className="gap-1">
-                    <CreditCard className="h-3 w-3" />
-                    {cardChanges > 0 && (
+                  <TabsTrigger value="changes" className="gap-1">
+                    Изменения
+                    {totalChanges > 0 && (
                       <Badge variant="secondary" className="ml-1 h-5 px-1">
-                        {cardChanges}
+                        {totalChanges}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger value="unverifiable" className="gap-1">
+                    Недоступно
+                    {(result.uid_verify_stats?.unverifiable || 0) > 0 && (
+                      <Badge variant="secondary" className="ml-1 h-5 px-1">
+                        {result.uid_verify_stats?.unverifiable}
                       </Badge>
                     )}
                   </TabsTrigger>
                   <TabsTrigger value="errors" className="gap-1">
                     Ошибки
-                    {result.changes.errors > 0 && (
+                    {((result.actions?.errors || 0) + (result.uid_verify_stats?.errors || 0)) > 0 && (
                       <Badge variant="destructive" className="ml-1 h-5 px-1">
-                        {result.changes.errors}
+                        {(result.actions?.errors || 0) + (result.uid_verify_stats?.errors || 0)}
                       </Badge>
                     )}
                   </TabsTrigger>
@@ -284,74 +377,106 @@ export default function BepaidFullSyncDialog({
 
                 <ScrollArea className="flex-1 mt-2">
                   <TabsContent value="summary" className="m-0 space-y-2">
-                    <div className="p-4 rounded-lg border space-y-3">
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Период</span>
-                        <span>{result.period.from_date} — {result.period.to_date}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Транзакций на bePaid</span>
-                        <span className="font-medium">{result.fetched.bepaid_total}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Платежей у нас</span>
-                        <span className="font-medium">{result.compared.our_total}</span>
-                      </div>
-                      <hr />
-                      <div className="flex justify-between items-center text-green-600">
-                        <span>Добавить новых</span>
-                        <span className="font-bold">{result.changes.added}</span>
-                      </div>
-                      <div className="flex justify-between items-center text-yellow-600">
-                        <span>Исправить суммы</span>
-                        <span className="font-bold">{result.changes.updated_amount}</span>
-                      </div>
-                      <div className="flex justify-between items-center text-yellow-600">
-                        <span>Исправить статусы</span>
-                        <span className="font-bold">{result.changes.updated_status}</span>
-                      </div>
-                      <div className="flex justify-between items-center text-yellow-600">
-                        <span>Исправить даты</span>
-                        <span className="font-bold">{result.changes.updated_paid_at}</span>
-                      </div>
-                      <hr />
-                      {/* Card fields section */}
-                      <div className="flex justify-between items-center text-blue-600">
-                        <span className="flex items-center gap-1">
-                          <CreditCard className="h-3 w-3" />
-                          Заполнить карты
-                        </span>
-                        <span className="font-bold">{result.changes.updated_card_fields || 0}</span>
-                      </div>
-                      <div className="flex justify-between items-center text-purple-600">
-                        <span className="flex items-center gap-1">
-                          <RefreshCw className="h-3 w-3" />
-                          Нормализовать бренды
-                        </span>
-                        <span className="font-bold">{result.changes.brand_normalized || 0}</span>
-                      </div>
-                      <div className="flex justify-between items-center text-teal-600">
-                        <span>Карты для возвратов</span>
-                        <span className="font-bold">{result.changes.refunds_card_filled || 0}</span>
-                      </div>
-                      <hr />
-                      <div className="flex justify-between items-center text-muted-foreground">
-                        <span>Без изменений</span>
-                        <span>{result.changes.unchanged}</span>
-                      </div>
-                      {result.changes.errors > 0 && (
-                        <div className="flex justify-between items-center text-red-600">
-                          <span>Ошибки</span>
-                          <span className="font-bold">{result.changes.errors}</span>
+                    {result.mode_used === 'list' ? (
+                      <div className="p-4 rounded-lg border space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Режим</span>
+                          <Badge variant="default">Полный список</Badge>
                         </div>
-                      )}
-                    </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Период</span>
+                          <span>{result.period.from_date} — {result.period.to_date}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Транзакций на bePaid</span>
+                          <span className="font-medium">{result.fetched?.bepaid_total || 0}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Страниц загружено</span>
+                          <span className="font-medium">{result.fetched?.pages || 0}</span>
+                        </div>
+                        <hr />
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Уже есть в БД</span>
+                          <span className="font-medium">{result.db?.already_in_db || 0}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Отсутствуют в БД</span>
+                          <span className="font-medium">{result.db?.missing_in_db || 0}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">С расхождениями</span>
+                          <span className="font-medium">{result.db?.mismatched || 0}</span>
+                        </div>
+                        <hr />
+                        <div className="flex justify-between items-center text-green-600">
+                          <span>Добавлено</span>
+                          <span className="font-bold">{result.actions?.inserted || 0}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-yellow-600">
+                          <span>Обновлено</span>
+                          <span className="font-bold">{result.actions?.updated || 0}</span>
+                        </div>
+                        {(result.actions?.skipped || 0) > 0 && (
+                          <div className="flex justify-between items-center text-muted-foreground">
+                            <span>Пропущено</span>
+                            <span>{result.actions?.skipped}</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-4 rounded-lg border space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Режим</span>
+                          <Badge variant="secondary">Проверка по UID</Badge>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Период</span>
+                          <span>{result.period.from_date} — {result.period.to_date}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Проверено UID</span>
+                          <span className="font-medium">{result.uid_verify_stats?.checked_uids || 0}</span>
+                        </div>
+                        <hr />
+                        <div className="flex justify-between items-center text-green-600">
+                          <span>Совпадают с bePaid</span>
+                          <span className="font-bold">{result.uid_verify_stats?.verified_ok || 0}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-yellow-600">
+                          <span>Обновлено сумм</span>
+                          <span className="font-bold">{result.uid_verify_stats?.updated_amount || 0}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-yellow-600">
+                          <span>Обновлено статусов</span>
+                          <span className="font-bold">{result.uid_verify_stats?.updated_status || 0}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-blue-600">
+                          <span className="flex items-center gap-1">
+                            <CreditCard className="h-3 w-3" />
+                            Заполнено карт
+                          </span>
+                          <span className="font-bold">{result.uid_verify_stats?.updated_card_fields || 0}</span>
+                        </div>
+                        <hr />
+                        <div className="flex justify-between items-center text-orange-600">
+                          <span>Недоступно в API</span>
+                          <span className="font-bold">{result.uid_verify_stats?.unverifiable || 0}</span>
+                        </div>
+                        {(result.uid_verify_stats?.errors || 0) > 0 && (
+                          <div className="flex justify-between items-center text-red-600">
+                            <span>Ошибки</span>
+                            <span className="font-bold">{result.uid_verify_stats?.errors}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     
                     {result.dry_run && totalChanges > 0 && (
                       <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center gap-2">
                         <AlertCircle className="h-4 w-4 text-yellow-600 shrink-0" />
                         <span className="text-sm">
-                          Это предварительный просмотр. Нажмите "Исправить всё" для применения изменений.
+                          Это предварительный просмотр. Нажмите "Применить" для сохранения изменений.
                         </span>
                       </div>
                     )}
@@ -362,141 +487,107 @@ export default function BepaidFullSyncDialog({
                         <span className="text-sm">Изменения применены успешно!</span>
                       </div>
                     )}
-                  </TabsContent>
 
-                  <TabsContent value="added" className="m-0">
-                    {result.samples.added.length > 0 ? (
-                      <div className="space-y-2">
-                        {result.samples.added.map((item, idx) => (
-                          <div key={idx} className="p-2 rounded border text-sm flex items-center justify-between">
-                            <div className="space-y-1">
-                              <code className="text-xs bg-muted px-1 rounded">{item.uid}</code>
-                              <div className="text-muted-foreground text-xs">
-                                {item.paid_at ? format(new Date(item.paid_at), "dd.MM.yyyy HH:mm") : "—"}
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-medium">{item.amount.toFixed(2)} BYN</div>
-                              <Badge variant="outline" className="text-xs">{item.status}</Badge>
-                            </div>
-                          </div>
-                        ))}
-                        {result.changes.added > result.samples.added.length && (
-                          <div className="text-center text-sm text-muted-foreground py-2">
-                            ...и ещё {result.changes.added - result.samples.added.length}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8 text-muted-foreground">
-                        Нет новых платежей для добавления
+                    {result.runtime_ms && (
+                      <div className="text-xs text-muted-foreground text-right">
+                        Выполнено за {(result.runtime_ms / 1000).toFixed(1)}с
                       </div>
                     )}
                   </TabsContent>
 
-                  <TabsContent value="amounts" className="m-0">
-                    {result.samples.discrepancies_amount.length > 0 ? (
+                  <TabsContent value="changes" className="m-0">
+                    {result.mode_used === 'list' ? (
                       <div className="space-y-2">
-                        {result.samples.discrepancies_amount.map((item, idx) => (
-                          <div key={idx} className="p-2 rounded border text-sm">
-                            <code className="text-xs bg-muted px-1 rounded">{item.uid}</code>
-                            <div className="flex items-center gap-2 mt-1">
-                              <span className="text-red-500 line-through">{item.our_amount.toFixed(2)}</span>
-                              <ArrowRight className="h-3 w-3" />
-                              <span className="text-green-600 font-medium">{item.bepaid_amount.toFixed(2)} BYN</span>
-                              {item.fixed && <CheckCircle className="h-3 w-3 text-green-600 ml-auto" />}
-                            </div>
-                          </div>
-                        ))}
-                        {result.changes.updated_amount > result.samples.discrepancies_amount.length && (
-                          <div className="text-center text-sm text-muted-foreground py-2">
-                            ...и ещё {result.changes.updated_amount - result.samples.discrepancies_amount.length}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8 text-muted-foreground">
-                        Расхождений по суммам не найдено
-                      </div>
-                    )}
-                  </TabsContent>
-
-                  <TabsContent value="statuses" className="m-0">
-                    {result.samples.discrepancies_status.length > 0 ? (
-                      <div className="space-y-2">
-                        {result.samples.discrepancies_status.map((item, idx) => (
-                          <div key={idx} className="p-2 rounded border text-sm">
-                            <code className="text-xs bg-muted px-1 rounded">{item.uid}</code>
-                            <div className="flex items-center gap-2 mt-1">
-                              <Badge variant="outline" className="text-red-500">{item.our_status}</Badge>
-                              <ArrowRight className="h-3 w-3" />
-                              <Badge variant="outline" className="text-green-600">{item.bepaid_status}</Badge>
-                              {item.fixed && <CheckCircle className="h-3 w-3 text-green-600 ml-auto" />}
-                            </div>
-                          </div>
-                        ))}
-                        {result.changes.updated_status > result.samples.discrepancies_status.length && (
-                          <div className="text-center text-sm text-muted-foreground py-2">
-                            ...и ещё {result.changes.updated_status - result.samples.discrepancies_status.length}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8 text-muted-foreground">
-                        Расхождений по статусам не найдено
-                      </div>
-                    )}
-                  </TabsContent>
-
-                  <TabsContent value="cards" className="m-0">
-                    {/* Card changes summary */}
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-3 gap-2">
-                        <div className="p-3 rounded-lg bg-blue-500/10 text-center">
-                          <div className="text-xl font-bold text-blue-600">{result.changes.updated_card_fields || 0}</div>
-                          <div className="text-xs text-muted-foreground">Заполнено</div>
-                        </div>
-                        <div className="p-3 rounded-lg bg-purple-500/10 text-center">
-                          <div className="text-xl font-bold text-purple-600">{result.changes.brand_normalized || 0}</div>
-                          <div className="text-xs text-muted-foreground">Нормализовано</div>
-                        </div>
-                        <div className="p-3 rounded-lg bg-teal-500/10 text-center">
-                          <div className="text-xl font-bold text-teal-600">{result.changes.refunds_card_filled || 0}</div>
-                          <div className="text-xs text-muted-foreground">Возвраты</div>
-                        </div>
-                      </div>
-
-                      {result.samples.card_backfilled && result.samples.card_backfilled.length > 0 ? (
-                        <div className="space-y-2">
-                          <div className="text-sm font-medium text-muted-foreground">Примеры изменений:</div>
-                          {result.samples.card_backfilled.map((item, idx) => (
+                        {/* LIST mode - show mismatches and inserts */}
+                        {result.samples?.mismatches && result.samples.mismatches.length > 0 ? (
+                          result.samples.mismatches.map((item, idx) => (
                             <div key={idx} className="p-2 rounded border text-sm">
-                              <div className="flex items-center justify-between">
-                                <code className="text-xs bg-muted px-1 rounded">{item.uid}</code>
-                                <Badge variant="outline" className="text-xs">{item.field}</Badge>
-                              </div>
-                              <div className="flex items-center gap-2 mt-1">
-                                <span className="text-muted-foreground">{item.old_value || '∅'}</span>
-                                <ArrowRight className="h-3 w-3" />
-                                <span className="text-green-600 font-medium">{item.new_value}</span>
+                              <code className="text-xs bg-muted px-1 rounded">{item.uid}</code>
+                              <div className="mt-1 space-y-1">
+                                {item.changes.map((change, i) => (
+                                  <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <ArrowRight className="h-3 w-3" />
+                                    {change}
+                                  </div>
+                                ))}
                               </div>
                             </div>
-                          ))}
-                        </div>
-                      ) : cardChanges === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                          <CreditCard className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
-                          Данные карт в порядке
-                        </div>
-                      ) : null}
-                    </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-8 text-muted-foreground">
+                            Нет изменений
+                          </div>
+                        )}
+                        {result.samples?.inserts && result.samples.inserts.length > 0 && (
+                          <>
+                            <div className="text-sm font-medium text-muted-foreground mt-4">Новые записи:</div>
+                            {result.samples.inserts.map((item, idx) => (
+                              <div key={idx} className="p-2 rounded border text-sm flex items-center justify-between bg-green-500/5">
+                                <code className="text-xs bg-muted px-1 rounded">{item.uid}</code>
+                                <div className="text-right">
+                                  <div className="font-medium">{item.amount?.toFixed(2)} BYN</div>
+                                  <Badge variant="outline" className="text-xs">{item.status}</Badge>
+                                </div>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {/* UID_VERIFY mode - show verified with changes */}
+                        {result.samples?.verified && result.samples.verified.length > 0 ? (
+                          result.samples.verified.map((item, idx) => (
+                            <div key={idx} className="p-2 rounded border text-sm">
+                              <code className="text-xs bg-muted px-1 rounded">{item.uid}</code>
+                              <div className="mt-1 space-y-1">
+                                {item.changes.map((change, i) => (
+                                  <div key={i} className="flex items-center gap-2 text-xs">
+                                    <CheckCircle className="h-3 w-3 text-green-600" />
+                                    {change}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <CheckCircle className="h-8 w-8 mx-auto mb-2 text-green-500" />
+                            Все данные актуальны
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="unverifiable" className="m-0">
+                    {result.samples?.unverifiable && result.samples.unverifiable.length > 0 ? (
+                      <div className="space-y-2">
+                        {result.samples.unverifiable.map((item, idx) => (
+                          <div key={idx} className="p-2 rounded border border-orange-200 bg-orange-50 dark:bg-orange-900/10 text-sm">
+                            <code className="text-xs bg-muted px-1 rounded">{item.uid}</code>
+                            <div className="text-orange-600 mt-1 text-xs">{item.reason}</div>
+                          </div>
+                        ))}
+                        {(result.uid_verify_stats?.unverifiable || 0) > (result.samples.unverifiable.length) && (
+                          <div className="text-center text-sm text-muted-foreground py-2">
+                            ...и ещё {(result.uid_verify_stats?.unverifiable || 0) - result.samples.unverifiable.length}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 text-muted-foreground">
+                        <ShieldCheck className="h-8 w-8 mx-auto mb-2 text-green-500" />
+                        Все транзакции доступны для проверки
+                      </div>
+                    )}
                   </TabsContent>
 
                   <TabsContent value="errors" className="m-0">
-                    {result.samples.errors.length > 0 ? (
+                    {result.samples?.errors && result.samples.errors.length > 0 ? (
                       <div className="space-y-2">
                         {result.samples.errors.map((item, idx) => (
-                          <div key={idx} className="p-2 rounded border border-red-200 bg-red-50 text-sm">
+                          <div key={idx} className="p-2 rounded border border-red-200 bg-red-50 dark:bg-red-900/10 text-sm">
                             <code className="text-xs bg-muted px-1 rounded">{item.uid}</code>
                             <div className="text-red-600 mt-1 text-xs">{item.error}</div>
                           </div>
@@ -520,7 +611,7 @@ export default function BepaidFullSyncDialog({
                   disabled={isChecking || isExecuting}
                   className="flex-1"
                 >
-                  {isChecking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  {isChecking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                   Проверить заново
                 </Button>
                 
@@ -538,7 +629,7 @@ export default function BepaidFullSyncDialog({
                     ) : (
                       <>
                         <CheckCircle className="mr-2 h-4 w-4" />
-                        Исправить всё ({totalChanges})
+                        Применить ({totalChanges})
                       </>
                     )}
                   </Button>
