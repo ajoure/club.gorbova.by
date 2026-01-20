@@ -108,6 +108,7 @@ import { AdminChargeDialog } from "./AdminChargeDialog";
 import { AvatarZoomDialog } from "./AvatarZoomDialog";
 import { LoyaltyPulse } from "./LoyaltyPulse";
 import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
+import { ContactPaymentsTab } from "./ContactPaymentsTab";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 
@@ -1160,6 +1161,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Сделки {deals && deals.filter(d => d.status === "paid").length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.filter(d => d.status === "paid").length}</Badge>}
               </TabsTrigger>
+              <TabsTrigger value="payments" className="text-xs sm:text-sm px-2.5 sm:px-3">
+                <CreditCard className="w-3 h-3 mr-1" />
+                Платежи
+              </TabsTrigger>
               <TabsTrigger value="communications" className="text-xs sm:text-sm px-2.5 sm:px-3">События</TabsTrigger>
               <TabsTrigger value="consent" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Согласия
@@ -2205,6 +2210,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   );
                 })
               )}
+            </TabsContent>
+
+            {/* Payments Tab */}
+            <TabsContent value="payments" className="m-0">
+              <ContactPaymentsTab contactId={contact.id} userId={contact.user_id} />
             </TabsContent>
 
             {/* Deals Tab */}

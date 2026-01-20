@@ -145,6 +145,31 @@ export function LinkTransactionDialog({ open, onOpenChange, transaction, onLinke
           console.warn("Error saving card link:", cardError);
         } else {
           console.log("Card link saved:", transaction.card_last_4, "->", profileId);
+          
+          // Trigger autolink for historical payments
+          try {
+            const { data: autolinkResult, error: autolinkError } = await supabase.functions.invoke('payments-autolink-by-card', {
+              body: {
+                profile_id: profileId,
+                card_last4: transaction.card_last_4,
+                card_brand: transaction.card_brand || 'unknown',
+                dry_run: false,
+                limit: 200,
+              }
+            });
+
+            if (autolinkError) {
+              console.warn("Autolink error:", autolinkError);
+            } else {
+              const linkedCount = (autolinkResult?.stats?.updated_payments_profile || 0) + 
+                                 (autolinkResult?.stats?.updated_queue_profile || 0);
+              if (linkedCount > 0) {
+                console.log(`Autolinked ${linkedCount} payments to profile ${profileId}`);
+              }
+            }
+          } catch (e) {
+            console.warn("Autolink invocation failed:", e);
+          }
         }
       }
 

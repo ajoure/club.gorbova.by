@@ -174,18 +174,30 @@ export function LinkContactDialog({
             });
         }
 
-        // 2. Always link ALL payments with this card (override existing if needed)
-        // Update all queue items with this card
-        await supabase
-          .from("payment_reconcile_queue")
-          .update({ matched_profile_id: selected.id })
-          .eq("card_last4", cardLast4);
+        // 2. Trigger autolink for historical payments via edge function
+        try {
+          const { data: autolinkResult, error: autolinkError } = await supabase.functions.invoke('payments-autolink-by-card', {
+            body: {
+              profile_id: selected.id,
+              card_last4: cardLast4,
+              card_brand: cardBrand || 'unknown',
+              dry_run: false,
+              limit: 200,
+            }
+          });
 
-        // Update all payments_v2 with this card
-        await supabase
-          .from("payments_v2")
-          .update({ profile_id: selected.id })
-          .eq("card_last4", cardLast4);
+          if (autolinkError) {
+            console.warn('Autolink error:', autolinkError);
+          } else {
+            const linkedCount = (autolinkResult?.stats?.updated_payments_profile || 0) + 
+                               (autolinkResult?.stats?.updated_queue_profile || 0);
+            if (linkedCount > 0) {
+              console.log(`Autolinked ${linkedCount} payments to profile ${selected.id}`);
+            }
+          }
+        } catch (e) {
+          console.warn('Autolink invocation failed:', e);
+        }
         
         console.log(`Linked card ${cardLast4} to profile ${selected.id}`);
       }
