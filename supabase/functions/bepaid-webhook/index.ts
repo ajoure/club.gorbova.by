@@ -2873,21 +2873,18 @@ async function createOrderFromWebhook(
       }
     }
 
-    await supabase.from('subscriptions_v2').insert({
-      order_id: order.id,
-      user_id: userId,
-      product_id: productId,
-      tariff_id: tariffId,
-      status: 'active',
-      access_start_at: now.toISOString(),
-      access_end_at: accessEndAt.toISOString(),
-      is_trial: false,
-      meta: {
-        source: 'webhook_orphan_reconstruction',
-        bepaid_subscription_id: bepaidSubscriptionId,
-        reconstructed_at: now.toISOString(),
-      },
-    });
+    // Delegate to centralized grant-access-for-order to avoid duplicates
+    try {
+      await supabase.functions.invoke('grant-access-for-order', {
+        body: {
+          orderId: order.id,
+          grantTelegram: false, // Will be handled below
+          grantGetcourse: false,
+        },
+      });
+    } catch (grantErr) {
+      console.error('[WEBHOOK] grant-access-for-order error (non-critical):', grantErr);
+    }
 
     // Create entitlement
     const { data: product } = await supabase

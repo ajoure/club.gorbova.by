@@ -269,55 +269,31 @@ Deno.serve(async (req) => {
       results.payment_created = true;
     }
 
-    // Create subscription
-    const nextChargeAt = orderV2.is_trial ? accessEndAt.toISOString() : null;
-    
-    const { error: subError } = await supabase
-      .from('subscriptions_v2')
-      .insert({
-        user_id: orderV2.user_id,
-        product_id: productId,
-        tariff_id: orderV2.tariff_id,
-        order_id: orderV2.id,
-        status: orderV2.is_trial ? 'trial' : 'active',
-        is_trial: !!orderV2.is_trial,
-        auto_renew: !!orderV2.is_trial,
-        access_start_at: accessStartAt,
-        access_end_at: accessEndAt.toISOString(),
-        trial_end_at: orderV2.is_trial ? accessEndAt.toISOString() : null,
-        next_charge_at: nextChargeAt,
-        updated_at: now.toISOString(),
+    // Delegate subscription and entitlement to centralized grant-access-for-order
+    // This prevents duplicate subscriptions and properly extends existing ones
+    try {
+      const grantRes = await supabase.functions.invoke('grant-access-for-order', {
+        body: {
+          orderId: orderV2.id,
+          customAccessDays: accessDays,
+          grantTelegram: false, // Will be handled separately below
+          grantGetcourse: false, // Will be handled separately below
+        },
       });
-
-    if (!subError) results.subscription_created = true;
-    else results.subscription_error = subError.message;
-
-    // Entitlement - dual-write: user_id + profile_id + order_id
-    if (productCode) {
-      // Resolve profile_id
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('user_id', orderV2.user_id)
-        .single();
-      const profileId = profileData?.id || orderV2.profile_id || null;
-
-      const { error: entError } = await supabase
-        .from('entitlements')
-        .upsert(
-          {
-            user_id: orderV2.user_id,
-            profile_id: profileId,
-            order_id: orderV2.id,
-            product_code: productCode,
-            status: 'active',
-            expires_at: accessEndAt.toISOString(),
-            meta: { source: 'admin_test_direct', order_id: orderV2.id },
-          },
-          { onConflict: 'user_id,product_code' }
-        );
-      results.entitlement_created = !entError;
-      if (entError) results.entitlement_error = entError.message;
+      
+      if (grantRes.error) {
+        console.error('[Test Payment Direct] grant-access-for-order error:', grantRes.error);
+        results.subscription_error = grantRes.error.message;
+      } else {
+        const grantData = grantRes.data as Record<string, any>;
+        results.subscription_created = !!grantData?.results?.subscription;
+        results.subscription_action = grantData?.results?.subscription?.action;
+        results.entitlement_created = !!grantData?.results?.entitlement;
+        console.log('[Test Payment Direct] grant-access-for-order result:', grantData?.results);
+      }
+    } catch (grantErr) {
+      console.error('[Test Payment Direct] grant-access-for-order exception:', grantErr);
+      results.subscription_error = grantErr instanceof Error ? grantErr.message : String(grantErr);
     }
 
     // Telegram access

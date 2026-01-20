@@ -182,25 +182,39 @@ Deno.serve(async (req) => {
     const hasPaymentMethod = !!userPaymentMethod?.id;
     console.log(`User ${userId} payment method: ${userPaymentMethod?.id || 'none'}, auto_renew will be: ${hasPaymentMethod}`);
 
-    // 3. Create or update subscription for this order
-    const { data: existingSub } = await supabase
-      .from("subscriptions_v2")
-      .select("id, payment_method_id")
-      .eq("order_id", orderId)
-      .maybeSingle();
+    // 3. Create or UPDATE subscription - use existingProductSub to avoid duplicates!
+    // If there's already an active subscription for this user+product, EXTEND it instead of creating new
+    if (existingProductSub) {
+      // EXTEND existing subscription (don't create duplicate)
+      const { data: fullExistingSub } = await supabase
+        .from("subscriptions_v2")
+        .select("id, payment_method_id, meta, tariff_id")
+        .eq("id", existingProductSub.id)
+        .single();
 
-    if (existingSub) {
-      // Update existing subscription with correct fields
-      // Only update payment_method_id if it's currently null and we have one
-      const updateData: any = {
+      const existingMeta = (fullExistingSub?.meta || {}) as Record<string, any>;
+      const extendedByOrders = existingMeta.extended_by_orders || [];
+      
+      const updateData: Record<string, any> = {
         status: "active",
-        access_start_at: accessStartAt.toISOString(),
         access_end_at: accessEndAt.toISOString(),
         next_charge_at: accessEndAt.toISOString(),
         updated_at: now.toISOString(),
+        meta: {
+          ...existingMeta,
+          extended_by_orders: [...extendedByOrders, orderId],
+          last_extension_at: now.toISOString(),
+          last_extension_days: durationDays,
+        },
       };
 
-      if (!existingSub.payment_method_id && hasPaymentMethod) {
+      // Update tariff if new order has different tariff
+      if (tariffId && tariffId !== fullExistingSub?.tariff_id) {
+        updateData.tariff_id = tariffId;
+      }
+
+      // Attach payment method if not present
+      if (!fullExistingSub?.payment_method_id && hasPaymentMethod) {
         updateData.payment_method_id = userPaymentMethod.id;
         updateData.auto_renew = true;
       }
@@ -208,15 +222,21 @@ Deno.serve(async (req) => {
       const { error: updateSubError } = await supabase
         .from("subscriptions_v2")
         .update(updateData)
-        .eq("id", existingSub.id);
+        .eq("id", existingProductSub.id);
 
       if (updateSubError) {
-        console.error("Error updating subscription:", updateSubError);
+        console.error("Error extending subscription:", updateSubError);
       } else {
-        results.subscription = { action: "updated", id: existingSub.id };
+        console.log(`Extended subscription ${existingProductSub.id} to ${accessEndAt.toISOString()}`);
+        results.subscription = { 
+          action: "extended", 
+          id: existingProductSub.id,
+          extended_by_order: orderId,
+          new_end_date: accessEndAt.toISOString(),
+        };
       }
     } else {
-      // Create new subscription for this order with payment method if available
+      // CREATE new subscription (no active subscription for this user+product)
       const { data: newSub, error: createSubError } = await supabase
         .from("subscriptions_v2")
         .insert({
@@ -230,11 +250,11 @@ Deno.serve(async (req) => {
           access_end_at: accessEndAt.toISOString(),
           next_charge_at: accessEndAt.toISOString(),
           payment_method_id: hasPaymentMethod ? userPaymentMethod.id : null,
-          auto_renew: true, // Enable auto-renew by default for subscription products
+          auto_renew: true,
           meta: {
             granted_by: "grant-access-for-order",
             granted_at: now.toISOString(),
-            extended_from: existingProductSub?.id || null,
+            initial_order_id: orderId,
           },
         })
         .select("id")
@@ -243,6 +263,7 @@ Deno.serve(async (req) => {
       if (createSubError) {
         console.error("Error creating subscription:", createSubError);
       } else {
+        console.log(`Created new subscription ${newSub?.id} for user ${userId}, product ${productId}`);
         results.subscription = { action: "created", id: newSub?.id, auto_renew: true };
       }
     }

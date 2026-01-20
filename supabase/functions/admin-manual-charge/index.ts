@@ -412,34 +412,8 @@ Deno.serve(async (req) => {
         const durationDays = tariff?.access_duration_days || tariff?.duration_days || 365;
         const accessEnd = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
-        // Create subscription record with CORRECT column names
-        const { data: subscription, error: subError } = await supabase
-          .from('subscriptions_v2')
-          .insert({
-            user_id,
-            order_id: order.id,
-            product_id,
-            tariff_id,
-            status: 'active',
-            payment_token: paymentMethod.provider_token,
-            payment_method_id: paymentMethod.id,
-            access_start_at: now.toISOString(),
-            access_end_at: accessEnd.toISOString(),
-            next_charge_at: accessEnd.toISOString(),
-            auto_renew: true, // Enable auto-renew by default for subscription products
-            meta: {
-              source: 'admin_manual_charge',
-              charged_by: user.id,
-              description,
-            },
-          })
-          .select()
-          .single();
-
-        if (subError) {
-          console.error('Subscription creation error:', subError);
-          // Don't fail the payment, just log it
-        }
+        // NOTE: Subscription creation is now handled by grant-access-for-order
+        // to avoid duplicates and properly extend existing subscriptions
 
         // Grant access via centralized function (handles entitlements, Telegram, GetCourse)
         try {
@@ -508,7 +482,7 @@ Deno.serve(async (req) => {
             payment_id: payment.id,
             order_id: order.id,
             order_number: orderNumber,
-            subscription_id: subscription?.id,
+            // subscription_id handled by grant-access-for-order
             product_id,
             tariff_id,
             product_name: product?.name,
@@ -524,14 +498,14 @@ Deno.serve(async (req) => {
           },
         });
 
-        console.log(`Manual charge successful: order=${orderNumber}, payment=${payment.id}, subscription=${subscription?.id}, amount=${amount / 100} BYN`);
+        console.log(`Manual charge successful: order=${orderNumber}, payment=${payment.id}, amount=${amount / 100} BYN`);
 
         return new Response(JSON.stringify({
           success: true,
           payment_id: payment.id,
           order_id: order.id,
           order_number: orderNumber,
-          subscription_id: subscription?.id,
+          // subscription handled by grant-access-for-order
           bepaid_uid: chargeResult.uid,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },

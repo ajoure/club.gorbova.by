@@ -754,20 +754,21 @@ Deno.serve(async (req) => {
           const startDate = new Date(paidAt);
           const endDate = new Date(startDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
 
-          // Create subscription if needed - use correct column names!
+          // Delegate to centralized grant-access-for-order to avoid subscription duplicates
           if (mapping.is_subscription && profileUserId) {
-            await supabase.from('subscriptions_v2').insert({
-              user_id: profileUserId,
-              profile_id: profileId,
-              order_id: newOrder.id,
-              product_id: mapping.product_id,
-              tariff_id: mapping.tariff_id,
-              status: 'active',
-              access_start_at: startDate.toISOString(),
-              access_end_at: endDate.toISOString(),
-              next_charge_at: trialDays > 0 ? endDate.toISOString() : null,
-              auto_renew: trialDays === 0,
-            });
+            try {
+              await supabase.functions.invoke('grant-access-for-order', {
+                body: {
+                  orderId: newOrder.id,
+                  customAccessDays: accessDays,
+                  grantTelegram: true,
+                  grantGetcourse: true,
+                },
+              });
+              console.log(`[BEPAID-AUTO-PROCESS] Delegated subscription to grant-access-for-order for order ${newOrder.id}`);
+            } catch (grantErr) {
+              console.error(`[BEPAID-AUTO-PROCESS] grant-access-for-order error:`, grantErr);
+            }
           }
 
           // Create/Update entitlement with GREATEST(expires_at) + entitlement_orders link
