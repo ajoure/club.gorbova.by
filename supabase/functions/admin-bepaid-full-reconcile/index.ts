@@ -108,7 +108,7 @@ async function fetchFromBepaidWithProbing(auth: string, shopId: string, fromDate
       }
       
       return { success: true, transactions: allTransactions.slice(0, maxTransactions), pages, endpoint_used: candidate.name };
-    } catch (err) { errors.push(`${candidate.name}: ${err.message}`); }
+    } catch (err) { errors.push(`${candidate.name}: ${(err as Error).message}`); }
   }
   
   return { success: false, transactions: [], error: `All bePaid endpoints failed: ${errors.join('; ')}`, pages: 0 };
@@ -184,7 +184,7 @@ async function runUidVerifyMode(supabase: any, auth: string, fromDate: string, t
       } else {
         stats.verified_ok++;
       }
-    } catch (err) { stats.errors++; if (samples.errors.length < maxSamples) samples.errors.push({ uid, error: err.message }); }
+    } catch (err) { stats.errors++; if (samples.errors.length < maxSamples) samples.errors.push({ uid, error: (err as Error).message }); }
   }
   
   return { success: true, stats, samples };
@@ -198,7 +198,7 @@ async function processListModeTransactions(supabase: any, transactions: any[], d
   
   const uids = transactions.map(tx => tx.uid || tx.id).filter(Boolean);
   const { data: existingPayments } = await supabase.from('payments_v2').select('id, provider_payment_id, amount, status, card_last4, card_brand, meta').in('provider_payment_id', uids);
-  const existingMap = new Map((existingPayments || []).map((p: any) => [p.provider_payment_id, p]));
+  const existingMap = new Map<string, { id: string; provider_payment_id: string; amount: number; status: string; card_last4: string | null; card_brand: string | null; meta: any }>((existingPayments || []).map((p: any) => [p.provider_payment_id, p]));
   
   for (const tx of transactions) {
     const uid = tx.uid || tx.id;
@@ -313,6 +313,6 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify(response), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (err) {
     console.error("[full-reconcile] Error:", err);
-    return new Response(JSON.stringify({ ok: false, error: err.message || "Internal error", runtime_ms: Date.now() - startTime }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: false, error: (err as Error).message || "Internal error", runtime_ms: Date.now() - startTime }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
