@@ -136,9 +136,9 @@ export function LinkTransactionDialog({ open, onOpenChange, transaction, onLinke
             card_brand: transaction.card_brand || null,
             card_holder: transaction.card_holder || null,
             profile_id: profileId,
-            updated_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
           }, {
-            onConflict: "card_last4,card_holder"
+            onConflict: "card_last4,card_brand"
           });
         
         if (cardError) {
@@ -183,6 +183,8 @@ export function LinkTransactionDialog({ open, onOpenChange, transaction, onLinke
       
       queryClient.invalidateQueries({ queryKey: ["bepaid-raw-data"] });
       queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
+      queryClient.invalidateQueries({ queryKey: ["unified-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["contact-payments"] });
       onLinked?.(profileId);
       onOpenChange(false);
       setSearchQuery("");

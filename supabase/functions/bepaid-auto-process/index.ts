@@ -425,7 +425,7 @@ Deno.serve(async (req) => {
                 card_brand: item.card_brand,
                 profile_id: profileId,
               }, {
-                onConflict: 'card_last4,card_holder',
+                onConflict: 'card_last4,card_brand',
                 ignoreDuplicates: true,
               });
             }
@@ -472,7 +472,7 @@ Deno.serve(async (req) => {
                 card_brand: item.card_brand,
                 profile_id: profileId,
               }, {
-                onConflict: 'card_last4,card_holder',
+                onConflict: 'card_last4,card_brand',
                 ignoreDuplicates: true,
               });
             }

@@ -356,7 +356,7 @@ Deno.serve(async (req) => {
             profile_id: targetProfileId,
             updated_at: new Date().toISOString(),
           }, { 
-            onConflict: 'card_last4,profile_id',
+            onConflict: 'card_last4,card_brand',
             ignoreDuplicates: false 
           });
 

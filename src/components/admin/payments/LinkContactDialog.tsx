@@ -266,6 +266,7 @@ export function LinkContactDialog({
       queryClient.invalidateQueries({ queryKey: ["unified-payments"] });
       queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
       queryClient.invalidateQueries({ queryKey: ["bepaid-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["contact-payments"] });
       
       onSuccess();
       onOpenChange(false);
