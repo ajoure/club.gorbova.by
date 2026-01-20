@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { Settings, FileText, RotateCcw, Trash2, AlertTriangle, RefreshCw, RefreshCcw, Database } from "lucide-react";
+import { Settings, FileText, RotateCcw, Trash2, AlertTriangle, RefreshCw, RefreshCcw, Database, Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,6 +15,7 @@ import PurgeImportsDialog from "./PurgeImportsDialog";
 import PaymentDiagnosticsDialog from "./PaymentDiagnosticsDialog";
 import ResyncFromApiDialog from "./ResyncFromApiDialog";
 import { MigrationExportDialog } from "./MigrationExportDialog";
+import AdminAutolinkDialog from "./AdminAutolinkDialog";
 
 interface PaymentsSettingsDropdownProps {
   selectedIds?: string[];
@@ -93,6 +94,24 @@ export default function PaymentsSettingsDropdown({
             >
               <RefreshCcw className="h-4 w-4" />
               <span>Восстановление по UID</span>
+            </DropdownMenuItem>
+          )}
+        />
+        
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs text-muted-foreground">
+          Автопривязка
+        </DropdownMenuLabel>
+        
+        <AdminAutolinkDialog 
+          onComplete={onComplete}
+          renderTrigger={(onClick) => (
+            <DropdownMenuItem 
+              onClick={(e) => { e.preventDefault(); onClick(); }}
+              className="gap-2 cursor-pointer"
+            >
+              <Link2 className="h-4 w-4" />
+              <span>Привязать по карте</span>
             </DropdownMenuItem>
           )}
         />

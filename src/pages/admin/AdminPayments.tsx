@@ -22,6 +22,7 @@ import UnifiedPaymentsDashboard, { UnifiedDashboardFilter } from "@/components/a
 import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
 import PaymentsSettingsDropdown from "@/components/admin/payments/PaymentsSettingsDropdown";
 import PaymentSecurityTab from "@/components/admin/payments/PaymentSecurityTab";
+import UnlinkedPaymentsReport from "@/components/admin/payments/UnlinkedPaymentsReport";
 
 export type PaymentFilters = {
   search: string;
@@ -56,7 +57,7 @@ const defaultFilters: PaymentFilters = {
 export default function AdminPayments() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"payments" | "security">("payments");
+  const [activeTab, setActiveTab] = useState<"payments" | "unlinked" | "security">("payments");
   
   // Date filter - default to current month
   const now = new Date();
@@ -382,9 +383,10 @@ export default function AdminPayments() {
           
           {/* Tab switcher + Actions */}
           <div className="flex items-center gap-2">
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "payments" | "security")}>
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "payments" | "unlinked" | "security")}>
               <TabsList>
                 <TabsTrigger value="payments">Транзакции</TabsTrigger>
+                <TabsTrigger value="unlinked">Непривязанные</TabsTrigger>
                 <TabsTrigger value="security" className="gap-1">
                   <Shield className="h-3.5 w-3.5" />
                   Безопасность
@@ -439,6 +441,8 @@ export default function AdminPayments() {
         {/* Tab Content */}
         {activeTab === "security" ? (
           <PaymentSecurityTab />
+        ) : activeTab === "unlinked" ? (
+          <UnlinkedPaymentsReport onComplete={refetch} />
         ) : (
           <>
             {/* Unified Financial Dashboard */}
