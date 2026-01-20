@@ -344,59 +344,56 @@ export default function AdminPayments() {
             </div>
           </div>
           
-          {/* Tab switcher + Actions */}
-          <div className="flex items-center gap-2">
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "payments" | "unlinked" | "security")}>
-              <TabsList>
-                <TabsTrigger value="payments">Транзакции</TabsTrigger>
-                <TabsTrigger value="unlinked">Непривязанные</TabsTrigger>
-                <TabsTrigger value="security" className="gap-1">
-                  <Shield className="h-3.5 w-3.5" />
-                  Безопасность
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-            
-            {activeTab === "payments" && (
-              <>
-                {/* Period selector */}
-                <DatePeriodSelector 
-                  value={dateFilter} 
-                  onChange={setDateFilter} 
-                />
-                
-                {/* Sync with bePaid */}
-                <Button
-                  variant="outline"
-                  onClick={handleBepaidSync}
-                  className="gap-2 h-9"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  <span className="hidden sm:inline">Синхронизировать</span>
-                </Button>
-                
-                {/* Import button */}
-                <Button 
-                  onClick={() => setImportDialogOpen(true)} 
-                  className="gap-2 h-9"
-                >
-                  <Upload className="h-4 w-4" />
-                  <span className="hidden sm:inline">Импорт</span>
-                </Button>
-                
-                {/* Mass autolink button */}
-                <AutolinkAllCardsButton />
-                
-                {/* Settings dropdown */}
-                <PaymentsSettingsDropdown 
-                  selectedIds={selectedItems.size > 0 ? Array.from(selectedItems) : undefined}
-                  onRefreshFromApi={handleRefreshFromApi}
-                  isRefreshingFromApi={isRefreshingFromApi}
-                  onComplete={refetch}
-                />
-              </>
-            )}
+        </div>
+
+        {/* Glassmorphism Tabs */}
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "payments" | "unlinked" | "security")} className="space-y-4">
+          <div className="p-1.5 rounded-2xl bg-background/40 backdrop-blur-xl border border-border/30 shadow-lg">
+            <TabsList className="w-full grid grid-cols-3 gap-1 bg-transparent p-0 h-auto">
+              <TabsTrigger 
+                value="payments" 
+                className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all data-[state=active]:bg-background/80 data-[state=active]:shadow-md data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background/40"
+              >
+                Транзакции
+              </TabsTrigger>
+              <TabsTrigger 
+                value="unlinked" 
+                className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all data-[state=active]:bg-background/80 data-[state=active]:shadow-md data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background/40"
+              >
+                Непривязанные
+              </TabsTrigger>
+              <TabsTrigger 
+                value="security" 
+                className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all data-[state=active]:bg-background/80 data-[state=active]:shadow-md data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:bg-background/40"
+              >
+                <Shield className="h-4 w-4" />
+                Безопасность
+              </TabsTrigger>
+            </TabsList>
           </div>
+          
+          {/* Toolbar - only for payments tab */}
+          {activeTab === "payments" && (
+            <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-background/30 backdrop-blur-sm border border-border/20">
+              <DatePeriodSelector value={dateFilter} onChange={setDateFilter} />
+              <div className="flex-1" />
+              <Button variant="outline" onClick={handleBepaidSync} className="gap-2 h-9 bg-background/60">
+                <RefreshCw className="h-4 w-4" />
+                <span className="hidden sm:inline">Синхронизировать</span>
+              </Button>
+              <Button onClick={() => setImportDialogOpen(true)} className="gap-2 h-9">
+                <Upload className="h-4 w-4" />
+                <span className="hidden sm:inline">Импорт</span>
+              </Button>
+              <AutolinkAllCardsButton />
+              <PaymentsSettingsDropdown 
+                selectedIds={selectedItems.size > 0 ? Array.from(selectedItems) : undefined}
+                onRefreshFromApi={handleRefreshFromApi}
+                isRefreshingFromApi={isRefreshingFromApi}
+                onComplete={refetch}
+              />
+            </div>
+          )}
         </div>
         
         {/* Tab Content */}

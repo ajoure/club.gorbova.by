@@ -191,26 +191,27 @@ export default function UnifiedPaymentsDashboard({
   const { data: feeRules, isLoading: isLoadingRules } = useBepaidFeeRules();
   
   // Fetch accurate server-side statistics
-  const { data: serverStats, isLoading: isLoadingStats } = useQuery({
-    queryKey: ["payment-stats", dateFilter],
+  const { data: serverStats, isLoading: isLoadingStats, isFetching: isFetchingStats } = useQuery({
+    queryKey: ["payment-stats", dateFilter?.from, dateFilter?.to],
     queryFn: async () => {
-      const fromDate = dateFilter?.from || "2020-01-01";
-      const toDate = dateFilter?.to || new Date().toISOString().split('T')[0];
+      if (!dateFilter?.from || !dateFilter?.to) return null;
       
       const { data, error } = await supabase.rpc('get_payments_stats', {
-        from_date: `${fromDate}T00:00:00Z`,
-        to_date: `${toDate}T23:59:59Z`
+        from_date: dateFilter.from,
+        to_date: dateFilter.to,
       });
       
       if (error) {
-        console.error('[ServerStats] Error fetching stats:', error);
+        console.error('Error fetching server stats:', error);
         return null;
       }
       
-      return data as unknown as ServerStats;
+      return data as unknown as ServerStats | null;
     },
-    enabled: !!dateFilter,
-    staleTime: 30000,
+    enabled: !!dateFilter?.from && !!dateFilter?.to,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    gcTime: 0,
   });
   
   const analytics = useMemo(() => {
