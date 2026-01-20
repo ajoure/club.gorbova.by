@@ -4,11 +4,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Loader2, CreditCard, Link2, AlertTriangle } from "lucide-react";
+import { Loader2, CreditCard, Link2, AlertTriangle, Wrench } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import AdminAutolinkDialog from "./AdminAutolinkDialog";
+import AdminRepairCollisionDialog from "./AdminRepairCollisionDialog";
 
 interface UnlinkedPaymentDetail {
   id: string;
@@ -147,18 +148,25 @@ export default function UnlinkedPaymentsDetailDrawer({
             )}
           </div>
 
-          {/* Collision hard-block: always show button, disabled when collision */}
+          {/* Collision: show repair option instead of disabled button */}
           {collisionRisk ? (
             <>
-              <Button disabled className="w-full gap-2">
-                <Link2 className="h-4 w-4" />
-                Привязать к контакту
-              </Button>
-              <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-sm">
-                <AlertTriangle className="h-4 w-4 text-destructive flex-shrink-0" />
+              <AdminRepairCollisionDialog
+                last4={last4}
+                brand={brand}
+                onComplete={handleAutolinked}
+                renderTrigger={(onClick) => (
+                  <Button onClick={onClick} variant="secondary" className="w-full gap-2">
+                    <Wrench className="h-4 w-4" />
+                    Исправить коллизию
+                  </Button>
+                )}
+              />
+              <div className="flex items-center gap-2 p-3 bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-300/50 rounded-lg text-sm">
+                <AlertTriangle className="h-4 w-4 text-yellow-600 flex-shrink-0" />
                 <span>
                   <strong>Коллизия:</strong> карта связана с несколькими профилями. 
-                  Автопривязка заблокирована.
+                  Сначала исправьте коллизию, затем автопривязка станет доступна.
                 </span>
               </div>
             </>
