@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -6,770 +5,314 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-/**
- * admin-bepaid-full-reconcile
- * 
- * Full reconciliation of bePaid transactions with payments_v2.
- * bePaid is the source of truth - adds missing, fixes amounts/statuses.
- * 
- * NEW IN THIS VERSION:
- * - normalizeCardBrand: Canonical brand normalization (master -> mastercard)
- * - Backfill card_last4/card_brand for existing records
- * - Refund card inheritance from parent payments
- * - fetchTransactionDetails: Detail fetch for missing card data
- * 
- * STOP GUARDS:
- * - Admin-only (has_role check)
- * - dry_run=true by default
- * - Max 5000 transactions per run
- * - Timeout protection with cursor_next
- * - Never deletes payments (only INSERT/UPDATE)
- * - Original values preserved in meta.reconcile_original
- */
+type ReconcileMode = 'list' | 'uid_verify' | 'auto';
 
 interface ReconcileRequest {
-  from_date?: string;      // default: '2026-01-01'
-  to_date?: string;        // default: today
-  dry_run?: boolean;       // default: true
-  limit?: number;          // max transactions per run (default 2000, max 5000)
-  cursor?: string | null;  // continuation token
-  allow_over_limit?: boolean; // bypass limit check
+  from_date?: string;
+  to_date?: string;
+  dry_run?: boolean;
+  limit?: number;
+  mode?: ReconcileMode;
 }
 
-interface ReconcileResponse {
-  ok: boolean;
-  dry_run: boolean;
-  period: { from_date: string; to_date: string };
-  fetched: {
-    bepaid_total: number;
-    pages: number;
-    cursor_next: string | null;
-  };
-  compared: { our_total: number };
-  changes: {
-    added: number;
-    updated_amount: number;
-    updated_status: number;
-    updated_paid_at: number;
-    updated_card_fields: number;    // NEW: backfilled card_last4/brand
-    brand_normalized: number;        // NEW: 'master' -> 'mastercard'
-    refunds_card_filled: number;     // NEW: refunds with inherited card data
-    unchanged: number;
-    errors: number;
-  };
-  samples: {
-    added: Array<{ uid: string; amount: number; status: string; paid_at: string }>;
-    discrepancies_amount: Array<{ uid: string; our_amount: number; bepaid_amount: number; fixed: boolean }>;
-    discrepancies_status: Array<{ uid: string; our_status: string; bepaid_status: string; fixed: boolean }>;
-    discrepancies_paid_at: Array<{ uid: string; our_paid_at: string; bepaid_paid_at: string; fixed: boolean }>;
-    card_backfilled: Array<{ uid: string; field: string; old_value: string | null; new_value: string }>;
-    errors: Array<{ uid: string; error: string }>;
-  };
-  error?: string;
+interface UidVerifyStats {
+  checked_uids: number;
+  verified_ok: number;
+  unverifiable: number;
+  updated_amount: number;
+  updated_status: number;
+  updated_paid_at: number;
+  updated_card_fields: number;
+  refunds_card_filled: number;
+  errors: number;
 }
 
-// Normalize bePaid status to our payment_status enum
-function normalizeStatus(status: string): 'pending' | 'processing' | 'succeeded' | 'failed' | 'refunded' | 'canceled' {
+function normalizeStatus(status: string): string {
   switch (status?.toLowerCase()) {
-    case 'successful':
-    case 'success':
-      return 'succeeded';
-    case 'failed':
-    case 'declined':
-    case 'expired':
-    case 'error':
-      return 'failed';
-    case 'incomplete':
-    case 'processing':
-      return 'processing';
-    case 'pending':
-      return 'pending';
-    case 'refunded':
-    case 'voided':
-      return 'refunded';
-    case 'canceled':
-    case 'cancelled':
-      return 'canceled';
-    default:
-      return 'pending';
+    case 'successful': case 'success': return 'succeeded';
+    case 'failed': case 'declined': case 'expired': case 'error': return 'failed';
+    case 'incomplete': case 'processing': return 'processing';
+    case 'pending': return 'pending';
+    case 'refunded': case 'voided': return 'refunded';
+    case 'canceled': case 'cancelled': return 'canceled';
+    default: return 'pending';
   }
 }
 
-// Normalize card brand to canonical format
 function normalizeCardBrand(brand: string | null | undefined): string | null {
   if (!brand) return null;
   const lower = brand.toLowerCase().trim();
-  const brandMap: Record<string, string> = {
-    'master': 'mastercard',
-    'mc': 'mastercard',
-    'mastercard': 'mastercard',
-    'visa': 'visa',
-    'belkart': 'belkart',
-    'belcard': 'belkart',
-    'maestro': 'maestro',
-    'mir': 'mir',
-  };
+  const brandMap: Record<string, string> = { 'master': 'mastercard', 'mc': 'mastercard', 'mastercard': 'mastercard', 'visa': 'visa', 'belkart': 'belkart', 'belcard': 'belkart', 'maestro': 'maestro', 'mir': 'mir' };
   return brandMap[lower] || lower;
 }
 
-// Normalize last4 - strip non-digits, take last 4
 function normalizeLast4(last4: string | null | undefined): string | null {
   if (!last4) return null;
   const cleaned = last4.replace(/\D/g, '').slice(-4);
   return cleaned.length === 4 ? cleaned : null;
 }
 
-// Format date for bePaid Reports API
-function formatBepaidDate(d: Date): string {
-  return d.toISOString().replace('T', ' ').substring(0, 19);
-}
-
-// Fetch transaction details by UID from bePaid
-async function fetchTransactionDetails(auth: string, uid: string): Promise<any | null> {
-  const endpoints = [
-    `https://gateway.bepaid.by/transactions/${uid}`,
-    `https://api.bepaid.by/transactions/${uid}`,
-  ];
-  
-  for (const endpoint of endpoints) {
-    try {
-      const response = await fetch(endpoint, {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${auth}`,
-          Accept: "application/json",
-          "X-Api-Version": "3",
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        return data.transaction || data;
-      }
-    } catch (err) {
-      console.error(`[full-reconcile] Detail fetch error for ${uid}:`, err);
-    }
-  }
-  return null;
-}
-
-// Fetch transactions from bePaid Reports API
-async function fetchFromBepaid(
-  auth: string,
-  fromDate: Date,
-  toDate: Date,
-  maxTransactions: number,
-  startTime: number
-): Promise<{ success: boolean; transactions: any[]; error?: string; pages: number }> {
-  const endpoints = [
-    "https://gateway.bepaid.by/transactions",
-    "https://api.bepaid.by/transactions",
-  ];
-
+// LIST MODE: Fetch with 8-endpoint probing
+async function fetchFromBepaidWithProbing(auth: string, shopId: string, fromDate: Date, toDate: Date, maxTransactions: number, startTime: number): Promise<{ success: boolean; transactions: any[]; error?: string; pages: number; endpoint_used?: string }> {
   const fromDateISO = fromDate.toISOString();
   const toDateISO = toDate.toISOString();
   
-  let allTransactions: any[] = [];
-  let pages = 0;
-  let hasMore = true;
-  let currentPage = 1;
-  const perPage = 100;
-  const maxPages = Math.ceil(maxTransactions / perPage);
-  const maxRuntimeMs = 50000; // 50 seconds timeout protection
-
-  for (const endpoint of endpoints) {
-    console.log(`[full-reconcile] Trying endpoint: ${endpoint}`);
-    
-    try {
-      allTransactions = [];
-      pages = 0;
-      hasMore = true;
-      currentPage = 1;
-
-      while (hasMore && pages < maxPages && allTransactions.length < maxTransactions) {
-        // Timeout protection
-        if (Date.now() - startTime > maxRuntimeMs) {
-          console.log(`[full-reconcile] Timeout protection triggered at page ${currentPage}`);
-          return {
-            success: true,
-            transactions: allTransactions,
-            pages,
-            error: `Timeout after ${pages} pages, ${allTransactions.length} transactions`
-          };
-        }
-
-        const url = `${endpoint}?created_at_from=${encodeURIComponent(fromDateISO)}&created_at_to=${encodeURIComponent(toDateISO)}&per_page=${perPage}&page=${currentPage}`;
-        
-        console.log(`[full-reconcile] Fetching page ${currentPage}: ${url}`);
-        
-        const response = await fetch(url, {
-          method: "GET",
-          headers: {
-            Authorization: `Basic ${auth}`,
-            Accept: "application/json",
-            "X-Api-Version": "3",
-          },
-        });
-
-        if (!response.ok) {
-          if (response.status === 401 || response.status === 403) {
-            console.log(`[full-reconcile] Auth failed for ${endpoint}`);
-            break; // Try next endpoint
-          }
-          const errText = await response.text();
-          console.log(`[full-reconcile] Error ${response.status}: ${errText.substring(0, 200)}`);
-          break;
-        }
-
-        const data = await response.json();
-        const transactions = data.transactions || data.data?.transactions || [];
-        
-        console.log(`[full-reconcile] Page ${currentPage}: got ${transactions.length} transactions`);
-        
-        if (transactions.length === 0) {
-          hasMore = false;
-        } else {
-          allTransactions.push(...transactions);
-          pages++;
-          currentPage++;
-          
-          if (transactions.length < perPage) {
-            hasMore = false;
-          }
-        }
-      }
-
-      if (allTransactions.length > 0) {
-        console.log(`[full-reconcile] Success: ${allTransactions.length} transactions from ${endpoint}`);
-        return { success: true, transactions: allTransactions, pages };
-      }
-    } catch (err) {
-      console.error(`[full-reconcile] Error with ${endpoint}:`, err);
-    }
-  }
-
-  // Fallback: try Reports API (POST)
-  console.log(`[full-reconcile] Falling back to Reports API`);
-  const reportsEndpoints = [
-    "https://api.bepaid.by/api/reports",
-    "https://gateway.bepaid.by/api/reports",
-  ];
-
-  const requestBody = {
-    report_params: {
-      date_type: "created_at",
-      from: formatBepaidDate(fromDate),
-      to: formatBepaidDate(toDate),
-      status: "all",
-      payment_method_type: "all",
-      time_zone: "Europe/Minsk"
-    }
+  const buildUrl = (base: string, includeShopId: boolean, page = 1) => {
+    const params = new URLSearchParams({ created_at_from: fromDateISO, created_at_to: toDateISO, per_page: "100", page: String(page), ...(includeShopId ? { shop_id: String(shopId) } : {}) });
+    return `${base}?${params.toString()}`;
   };
 
-  for (const endpoint of reportsEndpoints) {
+  const candidates = [
+    { name: "gateway:/transactions", base: "https://gateway.bepaid.by/transactions", includeShopId: false },
+    { name: "gateway:/transactions?shop_id", base: "https://gateway.bepaid.by/transactions", includeShopId: true },
+    { name: "gateway:/api/v1/transactions", base: "https://gateway.bepaid.by/api/v1/transactions", includeShopId: false },
+    { name: "api:/transactions", base: "https://api.bepaid.by/transactions", includeShopId: false },
+    { name: "api:/transactions?shop_id", base: "https://api.bepaid.by/transactions", includeShopId: true },
+    { name: "api:/reports/transactions", base: "https://api.bepaid.by/reports/transactions", includeShopId: false },
+    { name: "gateway:/reports/transactions", base: "https://gateway.bepaid.by/reports/transactions", includeShopId: false },
+    { name: "checkout:/transactions", base: "https://checkout.bepaid.by/transactions", includeShopId: false },
+  ];
+
+  const errors: string[] = [];
+  
+  for (const candidate of candidates) {
+    if (Date.now() - startTime > 25000) break;
+    
     try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${auth}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "X-Api-Version": "2",
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const transactions = data.transactions || data.data?.transactions || data.items || [];
-        if (transactions.length > 0) {
-          console.log(`[full-reconcile] Reports API success: ${transactions.length} transactions`);
-          return { success: true, transactions: transactions.slice(0, maxTransactions), pages: 1 };
-        }
+      const url = buildUrl(candidate.base, candidate.includeShopId);
+      console.log(`[full-reconcile] Trying: ${candidate.name}`);
+      
+      const response = await fetch(url, { method: "GET", headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json", "Accept": "application/json" } });
+      
+      if (!response.ok) { errors.push(`${candidate.name}: ${response.status}`); continue; }
+      
+      const data = await response.json();
+      const transactions = data.transactions || data.data || [];
+      
+      if (!Array.isArray(transactions) || transactions.length === 0) { errors.push(`${candidate.name}: 0 transactions`); continue; }
+      
+      console.log(`[full-reconcile] Success: ${candidate.name} returned ${transactions.length}`);
+      
+      let allTransactions = [...transactions];
+      let page = 2, pages = 1;
+      
+      while (allTransactions.length < maxTransactions && transactions.length === 100) {
+        const nextResp = await fetch(buildUrl(candidate.base, candidate.includeShopId, page), { method: "GET", headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json" } });
+        if (!nextResp.ok) break;
+        const nextData = await nextResp.json();
+        const nextTx = nextData.transactions || nextData.data || [];
+        if (!Array.isArray(nextTx) || nextTx.length === 0) break;
+        allTransactions = [...allTransactions, ...nextTx];
+        pages++; page++;
+        if (nextTx.length < 100) break;
       }
-    } catch (err) {
-      console.error(`[full-reconcile] Reports API error:`, err);
-    }
+      
+      return { success: true, transactions: allTransactions.slice(0, maxTransactions), pages, endpoint_used: candidate.name };
+    } catch (err) { errors.push(`${candidate.name}: ${err.message}`); }
   }
-
-  return { success: false, transactions: [], error: "All bePaid endpoints failed", pages: 0 };
+  
+  return { success: false, transactions: [], error: `All bePaid endpoints failed: ${errors.join('; ')}`, pages: 0 };
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+// UID VERIFY: Fetch single transaction
+async function fetchTransactionDetails(auth: string, uid: string): Promise<{ success: boolean; data?: any }> {
+  const endpoints = [`https://gateway.bepaid.by/transactions/${uid}`, `https://api.bepaid.by/transactions/${uid}`, `https://checkout.bepaid.by/transactions/${uid}`];
+  
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, { method: "GET", headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/json", "Accept": "application/json" } });
+      if (response.status === 404 || response.status === 403) continue;
+      if (!response.ok) continue;
+      const data = await response.json();
+      const tx = data.transaction || data;
+      if (tx && (tx.uid || tx.id)) return { success: true, data: tx };
+    } catch (err) { /* continue */ }
   }
+  return { success: false };
+}
+
+// UID VERIFY MODE
+async function runUidVerifyMode(supabase: any, auth: string, fromDate: string, toDate: string, dryRun: boolean, limit: number, startTime: number): Promise<{ success: boolean; stats: UidVerifyStats; samples: any; error?: string }> {
+  const stats: UidVerifyStats = { checked_uids: 0, verified_ok: 0, unverifiable: 0, updated_amount: 0, updated_status: 0, updated_paid_at: 0, updated_card_fields: 0, refunds_card_filled: 0, errors: 0 };
+  const samples = { verified: [] as any[], unverifiable: [] as any[], errors: [] as any[] };
+  const maxSamples = 20;
+
+  const { data: payments, error: fetchError } = await supabase.from('payments_v2').select('id, provider_payment_id, amount, status, paid_at, card_last4, card_brand, transaction_type, meta').gte('paid_at', fromDate).lte('paid_at', toDate + 'T23:59:59Z').not('provider_payment_id', 'is', null).order('paid_at', { ascending: false }).limit(limit);
+  
+  if (fetchError) return { success: false, stats, samples, error: `DB error: ${fetchError.message}` };
+  if (!payments || payments.length === 0) return { success: true, stats, samples };
+  
+  console.log(`[uid-verify] Found ${payments.length} UIDs to verify`);
+  
+  for (const payment of payments) {
+    if (Date.now() - startTime > 25000) break;
+    stats.checked_uids++;
+    const uid = payment.provider_payment_id;
+    
+    try {
+      const txResult = await fetchTransactionDetails(auth, uid);
+      
+      if (!txResult.success || !txResult.data) {
+        stats.unverifiable++;
+        if (!dryRun) {
+          await supabase.from('payments_v2').update({ meta: { ...(payment.meta || {}), reconcile_verification: { status: 'unverifiable', reason: 'bepaid_details_denied', at: new Date().toISOString(), uid } } }).eq('id', payment.id);
+        }
+        if (samples.unverifiable.length < maxSamples) samples.unverifiable.push({ uid, reason: 'bepaid_details_denied' });
+        continue;
+      }
+      
+      const tx = txResult.data;
+      const changes: string[] = [];
+      const updates: Record<string, any> = {};
+      
+      const bepaidAmount = (tx.amount || 0) / 100;
+      if (Math.abs(bepaidAmount - payment.amount) >= 0.01) { changes.push(`amount: ${payment.amount} → ${bepaidAmount}`); updates.amount = bepaidAmount; stats.updated_amount++; }
+      
+      const bepaidStatus = normalizeStatus(tx.status);
+      if (bepaidStatus && bepaidStatus !== payment.status) { changes.push(`status: ${payment.status} → ${bepaidStatus}`); updates.status = bepaidStatus; stats.updated_status++; }
+      
+      const bepaidCardLast4 = normalizeLast4(tx.credit_card?.last_4 || tx.card?.last_4);
+      const bepaidCardBrand = normalizeCardBrand(tx.credit_card?.brand || tx.card?.brand);
+      
+      if (bepaidCardLast4 && !payment.card_last4) { changes.push(`card_last4: null → ${bepaidCardLast4}`); updates.card_last4 = bepaidCardLast4; stats.updated_card_fields++; }
+      if (bepaidCardBrand && !payment.card_brand) { changes.push(`card_brand: null → ${bepaidCardBrand}`); updates.card_brand = bepaidCardBrand; }
+      
+      if (changes.length > 0) {
+        updates.meta = { ...(payment.meta || {}), reconcile_verification: { status: 'verified', at: new Date().toISOString(), uid, changes } };
+        if (!dryRun) await supabase.from('payments_v2').update(updates).eq('id', payment.id);
+        if (samples.verified.length < maxSamples) samples.verified.push({ uid, changes });
+      } else {
+        stats.verified_ok++;
+      }
+    } catch (err) { stats.errors++; if (samples.errors.length < maxSamples) samples.errors.push({ uid, error: err.message }); }
+  }
+  
+  return { success: true, stats, samples };
+}
+
+// LIST MODE: Process transactions
+async function processListModeTransactions(supabase: any, transactions: any[], dryRun: boolean): Promise<{ counters: any; samples: any }> {
+  const counters = { bepaid_total: transactions.length, already_in_db: 0, missing_in_db: 0, mismatched: 0, inserted: 0, updated: 0, skipped: 0, errors: 0 };
+  const samples = { inserts: [] as any[], updates: [] as any[], mismatches: [] as any[] };
+  const maxSamples = 20;
+  
+  const uids = transactions.map(tx => tx.uid || tx.id).filter(Boolean);
+  const { data: existingPayments } = await supabase.from('payments_v2').select('id, provider_payment_id, amount, status, card_last4, card_brand, meta').in('provider_payment_id', uids);
+  const existingMap = new Map((existingPayments || []).map((p: any) => [p.provider_payment_id, p]));
+  
+  for (const tx of transactions) {
+    const uid = tx.uid || tx.id;
+    if (!uid) { counters.skipped++; continue; }
+    
+    const existing = existingMap.get(uid);
+    const bepaidAmount = (tx.amount || 0) / 100;
+    const bepaidStatus = normalizeStatus(tx.status);
+    const last4 = normalizeLast4(tx.credit_card?.last_4 || tx.card?.last_4);
+    const brand = normalizeCardBrand(tx.credit_card?.brand || tx.card?.brand);
+    
+    if (existing) {
+      counters.already_in_db++;
+      const changes: string[] = [];
+      const updates: Record<string, any> = {};
+      
+      if (Math.abs(bepaidAmount - existing.amount) >= 0.01) { changes.push(`amount: ${existing.amount} → ${bepaidAmount}`); updates.amount = bepaidAmount; }
+      if (bepaidStatus && bepaidStatus !== existing.status) { changes.push(`status: ${existing.status} → ${bepaidStatus}`); updates.status = bepaidStatus; }
+      if (last4 && !existing.card_last4) { changes.push(`card_last4: null → ${last4}`); updates.card_last4 = last4; }
+      if (brand && !existing.card_brand) { changes.push(`card_brand: null → ${brand}`); updates.card_brand = brand; }
+      
+      if (changes.length > 0) {
+        counters.mismatched++;
+        if (!dryRun) { await supabase.from('payments_v2').update(updates).eq('id', existing.id); }
+        counters.updated++;
+        if (samples.mismatches.length < maxSamples) samples.mismatches.push({ uid, changes });
+      }
+    } else {
+      counters.missing_in_db++;
+      const newPayment = { provider_payment_id: uid, amount: bepaidAmount, currency: tx.currency || 'BYN', status: bepaidStatus, card_last4: last4, card_brand: brand, paid_at: tx.paid_at || tx.created_at, customer_email: tx.customer?.email, provider_response: tx, meta: { source: 'bepaid_full_reconcile', imported_at: new Date().toISOString() } };
+      if (!dryRun) { await supabase.from('payments_v2').insert(newPayment); }
+      counters.inserted++;
+      if (samples.inserts.length < maxSamples) samples.inserts.push({ uid, amount: bepaidAmount, status: bepaidStatus });
+    }
+  }
+  
+  return { counters, samples };
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const startTime = Date.now();
-
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-  );
+  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   try {
-    // 1. Auth check - admin only
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(JSON.stringify({ ok: false, error: "No authorization header" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (!authHeader) return new Response(JSON.stringify({ ok: false, error: "No auth" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     const token = authHeader.replace("Bearer ", "");
     const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-    
-    if (userError || !user) {
-      return new Response(JSON.stringify({ ok: false, error: "Invalid token" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (userError || !user) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    // Check admin role
-    const { data: hasAdminRole } = await supabase.rpc('has_role', { 
-      _user_id: user.id, 
-      _role: 'admin' 
-    });
-    if (!hasAdminRole) {
-      return new Response(JSON.stringify({ ok: false, error: "Admin access required" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    const { data: hasAdminRole } = await supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' });
+    if (!hasAdminRole) return new Response(JSON.stringify({ ok: false, error: "Admin access required" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    // 2. Parse request
     const body: ReconcileRequest = await req.json().catch(() => ({}));
     const from_date = body.from_date || '2026-01-01';
     const to_date = body.to_date || new Date().toISOString().split('T')[0];
-    const dry_run = body.dry_run !== false; // Default true
-    const requestedLimit = body.limit || 2000;
-    const limit = body.allow_over_limit ? Math.min(requestedLimit, 10000) : Math.min(requestedLimit, 5000);
+    const dry_run = body.dry_run !== false;
+    const limit = Math.min(body.limit || 500, 2000);
+    const requestedMode = body.mode || 'auto';
 
-    console.log(`[full-reconcile] Starting: from=${from_date}, to=${to_date}, dry_run=${dry_run}, limit=${limit}`);
+    console.log(`[full-reconcile] mode=${requestedMode}, from=${from_date}, to=${to_date}, dry_run=${dry_run}`);
 
-    // 3. Get bePaid credentials
-    const { data: bepaidInstance } = await supabase
-      .from("integration_instances")
-      .select("id, config")
-      .eq("provider", "bepaid")
-      .in("status", ["active", "connected"])
-      .single();
+    const { data: integrations } = await supabase.from('integration_instances').select('credentials, config').eq('provider', 'bepaid').in('status', ['active', 'connected']).limit(1);
+    const creds = integrations?.[0]?.credentials || integrations?.[0]?.config;
+    const shopId = creds?.shop_id || Deno.env.get("BEPAID_SHOP_ID");
+    const secretKey = creds?.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
 
-    if (!bepaidInstance?.config) {
-      return new Response(JSON.stringify({ ok: false, error: "No bePaid integration configured" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const shopId = bepaidInstance.config.shop_id;
-    const secretKey = bepaidInstance.config.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
-    
-    if (!shopId || !secretKey) {
-      return new Response(JSON.stringify({ ok: false, error: "Missing bePaid credentials" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (!shopId || !secretKey) return new Response(JSON.stringify({ ok: false, error: "bePaid credentials not configured" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     const auth = btoa(`${shopId}:${secretKey}`);
-
-    // 4. Calculate date range with timezone buffer
     const fromDate = new Date(`${from_date}T00:00:00Z`);
-    fromDate.setHours(fromDate.getHours() - 12); // -12h buffer for timezone
-    
     const toDate = new Date(`${to_date}T23:59:59Z`);
-    toDate.setHours(toDate.getHours() + 12); // +12h buffer for timezone
 
-    console.log(`[full-reconcile] Date range with buffer: ${fromDate.toISOString()} to ${toDate.toISOString()}`);
+    let modeUsed: 'list' | 'uid_verify' = 'list';
+    let fallbackReason: string | undefined;
+    let listResult: any = null;
 
-    // 5. Fetch transactions from bePaid
-    const { success: fetchSuccess, transactions: bepaidTx, error: fetchError, pages } = 
-      await fetchFromBepaid(auth, fromDate, toDate, limit, startTime);
-
-    if (!fetchSuccess || bepaidTx.length === 0) {
-      return new Response(JSON.stringify({
-        ok: false,
-        error: fetchError || "No transactions found in bePaid",
-        dry_run,
-        period: { from_date, to_date },
-        fetched: { bepaid_total: 0, pages: 0, cursor_next: null },
-      }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    console.log(`[full-reconcile] Fetched ${bepaidTx.length} transactions from bePaid`);
-
-    // 6. Get our payments for the period (include card fields for backfill check)
-    const { data: ourPayments, error: ourError } = await supabase
-      .from("payments_v2")
-      .select("id, provider_payment_id, amount, status, paid_at, card_last4, card_brand, meta")
-      .gte("paid_at", from_date)
-      .lte("paid_at", to_date + "T23:59:59Z");
-
-    if (ourError) {
-      console.error("[full-reconcile] Error fetching our payments:", ourError);
-    }
-
-    const ourMap = new Map((ourPayments || []).map(p => [p.provider_payment_id, p]));
-    console.log(`[full-reconcile] Found ${ourMap.size} payments in our DB for this period`);
-
-    // 7. Compare and reconcile
-    const result: ReconcileResponse = {
-      ok: true,
-      dry_run,
-      period: { from_date, to_date },
-      fetched: {
-        bepaid_total: bepaidTx.length,
-        pages,
-        cursor_next: bepaidTx.length >= limit ? "continue" : null,
-      },
-      compared: { our_total: ourMap.size },
-      changes: {
-        added: 0,
-        updated_amount: 0,
-        updated_status: 0,
-        updated_paid_at: 0,
-        updated_card_fields: 0,
-        brand_normalized: 0,
-        refunds_card_filled: 0,
-        unchanged: 0,
-        errors: 0,
-      },
-      samples: {
-        added: [],
-        discrepancies_amount: [],
-        discrepancies_status: [],
-        discrepancies_paid_at: [],
-        card_backfilled: [],
-        errors: [],
-      },
-    };
-
-    const maxSamples = 20;
-    const processedUids = new Set<string>();
-
-    for (const beTx of bepaidTx) {
-      const uid = beTx.uid || beTx.id;
+    if (requestedMode === 'list' || requestedMode === 'auto') {
+      listResult = await fetchFromBepaidWithProbing(auth, shopId, fromDate, toDate, limit, startTime);
       
-      if (!uid || processedUids.has(uid)) continue;
-      processedUids.add(uid);
-
-      try {
-        const bepaidAmount = Number(beTx.amount) / 100; // kopeks to rubles
-        const bepaidStatus = normalizeStatus(beTx.status);
-        const bepaidPaidAt = beTx.created_at || beTx.paid_at || beTx.completed_at;
-
-        // Extract card data from bePaid transaction
-        let bepaidCardLast4 = normalizeLast4(beTx.credit_card?.last_4 || beTx.card?.last_4);
-        let bepaidCardBrand = normalizeCardBrand(beTx.credit_card?.brand || beTx.card?.brand);
-        
-        // Determine if this is a refund transaction
-        const txType = beTx.type?.toLowerCase() || beTx.transaction_type?.toLowerCase() || '';
-        const isRefund = ['refund', 'void', 'credit'].includes(txType) || 
-                         bepaidStatus === 'refunded';
-
-        // For refunds missing card data, try to get from parent
-        if (isRefund && !bepaidCardLast4) {
-          const parentUid = beTx.parent_uid || beTx.parent_transaction_uid || beTx.original_transaction?.uid;
-          
-          if (parentUid) {
-            // First check our DB for parent
-            const { data: parentPayment } = await supabase
-              .from("payments_v2")
-              .select("card_last4, card_brand")
-              .eq("provider_payment_id", parentUid)
-              .maybeSingle();
-            
-            if (parentPayment?.card_last4) {
-              bepaidCardLast4 = normalizeLast4(parentPayment.card_last4);
-              bepaidCardBrand = normalizeCardBrand(parentPayment.card_brand);
-              result.changes.refunds_card_filled++;
-            }
-          }
-          
-          // If still missing, fetch details from bePaid
-          if (!bepaidCardLast4) {
-            const detailTx = await fetchTransactionDetails(auth, uid);
-            if (detailTx) {
-              if (detailTx.credit_card?.last_4) {
-                bepaidCardLast4 = normalizeLast4(detailTx.credit_card.last_4);
-                bepaidCardBrand = normalizeCardBrand(detailTx.credit_card.brand);
-                result.changes.refunds_card_filled++;
-              } else if (detailTx.parent_uid || detailTx.parent_transaction_uid) {
-                // Try to get from parent via API
-                const parentDetailUid = detailTx.parent_uid || detailTx.parent_transaction_uid;
-                const parentDetailTx = await fetchTransactionDetails(auth, parentDetailUid);
-                if (parentDetailTx?.credit_card?.last_4) {
-                  bepaidCardLast4 = normalizeLast4(parentDetailTx.credit_card.last_4);
-                  bepaidCardBrand = normalizeCardBrand(parentDetailTx.credit_card.brand);
-                  result.changes.refunds_card_filled++;
-                }
-              }
-            }
-          }
-        }
-
-        const ourPayment = ourMap.get(uid);
-
-        if (!ourPayment) {
-          // New payment - INSERT
-          result.changes.added++;
-          
-          if (result.samples.added.length < maxSamples) {
-            result.samples.added.push({
-              uid,
-              amount: bepaidAmount,
-              status: bepaidStatus,
-              paid_at: bepaidPaidAt,
-            });
-          }
-
-          if (!dry_run) {
-            // Extract additional data from bePaid transaction
-            const productName = beTx.description || beTx.order?.description || null;
-            const trackingId = beTx.tracking_id;
-            
-            // Try to parse order_id from tracking_id
-            let orderId = null;
-            if (trackingId) {
-              const parts = trackingId.split("_");
-              const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-              if (parts.length >= 1 && uuidRegex.test(parts[0])) {
-                orderId = parts[0];
-              }
-            }
-
-            const { error: insertError } = await supabase
-              .from("payments_v2")
-              .insert({
-                provider_payment_id: uid,
-                provider: "bepaid",
-                amount: bepaidAmount,
-                currency: beTx.currency || "BYN",
-                status: bepaidStatus,
-                paid_at: bepaidPaidAt,
-                card_last4: bepaidCardLast4,
-                card_brand: bepaidCardBrand,
-                transaction_type: isRefund ? 'refund' : (beTx.type || beTx.transaction_type || 'payment'),
-                product_name_raw: productName,
-                order_id: orderId,
-                meta: {
-                  tracking_id: trackingId,
-                  bepaid_raw: beTx,
-                  reconcile_source: "admin-bepaid-full-reconcile",
-                  reconcile_at: new Date().toISOString(),
-                },
-              });
-
-            if (insertError) {
-              console.error(`[full-reconcile] Insert error for ${uid}:`, insertError);
-              result.changes.added--;
-              result.changes.errors++;
-              if (result.samples.errors.length < maxSamples) {
-                result.samples.errors.push({ uid, error: insertError.message });
-              }
-            }
-          }
-        } else {
-          // Existing payment - check for discrepancies
-          let hasChanges = false;
-          const updates: Record<string, any> = {};
-          const originalValues: Record<string, any> = {};
-
-          // Check amount
-          const amountDiff = Math.abs(ourPayment.amount - bepaidAmount);
-          if (amountDiff > 0.01) {
-            originalValues.amount = ourPayment.amount;
-            updates.amount = bepaidAmount;
-            result.changes.updated_amount++;
-            hasChanges = true;
-            
-            if (result.samples.discrepancies_amount.length < maxSamples) {
-              result.samples.discrepancies_amount.push({
-                uid,
-                our_amount: ourPayment.amount,
-                bepaid_amount: bepaidAmount,
-                fixed: !dry_run,
-              });
-            }
-          }
-
-          // Check status
-          if (ourPayment.status !== bepaidStatus) {
-            originalValues.status = ourPayment.status;
-            updates.status = bepaidStatus;
-            result.changes.updated_status++;
-            hasChanges = true;
-            
-            if (result.samples.discrepancies_status.length < maxSamples) {
-              result.samples.discrepancies_status.push({
-                uid,
-                our_status: ourPayment.status,
-                bepaid_status: bepaidStatus,
-                fixed: !dry_run,
-              });
-            }
-          }
-
-          // Check paid_at (allow 1 minute tolerance)
-          if (bepaidPaidAt && ourPayment.paid_at) {
-            const ourDate = new Date(ourPayment.paid_at).getTime();
-            const bepaidDate = new Date(bepaidPaidAt).getTime();
-            if (Math.abs(ourDate - bepaidDate) > 60000) { // > 1 minute difference
-              originalValues.paid_at = ourPayment.paid_at;
-              updates.paid_at = bepaidPaidAt;
-              result.changes.updated_paid_at++;
-              hasChanges = true;
-              
-              if (result.samples.discrepancies_paid_at.length < maxSamples) {
-                result.samples.discrepancies_paid_at.push({
-                  uid,
-                  our_paid_at: ourPayment.paid_at,
-                  bepaid_paid_at: bepaidPaidAt,
-                  fixed: !dry_run,
-                });
-              }
-            }
-          }
-
-          // ========== CARD BACKFILL LOGIC ==========
-          
-          // Backfill card_last4 if missing
-          if (bepaidCardLast4 && !ourPayment.card_last4) {
-            updates.card_last4 = bepaidCardLast4;
-            result.changes.updated_card_fields++;
-            hasChanges = true;
-            
-            if (result.samples.card_backfilled.length < maxSamples) {
-              result.samples.card_backfilled.push({
-                uid,
-                field: 'card_last4',
-                old_value: ourPayment.card_last4,
-                new_value: bepaidCardLast4,
-              });
-            }
-          }
-
-          // Backfill or normalize card_brand
-          if (bepaidCardBrand) {
-            const currentNormalized = normalizeCardBrand(ourPayment.card_brand);
-            
-            if (!ourPayment.card_brand) {
-              // Missing card_brand - backfill
-              updates.card_brand = bepaidCardBrand;
-              result.changes.updated_card_fields++;
-              hasChanges = true;
-              
-              if (result.samples.card_backfilled.length < maxSamples) {
-                result.samples.card_backfilled.push({
-                  uid,
-                  field: 'card_brand',
-                  old_value: null,
-                  new_value: bepaidCardBrand,
-                });
-              }
-            } else if (ourPayment.card_brand !== bepaidCardBrand && currentNormalized === bepaidCardBrand) {
-              // Brand needs normalization (e.g., 'master' -> 'mastercard')
-              originalValues.card_brand = ourPayment.card_brand;
-              updates.card_brand = bepaidCardBrand;
-              result.changes.brand_normalized++;
-              hasChanges = true;
-              
-              if (result.samples.card_backfilled.length < maxSamples) {
-                result.samples.card_backfilled.push({
-                  uid,
-                  field: 'card_brand_normalized',
-                  old_value: ourPayment.card_brand,
-                  new_value: bepaidCardBrand,
-                });
-              }
-            }
-          }
-
-          if (hasChanges && !dry_run) {
-            // Preserve original values in meta
-            updates.meta = {
-              ...(ourPayment.meta || {}),
-              reconcile_original: {
-                ...(ourPayment.meta?.reconcile_original || {}),
-                ...originalValues,
-              },
-              reconcile_at: new Date().toISOString(),
-              reconcile_source: "admin-bepaid-full-reconcile",
-            };
-            updates.updated_at = new Date().toISOString();
-
-            const { error: updateError } = await supabase
-              .from("payments_v2")
-              .update(updates)
-              .eq("id", ourPayment.id);
-
-            if (updateError) {
-              console.error(`[full-reconcile] Update error for ${uid}:`, updateError);
-              result.changes.errors++;
-              if (result.samples.errors.length < maxSamples) {
-                result.samples.errors.push({ uid, error: updateError.message });
-              }
-            }
-          }
-
-          if (!hasChanges) {
-            result.changes.unchanged++;
-          }
-        }
-      } catch (err: any) {
-        console.error(`[full-reconcile] Error processing ${uid}:`, err);
-        result.changes.errors++;
-        if (result.samples.errors.length < maxSamples) {
-          result.samples.errors.push({ uid, error: err.message });
-        }
+      if (listResult.success && listResult.transactions.length > 0) {
+        modeUsed = 'list';
+      } else if (requestedMode === 'auto') {
+        modeUsed = 'uid_verify';
+        fallbackReason = listResult.error || 'List returned 0 transactions';
+        console.log(`[full-reconcile] Fallback to UID_VERIFY: ${fallbackReason}`);
+      } else {
+        return new Response(JSON.stringify({ ok: false, error: listResult.error || 'List mode failed', mode_attempted: 'list' }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
+    } else {
+      modeUsed = 'uid_verify';
     }
 
-    // 8. Write audit log (SYSTEM ACTOR) - only on execute
+    let response: any;
+
+    if (modeUsed === 'list' && listResult?.success) {
+      const { counters, samples } = await processListModeTransactions(supabase, listResult.transactions, dry_run);
+      response = { ok: true, dry_run, mode_used: 'list', endpoint_used: listResult.endpoint_used, period: { from_date, to_date }, fetched: { bepaid_total: counters.bepaid_total, pages: listResult.pages }, db: { already_in_db: counters.already_in_db, missing_in_db: counters.missing_in_db, mismatched: counters.mismatched }, actions: { inserted: counters.inserted, updated: counters.updated, skipped: counters.skipped, errors: counters.errors }, samples, runtime_ms: Date.now() - startTime };
+    } else {
+      const uidResult = await runUidVerifyMode(supabase, auth, from_date, to_date, dry_run, limit, startTime);
+      if (!uidResult.success) return new Response(JSON.stringify({ ok: false, error: uidResult.error || 'UID verify failed', mode_attempted: 'uid_verify', partial_stats: uidResult.stats }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      response = { ok: true, dry_run, mode_used: 'uid_verify', fallback_reason: fallbackReason, period: { from_date, to_date }, uid_verify_stats: uidResult.stats, samples: { verified: uidResult.samples.verified, unverifiable: uidResult.samples.unverifiable, errors: uidResult.samples.errors }, runtime_ms: Date.now() - startTime };
+    }
+
     if (!dry_run) {
-      await supabase.from("audit_logs").insert({
-        actor_type: "system",
-        actor_label: "admin-bepaid-full-reconcile",
-        actor_user_id: null,
-        action: "bepaid_full_reconcile",
-        meta: {
-          triggered_by: user.id,
-          period: { from_date, to_date },
-          dry_run: false,
-          bepaid_total: result.fetched.bepaid_total,
-          our_total: result.compared.our_total,
-          changes: result.changes,
-          sample_uids_added: result.samples.added.slice(0, 5).map(s => s.uid),
-          sample_uids_fixed_amount: result.samples.discrepancies_amount.slice(0, 5).map(s => s.uid),
-          sample_uids_fixed_status: result.samples.discrepancies_status.slice(0, 5).map(s => s.uid),
-          sample_uids_card_backfilled: result.samples.card_backfilled.slice(0, 5).map(s => s.uid),
-          runtime_ms: Date.now() - startTime,
-        },
-      });
+      await supabase.from('audit_logs').insert({ actor_type: 'system', actor_user_id: null, actor_label: 'admin-bepaid-full-reconcile', action: 'bepaid_full_reconcile', meta: { triggered_by: user.id, mode_used: modeUsed, fallback_reason: fallbackReason, period: { from_date, to_date }, dry_run: false, ...(modeUsed === 'list' ? { fetched: response.fetched, db: response.db, actions: response.actions } : { uid_verify_stats: response.uid_verify_stats }), runtime_ms: response.runtime_ms } });
     }
 
-    const runtime = Date.now() - startTime;
-    console.log(`[full-reconcile] Completed in ${runtime}ms: added=${result.changes.added}, updated_amount=${result.changes.updated_amount}, updated_status=${result.changes.updated_status}, updated_card_fields=${result.changes.updated_card_fields}, brand_normalized=${result.changes.brand_normalized}, refunds_card_filled=${result.changes.refunds_card_filled}, unchanged=${result.changes.unchanged}, errors=${result.changes.errors}`);
-
-    return new Response(JSON.stringify(result), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-
-  } catch (err: any) {
-    console.error("[full-reconcile] Critical error:", err);
-    return new Response(JSON.stringify({ 
-      ok: false, 
-      error: err.message,
-      dry_run: true,
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(JSON.stringify(response), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  } catch (err) {
+    console.error("[full-reconcile] Error:", err);
+    return new Response(JSON.stringify({ ok: false, error: err.message || "Internal error", runtime_ms: Date.now() - startTime }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
