@@ -60,10 +60,17 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
   });
 
   // Fetch payments for this contact - BOTH by profile_id AND by linked cards
+  // Also includes payment_reconcile_queue for transactions not yet in payments_v2
   const { data: payments, isLoading } = useQuery({
     queryKey: ['contact-payments', contactId],
     queryFn: async () => {
-      // 1. Get payments directly linked to profile_id
+      // 1. Get linked cards for this contact first
+      const { data: cards } = await supabase
+        .from('card_profile_links')
+        .select('card_last4, card_brand')
+        .eq('profile_id', contactId);
+
+      // 2. Get payments directly linked to profile_id from payments_v2
       const { data: directPayments, error } = await supabase
         .from('payments_v2')
         .select(`
@@ -77,14 +84,8 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
 
       if (error) throw error;
 
-      // 2. Get linked cards for this contact
-      const { data: cards } = await supabase
-        .from('card_profile_links')
-        .select('card_last4, card_brand')
-        .eq('profile_id', contactId);
-
-      // 3. Find payments by card (even if not linked to profile yet)
-      let cardPayments: any[] = [];
+      // 3. Find payments_v2 by card (even if not linked to profile yet)
+      let cardPaymentsV2: any[] = [];
       if (cards && cards.length > 0) {
         for (const card of cards) {
           const brandVariants = getBrandVariants(card.card_brand || 'unknown');
@@ -99,20 +100,56 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
             .in('status', ['succeeded', 'refunded'])
             .order('paid_at', { ascending: false })
             .limit(50);
-          cardPayments.push(...(byCard || []));
+          cardPaymentsV2.push(...(byCard || []));
         }
       }
 
-      // 4. Merge and deduplicate
-      const allPayments = [...(directPayments || []), ...cardPayments];
+      // 4. ALSO get payments from payment_reconcile_queue (for transactions not yet in payments_v2)
+      let queuePayments: any[] = [];
+      
+      // 4a. Direct match by matched_profile_id
+      const { data: directQueuePayments } = await supabase
+        .from('payment_reconcile_queue')
+        .select(`
+          id, provider_payment_id, amount, paid_at, status, transaction_type, 
+          card_last4, card_brand, order_id, product_name
+        `)
+        .eq('matched_profile_id', contactId)
+        .in('status', ['completed', 'pending'])
+        .order('paid_at', { ascending: false })
+        .limit(100);
+      
+      queuePayments.push(...(directQueuePayments || []));
+
+      // 4b. Match by card
+      if (cards && cards.length > 0) {
+        for (const card of cards) {
+          const brandVariants = getBrandVariants(card.card_brand || 'unknown');
+          const { data: byCardQueue } = await supabase
+            .from('payment_reconcile_queue')
+            .select(`
+              id, provider_payment_id, amount, paid_at, status, transaction_type, 
+              card_last4, card_brand, order_id, product_name
+            `)
+            .eq('card_last4', card.card_last4)
+            .in('card_brand', brandVariants)
+            .in('status', ['completed', 'pending'])
+            .order('paid_at', { ascending: false })
+            .limit(50);
+          queuePayments.push(...(byCardQueue || []));
+        }
+      }
+
+      // 5. Merge all sources and deduplicate by id
+      const allPayments = [...(directPayments || []), ...cardPaymentsV2, ...queuePayments];
       const uniquePaymentsMap = new Map(allPayments.map(p => [p.id, p]));
       const uniquePayments = Array.from(uniquePaymentsMap.values())
         .sort((a, b) => new Date(b.paid_at || 0).getTime() - new Date(a.paid_at || 0).getTime())
         .slice(0, 100);
 
-      // 5. Fetch related orders for product names
+      // 6. Fetch related orders for product names (for payments_v2 entries)
       const orderIds = uniquePayments
-        .filter(p => p.order_id)
+        .filter(p => p.order_id && !p.product_name) // Skip if already has product_name from queue
         .map(p => p.order_id!);
 
       let ordersMap = new Map<string, { id: string; product_name: string | null }>();
@@ -129,7 +166,8 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
 
       return uniquePayments.map(p => ({
         ...p,
-        productName: p.order_id ? ordersMap.get(p.order_id)?.product_name : null,
+        // Use existing product_name from queue, or fetch from orders
+        productName: p.product_name || (p.order_id ? ordersMap.get(p.order_id)?.product_name : null),
       })) as PaymentItem[];
     },
     enabled: !!contactId,
@@ -197,9 +235,12 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'succeeded':
+      case 'completed': // from payment_reconcile_queue
         return <Badge variant="default" className="text-xs">Успешно</Badge>;
       case 'refunded':
         return <Badge variant="secondary" className="text-xs">Возврат</Badge>;
+      case 'pending': // from payment_reconcile_queue
+        return <Badge variant="outline" className="text-xs">В обработке</Badge>;
       default:
         return <Badge variant="outline" className="text-xs">{status}</Badge>;
     }
