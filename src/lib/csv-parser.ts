@@ -56,24 +56,25 @@ export function normalizeStatus(
   const type = (transactionType || '').toLowerCase();
   const msg = (message || '').toLowerCase();
   
-  // Refund/cancel take priority based on transaction type
+  // PRIORITY 1: Refund/cancel take priority based on transaction type
+  // bePaid uses "Возврат средств" for refunds and "Отмена" for voids
   if (type.includes('возврат') || type.includes('refund')) {
     return 'refund';
   }
-  if (type.includes('отмен') || type.includes('cancel')) {
+  if (type.includes('отмен') || type.includes('cancel') || type.includes('void')) {
     return 'cancel';
   }
   
-  // Check message for failure indicators
+  // PRIORITY 2: Check message for failure indicators
   const failureIndicators = [
     'declined', 'отклон', 'error', 'insufficient', 'reject', 
-    'fail', 'ошибк', 'denied', 'refused', 'cancel'
+    'fail', 'ошибк', 'denied', 'refused'
   ];
   if (failureIndicators.some(ind => msg.includes(ind))) {
     return 'failed';
   }
   
-  // Check status text
+  // PRIORITY 3: Check status text
   if (status.includes('неуспеш') || status.includes('ошибк') || 
       status === 'failed' || status === 'error' || status.includes('fail')) {
     return 'failed';

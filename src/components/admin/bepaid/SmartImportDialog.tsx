@@ -111,6 +111,55 @@ type ImportPhase = 'upload' | 'parsing' | 'reconciliation' | 'importing' | 'comp
 
 const BATCH_SIZE = 50;
 
+// Sheet detection by name (case-insensitive)
+interface DetectedSheet {
+  name: string;
+  type: 'report' | 'cards' | 'erip' | 'memo' | 'unknown';
+  rowCount: number;
+  hasUid: boolean;
+}
+
+function detectSheetsByName(workbook: XLSX.WorkBook): DetectedSheet[] {
+  const detected: DetectedSheet[] = [];
+  
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '', raw: false });
+    const hasUid = rows.length > 0 && ('UID' in rows[0] || 'uid' in rows[0]);
+    const nameLower = sheetName.toLowerCase();
+    
+    let type: DetectedSheet['type'] = 'unknown';
+    
+    // Detect by sheet name
+    if (nameLower.includes('отчет') || nameLower.includes('report') || nameLower.includes('summary')) {
+      type = 'report';
+    } else if (nameLower.includes('карточ') || nameLower.includes('card')) {
+      type = 'cards';
+    } else if (nameLower.includes('ерип') || nameLower.includes('erip')) {
+      type = 'erip';
+    } else if (nameLower.includes('мемориальн') || nameLower.includes('memo')) {
+      type = 'memo';
+    } else if (hasUid) {
+      // Try to detect by content columns
+      const firstRow = rows[0] || {};
+      if (firstRow['Номер операции ЕРИП'] || firstRow['Расчетный агент'] || firstRow['Код услуги']) {
+        type = 'erip';
+      } else if (firstRow['Карта'] || firstRow['Card'] || firstRow['Владелец карты']) {
+        type = 'cards';
+      }
+    }
+    
+    detected.push({
+      name: sheetName,
+      type,
+      rowCount: rows.length,
+      hasUid,
+    });
+  }
+  
+  return detected;
+}
+
 // Parse bePaid CSV/Excel row using improved parser
 function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
   const uid = row['UID'] || row['uid'] || row['ID транзакции'];
@@ -123,7 +172,20 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
   // Use improved status normalization
   const status_normalized = normalizeStatus(statusRaw, typeRaw, messageRaw);
 
-  const amount = parseAmount(row['Сумма'] || row['Amount']);
+  // CRITICAL FIX: For void/cancel transactions, use 'Сумма' column, NOT 'Перечисленная сумма'
+  // bePaid file: 'Сумма' = actual transaction amount, 'Перечисленная сумма' = 0 for voids
+  const isVoidOrCancel = typeRaw.toLowerCase().includes('отмен') || 
+                          typeRaw.toLowerCase().includes('void') ||
+                          typeRaw.toLowerCase().includes('cancel');
+  
+  // Always prefer 'Сумма' column for the actual transaction amount
+  const amountRaw = row['Сумма'] || row['Amount'];
+  let amount = parseAmount(amountRaw);
+  
+  // For voids/cancels, amount should be positive (representing the cancelled amount)
+  if (isVoidOrCancel && amount < 0) {
+    amount = Math.abs(amount);
+  }
 
   const cardMask = row['Карта'] || row['Card'] || '';
   const card_last4 = extractCardLast4(cardMask);
@@ -210,6 +272,7 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
   const [selectedCategories, setSelectedCategories] = useState({ new: true, updates: true, conflicts: false });
   const [autoCreateOrders, setAutoCreateOrders] = useState(true);
   const [fileSummary, setFileSummary] = useState<{ cards: number; erip: number; delimiter?: string }>({ cards: 0, erip: 0 });
+  const [detectedSheets, setDetectedSheets] = useState<DetectedSheet[]>([]);
   
   const queryClient = useQueryClient();
   const { mappings } = useBepaidMappings();
@@ -289,28 +352,42 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
           allRows = [...allRows, ...rowsWithSource];
           console.log(`CSV parsed: ${parseResult.rows.length} rows from ${selectedFile.name}, delimiter: "${parseResult.delimiter}"`);
         } else {
-          // Excel file processing
+          // Excel file processing - detect sheets by NAME, not by index
           const buffer = await selectedFile.arrayBuffer();
           const workbook = XLSX.read(buffer, { type: 'array' });
           
+          // Detect all sheets and their types
+          const sheets = detectSheetsByName(workbook);
+          setDetectedSheets(sheets);
+          console.log('Detected sheets:', sheets);
+          
+          // Find cards sheet by name
+          const cardSheetInfo = sheets.find(s => s.type === 'cards');
           let cardRows: Record<string, string>[] = [];
-          if (workbook.SheetNames.length > 1) {
-            const cardSheet = workbook.Sheets[workbook.SheetNames[1]];
+          if (cardSheetInfo && cardSheetInfo.hasUid) {
+            const cardSheet = workbook.Sheets[cardSheetInfo.name];
             cardRows = XLSX.utils.sheet_to_json<Record<string, string>>(cardSheet, { defval: '', raw: false });
-            if (cardRows.length > 0 && !('UID' in cardRows[0])) cardRows = [];
+            console.log(`Cards sheet "${cardSheetInfo.name}": ${cardRows.length} rows`);
           }
           
+          // Find ERIP sheet by name
+          const eripSheetInfo = sheets.find(s => s.type === 'erip');
           let eripRows: Record<string, string>[] = [];
-          if (workbook.SheetNames.length > 2) {
-            const eripSheet = workbook.Sheets[workbook.SheetNames[2]];
+          if (eripSheetInfo && eripSheetInfo.hasUid) {
+            const eripSheet = workbook.Sheets[eripSheetInfo.name];
             const rawEripRows = XLSX.utils.sheet_to_json<Record<string, string>>(eripSheet, { defval: '', raw: false });
-            if (rawEripRows.length > 0 && 'UID' in rawEripRows[0]) {
-              eripRows = rawEripRows.map(row => ({
-                ...row,
-                'Способ оплаты': 'erip',
-                '_source': 'erip'
-              }));
-            }
+            eripRows = rawEripRows.map(row => ({
+              ...row,
+              'Способ оплаты': 'erip',
+              '_source': 'erip'
+            }));
+            console.log(`ERIP sheet "${eripSheetInfo.name}": ${eripRows.length} rows`);
+          }
+          
+          // Log ignored sheets
+          const ignoredSheets = sheets.filter(s => s.type === 'report' || s.type === 'memo');
+          if (ignoredSheets.length > 0) {
+            console.log('Ignored sheets:', ignoredSheets.map(s => `${s.name} (${s.type})`).join(', '));
           }
           
           cardCount += cardRows.length;
@@ -781,6 +858,7 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
     setProgress({ current: 0, total: 0, message: '' });
     setSelectedCategories({ new: true, updates: true, conflicts: false });
     setFileSummary({ cards: 0, erip: 0 });
+    setDetectedSheets([]);
   };
 
   const StatCard = ({ 
@@ -960,7 +1038,7 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
               {/* CSV Financial Summary */}
               <Card className="bg-primary/5 border-primary/20">
                 <CardContent className="p-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
                     <div>
                       <p className="text-muted-foreground">Успешные в CSV</p>
                       <p className="text-xl font-bold text-green-600">
@@ -974,6 +1052,18 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
                       <p className="text-muted-foreground">Возвраты в CSV</p>
                       <p className="text-xl font-bold text-amber-600">
                         {transactions.filter(t => t.status_normalized === 'refund' || (t.transaction_type || '').toLowerCase().includes('возврат')).reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)} BYN
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {transactions.filter(t => t.status_normalized === 'refund' || (t.transaction_type || '').toLowerCase().includes('возврат')).length} возвратов
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Отмены в CSV</p>
+                      <p className="text-xl font-bold text-orange-600">
+                        {transactions.filter(t => t.status_normalized === 'cancel' || (t.transaction_type || '').toLowerCase().includes('отмен')).reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)} BYN
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {transactions.filter(t => t.status_normalized === 'cancel' || (t.transaction_type || '').toLowerCase().includes('отмен')).length} отмен
                       </p>
                     </div>
                     <div>
@@ -997,6 +1087,42 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Detected Excel sheets info */}
+              {detectedSheets.length > 0 && (
+                <Card className="bg-muted/30 border-muted">
+                  <CardContent className="p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Листы в файле:</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {detectedSheets.map(sheet => (
+                        <Badge 
+                          key={sheet.name}
+                          variant={
+                            sheet.type === 'cards' || sheet.type === 'erip' 
+                              ? 'default' 
+                              : sheet.type === 'report' 
+                                ? 'secondary' 
+                                : 'outline'
+                          }
+                          className="text-xs"
+                        >
+                          {sheet.type === 'cards' && '💳 '}
+                          {sheet.type === 'erip' && '🏦 '}
+                          {sheet.type === 'report' && '📊 '}
+                          {sheet.type === 'memo' && '⏭️ '}
+                          {sheet.name}
+                          {sheet.hasUid && sheet.rowCount > 0 && ` (${sheet.rowCount})`}
+                          {sheet.type === 'memo' && ' — игнор.'}
+                          {sheet.type === 'report' && ' — сверка'}
+                        </Badge>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               <div className="flex items-center gap-4 flex-wrap p-3 bg-muted/50 rounded-lg">
                 <div className="flex items-center gap-2">
