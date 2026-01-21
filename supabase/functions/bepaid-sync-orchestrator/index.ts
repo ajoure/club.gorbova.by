@@ -12,8 +12,7 @@ interface SyncRequest {
   from_date: string;
   to_date: string;
   dry_run?: boolean;
-  run_id?: string; // for continuation
-  batch_size?: number;
+  limit?: number;
 }
 
 interface NormalizedTx {
@@ -46,14 +45,29 @@ interface SyncStats {
   amount_sum_api: number;
   diff_count: number;
   diff_amount: number;
+  endpoint_used?: string;
+  endpoint_attempts?: any[];
+  dry_run?: boolean;
+  auth_mode?: string;
+  pages_fetched?: number;
+  api_total_count?: number;
+}
+
+interface EndpointAttempt {
+  name: string;
+  url: string;
+  status: number | null;
+  ok: boolean;
+  keys_found: string[] | null;
+  error: string | null;
+  tx_count?: number;
 }
 
 // ============ CONSTANTS ============
 const MAX_CONSECUTIVE_ERRORS = 50;
 const MAX_DELTA_PER_TX_BYN = 1000;
-const BATCH_SIZE = 100;
-const CONCURRENCY = 5;
-const MAX_RETRIES = 3;
+const MAX_TRANSACTIONS = 10000;
+const MAX_ERROR_SAMPLES = 20;
 
 // ============ HELPERS ============
 
@@ -73,8 +87,9 @@ function normalizeCardBrand(brand: string | undefined): string | null {
   const b = String(brand).toLowerCase();
   if (b.includes('visa')) return 'visa';
   if (b.includes('master')) return 'mastercard';
-  if (b.includes('belcard') || b.includes('белкарт')) return 'belcard';
+  if (b.includes('belcard') || b.includes('белкарт') || b.includes('belkart')) return 'belkart';
   if (b.includes('mir') || b.includes('мир')) return 'mir';
+  if (b.includes('maestro')) return 'maestro';
   return brand;
 }
 
@@ -91,7 +106,6 @@ function determineTransactionType(tx: any): 'payment' | 'refund' {
   const status = String(tx.status || '').toLowerCase();
   if (status === 'refunded') return 'refund';
   
-  // Check for negative amount hint
   if (typeof tx.amount === 'number' && tx.amount < 0) return 'refund';
   
   return 'payment';
@@ -115,25 +129,31 @@ function normalizeTx(raw: any): { tx: NormalizedTx | null; error?: string } {
     // 3) Currency REQUIRED — NO DEFAULT
     const currency = raw.currency || raw.currency_code || raw.currencyCode;
     if (!currency) {
-      return { tx: null, error: 'Currency field missing - STOP required' };
+      return { tx: null, error: `STOP: Currency field missing for UID ${uid}` };
     }
     const normalizedCurrency = String(currency).toUpperCase();
     if (normalizedCurrency !== 'BYN') {
-      return { tx: null, error: `Currency mismatch: expected BYN, got ${normalizedCurrency} - STOP required` };
+      return { tx: null, error: `STOP: Currency mismatch - expected BYN, got ${normalizedCurrency} for UID ${uid}` };
     }
 
-    // 4) Transaction type
+    // 4) paid_at REQUIRED — NO DEFAULT to now()
+    const paidAt = raw.paid_at || raw.finished_at || raw.created_at;
+    if (!paidAt) {
+      return { tx: null, error: `Missing paid_at for UID ${uid}` };
+    }
+
+    // 5) Transaction type
     const txType = determineTransactionType(raw);
     const signedAmount = txType === 'refund' ? -Math.abs(normalizedAmount) : Math.abs(normalizedAmount);
 
-    // 5) Extract card info
+    // 6) Extract card info
     const cc = raw.credit_card || raw.card || {};
     
-    // 6) Extract customer info
+    // 7) Extract customer info
     const customer = raw.customer || {};
     const additional = raw.additional_data || {};
 
-    // 7) Extract product info
+    // 8) Extract product info
     const product = raw.product || additional.product || {};
 
     return {
@@ -144,7 +164,7 @@ function normalizeTx(raw: any): { tx: NormalizedTx | null; error?: string } {
         currency: 'BYN',
         transaction_type: txType,
         status: normalizeStatus(raw.status),
-        paid_at: raw.paid_at || raw.created_at || raw.finished_at || new Date().toISOString(),
+        paid_at: paidAt,
         card_last4: normalizeLast4(cc.last_4 || cc.last4 || cc.number?.slice(-4)),
         card_brand: normalizeCardBrand(cc.brand || cc.type),
         card_holder: cc.holder || cc.cardholder || null,
@@ -161,75 +181,178 @@ function normalizeTx(raw: any): { tx: NormalizedTx | null; error?: string } {
   }
 }
 
-async function fetchWithRetry(
-  url: string,
+// ============ 8-ENDPOINT PROBING (API LIST → DB strategy) ============
+
+async function fetchFromBepaidWithProbing(
   auth: string,
-  maxRetries = MAX_RETRIES
-): Promise<Response> {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Basic ${auth}`,
-        Accept: 'application/json',
-      },
-    });
-
-    if (response.status === 429) {
-      const delay = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
-      console.log(`[Sync] Rate limited, waiting ${delay}ms before retry ${attempt + 1}/${maxRetries}`);
-      await new Promise(r => setTimeout(r, delay));
-      continue;
-    }
-
-    if (response.status >= 500) {
-      const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
-      console.log(`[Sync] Server error ${response.status}, retrying in ${delay}ms`);
-      await new Promise(r => setTimeout(r, delay));
-      continue;
-    }
-
-    return response;
-  }
-  
-  throw new Error(`Max retries (${maxRetries}) exceeded`);
-}
-
-async function fetchTransactionByUid(
-  uid: string,
   shopId: string,
-  auth: string
-): Promise<{ tx: any | null; error?: string }> {
-  const endpoints = [
-    `https://api.bepaid.by/beyag/payments/${uid}`,
-    `https://api.bepaid.by/beyag/transactions/${uid}`,
-    `https://gateway.bepaid.by/v2/transactions/${uid}`,
-    `https://api.bepaid.by/v1/shops/${shopId}/transactions/${uid}`,
+  fromDate: Date,
+  toDate: Date,
+  maxTransactions: number,
+  startTime: number
+): Promise<{
+  success: boolean;
+  transactions: any[];
+  error?: string;
+  pages: number;
+  endpoint_used?: string;
+  endpoint_attempts: EndpointAttempt[];
+}> {
+  const fromDateISO = fromDate.toISOString();
+  const toDateISO = toDate.toISOString();
+
+  const buildUrl = (base: string, includeShopId: boolean, page = 1) => {
+    const params = new URLSearchParams({
+      created_at_from: fromDateISO,
+      created_at_to: toDateISO,
+      per_page: "100",
+      page: String(page),
+      ...(includeShopId ? { shop_id: String(shopId) } : {}),
+    });
+    return `${base}?${params.toString()}`;
+  };
+
+  // 8 candidate endpoints to try
+  const candidates = [
+    { name: "gateway:/transactions", base: "https://gateway.bepaid.by/transactions", includeShopId: false },
+    { name: "gateway:/transactions?shop_id", base: "https://gateway.bepaid.by/transactions", includeShopId: true },
+    { name: "gateway:/api/v1/transactions", base: "https://gateway.bepaid.by/api/v1/transactions", includeShopId: false },
+    { name: "api:/transactions", base: "https://api.bepaid.by/transactions", includeShopId: false },
+    { name: "api:/transactions?shop_id", base: "https://api.bepaid.by/transactions", includeShopId: true },
+    { name: "api:/reports/transactions", base: "https://api.bepaid.by/reports/transactions", includeShopId: false },
+    { name: "gateway:/reports/transactions", base: "https://gateway.bepaid.by/reports/transactions", includeShopId: false },
+    { name: "checkout:/transactions", base: "https://checkout.bepaid.by/transactions", includeShopId: false },
   ];
 
-  for (const endpoint of endpoints) {
+  const endpointAttempts: EndpointAttempt[] = [];
+
+  for (const candidate of candidates) {
+    // Timeout check
+    if (Date.now() - startTime > 25000) {
+      break;
+    }
+
+    const url = buildUrl(candidate.base, candidate.includeShopId);
+    
     try {
-      const response = await fetchWithRetry(endpoint, auth);
+      console.log(`[Sync] Trying endpoint: ${candidate.name}`);
       
-      if (response.ok) {
-        const data = await response.json();
-        
-        // Extract transaction from known shapes
-        let tx = data;
-        if (data.transaction) tx = data.transaction;
-        else if (data.data?.transaction) tx = data.data.transaction;
-        else if (data.data && data.data.uid) tx = data.data;
-        
-        if (tx && (tx.uid || tx.id)) {
-          return { tx };
-        }
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
+      });
+
+      const attempt: EndpointAttempt = {
+        name: candidate.name,
+        url: url.replace(/shop_id=\d+/, 'shop_id=***'),
+        status: response.status,
+        ok: response.ok,
+        keys_found: null,
+        error: null,
+      };
+
+      if (!response.ok) {
+        attempt.error = `HTTP ${response.status}`;
+        endpointAttempts.push(attempt);
+        continue;
       }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.log(`[Sync] Endpoint ${endpoint} failed: ${message}`);
+
+      const data = await response.json();
+      const transactions = data.transactions || data.data || [];
+      
+      attempt.keys_found = Object.keys(data).slice(0, 5);
+      attempt.tx_count = transactions.length;
+
+      if (!Array.isArray(transactions)) {
+        attempt.error = 'Response is not an array';
+        endpointAttempts.push(attempt);
+        continue;
+      }
+
+      if (transactions.length === 0) {
+        attempt.error = '0 transactions returned';
+        endpointAttempts.push(attempt);
+        continue;
+      }
+
+      // Validate first transaction has required fields
+      const firstTx = transactions[0];
+      if (!firstTx.uid && !firstTx.id) {
+        attempt.error = 'No uid/id in transactions';
+        endpointAttempts.push(attempt);
+        continue;
+      }
+
+      console.log(`[Sync] Success! ${candidate.name} returned ${transactions.length} transactions`);
+      endpointAttempts.push(attempt);
+
+      // Paginate to get all transactions
+      let allTransactions = [...transactions];
+      let page = 2;
+      let pages = 1;
+
+      while (allTransactions.length < maxTransactions && transactions.length === 100) {
+        if (Date.now() - startTime > 25000) break;
+
+        const nextUrl = buildUrl(candidate.base, candidate.includeShopId, page);
+        const nextResp = await fetch(nextUrl, {
+          method: "GET",
+          headers: {
+            "Authorization": `Basic ${auth}`,
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (!nextResp.ok) break;
+
+        const nextData = await nextResp.json();
+        const nextTx = nextData.transactions || nextData.data || [];
+
+        if (!Array.isArray(nextTx) || nextTx.length === 0) break;
+
+        allTransactions = [...allTransactions, ...nextTx];
+        pages++;
+        page++;
+
+        console.log(`[Sync] Fetched page ${pages}, total: ${allTransactions.length}`);
+
+        if (nextTx.length < 100) break;
+      }
+
+      return {
+        success: true,
+        transactions: allTransactions.slice(0, maxTransactions),
+        pages,
+        endpoint_used: candidate.name,
+        endpoint_attempts: endpointAttempts,
+      };
+
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      endpointAttempts.push({
+        name: candidate.name,
+        url: url.replace(/shop_id=\d+/, 'shop_id=***'),
+        status: null,
+        ok: false,
+        keys_found: null,
+        error: errMsg,
+      });
     }
   }
 
-  return { tx: null, error: 'Transaction not found in any endpoint' };
+  // All endpoints failed
+  const errorSummary = endpointAttempts.map(e => `${e.name}: ${e.error}`).join('; ');
+  return {
+    success: false,
+    transactions: [],
+    error: `All bePaid endpoints failed: ${errorSummary}`,
+    pages: 0,
+    endpoint_attempts: endpointAttempts,
+  };
 }
 
 // ============ MAIN HANDLER ============
@@ -284,7 +407,7 @@ serve(async (req) => {
       from_date,
       to_date,
       dry_run = false,
-      batch_size = BATCH_SIZE,
+      limit = MAX_TRANSACTIONS,
     } = body;
 
     if (!from_date || !to_date) {
@@ -294,9 +417,9 @@ serve(async (req) => {
       });
     }
 
-    console.log(`[Sync] Starting ${mode} sync for ${from_date} to ${to_date}, dry_run=${dry_run}`);
+    console.log(`[Sync] Starting API→DB sync for ${from_date} to ${to_date}, dry_run=${dry_run}, limit=${limit}`);
 
-    // === GET BEPAID CREDENTIALS (standard pattern: integration_instances > env) ===
+    // === GET BEPAID CREDENTIALS ===
     const { data: integrations } = await supabase
       .from("integration_instances")
       .select("config")
@@ -318,6 +441,7 @@ serve(async (req) => {
     }
 
     const auth = btoa(`${shopId}:${secretKey}`);
+    const authMode = `basic ${String(shopId).slice(0, 4)}***:***`;
 
     // === CREATE RUN RECORD ===
     const startTime = Date.now();
@@ -330,7 +454,7 @@ serve(async (req) => {
         status: 'running',
         started_at: new Date().toISOString(),
         initiated_by: user.id,
-        stats: { dry_run },
+        stats: { dry_run, auth_mode: authMode },
       })
       .select()
       .single();
@@ -359,179 +483,250 @@ serve(async (req) => {
       amount_sum_api: 0,
       diff_count: 0,
       diff_amount: 0,
+      auth_mode: authMode,
     };
 
     let consecutiveErrors = 0;
     let stopped = false;
 
     try {
-      // === FETCH EXISTING PAYMENTS FROM DB ===
-      const { data: existingPayments, error: fetchError } = await supabase
-        .from("payments_v2")
-        .select("id, provider_payment_id, amount, status, transaction_type, paid_at, meta")
-        .eq("provider", "bepaid")
-        .gte("paid_at", `${from_date}T00:00:00Z`)
-        .lte("paid_at", `${to_date}T23:59:59Z`)
-        .order("paid_at", { ascending: true });
+      // ========== STEP 1: FETCH ALL TRANSACTIONS FROM BEPAID API ==========
+      const fromDate = new Date(`${from_date}T00:00:00Z`);
+      const toDate = new Date(`${to_date}T23:59:59Z`);
 
-      if (fetchError) {
-        throw new Error(`Failed to fetch existing payments: ${fetchError.message}`);
+      const listResult = await fetchFromBepaidWithProbing(
+        auth,
+        shopId,
+        fromDate,
+        toDate,
+        Math.min(limit, MAX_TRANSACTIONS),
+        startTime
+      );
+
+      stats.endpoint_attempts = listResult.endpoint_attempts;
+      stats.endpoint_used = listResult.endpoint_used;
+      stats.pages_fetched = listResult.pages;
+      stats.api_total_count = listResult.transactions.length;
+
+      // Update run with endpoint info
+      await supabase
+        .from("payments_sync_runs")
+        .update({
+          stats: { ...stats, phase: 'fetched_api' },
+          total_pages: listResult.pages,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", runId);
+
+      if (!listResult.success) {
+        stopped = true;
+        stats.stopped_reason = listResult.error || 'API fetch failed';
+        stats.error_samples = listResult.endpoint_attempts.map(e => ({
+          uid: e.name,
+          error: e.error || 'unknown',
+        }));
+        throw new Error(stats.stopped_reason);
       }
 
-      const payments = existingPayments || [];
-      console.log(`[Sync] Found ${payments.length} payments in DB for period`);
+      console.log(`[Sync] Fetched ${listResult.transactions.length} transactions from bePaid via ${listResult.endpoint_used}`);
 
-      // Calculate initial DB sum
-      for (const p of payments) {
-        stats.amount_sum_db += Number(p.amount) || 0;
+      // ========== STEP 2: FETCH EXISTING PAYMENTS FROM DB ==========
+      const uids = listResult.transactions
+        .map(tx => tx.uid || tx.id)
+        .filter(Boolean)
+        .map(String);
+
+      // Batch UIDs to avoid query limits (1000 max per IN clause)
+      const batchSize = 500;
+      const existingMap = new Map<string, any>();
+
+      for (let i = 0; i < uids.length; i += batchSize) {
+        const batchUids = uids.slice(i, i + batchSize);
+        const { data: batchPayments } = await supabase
+          .from("payments_v2")
+          .select("id, provider_payment_id, amount, status, transaction_type, paid_at, card_last4, card_brand, meta")
+          .in("provider_payment_id", batchUids);
+
+        if (batchPayments) {
+          for (const p of batchPayments) {
+            existingMap.set(p.provider_payment_id, p);
+            stats.amount_sum_db += Number(p.amount) || 0;
+          }
+        }
       }
 
-      // === PROCESS PAYMENTS ===
-      const uidToPayment = new Map(payments.map(p => [p.provider_payment_id, p]));
-      
-      // Process in batches with concurrency
-      for (let i = 0; i < payments.length; i += batch_size) {
+      console.log(`[Sync] Found ${existingMap.size} existing payments in DB`);
+
+      // ========== STEP 3: PROCESS EACH API TRANSACTION → UPSERT ==========
+      for (const rawTx of listResult.transactions) {
         if (stopped) break;
 
-        const batch = payments.slice(i, i + batch_size);
-        
-        // Process batch with limited concurrency
-        const results = await Promise.allSettled(
-          batch.map(async (payment) => {
-            const uid = payment.provider_payment_id;
-            if (!uid) {
-              stats.errors++;
-              return { uid: 'unknown', status: 'error', error: 'Missing UID' };
-            }
+        stats.scanned++;
 
-            stats.scanned++;
+        // Normalize transaction
+        const { tx: normalized, error: normalizeErr } = normalizeTx(rawTx);
 
-            // Fetch from bePaid API
-            const { tx: rawTx, error: fetchErr } = await fetchTransactionByUid(uid, shopId, auth);
-            
-            if (fetchErr || !rawTx) {
-              consecutiveErrors++;
-              stats.errors++;
-              if (stats.error_samples.length < 10) {
-                stats.error_samples.push({ uid, error: fetchErr || 'Not found' });
-              }
-              
-              // STOP if too many consecutive errors
-              if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                stopped = true;
-                stats.stopped_reason = `STOP: ${MAX_CONSECUTIVE_ERRORS} consecutive errors`;
-              }
-              
-              return { uid, status: 'error', error: fetchErr };
-            }
+        if (normalizeErr) {
+          consecutiveErrors++;
+          stats.errors++;
 
-            consecutiveErrors = 0; // Reset on success
+          if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+            stats.error_samples.push({ uid: rawTx.uid || rawTx.id || 'unknown', error: normalizeErr });
+          }
 
-            // Normalize transaction
-            const { tx: normalized, error: normalizeErr } = normalizeTx(rawTx);
-            
-            if (normalizeErr || !normalized) {
-              stats.errors++;
-              if (stats.error_samples.length < 10) {
-                stats.error_samples.push({ uid, error: normalizeErr || 'Normalization failed' });
-              }
-              
-              // STOP on currency mismatch
-              if (normalizeErr?.includes('Currency') || normalizeErr?.includes('STOP')) {
-                stopped = true;
-                stats.stopped_reason = normalizeErr;
-              }
-              
-              return { uid, status: 'error', error: normalizeErr };
-            }
+          // STOP on currency mismatch or critical error
+          if (normalizeErr.includes('STOP')) {
+            stopped = true;
+            stats.stopped_reason = normalizeErr;
+            break;
+          }
 
-            stats.amount_sum_api += normalized.amount;
+          // STOP if too many consecutive errors
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            stopped = true;
+            stats.stopped_reason = `STOP: ${MAX_CONSECUTIVE_ERRORS} consecutive normalization errors`;
+            break;
+          }
 
-            // Compare with DB
-            const dbPayment = payment;
-            const dbAmount = Number(dbPayment.amount);
-            const apiAmount = normalized.amount;
-            const diff = Math.abs(dbAmount - apiAmount);
+          continue;
+        }
 
-            // STOP if delta too large
-            if (diff > MAX_DELTA_PER_TX_BYN) {
-              stopped = true;
-              stats.stopped_reason = `STOP: Delta ${diff.toFixed(2)} BYN exceeds threshold ${MAX_DELTA_PER_TX_BYN} for UID ${uid}`;
-              return { uid, status: 'stopped', error: stats.stopped_reason };
-            }
+        consecutiveErrors = 0; // Reset on success
 
-            if (diff > 0.01) {
-              stats.diff_count++;
-              stats.diff_amount += (apiAmount - dbAmount);
-            }
+        if (!normalized) continue;
 
-            // Check if update needed
-            const needsUpdate = 
-              diff > 0.01 ||
-              dbPayment.status !== normalized.status ||
-              dbPayment.transaction_type !== normalized.transaction_type;
+        stats.amount_sum_api += normalized.amount;
 
-            if (!needsUpdate) {
-              stats.unchanged++;
-              return { uid, status: 'unchanged' };
-            }
+        const existing = existingMap.get(normalized.uid);
 
-            if (dry_run) {
-              stats.updated++;
-              return { uid, status: 'would_update', diff };
-            }
+        if (existing) {
+          // ========== UPDATE EXISTING ==========
+          const dbAmount = Number(existing.amount);
+          const apiAmount = normalized.amount;
+          const diff = Math.abs(dbAmount - apiAmount);
 
-            // Execute update
-            const { error: updateError } = await supabase
-              .from("payments_v2")
-              .update({
-                amount: normalized.amount,
-                status: normalized.status,
-                transaction_type: normalized.transaction_type,
-                card_last4: normalized.card_last4 || dbPayment.meta?.card_last4,
-                card_brand: normalized.card_brand || dbPayment.meta?.card_brand,
-                updated_at: new Date().toISOString(),
-                meta: {
-                  ...dbPayment.meta,
-                  last_synced_at: new Date().toISOString(),
-                  sync_run_id: runId,
-                  previous_amount: dbAmount,
-                  sync_source: 'bepaid_api',
-                },
-              })
-              .eq("id", dbPayment.id);
+          // STOP if delta too large
+          if (diff > MAX_DELTA_PER_TX_BYN) {
+            stopped = true;
+            stats.stopped_reason = `STOP: Delta ${diff.toFixed(2)} BYN exceeds ${MAX_DELTA_PER_TX_BYN} for UID ${normalized.uid}`;
+            break;
+          }
 
-            if (updateError) {
-              stats.errors++;
-              if (stats.error_samples.length < 10) {
-                stats.error_samples.push({ uid, error: updateError.message });
-              }
-              return { uid, status: 'error', error: updateError.message };
-            }
+          // Check if update needed
+          const needsUpdate =
+            diff > 0.01 ||
+            existing.status !== normalized.status ||
+            existing.transaction_type !== normalized.transaction_type ||
+            (!existing.card_last4 && normalized.card_last4) ||
+            (!existing.card_brand && normalized.card_brand);
 
+          if (!needsUpdate) {
+            stats.unchanged++;
+            continue;
+          }
+
+          if (diff > 0.01) {
+            stats.diff_count++;
+            stats.diff_amount += (apiAmount - dbAmount);
+          }
+
+          if (dry_run) {
             stats.updated++;
-            return { uid, status: 'updated', diff };
-          })
-        );
+            continue;
+          }
 
-        // Update progress
-        const progress = Math.round(((i + batch.length) / payments.length) * 100);
-        await supabase
-          .from("payments_sync_runs")
-          .update({
-            processed_pages: Math.ceil((i + batch.length) / batch_size),
-            total_pages: Math.ceil(payments.length / batch_size),
-            stats: { ...stats, progress },
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", runId);
+          // Execute update
+          const { error: updateError } = await supabase
+            .from("payments_v2")
+            .update({
+              amount: normalized.amount,
+              status: normalized.status,
+              transaction_type: normalized.transaction_type,
+              paid_at: normalized.paid_at,
+              card_last4: normalized.card_last4 || existing.card_last4,
+              card_brand: normalized.card_brand || existing.card_brand,
+              customer_email: normalized.customer_email || existing.meta?.customer_email,
+              updated_at: new Date().toISOString(),
+              meta: {
+                ...existing.meta,
+                last_synced_at: new Date().toISOString(),
+                sync_run_id: runId,
+                previous_amount: dbAmount,
+                sync_source: 'bepaid_api',
+              },
+            })
+            .eq("id", existing.id);
 
-        console.log(`[Sync] Progress: ${i + batch.length}/${payments.length} (${progress}%)`);
+          if (updateError) {
+            stats.errors++;
+            if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+              stats.error_samples.push({ uid: normalized.uid, error: updateError.message });
+            }
+            continue;
+          }
+
+          stats.updated++;
+
+        } else {
+          // ========== INSERT NEW ==========
+          if (dry_run) {
+            stats.inserted++;
+            continue;
+          }
+
+          const { error: insertError } = await supabase
+            .from("payments_v2")
+            .insert({
+              provider: 'bepaid',
+              provider_payment_id: normalized.uid,
+              amount: normalized.amount,
+              currency: 'BYN',
+              status: normalized.status,
+              transaction_type: normalized.transaction_type,
+              paid_at: normalized.paid_at,
+              card_last4: normalized.card_last4,
+              card_brand: normalized.card_brand,
+              customer_email: normalized.customer_email,
+              provider_response: normalized.provider_response,
+              meta: {
+                sync_run_id: runId,
+                imported_at: new Date().toISOString(),
+                sync_source: 'bepaid_api',
+              },
+            });
+
+          if (insertError) {
+            stats.errors++;
+            if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+              stats.error_samples.push({ uid: normalized.uid, error: insertError.message });
+            }
+            continue;
+          }
+
+          stats.inserted++;
+        }
+
+        // Update progress periodically
+        if (stats.scanned % 100 === 0) {
+          const progress = Math.round((stats.scanned / listResult.transactions.length) * 100);
+          await supabase
+            .from("payments_sync_runs")
+            .update({
+              processed_pages: Math.ceil(stats.scanned / 100),
+              stats: { ...stats, progress },
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", runId);
+
+          console.log(`[Sync] Progress: ${stats.scanned}/${listResult.transactions.length} (${progress}%)`);
+        }
       }
 
       // === FINALIZE ===
       const finalStatus = stopped ? 'stopped' : 'success';
       const duration = Date.now() - startTime;
+
+      stats.dry_run = dry_run;
 
       await supabase
         .from("payments_sync_runs")
@@ -550,7 +745,7 @@ serve(async (req) => {
         actor_user_id: null,
         actor_type: 'system',
         actor_label: 'bepaid-sync-orchestrator',
-        action: 'payments_sync_run',
+        action: 'bepaid_sync_run',
         meta: {
           run_id: runId,
           mode,
@@ -559,6 +754,7 @@ serve(async (req) => {
           stats,
           duration_ms: duration,
           initiated_by: user.id,
+          endpoint_used: listResult.endpoint_used,
         },
       });
 
