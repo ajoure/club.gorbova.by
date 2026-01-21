@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { Settings, FileText, RotateCcw, Trash2, AlertTriangle, RefreshCw, RefreshCcw, Database, Link2 } from "lucide-react";
+import { Settings, FileText, RotateCcw, Trash2, AlertTriangle, RefreshCw, RefreshCcw, Database, Link2, ArrowRightLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -16,6 +16,7 @@ import PaymentDiagnosticsDialog from "./PaymentDiagnosticsDialog";
 import ResyncFromApiDialog from "./ResyncFromApiDialog";
 import { MigrationExportDialog } from "./MigrationExportDialog";
 import AdminAutolinkDialog from "./AdminAutolinkDialog";
+import MaterializeQueueDialog from "./MaterializeQueueDialog";
 
 interface PaymentsSettingsDropdownProps {
   selectedIds?: string[];
@@ -112,6 +113,25 @@ export default function PaymentsSettingsDropdown({
             >
               <Link2 className="h-4 w-4" />
               <span>Привязать по карте</span>
+            </DropdownMenuItem>
+          )}
+        />
+        
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs text-muted-foreground">
+          Финализация данных
+        </DropdownMenuLabel>
+        
+        {/* Materialize queue to payments_v2 */}
+        <MaterializeQueueDialog 
+          onComplete={onComplete}
+          renderTrigger={(onClick) => (
+            <DropdownMenuItem 
+              onClick={(e) => { e.preventDefault(); onClick(); }}
+              className="gap-2 cursor-pointer"
+            >
+              <ArrowRightLeft className="h-4 w-4" />
+              <span>Очередь → payments_v2</span>
             </DropdownMenuItem>
           )}
         />

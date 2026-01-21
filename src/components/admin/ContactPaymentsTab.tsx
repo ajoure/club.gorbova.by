@@ -29,23 +29,7 @@ interface PaymentItem {
   source?: 'payments_v2' | 'queue'; // Track data source for transparency
 }
 
-// Debug stats for DoD verification
-interface DebugStats {
-  paymentsV2Direct: number;
-  paymentsV2ByCard: number;
-  queueDirect: number;
-  queueByCard: number;
-  totalUnique: number;
-  queryTimestamp: string;
-
-  // DoD proof: show what cards we attempted to match + a couple of examples per bucket
-  matchedCards: Array<{ last4: string; brand: string | null; variants: string[] }>;
-  collisionLast4InContact: string[]; // last4 values that are ambiguous within THIS contact
-  paymentsV2DirectExamples: Array<Pick<PaymentItem, 'id' | 'paid_at' | 'amount' | 'card_last4' | 'card_brand' | 'status'> & { source: 'payments_v2' }>;
-  paymentsV2ByCardExamples: Array<Pick<PaymentItem, 'id' | 'paid_at' | 'amount' | 'card_last4' | 'card_brand' | 'status'> & { source: 'payments_v2' }>;
-  queueDirectExamples: Array<Pick<PaymentItem, 'id' | 'paid_at' | 'amount' | 'card_last4' | 'card_brand' | 'status'> & { source: 'queue' }>;
-  queueByCardExamples: Array<Pick<PaymentItem, 'id' | 'paid_at' | 'amount' | 'card_last4' | 'card_brand' | 'status'> & { source: 'queue' }>;
-}
+// Removed DoD Debug Stats interface - debug panel has been removed after DoD verification
 
 // Helper: get brand variants for matching (handles master vs mastercard)
 function getBrandVariants(brand: string): string[] {
@@ -81,11 +65,9 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
   // Fetch payments for this contact - BOTH by profile_id AND by linked cards
   // Also includes payment_reconcile_queue for completed transactions not yet in payments_v2
   // STRICT: Only succeeded/refunded from payments_v2, only completed from queue (NO pending)
-  const { data: paymentsData, isLoading } = useQuery({
+  const { data: payments, isLoading } = useQuery({
     queryKey: ['contact-payments', contactId],
-    queryFn: async (): Promise<{ payments: PaymentItem[]; debug: DebugStats }> => {
-      const queryTimestamp = new Date().toISOString();
-      
+    queryFn: async (): Promise<PaymentItem[]> => {
       // 1. Get linked cards for this contact first
       const { data: cards } = await supabase
         .from('card_profile_links')
@@ -105,233 +87,199 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         .limit(100);
 
       if (error) throw error;
-      
-      const paymentsV2DirectCount = directPayments?.length || 0;
 
-       // Prep: normalize linked cards and detect last4 collisions *within this contact*
-       const linkedCardsNormalized = (cards || []).map((c) => {
-         const rawBrand = (c.card_brand ?? '').toString();
-         const normalizedVariants = getBrandVariants(rawBrand || 'unknown')
-           .map((v) => (v || '').toLowerCase().trim())
-           .filter(Boolean);
-         return {
-           card_last4: c.card_last4,
-           card_brand: rawBrand,
-           brandVariants: normalizedVariants,
-         };
-       });
+      // Prep: normalize linked cards and detect last4 collisions *within this contact*
+      const linkedCardsNormalized = (cards || []).map((c) => {
+        const rawBrand = (c.card_brand ?? '').toString();
+        const normalizedVariants = getBrandVariants(rawBrand || 'unknown')
+          .map((v) => (v || '').toLowerCase().trim())
+          .filter(Boolean);
+        return {
+          card_last4: c.card_last4,
+          card_brand: rawBrand,
+          brandVariants: normalizedVariants,
+        };
+      });
 
-       const last4Counts = new Map<string, number>();
-       for (const c of linkedCardsNormalized) {
-         last4Counts.set(c.card_last4, (last4Counts.get(c.card_last4) || 0) + 1);
-       }
-       const collisionLast4InContact = Array.from(last4Counts.entries())
-         .filter(([, cnt]) => cnt > 1)
-         .map(([last4]) => last4);
+      const last4Counts = new Map<string, number>();
+      for (const c of linkedCardsNormalized) {
+        last4Counts.set(c.card_last4, (last4Counts.get(c.card_last4) || 0) + 1);
+      }
 
-       const matchedCards = linkedCardsNormalized.map((c) => ({
-         last4: c.card_last4,
-         brand: c.card_brand || null,
-         variants: c.brandVariants,
-       }));
+      // 3. Find payments_v2 by card (even if not linked to profile yet)
+      let cardPaymentsV2: any[] = [];
+      if (linkedCardsNormalized.length > 0) {
+        for (const card of linkedCardsNormalized) {
+          const hasBrand = !!card.card_brand && card.card_brand.trim().length > 0;
+          const last4IsAmbiguousWithinContact = (last4Counts.get(card.card_last4) || 0) > 1;
 
-       // 3. Find payments_v2 by card (even if not linked to profile yet)
-       // FIX: make brand matching tolerant to case + allow NULL/empty brands in payment rows.
-       // IMPORTANT: last4-only fallback is ONLY allowed for cards that are already linked to THIS contact.
-       let cardPaymentsV2: any[] = [];
-       if (linkedCardsNormalized.length > 0) {
-         for (const card of linkedCardsNormalized) {
-           const hasBrand = !!card.card_brand && card.card_brand.trim().length > 0;
-           const last4IsAmbiguousWithinContact = (last4Counts.get(card.card_last4) || 0) > 1;
+          if (hasBrand && card.brandVariants.length > 0) {
+            const orIlike = card.brandVariants.map((v) => `card_brand.ilike.${v}`).join(',');
+            const { data: byCardBrand, error: byCardBrandError } = await supabase
+              .from('payments_v2')
+              .select(`
+                id, provider_payment_id, amount, paid_at, status, transaction_type,
+                card_last4, card_brand, order_id
+              `)
+              .eq('card_last4', card.card_last4)
+              .in('status', ['succeeded', 'refunded'])
+              .or(orIlike)
+              .order('paid_at', { ascending: false })
+              .limit(50);
 
-           // 3a) Variant / case-insensitive brand match
-           if (hasBrand && card.brandVariants.length > 0) {
-             const orIlike = card.brandVariants.map((v) => `card_brand.ilike.${v}`).join(',');
-             const { data: byCardBrand, error: byCardBrandError } = await supabase
-               .from('payments_v2')
-               .select(`
-                 id, provider_payment_id, amount, paid_at, status, transaction_type,
-                 card_last4, card_brand, order_id
-               `)
-               .eq('card_last4', card.card_last4)
-               .in('status', ['succeeded', 'refunded'])
-               .or(orIlike)
-               .order('paid_at', { ascending: false })
-               .limit(50);
+            if (!byCardBrandError) cardPaymentsV2.push(...(byCardBrand || []));
 
-             if (!byCardBrandError) cardPaymentsV2.push(...(byCardBrand || []));
+            if (!last4IsAmbiguousWithinContact) {
+              const [{ data: byCardNull }, { data: byCardEmpty }] = await Promise.all([
+                supabase
+                  .from('payments_v2')
+                  .select(`
+                    id, provider_payment_id, amount, paid_at, status, transaction_type,
+                    card_last4, card_brand, order_id
+                  `)
+                  .eq('card_last4', card.card_last4)
+                  .in('status', ['succeeded', 'refunded'])
+                  .is('card_brand', null)
+                  .order('paid_at', { ascending: false })
+                  .limit(50),
+                supabase
+                  .from('payments_v2')
+                  .select(`
+                    id, provider_payment_id, amount, paid_at, status, transaction_type,
+                    card_last4, card_brand, order_id
+                  `)
+                  .eq('card_last4', card.card_last4)
+                  .in('status', ['succeeded', 'refunded'])
+                  .eq('card_brand', '')
+                  .order('paid_at', { ascending: false })
+                  .limit(50),
+              ]);
+              cardPaymentsV2.push(...(byCardNull || []), ...(byCardEmpty || []));
+            }
+            continue;
+          }
 
-             // 3b) Include rows where payment brand is missing (NULL/empty)
-             // Guard: if the contact has multiple cards with same last4, do NOT last4-only match.
-             if (!last4IsAmbiguousWithinContact) {
-               const [{ data: byCardNull }, { data: byCardEmpty }] = await Promise.all([
-                 supabase
-                   .from('payments_v2')
-                   .select(`
-                     id, provider_payment_id, amount, paid_at, status, transaction_type,
-                     card_last4, card_brand, order_id
-                   `)
-                   .eq('card_last4', card.card_last4)
-                   .in('status', ['succeeded', 'refunded'])
-                   .is('card_brand', null)
-                   .order('paid_at', { ascending: false })
-                   .limit(50),
-                 supabase
-                   .from('payments_v2')
-                   .select(`
-                     id, provider_payment_id, amount, paid_at, status, transaction_type,
-                     card_last4, card_brand, order_id
-                   `)
-                   .eq('card_last4', card.card_last4)
-                   .in('status', ['succeeded', 'refunded'])
-                   .eq('card_brand', '')
-                   .order('paid_at', { ascending: false })
-                   .limit(50),
-               ]);
-               cardPaymentsV2.push(...(byCardNull || []), ...(byCardEmpty || []));
-             }
-             continue;
-           }
+          if (last4IsAmbiguousWithinContact) {
+            continue;
+          }
 
-           // 3c) Brand unknown/empty on linked card → allow last4-only matching, but ONLY within this contact.
-           if (last4IsAmbiguousWithinContact) {
-             // STOP: ambiguous within the contact itself; don't attempt last4-only.
-             continue;
-           }
+          const { data: byLast4AnyBrand, error: byLast4AnyBrandError } = await supabase
+            .from('payments_v2')
+            .select(`
+              id, provider_payment_id, amount, paid_at, status, transaction_type,
+              card_last4, card_brand, order_id
+            `)
+            .eq('card_last4', card.card_last4)
+            .in('status', ['succeeded', 'refunded'])
+            .order('paid_at', { ascending: false })
+            .limit(50);
+          if (!byLast4AnyBrandError) cardPaymentsV2.push(...(byLast4AnyBrand || []));
+        }
+      }
 
-           const { data: byLast4AnyBrand, error: byLast4AnyBrandError } = await supabase
-             .from('payments_v2')
-             .select(`
-               id, provider_payment_id, amount, paid_at, status, transaction_type,
-               card_last4, card_brand, order_id
-             `)
-             .eq('card_last4', card.card_last4)
-             .in('status', ['succeeded', 'refunded'])
-             .order('paid_at', { ascending: false })
-             .limit(50);
-           if (!byLast4AnyBrandError) cardPaymentsV2.push(...(byLast4AnyBrand || []));
-         }
-       }
-      
-      const paymentsV2ByCardCount = cardPaymentsV2.length;
-
-       // 4. Get ONLY COMPLETED payments from payment_reconcile_queue (NO pending!)
-      // These are transactions that succeeded but haven't been moved to payments_v2 yet
+      // 4. Get ONLY COMPLETED payments from payment_reconcile_queue (NO pending!)
       let queuePayments: any[] = [];
       
-      // 4a. Direct match by matched_profile_id - ONLY completed
-       // NOTE: payment_reconcile_queue does NOT have provider_payment_id/order_id columns.
-       const { data: directQueuePayments } = await supabase
+      const { data: directQueuePayments } = await supabase
         .from('payment_reconcile_queue')
         .select(`
-           id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
-           card_last4, card_brand, matched_order_id, processed_order_id, product_name
+          id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
+          card_last4, card_brand, matched_order_id, processed_order_id, product_name
         `)
         .eq('matched_profile_id', contactId)
-        .eq('status', 'completed') // STRICT: only completed, not pending
+        .eq('status', 'completed')
         .order('paid_at', { ascending: false })
         .limit(100);
       
-      const queueDirectCount = directQueuePayments?.length || 0;
       queuePayments.push(...(directQueuePayments || []));
 
-      // 4b. Match by card - ONLY completed
-      let queueByCardCount = 0;
-       if (linkedCardsNormalized.length > 0) {
-         for (const card of linkedCardsNormalized) {
-           const hasBrand = !!card.card_brand && card.card_brand.trim().length > 0;
-           const last4IsAmbiguousWithinContact = (last4Counts.get(card.card_last4) || 0) > 1;
+      if (linkedCardsNormalized.length > 0) {
+        for (const card of linkedCardsNormalized) {
+          const hasBrand = !!card.card_brand && card.card_brand.trim().length > 0;
+          const last4IsAmbiguousWithinContact = (last4Counts.get(card.card_last4) || 0) > 1;
 
-           // 4b-1) Variant / case-insensitive brand match
-           if (hasBrand && card.brandVariants.length > 0) {
-             const orIlike = card.brandVariants.map((v) => `card_brand.ilike.${v}`).join(',');
-             const { data: byCardQueueBrand, error: byCardQueueBrandError } = await supabase
-               .from('payment_reconcile_queue')
-               .select(`
-                 id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
-                 card_last4, card_brand, matched_order_id, processed_order_id, product_name
-               `)
-               .eq('card_last4', card.card_last4)
-               .eq('status', 'completed') // STRICT: only completed
-               .or(orIlike)
-               .order('paid_at', { ascending: false })
-               .limit(50);
+          if (hasBrand && card.brandVariants.length > 0) {
+            const orIlike = card.brandVariants.map((v) => `card_brand.ilike.${v}`).join(',');
+            const { data: byCardQueueBrand, error: byCardQueueBrandError } = await supabase
+              .from('payment_reconcile_queue')
+              .select(`
+                id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
+                card_last4, card_brand, matched_order_id, processed_order_id, product_name
+              `)
+              .eq('card_last4', card.card_last4)
+              .eq('status', 'completed')
+              .or(orIlike)
+              .order('paid_at', { ascending: false })
+              .limit(50);
 
-             if (!byCardQueueBrandError) {
-               queueByCardCount += byCardQueueBrand?.length || 0;
-               queuePayments.push(...(byCardQueueBrand || []));
-             }
+            if (!byCardQueueBrandError) {
+              queuePayments.push(...(byCardQueueBrand || []));
+            }
 
-             // 4b-2) Include NULL/empty brands in queue rows (guarded)
-             if (!last4IsAmbiguousWithinContact) {
-               const [{ data: byCardQueueNull }, { data: byCardQueueEmpty }] = await Promise.all([
-                 supabase
-                   .from('payment_reconcile_queue')
-                   .select(`
-                     id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
-                     card_last4, card_brand, matched_order_id, processed_order_id, product_name
-                   `)
-                   .eq('card_last4', card.card_last4)
-                   .eq('status', 'completed')
-                   .is('card_brand', null)
-                   .order('paid_at', { ascending: false })
-                   .limit(50),
-                 supabase
-                   .from('payment_reconcile_queue')
-                   .select(`
-                     id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
-                     card_last4, card_brand, matched_order_id, processed_order_id, product_name
-                   `)
-                   .eq('card_last4', card.card_last4)
-                   .eq('status', 'completed')
-                   .eq('card_brand', '')
-                   .order('paid_at', { ascending: false })
-                   .limit(50),
-               ]);
+            if (!last4IsAmbiguousWithinContact) {
+              const [{ data: byCardQueueNull }, { data: byCardQueueEmpty }] = await Promise.all([
+                supabase
+                  .from('payment_reconcile_queue')
+                  .select(`
+                    id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
+                    card_last4, card_brand, matched_order_id, processed_order_id, product_name
+                  `)
+                  .eq('card_last4', card.card_last4)
+                  .eq('status', 'completed')
+                  .is('card_brand', null)
+                  .order('paid_at', { ascending: false })
+                  .limit(50),
+                supabase
+                  .from('payment_reconcile_queue')
+                  .select(`
+                    id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
+                    card_last4, card_brand, matched_order_id, processed_order_id, product_name
+                  `)
+                  .eq('card_last4', card.card_last4)
+                  .eq('status', 'completed')
+                  .eq('card_brand', '')
+                  .order('paid_at', { ascending: false })
+                  .limit(50),
+              ]);
 
-               const extra = [...(byCardQueueNull || []), ...(byCardQueueEmpty || [])];
-               queueByCardCount += extra.length;
-               queuePayments.push(...extra);
-             }
-             continue;
-           }
+              queuePayments.push(...(byCardQueueNull || []), ...(byCardQueueEmpty || []));
+            }
+            continue;
+          }
 
-           // 4b-3) Brand unknown/empty on linked card → allow last4-only match ONLY if unambiguous within contact
-           if (last4IsAmbiguousWithinContact) {
-             continue;
-           }
+          if (last4IsAmbiguousWithinContact) {
+            continue;
+          }
 
-           const { data: byLast4QueueAnyBrand, error: byLast4QueueAnyBrandError } = await supabase
-             .from('payment_reconcile_queue')
-             .select(`
-               id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
-               card_last4, card_brand, matched_order_id, processed_order_id, product_name
-             `)
-             .eq('card_last4', card.card_last4)
-             .eq('status', 'completed')
-             .order('paid_at', { ascending: false })
-             .limit(50);
+          const { data: byLast4QueueAnyBrand, error: byLast4QueueAnyBrandError } = await supabase
+            .from('payment_reconcile_queue')
+            .select(`
+              id, bepaid_uid, tracking_id, amount, paid_at, status, transaction_type,
+              card_last4, card_brand, matched_order_id, processed_order_id, product_name
+            `)
+            .eq('card_last4', card.card_last4)
+            .eq('status', 'completed')
+            .order('paid_at', { ascending: false })
+            .limit(50);
 
-           if (!byLast4QueueAnyBrandError) {
-             queueByCardCount += byLast4QueueAnyBrand?.length || 0;
-             queuePayments.push(...(byLast4QueueAnyBrand || []));
-           }
-         }
-       }
+          if (!byLast4QueueAnyBrandError) {
+            queuePayments.push(...(byLast4QueueAnyBrand || []));
+          }
+        }
+      }
 
       // 5. Mark sources and merge
-       const paymentsV2WithSource = [...(directPayments || []), ...cardPaymentsV2].map((p) => ({
-         ...p,
-         source: 'payments_v2' as const,
-       }));
+      const paymentsV2WithSource = [...(directPayments || []), ...cardPaymentsV2].map((p) => ({
+        ...p,
+        source: 'payments_v2' as const,
+      }));
       
-       // Normalize queue rows to look like PaymentItem as close as possible
-       const queueWithSource = queuePayments.map((p) => ({
-         ...p,
-         provider_payment_id: p.bepaid_uid || p.tracking_id || p.id,
-         order_id: p.matched_order_id || p.processed_order_id || null,
-         source: 'queue' as const,
-       }));
+      const queueWithSource = queuePayments.map((p) => ({
+        ...p,
+        provider_payment_id: p.bepaid_uid || p.tracking_id || p.id,
+        order_id: p.matched_order_id || p.processed_order_id || null,
+        source: 'queue' as const,
+      }));
 
       // 6. Merge all sources and deduplicate by id
       const allPayments = [...paymentsV2WithSource, ...queueWithSource];
@@ -340,7 +288,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         .sort((a, b) => new Date(b.paid_at || 0).getTime() - new Date(a.paid_at || 0).getTime())
         .slice(0, 100);
 
-      // 7. Fetch related orders for product names (for payments_v2 entries)
+      // 7. Fetch related orders for product names
       const orderIds = uniquePayments
         .filter(p => p.order_id && !p.product_name)
         .map(p => p.order_id!);
@@ -357,51 +305,13 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         ]));
       }
 
-      const finalPayments = uniquePayments.map(p => ({
+      return uniquePayments.map(p => ({
         ...p,
         productName: p.product_name || (p.order_id ? ordersMap.get(p.order_id)?.product_name : null),
       })) as PaymentItem[];
-
-       type DebugExampleBase = Pick<PaymentItem, 'id' | 'paid_at' | 'amount' | 'card_last4' | 'card_brand' | 'status'>;
-       const makeExamples = <S extends 'payments_v2' | 'queue'>(
-         items: any[],
-         source: S
-       ): Array<DebugExampleBase & { source: S }> =>
-         (items || []).slice(0, 2).map((p) => ({
-           id: p.id,
-           paid_at: p.paid_at,
-           amount: p.amount,
-           card_last4: p.card_last4,
-           card_brand: p.card_brand,
-           status: p.status,
-           source,
-         }));
-
-       return {
-         payments: finalPayments,
-         debug: {
-           paymentsV2Direct: paymentsV2DirectCount,
-           paymentsV2ByCard: paymentsV2ByCardCount,
-           queueDirect: queueDirectCount,
-           queueByCard: queueByCardCount,
-           totalUnique: finalPayments.length,
-           queryTimestamp,
-
-           matchedCards,
-           collisionLast4InContact,
-           paymentsV2DirectExamples: makeExamples(directPayments || [], 'payments_v2'),
-           paymentsV2ByCardExamples: makeExamples(cardPaymentsV2 || [], 'payments_v2'),
-           queueDirectExamples: makeExamples(directQueuePayments || [], 'queue'),
-           queueByCardExamples: makeExamples(queuePayments || [], 'queue'),
-         },
-       };
     },
     enabled: !!contactId,
   });
-  
-  // Extract payments and debug from query result
-  const payments = paymentsData?.payments;
-  const debugStats = paymentsData?.debug;
 
   // Handle re-autolink for all linked cards
   const handleReautolink = async () => {
@@ -523,42 +433,6 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         </div>
       </div>
 
-       {/* DoD DEBUG PANEL - proof for DoD: shows matching attempts + a couple of example rows */}
-      {debugStats && (
-        <Card className="border-dashed border-blue-300 bg-blue-50/50">
-          <CardContent className="py-3">
-            <div className="text-xs font-mono space-y-1">
-               <div className="font-semibold text-blue-700">📊 DoD Debug Panel (временно)</div>
-              <div>payments_v2 (direct profile_id): <strong>{debugStats.paymentsV2Direct}</strong></div>
-              <div>payments_v2 (by card match): <strong>{debugStats.paymentsV2ByCard}</strong></div>
-              <div>queue (direct matched_profile_id): <strong>{debugStats.queueDirect}</strong></div>
-              <div>queue (by card match): <strong>{debugStats.queueByCard}</strong></div>
-               <div className="pt-1 border-t border-blue-200">
-                 matched_cards:
-                 <pre className="whitespace-pre-wrap break-words">{JSON.stringify(debugStats.matchedCards, null, 2)}</pre>
-               </div>
-               {debugStats.collisionLast4InContact.length > 0 && (
-                 <div className="text-orange-700">
-                   collision_last4_in_contact: {debugStats.collisionLast4InContact.join(', ')}
-                 </div>
-               )}
-               <div className="pt-1 border-t border-blue-200">
-                 examples:
-                 <pre className="whitespace-pre-wrap break-words">{JSON.stringify({
-                   payments_v2_direct: debugStats.paymentsV2DirectExamples,
-                   payments_v2_by_card: debugStats.paymentsV2ByCardExamples,
-                   queue_direct: debugStats.queueDirectExamples,
-                   queue_by_card: debugStats.queueByCardExamples,
-                 }, null, 2)}</pre>
-               </div>
-              <div className="pt-1 border-t border-blue-200">
-                <strong>ИТОГО уникальных: {debugStats.totalUnique}</strong>
-              </div>
-              <div className="text-muted-foreground">Query: {debugStats.queryTimestamp}</div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Linked cards summary */}
       {linkedCards && linkedCards.length > 0 && (
