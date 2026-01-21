@@ -43,9 +43,10 @@ export function parseCSVContent(content: string): CSVParseResult {
 }
 
 /**
- * Normalize bePaid status to standard values
+ * Normalize bePaid status to canonical values
+ * MUST match DB constraint and RPC logic
  */
-export type NormalizedStatus = 'successful' | 'failed' | 'pending' | 'refund' | 'cancel';
+export type NormalizedStatus = 'succeeded' | 'failed' | 'pending' | 'refunded' | 'canceled';
 
 export function normalizeStatus(
   statusRaw: string | undefined,
@@ -59,10 +60,10 @@ export function normalizeStatus(
   // PRIORITY 1: Refund/cancel take priority based on transaction type
   // bePaid uses "Возврат средств" for refunds and "Отмена" for voids
   if (type.includes('возврат') || type.includes('refund')) {
-    return 'refund';
+    return 'refunded';  // CANONICAL: was 'refund'
   }
   if (type.includes('отмен') || type.includes('cancel') || type.includes('void')) {
-    return 'cancel';
+    return 'canceled';  // CANONICAL: was 'cancel'
   }
   
   // PRIORITY 2: Check message for failure indicators
@@ -82,8 +83,8 @@ export function normalizeStatus(
   
   if (status === 'успешно' || status === 'successful' || 
       status.startsWith('успеш') || status.includes('completed') || 
-      status.includes('processed')) {
-    return 'successful';
+      status.includes('processed') || status === 'succeeded') {
+    return 'succeeded';  // CANONICAL: was 'successful'
   }
   
   if (status.includes('pending') || status.includes('processing') || 

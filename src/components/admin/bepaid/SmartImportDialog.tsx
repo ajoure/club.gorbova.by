@@ -33,6 +33,7 @@ import {
   extractCardLast4,
   detectCardBrand
 } from "@/lib/csv-parser";
+import { toCanonicalStatus, isCanonicalStatus, type CanonicalStatus } from "@/lib/paymentStatus";
 
 interface SmartImportDialogProps {
   open: boolean;
@@ -44,7 +45,7 @@ interface ParsedTransaction {
   uid: string;
   bepaid_order_id?: string;
   status: string;
-  status_normalized: 'successful' | 'failed' | 'pending' | 'refund' | 'cancel' | 'refunded' | 'cancelled';
+  status_normalized: CanonicalStatus;
   transaction_type: string;
   amount: number;
   currency: string;
@@ -825,20 +826,8 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
     importMutation.mutate();
   };
 
-  // Map status_normalized to canonical DB values for overrides
-  // CRITICAL: Must match RPC exactly
-  const toCanonicalStatus = (status: string): string => {
-    switch (status) {
-      case 'successful': return 'succeeded';
-      case 'refund': return 'refunded';
-      case 'cancel': return 'canceled';
-      case 'cancelled': return 'canceled';
-      case 'void': return 'canceled';
-      default: return status;
-    }
-  };
-
   // Apply status overrides for conflicts with payments_v2
+  // Uses centralized toCanonicalStatus from paymentStatus.ts
   const applyOverridesMutation = useMutation({
     mutationFn: async () => {
       const conflictsToOverride = report?.conflicts.filter(c => 
@@ -846,8 +835,19 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
       ) || [];
       
       let applied = 0;
+      let skipped = 0;
+      
       for (const tx of conflictsToOverride) {
+        // Use centralized canonical status converter
         const canonicalStatus = toCanonicalStatus(tx.status_normalized);
+        
+        // GUARD: Skip if status cannot be canonicalized (prevents constraint violation)
+        if (!canonicalStatus) {
+          console.warn(`Skipping unknown status: ${tx.status_normalized} for UID ${tx.uid}`);
+          skipped++;
+          continue;
+        }
+        
         const { error } = await supabase
           .from('payment_status_overrides')
           .upsert({
@@ -859,10 +859,14 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
             source: 'csv_import',
           }, { onConflict: 'provider,uid' });
         
-        if (!error) applied++;
+        if (error) {
+          console.error(`Failed to apply override for ${tx.uid}:`, error);
+        } else {
+          applied++;
+        }
       }
       
-      return { applied, total: conflictsToOverride.length };
+      return { applied, total: conflictsToOverride.length, skipped };
     },
     onSuccess: ({ applied, total }) => {
       toast.success(`Применено ${applied} из ${total} переопределений статусов`);
@@ -1070,28 +1074,28 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
                     <div>
                       <p className="text-muted-foreground">Успешные в CSV</p>
                       <p className="text-xl font-bold text-green-600">
-                        {transactions.filter(t => t.status_normalized === 'successful' && !['refund', 'void', 'cancel'].includes((t.transaction_type || '').toLowerCase().replace('возврат средств', 'refund').replace('отмена', 'void'))).reduce((s, t) => s + t.amount, 0).toFixed(2)} BYN
+                        {transactions.filter(t => t.status_normalized === 'succeeded' && !['refund', 'void', 'cancel'].includes((t.transaction_type || '').toLowerCase().replace('возврат средств', 'refund').replace('отмена', 'void'))).reduce((s, t) => s + t.amount, 0).toFixed(2)} BYN
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {transactions.filter(t => t.status_normalized === 'successful' && !['refund', 'void', 'cancel'].includes((t.transaction_type || '').toLowerCase())).length} операций
+                        {transactions.filter(t => t.status_normalized === 'succeeded' && !['refund', 'void', 'cancel'].includes((t.transaction_type || '').toLowerCase())).length} операций
                       </p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Возвраты в CSV</p>
                       <p className="text-xl font-bold text-amber-600">
-                        {transactions.filter(t => t.status_normalized === 'refund' || (t.transaction_type || '').toLowerCase().includes('возврат')).reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)} BYN
+                        {transactions.filter(t => t.status_normalized === 'refunded' || (t.transaction_type || '').toLowerCase().includes('возврат')).reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)} BYN
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {transactions.filter(t => t.status_normalized === 'refund' || (t.transaction_type || '').toLowerCase().includes('возврат')).length} возвратов
+                        {transactions.filter(t => t.status_normalized === 'refunded' || (t.transaction_type || '').toLowerCase().includes('возврат')).length} возвратов
                       </p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Отмены в CSV</p>
                       <p className="text-xl font-bold text-orange-600">
-                        {transactions.filter(t => t.status_normalized === 'cancel' || (t.transaction_type || '').toLowerCase().includes('отмен')).reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)} BYN
+                        {transactions.filter(t => t.status_normalized === 'canceled' || (t.transaction_type || '').toLowerCase().includes('отмен')).reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)} BYN
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {transactions.filter(t => t.status_normalized === 'cancel' || (t.transaction_type || '').toLowerCase().includes('отмен')).length} отмен
+                        {transactions.filter(t => t.status_normalized === 'canceled' || (t.transaction_type || '').toLowerCase().includes('отмен')).length} отмен
                       </p>
                     </div>
                     <div>
