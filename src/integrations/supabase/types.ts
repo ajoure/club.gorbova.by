@@ -3779,10 +3779,12 @@ export type Database = {
           currency: string
           error_message: string | null
           id: string
+          import_ref: string | null
           installment_number: number | null
           is_recurring: boolean | null
           meta: Json | null
           order_id: string | null
+          origin: string | null
           paid_at: string | null
           payment_token: string | null
           product_name_raw: string | null
@@ -3808,10 +3810,12 @@ export type Database = {
           currency?: string
           error_message?: string | null
           id?: string
+          import_ref?: string | null
           installment_number?: number | null
           is_recurring?: boolean | null
           meta?: Json | null
           order_id?: string | null
+          origin?: string | null
           paid_at?: string | null
           payment_token?: string | null
           product_name_raw?: string | null
@@ -3837,10 +3841,12 @@ export type Database = {
           currency?: string
           error_message?: string | null
           id?: string
+          import_ref?: string | null
           installment_number?: number | null
           is_recurring?: boolean | null
           meta?: Json | null
           order_id?: string | null
+          origin?: string | null
           paid_at?: string | null
           payment_token?: string | null
           product_name_raw?: string | null

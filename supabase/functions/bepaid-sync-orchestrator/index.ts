@@ -69,6 +69,9 @@ interface SyncStats {
   list_error?: string;
   not_found_all_hosts_count?: number;
   retries_performed_count?: number;
+  // Origin-based filtering stats
+  excluded_import_count?: number;
+  bepaid_origin_count?: number;
 }
 
 interface EndpointAttempt {
@@ -717,10 +720,12 @@ serve(async (req) => {
 
     try {
       // ========== STEP 0: AUTO-PROBE HOST FOR UID FETCH (3 samples) ==========
+      // Only use origin='bepaid' records for probing (exclude imports)
       const { data: sampleRows } = await supabase
         .from('payments_v2')
         .select('provider_payment_id')
         .eq('provider', 'bepaid')
+        .eq('origin', 'bepaid')  // CRITICAL: Only real bePaid transactions
         .not('provider_payment_id', 'is', null)
         .order('paid_at', { ascending: false })
         .limit(3);
@@ -781,11 +786,23 @@ serve(async (req) => {
         let offset = 0;
         const pageSize = 1000;
 
+        // Count excluded imports for stats
+        const { count: excludedCount } = await supabase
+          .from('payments_v2')
+          .select('*', { count: 'exact', head: true })
+          .eq('provider', 'bepaid')
+          .neq('origin', 'bepaid')
+          .gte('paid_at', startISO)
+          .lte('paid_at', endISO);
+        
+        stats.excluded_import_count = excludedCount || 0;
+
         while (uidSet.size < Math.min(limit, MAX_TRANSACTIONS)) {
           const { data: rows, error: rowsErr } = await supabase
             .from('payments_v2')
             .select('id, provider_payment_id, amount, status, transaction_type, paid_at, card_last4, card_brand, meta')
             .eq('provider', 'bepaid')
+            .eq('origin', 'bepaid')  // CRITICAL: Only real bePaid transactions
             .not('provider_payment_id', 'is', null)
             .gte('paid_at', startISO)
             .lte('paid_at', endISO)

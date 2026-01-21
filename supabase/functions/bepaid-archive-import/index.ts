@@ -427,6 +427,8 @@ Deno.serve(async (req) => {
               paid_at: item.paid_at,
               product_name_raw: description,
               provider_response: payload,
+              origin: 'import',  // Mark as imported, not real-time bePaid
+              import_ref: item.id,  // Reference to queue item
             });
 
           if (refundError) {
@@ -535,6 +537,8 @@ Deno.serve(async (req) => {
             receipt_url: item.receipt_url,
             product_name_raw: description,
             provider_response: payload,
+            origin: 'import',  // Mark as imported, not real-time bePaid
+            import_ref: item.id,  // Reference to queue item
           });
 
         if (paymentError) {
