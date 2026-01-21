@@ -25,6 +25,7 @@ interface ServerStats {
   pending_amount: number;
   pending_count: number;
   total_count: number;
+  net_revenue?: number; // Added: server-calculated net revenue
 }
 
 export type UnifiedDashboardFilter = 'successful' | 'refunded' | 'cancelled' | 'failed' | null;
@@ -391,11 +392,16 @@ export default function UnifiedPaymentsDashboard({
       : (result.failed[primaryCurrency] || 0);
     const finalFailedCount = serverStats?.failed_count ?? result.failed.count;
     
-    // Get cancelled stats from server
-    const finalCancelledAmount = serverStats?.cancelled_amount ?? 0;
+    // Get cancelled stats from server (now ABS value from RPC)
+    const finalCancelledAmount = Math.abs(serverStats?.cancelled_amount ?? 0);
     const finalCancelledCount = serverStats?.cancelled_count ?? 0;
     
-    const finalNetRevenue = finalSuccessfulAmount - finalRefundedAmount - feesAmount;
+    // Net revenue: prefer server-calculated, fallback to client calculation
+    // Server formula: Successful - Refunds - Cancellations (fees client-side)
+    const serverNetRevenue = serverStats?.net_revenue;
+    const finalNetRevenue = serverNetRevenue != null 
+      ? serverNetRevenue - feesAmount  // Server includes S-R-C, we subtract fees
+      : finalSuccessfulAmount - finalRefundedAmount - finalCancelledAmount - feesAmount;
 
     return { 
       successful: { amount: finalSuccessfulAmount, count: finalSuccessfulCount },
@@ -546,13 +552,14 @@ export default function UnifiedPaymentsDashboard({
           title="Чистая выручка"
           amount={analytics.netRevenue}
           count={0}
-          countLabel="Gross − Возвраты − Комиссии"
+          countLabel="Gross − Возвр − Отмен − Комис"
           currency={primaryCurrency}
           icon={<Wallet className="h-5 w-5" />}
           colorClass={analytics.netRevenue >= 0 ? "text-sky-500" : "text-rose-500"}
           glowColor={analytics.netRevenue >= 0 ? "bg-sky-500" : "bg-rose-500"}
           isClickable={false}
           isActive={false}
+          tooltip={`Формула: ${analytics.successful.amount.toFixed(2)} − ${analytics.refunded.amount.toFixed(2)} − ${analytics.cancelled.amount.toFixed(2)} − ${analytics.fees.amount.toFixed(2)} = ${analytics.netRevenue.toFixed(2)}`}
         />
       </div>
     </div>
