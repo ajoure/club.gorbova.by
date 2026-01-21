@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { Settings, FileText, RotateCcw, Trash2, AlertTriangle, RefreshCw, RefreshCcw, Database, Link2 } from "lucide-react";
+import { Settings, FileText, RotateCcw, Trash2, AlertTriangle, RefreshCw, RefreshCcw, Database, Link2, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -16,6 +16,7 @@ import PaymentDiagnosticsDialog from "./PaymentDiagnosticsDialog";
 import ResyncFromApiDialog from "./ResyncFromApiDialog";
 import { MigrationExportDialog } from "./MigrationExportDialog";
 import AdminAutolinkDialog from "./AdminAutolinkDialog";
+import MaterializeQueueDialog from "./MaterializeQueueDialog";
 
 interface PaymentsSettingsDropdownProps {
   selectedIds?: string[];
@@ -172,6 +173,20 @@ export default function PaymentsSettingsDropdown({
         <DropdownMenuLabel className="text-xs text-muted-foreground">
           Миграция
         </DropdownMenuLabel>
+        
+        {/* Materialize queue to payments_v2 */}
+        <MaterializeQueueDialog 
+          onComplete={onComplete}
+          renderTrigger={(onClick) => (
+            <DropdownMenuItem 
+              onClick={(e) => { e.preventDefault(); onClick(); }}
+              className="gap-2 cursor-pointer"
+            >
+              <Server className="h-4 w-4" />
+              <span>Очередь → payments_v2</span>
+            </DropdownMenuItem>
+          )}
+        />
         
         {/* Migration export */}
         <MigrationExportDialog 
