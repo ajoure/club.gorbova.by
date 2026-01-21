@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { classifyPayment } from "@/lib/paymentClassification";
 
 export interface DateFilter {
   from: string;
@@ -177,6 +178,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           `)
           .eq("provider", "bepaid")
           .eq("origin", "bepaid") // Sync with RPC: only real bepaid transactions, exclude imports
+          .not("paid_at", "is", null) // Sync with RPC: exclude pending/manual with null paid_at
           .gte("paid_at", `${fromDate}T00:00:00Z`);
         
         if (toDate) {
@@ -452,18 +454,12 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         // totalRefunded: sum of absolute values of negative amounts (refunds)
         totalRefunded: allPayments.filter(p => p.amount < 0).reduce((sum, p) => sum + Math.abs(p.amount), 0) 
           + allPayments.reduce((sum, p) => sum + (p.total_refunded || 0), 0),
-        pending: allPayments.filter(p => p.status_normalized === 'pending').length,
-        failed: allPayments.filter(p => ['failed', 'error', 'declined'].includes(p.status_normalized)).length,
-        successful: allPayments.filter(p => ['successful', 'succeeded'].includes(p.status_normalized) && p.amount > 0).length,
-        // FIX: Count refunds by status OR transaction_type OR negative amount
-        refunded: allPayments.filter(p => {
-          const txType = (p.transaction_type || '').toLowerCase();
-          return ['refunded', 'refund'].includes(p.status_normalized) ||
-                 txType.includes('возврат') ||
-                 txType === 'refund' ||
-                 p.amount < 0;
-        }).length,
-        cancelled: allPayments.filter(p => ['cancelled', 'canceled', 'expired', 'voided'].includes(p.status_normalized)).length,
+        // Use classifyPayment for EXACT match with RPC and Dashboard
+        pending: allPayments.filter(p => classifyPayment(p.status_normalized, p.transaction_type, p.amount) === 'pending').length,
+        failed: allPayments.filter(p => classifyPayment(p.status_normalized, p.transaction_type, p.amount) === 'failed').length,
+        successful: allPayments.filter(p => classifyPayment(p.status_normalized, p.transaction_type, p.amount) === 'successful').length,
+        refunded: allPayments.filter(p => classifyPayment(p.status_normalized, p.transaction_type, p.amount) === 'refunded').length,
+        cancelled: allPayments.filter(p => classifyPayment(p.status_normalized, p.transaction_type, p.amount) === 'cancelled').length,
       };
       
       return { payments: allPayments, stats };
