@@ -397,12 +397,19 @@ export default function AdminPayments() {
           <UnlinkedPaymentsReport onComplete={refetch} />
         ) : (
           <>
-            {/* Unified Financial Dashboard */}
+            {/* Unified Financial Dashboard - only bepaid payments for accurate stats */}
             <UnifiedPaymentsDashboard 
-              payments={payments} 
+              payments={payments.filter(p => p.rawSource === 'payments_v2')} 
               isLoading={isLoading} 
               activeFilter={dashboardFilter}
-              onFilterChange={setDashboardFilter}
+              onFilterChange={(filter) => {
+                setDashboardFilter(filter);
+                // Debug verification: log expected count vs table count
+                if (filter && stats) {
+                  const expectedCount = stats[filter] || 0;
+                  console.debug(`[Payments] Dashboard filter: ${filter}, expected count: ${expectedCount}`);
+                }
+              }}
               dateFilter={dateFilter}
             />
 
@@ -413,7 +420,8 @@ export default function AdminPayments() {
                   <div>
                     <CardTitle>Транзакции</CardTitle>
                     <CardDescription>
-                      {filteredPayments.length} из {payments.length} транзакций
+                      {filteredPayments.length} из {dashboardFilter ? payments.filter(p => p.rawSource === 'payments_v2').length : payments.length} транзакций
+                      {dashboardFilter && <Badge variant="outline" className="ml-2 text-xs">Фильтр: {dashboardFilter}</Badge>}
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-2">

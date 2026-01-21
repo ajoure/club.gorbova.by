@@ -523,14 +523,14 @@ export default function UnifiedPaymentsDashboard({
           title="Комиссии"
           amount={showFeesAsDash ? null : analytics.fees.amount}
           count={analytics.fees.count}
-          countLabel={analytics.feesFallback > 0 ? `расчёт: ${analytics.feesFallback}` : ''}
+          countLabel={analytics.feesFallback > 0 ? `расчёт: ${analytics.feesFallback}` : 'не фильтруется'}
           currency={primaryCurrency}
           icon={<Percent className="h-5 w-5" />}
           colorClass="text-violet-500"
           glowColor="bg-violet-500"
           isClickable={false}
           isActive={false}
-          tooltip={`Из API: ${analytics.feesKnown} · Расчётные: ${analytics.feesFallback} · Неизвестно: ${analytics.feesUnknown}`}
+          tooltip={`Из API: ${analytics.feesKnown} · Расчётные: ${analytics.feesFallback} · Неизвестно: ${analytics.feesUnknown}. Эта карточка не является фильтром.`}
           showDash={showFeesAsDash}
         />
 
@@ -538,14 +538,14 @@ export default function UnifiedPaymentsDashboard({
           title="Чистая выручка"
           amount={analytics.netRevenue}
           count={0}
-          countLabel="Gross − Возвр − Отмен − Комис"
+          countLabel="не фильтруется"
           currency={primaryCurrency}
           icon={<Wallet className="h-5 w-5" />}
           colorClass={analytics.netRevenue >= 0 ? "text-sky-500" : "text-rose-500"}
           glowColor={analytics.netRevenue >= 0 ? "bg-sky-500" : "bg-rose-500"}
           isClickable={false}
           isActive={false}
-          tooltip={`Формула: ${analytics.successful.amount.toFixed(2)} − ${analytics.refunded.amount.toFixed(2)} − ${analytics.cancelled.amount.toFixed(2)} − ${analytics.fees.amount.toFixed(2)} = ${analytics.netRevenue.toFixed(2)}`}
+          tooltip={`Формула: Gross − Возвраты − Отмены − Комиссии = ${analytics.netRevenue.toFixed(2)} ${primaryCurrency}. Эта карточка не является фильтром.`}
         />
       </div>
     </div>
