@@ -33,6 +33,9 @@ const STATUS_MAP: Record<string, CanonicalStatus> = {
   'успешно': 'succeeded',
   'успех': 'succeeded',
   'successful payment': 'succeeded',
+  'completed': 'succeeded',    // ADDED: final state
+  'processed': 'succeeded',    // ADDED: final state
+  'captured': 'succeeded',     // ADDED: bePaid captured = success
   
   // Refund variations → 'refunded'
   'refund': 'refunded',
@@ -46,6 +49,7 @@ const STATUS_MAP: Record<string, CanonicalStatus> = {
   'cancelled': 'canceled',
   'canceled': 'canceled',
   'void': 'canceled',
+  'voided': 'canceled',        // ADDED: bePaid voided
   'отмена': 'canceled',
   'authorization_void': 'canceled',
   'cancellation': 'canceled',
@@ -56,7 +60,7 @@ const STATUS_MAP: Record<string, CanonicalStatus> = {
   'error': 'failed',
   'declined': 'failed',
   'expired': 'failed',
-  'incomplete': 'failed',
+  'incomplete': 'failed',      // NOTE: incomplete = failed (not pending)
   'ошибка': 'failed',
   'отклонено': 'failed',
   'неуспешно': 'failed',
@@ -67,6 +71,60 @@ const STATUS_MAP: Record<string, CanonicalStatus> = {
   'ожидание': 'pending',
   'в обработке': 'pending',
 };
+
+// ============================================================================
+// TRANSACTION TYPE HELPERS
+// Centralized logic for detecting refund/cancel/payment transactions
+// ============================================================================
+
+/**
+ * Transaction type patterns for refunds
+ */
+const REFUND_TYPE_PATTERNS = [
+  'возврат', 'refund', 'refunds', 'refunded'
+] as const;
+
+/**
+ * Transaction type patterns for cancellations/voids
+ */
+const CANCEL_TYPE_PATTERNS = [
+  'отмена', 'отмен', 'cancel', 'void', 'authorization_void', 'cancellation'
+] as const;
+
+/**
+ * Transaction type patterns for regular payments
+ */
+const PAYMENT_TYPE_PATTERNS = [
+  'платеж', 'платёж', 'payment', 'payment_card', 'payment_erip', 
+  'erip', 'apple_pay', 'google_pay'
+] as const;
+
+/**
+ * Check if transaction type indicates a refund
+ */
+export function isRefundTransactionType(transactionType: string | null | undefined): boolean {
+  if (!transactionType) return false;
+  const lower = transactionType.toLowerCase();
+  return REFUND_TYPE_PATTERNS.some(pattern => lower.includes(pattern));
+}
+
+/**
+ * Check if transaction type indicates a cancellation/void
+ */
+export function isCancelTransactionType(transactionType: string | null | undefined): boolean {
+  if (!transactionType) return false;
+  const lower = transactionType.toLowerCase();
+  return CANCEL_TYPE_PATTERNS.some(pattern => lower.includes(pattern));
+}
+
+/**
+ * Check if transaction type indicates a regular payment
+ */
+export function isPaymentTransactionType(transactionType: string | null | undefined): boolean {
+  if (!transactionType) return true; // Default to payment if no type
+  const lower = transactionType.toLowerCase();
+  return PAYMENT_TYPE_PATTERNS.some(pattern => lower.includes(pattern));
+}
 
 /**
  * Convert any status string to canonical form

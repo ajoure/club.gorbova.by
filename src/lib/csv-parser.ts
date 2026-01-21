@@ -46,24 +46,36 @@ export function parseCSVContent(content: string): CSVParseResult {
  * Normalize bePaid status to canonical values
  * MUST match DB constraint and RPC logic
  */
-export type NormalizedStatus = 'succeeded' | 'failed' | 'pending' | 'refunded' | 'canceled';
+import { toCanonicalStatus, isRefundTransactionType, isCancelTransactionType, type CanonicalStatus } from './paymentStatus';
 
+export type NormalizedStatus = CanonicalStatus;
+
+/**
+ * Normalize bePaid status to canonical values using centralized paymentStatus.ts
+ * 
+ * PRIORITY ORDER:
+ * 1. Transaction type (refund/cancel) overrides status
+ * 2. Message contains failure indicators
+ * 3. Status text normalization via toCanonicalStatus
+ * 4. UNKNOWN → returns null (NOT 'pending') for safety
+ * 
+ * @returns CanonicalStatus or null if unrecognized (caller decides how to handle)
+ */
 export function normalizeStatus(
   statusRaw: string | undefined,
   transactionType: string | undefined,
   message: string | undefined
-): NormalizedStatus {
-  const status = (statusRaw || '').toLowerCase();
-  const type = (transactionType || '').toLowerCase();
+): CanonicalStatus | null {
+  const status = (statusRaw || '').toLowerCase().trim();
   const msg = (message || '').toLowerCase();
   
-  // PRIORITY 1: Refund/cancel take priority based on transaction type
+  // PRIORITY 1: Transaction type takes precedence
   // bePaid uses "Возврат средств" for refunds and "Отмена" for voids
-  if (type.includes('возврат') || type.includes('refund')) {
-    return 'refunded';  // CANONICAL: was 'refund'
+  if (isRefundTransactionType(transactionType)) {
+    return 'refunded';
   }
-  if (type.includes('отмен') || type.includes('cancel') || type.includes('void')) {
-    return 'canceled';  // CANONICAL: was 'cancel'
+  if (isCancelTransactionType(transactionType)) {
+    return 'canceled';
   }
   
   // PRIORITY 2: Check message for failure indicators
@@ -75,25 +87,18 @@ export function normalizeStatus(
     return 'failed';
   }
   
-  // PRIORITY 3: Check status text
-  if (status.includes('неуспеш') || status.includes('ошибк') || 
-      status === 'failed' || status === 'error' || status.includes('fail')) {
-    return 'failed';
+  // PRIORITY 3: Use centralized status normalization
+  const canonical = toCanonicalStatus(statusRaw);
+  if (canonical) {
+    return canonical;
   }
   
-  if (status === 'успешно' || status === 'successful' || 
-      status.startsWith('успеш') || status.includes('completed') || 
-      status.includes('processed') || status === 'succeeded') {
-    return 'succeeded';  // CANONICAL: was 'successful'
+  // UNKNOWN: Return null instead of defaulting to 'pending'
+  // This prevents writing garbage to DB - caller should handle null
+  if (status) {
+    console.warn(`[csv-parser] Unknown status: "${statusRaw}" (type: "${transactionType}")`);
   }
-  
-  if (status.includes('pending') || status.includes('processing') || 
-      status.includes('incomplete')) {
-    return 'pending';
-  }
-  
-  // Default to pending for unknown statuses
-  return 'pending';
+  return null;
 }
 
 /**

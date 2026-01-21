@@ -33,7 +33,14 @@ import {
   extractCardLast4,
   detectCardBrand
 } from "@/lib/csv-parser";
-import { toCanonicalStatus, isCanonicalStatus, type CanonicalStatus } from "@/lib/paymentStatus";
+import { 
+  toCanonicalStatus, 
+  isCanonicalStatus, 
+  isRefundTransactionType, 
+  isCancelTransactionType,
+  isPaymentTransactionType,
+  type CanonicalStatus 
+} from "@/lib/paymentStatus";
 
 interface SmartImportDialogProps {
   open: boolean;
@@ -45,7 +52,7 @@ interface ParsedTransaction {
   uid: string;
   bepaid_order_id?: string;
   status: string;
-  status_normalized: CanonicalStatus;
+  status_normalized: CanonicalStatus | null; // UPDATED: Can be null for unknown statuses
   transaction_type: string;
   amount: number;
   currency: string;
@@ -171,8 +178,13 @@ function parseCSVRow(row: Record<string, string>, sheetType?: 'cards' | 'erip'):
   const typeRaw = row['Тип транзакции'] || row['Transaction type'] || 'Платеж';
   const messageRaw = row['Сообщение'] || row['Message'] || '';
   
-  // Use improved status normalization
+  // Use improved status normalization (returns null for unknown)
   const status_normalized = normalizeStatus(statusRaw, typeRaw, messageRaw);
+  
+  // GUARD: Log warning for unknown statuses but still allow parsing
+  if (status_normalized === null && statusRaw) {
+    console.warn(`[SmartImportDialog] Unknown status in CSV: "${statusRaw}" (type: "${typeRaw}") for UID ${uid}`);
+  }
 
   // CRITICAL FIX: For void/cancel transactions, use 'Сумма' column, NOT 'Перечисленная сумма'
   // bePaid file: 'Сумма' = actual transaction amount, 'Перечисленная сумма' = 0 for voids
@@ -1067,35 +1079,56 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
                 />
               </div>
 
-              {/* CSV Financial Summary */}
+              {/* CSV Financial Summary - Using centralized helpers */}
               <Card className="bg-primary/5 border-primary/20">
                 <CardContent className="p-4">
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
                     <div>
                       <p className="text-muted-foreground">Успешные в CSV</p>
                       <p className="text-xl font-bold text-green-600">
-                        {transactions.filter(t => t.status_normalized === 'succeeded' && !['refund', 'void', 'cancel'].includes((t.transaction_type || '').toLowerCase().replace('возврат средств', 'refund').replace('отмена', 'void'))).reduce((s, t) => s + t.amount, 0).toFixed(2)} BYN
+                        {transactions.filter(t => 
+                          t.status_normalized === 'succeeded' && 
+                          isPaymentTransactionType(t.transaction_type) &&
+                          !isRefundTransactionType(t.transaction_type) &&
+                          !isCancelTransactionType(t.transaction_type)
+                        ).reduce((s, t) => s + t.amount, 0).toFixed(2)} BYN
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {transactions.filter(t => t.status_normalized === 'succeeded' && !['refund', 'void', 'cancel'].includes((t.transaction_type || '').toLowerCase())).length} операций
+                        {transactions.filter(t => 
+                          t.status_normalized === 'succeeded' && 
+                          isPaymentTransactionType(t.transaction_type) &&
+                          !isRefundTransactionType(t.transaction_type)
+                        ).length} операций
                       </p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Возвраты в CSV</p>
                       <p className="text-xl font-bold text-amber-600">
-                        {transactions.filter(t => t.status_normalized === 'refunded' || (t.transaction_type || '').toLowerCase().includes('возврат')).reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)} BYN
+                        {transactions.filter(t => 
+                          t.status_normalized === 'refunded' || 
+                          isRefundTransactionType(t.transaction_type)
+                        ).reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)} BYN
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {transactions.filter(t => t.status_normalized === 'refunded' || (t.transaction_type || '').toLowerCase().includes('возврат')).length} возвратов
+                        {transactions.filter(t => 
+                          t.status_normalized === 'refunded' || 
+                          isRefundTransactionType(t.transaction_type)
+                        ).length} возвратов
                       </p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Отмены в CSV</p>
                       <p className="text-xl font-bold text-orange-600">
-                        {transactions.filter(t => t.status_normalized === 'canceled' || (t.transaction_type || '').toLowerCase().includes('отмен')).reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)} BYN
+                        {transactions.filter(t => 
+                          t.status_normalized === 'canceled' || 
+                          isCancelTransactionType(t.transaction_type)
+                        ).reduce((s, t) => s + Math.abs(t.amount), 0).toFixed(2)} BYN
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {transactions.filter(t => t.status_normalized === 'canceled' || (t.transaction_type || '').toLowerCase().includes('отмен')).length} отмен
+                        {transactions.filter(t => 
+                          t.status_normalized === 'canceled' || 
+                          isCancelTransactionType(t.transaction_type)
+                        ).length} отмен
                       </p>
                     </div>
                     <div>
