@@ -176,6 +176,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             profiles:profile_id(id, full_name, email, phone, user_id)
           `)
           .eq("provider", "bepaid")
+          .eq("origin", "bepaid") // Sync with RPC: only real bepaid transactions, exclude imports
           .gte("paid_at", `${fromDate}T00:00:00Z`);
         
         if (toDate) {
