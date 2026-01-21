@@ -1,19 +1,15 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { 
-  Download, Upload, ArrowLeft, Search, Filter, X, RefreshCw, Loader2, Shield, FileSpreadsheet
+  Download, Upload, ArrowLeft, Search, Filter, X, RefreshCw
 } from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth } from "date-fns";
-import { supabase } from "@/integrations/supabase/client";
 import { useUnifiedPayments, UnifiedPayment, DateFilter } from "@/hooks/useUnifiedPayments";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import SmartImportDialog from "@/components/admin/bepaid/SmartImportDialog";
@@ -21,11 +17,6 @@ import PaymentsTable from "@/components/admin/payments/PaymentsTable";
 import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
 import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
-import PaymentsSettingsDropdown from "@/components/admin/payments/PaymentsSettingsDropdown";
-import PaymentSecurityTab from "@/components/admin/payments/PaymentSecurityTab";
-import UnlinkedPaymentsReport from "@/components/admin/payments/UnlinkedPaymentsReport";
-import BepaidFullSyncDialog from "@/components/admin/payments/BepaidFullSyncDialog";
-import AutolinkAllCardsButton from "@/components/admin/payments/AutolinkAllCardsButton";
 import SyncRunDialog from "@/components/admin/payments/SyncRunDialog";
 
 export type PaymentFilters = {
@@ -45,7 +36,7 @@ export type PaymentFilters = {
 
 const defaultFilters: PaymentFilters = {
   search: "",
-  status: "successful_and_refunds", // Default: show successful + refunds
+  status: "successful_and_refunds",
   type: "all",
   hasContact: "all",
   hasDeal: "all",
@@ -58,14 +49,9 @@ const defaultFilters: PaymentFilters = {
   source: "all",
 };
 
-// LocalStorage key for include import toggle persistence
-const INCLUDE_IMPORT_KEY = 'admin_payments_include_import';
-
 export default function AdminPayments() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<"payments" | "unlinked" | "security">("payments");
   
   // Date filter - default to current month
   const now = new Date();
@@ -78,61 +64,20 @@ export default function AdminPayments() {
   const [filters, setFilters] = useState<PaymentFilters>(defaultFilters);
   const [showFilters, setShowFilters] = useState(false);
   
-  
-  // Include import toggle - persistent via URL + localStorage
-  // Priority: URL > localStorage > default TRUE (show all by default)
-  const [includeImport, setIncludeImport] = useState(() => {
-    const urlValue = searchParams.get('include_import');
-    if (urlValue !== null) {
-      return urlValue === '1' || urlValue === 'true';
-    }
-    const storedValue = localStorage.getItem(INCLUDE_IMPORT_KEY);
-    if (storedValue !== null) {
-      return storedValue === 'true';
-    }
-    return true; // Default TRUE: показываем всё (API + CSV)
-  });
-  
-  // Sync includeImport to localStorage and URL
-  useEffect(() => {
-    localStorage.setItem(INCLUDE_IMPORT_KEY, String(includeImport));
-    
-    // Update URL without navigation
-    const newParams = new URLSearchParams(searchParams);
-    if (includeImport) {
-      newParams.set('include_import', '1');
-    } else {
-      newParams.delete('include_import');
-    }
-    setSearchParams(newParams, { replace: true });
-  }, [includeImport]);
-  
   // Selection for batch operations
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   
   // Import dialog
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   
-  // Full sync dialog (old)
-  const [fullSyncDialogOpen, setFullSyncDialogOpen] = useState(false);
-  
-  // New unified sync dialog
+  // Sync dialog
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
   
-  // Refresh from API state
-  const [isRefreshingFromApi, setIsRefreshingFromApi] = useState(false);
-  
-  // Handler for include import toggle - resets selection
-  const handleIncludeImportChange = (value: boolean) => {
-    setIncludeImport(value);
-    setSelectedItems(new Set());
-  };
-  
-  // Fetch unified payment data with includeImport toggle
+  // Fetch unified payment data - always include imports
   const effectiveDateFilter = useMemo(() => ({
     ...dateFilter,
-    includeImport,
-  }), [dateFilter, includeImport]);
+    includeImport: true,
+  }), [dateFilter]);
   
   const { 
     payments, 
@@ -141,7 +86,7 @@ export default function AdminPayments() {
     refetch 
   } = useUnifiedPayments(effectiveDateFilter);
 
-  // Apply filters to payments (including dashboard + analytics filters)
+  // Apply filters to payments
   const filteredPayments = useMemo(() => {
     const normalizeType = (raw: string | null | undefined) => {
       const v = (raw || '').toLowerCase().trim();
@@ -152,17 +97,16 @@ export default function AdminPayments() {
       if (['authorization', 'auth', 'авторизация'].includes(v)) return 'authorization';
       if (['void', 'canceled', 'cancelled', 'отмена', 'cancellation', 'authorization_void'].includes(v)) return 'void';
       if (['chargeback', 'чарджбек'].includes(v)) return 'chargeback';
-      return v; // fallback
+      return v;
     };
     
-    // Helper to check if transaction is a cancellation/void by type
     const isCancelledTransaction = (p: UnifiedPayment) => {
       const txType = normalizeType(p.transaction_type);
       return txType === 'void';
     };
 
     return payments.filter(p => {
-      // Search filter - include linked profile data
+      // Search filter
       if (filters.search) {
         const search = filters.search.toLowerCase();
         const matchSearch = 
@@ -172,27 +116,23 @@ export default function AdminPayments() {
           p.card_holder?.toLowerCase().includes(search) ||
           p.card_last4?.includes(search) ||
           p.order_number?.toLowerCase().includes(search) ||
-          // Also search by linked profile data
           p.profile_name?.toLowerCase().includes(search) ||
           p.profile_email?.toLowerCase().includes(search) ||
           p.profile_phone?.toLowerCase().includes(search);
         if (!matchSearch) return false;
       }
 
-      // Status filter with combo option for successful + refunds
+      // Status filter
       if (filters.status !== "all") {
         if (filters.status === "successful_and_refunds") {
-          // Show successful payments AND refund transactions (by status, type, or negative amount)
           const isSuccessful = ['successful', 'succeeded'].includes(p.status_normalized);
           const isRefundStatus = ['refund', 'refunded'].includes(p.status_normalized);
           const isRefundType = normalizeType(p.transaction_type) === 'refund';
-          const isNegativeAmount = p.amount < 0; // Negative amount = refund
+          const isNegativeAmount = p.amount < 0;
           if (!isSuccessful && !isRefundStatus && !isRefundType && !isNegativeAmount) return false;
         } else if (filters.status === "cancelled") {
-          // Show cancelled by transaction_type (not status!)
           if (!isCancelledTransaction(p)) return false;
         } else if (filters.status === "failed") {
-          // Show all failed statuses (failed, declined, expired, error) - NOT cancellations
           const failedStatuses = ['failed', 'declined', 'expired', 'error', 'incomplete'];
           const isCancel = isCancelledTransaction(p);
           if (!failedStatuses.includes(p.status_normalized) || isCancel) return false;
@@ -201,7 +141,7 @@ export default function AdminPayments() {
         }
       }
 
-      // Type filter (normalize english/russian variants)
+      // Type filter
       if (filters.type !== "all" && normalizeType(p.transaction_type) !== filters.type) return false;
 
       // Has contact filter
@@ -243,38 +183,7 @@ export default function AdminPayments() {
     });
   }, [payments, filters]);
 
-  // Refresh from bePaid API
-  const handleRefreshFromApi = async () => {
-    setIsRefreshingFromApi(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('bepaid-fetch-transactions');
-      if (error) throw error;
-      
-      const result = data as { 
-        transactions_fetched?: number; 
-        queued_for_review?: number;
-        new_payments?: number;
-        error?: string;
-      };
-      
-      if (result.error) {
-        toast.error(`Ошибка: ${result.error}`);
-      } else {
-        toast.success(
-          `Загружено ${result.transactions_fetched || 0} транзакций, ` +
-          `${result.queued_for_review || 0} в очередь`
-        );
-        refetch();
-      }
-    } catch (e: any) {
-      console.error('Error refreshing from bePaid:', e);
-      toast.error('Ошибка обновления: ' + (e.message || 'Неизвестная ошибка'));
-    } finally {
-      setIsRefreshingFromApi(false);
-    }
-  };
-  
-  // Open new unified sync dialog
+  // Open sync dialog
   const handleBepaidSync = () => {
     setSyncDialogOpen(true);
   };
@@ -345,212 +254,150 @@ export default function AdminPayments() {
     <AdminLayout>
       <div className="container mx-auto p-4 space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between flex-wrap gap-4">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <div>
-              <h1 className="text-2xl font-bold">Платежи</h1>
-              <p className="text-muted-foreground">
-                Все транзакции bePaid в единой таблице
-              </p>
-            </div>
-          </div>
-          
-        </div>
-
-        {/* Glassmorphism Tabs */}
-        <div className="p-1.5 rounded-2xl bg-background/40 backdrop-blur-xl border border-border/30 shadow-lg">
-          <div className="w-full grid grid-cols-3 gap-1 bg-transparent p-0 h-auto">
-            <button 
-              onClick={() => setActiveTab("payments")}
-              className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all ${
-                activeTab === "payments" 
-                  ? "bg-background/80 shadow-md text-foreground" 
-                  : "text-muted-foreground hover:bg-background/40"
-              }`}
-            >
-              Транзакции
-            </button>
-            <button 
-              onClick={() => setActiveTab("unlinked")}
-              className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all ${
-                activeTab === "unlinked" 
-                  ? "bg-background/80 shadow-md text-foreground" 
-                  : "text-muted-foreground hover:bg-background/40"
-              }`}
-            >
-              Непривязанные
-            </button>
-            <button 
-              onClick={() => setActiveTab("security")}
-              className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium transition-all ${
-                activeTab === "security" 
-                  ? "bg-background/80 shadow-md text-foreground" 
-                  : "text-muted-foreground hover:bg-background/40"
-              }`}
-            >
-              <Shield className="h-4 w-4" />
-              Безопасность
-            </button>
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold">Платежи</h1>
+            <p className="text-muted-foreground">
+              Все транзакции bePaid в единой таблице
+            </p>
           </div>
         </div>
         
-        {/* Toolbar - only for payments tab */}
-        {activeTab === "payments" && (
-          <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-background/30 backdrop-blur-sm border border-border/20">
+        {/* Toolbar - responsive: 2 rows on mobile */}
+        <div className="flex flex-col gap-3 p-3 rounded-xl bg-background/30 backdrop-blur-sm border border-border/20">
+          {/* Row 1: Period selector */}
+          <div className="flex flex-wrap items-center gap-3">
             <DatePeriodSelector value={dateFilter} onChange={setDateFilter} />
-            
-            {/* Include import toggle */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-background/60 border border-border/40">
-              <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
-              <Label htmlFor="includeImport" className="text-xs text-muted-foreground cursor-pointer">
-                CSV импорт
-              </Label>
-              <Switch 
-                id="includeImport" 
-                checked={includeImport} 
-                onCheckedChange={handleIncludeImportChange}
-                className="scale-75"
-              />
+            <div className="flex-1 min-w-0" />
+            {/* Desktop: show buttons inline */}
+            <div className="hidden sm:flex items-center gap-2">
+              <Button variant="outline" onClick={handleBepaidSync} className="gap-2 h-9 bg-background/60">
+                <RefreshCw className="h-4 w-4" />
+                Синхронизировать
+              </Button>
+              <Button onClick={() => setImportDialogOpen(true)} className="gap-2 h-9">
+                <Upload className="h-4 w-4" />
+                Импорт
+              </Button>
             </div>
-            
-            <div className="flex-1" />
-            <Button variant="outline" onClick={handleBepaidSync} className="gap-2 h-9 bg-background/60">
-              <RefreshCw className="h-4 w-4" />
-              <span className="hidden sm:inline">Синхронизировать</span>
-            </Button>
-            <Button onClick={() => setImportDialogOpen(true)} className="gap-2 h-9">
-              <Upload className="h-4 w-4" />
-              <span className="hidden sm:inline">Импорт</span>
-            </Button>
-            <AutolinkAllCardsButton />
-            <PaymentsSettingsDropdown 
-              selectedIds={selectedItems.size > 0 ? Array.from(selectedItems) : undefined}
-              onRefreshFromApi={handleRefreshFromApi}
-              isRefreshingFromApi={isRefreshingFromApi}
-              onComplete={refetch}
-            />
           </div>
-        )}
+          {/* Row 2: Mobile buttons - full width */}
+          <div className="flex sm:hidden items-center gap-2">
+            <Button variant="outline" onClick={handleBepaidSync} className="flex-1 gap-2 h-9 bg-background/60">
+              <RefreshCw className="h-4 w-4" />
+              Sync
+            </Button>
+            <Button onClick={() => setImportDialogOpen(true)} className="flex-1 gap-2 h-9">
+              <Upload className="h-4 w-4" />
+              Импорт
+            </Button>
+          </div>
+        </div>
         
-        {/* Tab Content */}
-        {activeTab === "security" ? (
-          <PaymentSecurityTab />
-        ) : activeTab === "unlinked" ? (
-          <UnlinkedPaymentsReport onComplete={refetch} />
-        ) : (
-          <>
-            {/* Main content */}
-            <Card>
-              <CardHeader className="pb-4">
-                <div className="flex items-center justify-between flex-wrap gap-4">
-                  <div>
-                    <CardTitle>Транзакции</CardTitle>
-                    <CardDescription>
-                      {filteredPayments.length} из {payments.length} транзакций
-                    </CardDescription>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {/* Search */}
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Поиск по UID, email, телефону, карте, заказу..."
-                        value={filters.search}
-                        onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                        className="pl-10 w-80"
-                      />
-                    </div>
-                    
-                    {/* Filter toggle */}
-                    <Button 
-                      variant={showFilters ? "secondary" : "outline"} 
-                      onClick={() => setShowFilters(!showFilters)}
-                      className="gap-2"
-                    >
-                      <Filter className="h-4 w-4" />
-                      Фильтры
-                      {activeFiltersCount > 0 && (
-                        <Badge variant="secondary" className="ml-1">{activeFiltersCount}</Badge>
-                      )}
-                    </Button>
-                    
-                    {/* Reset filters */}
-                    {activeFiltersCount > 0 && (
-                      <Button variant="ghost" size="sm" onClick={resetFilters}>
-                        <X className="h-4 w-4 mr-1" />
-                        Сбросить
-                      </Button>
-                    )}
-                    
-                    {/* Export */}
-                    <Button variant="outline" onClick={handleExport} disabled={filteredPayments.length === 0}>
-                      <Download className="h-4 w-4 mr-2" />
-                      CSV
-                    </Button>
-                  </div>
+        {/* Main content */}
+        <Card>
+          <CardHeader className="pb-4">
+            {/* Responsive header: stacked on mobile */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <CardTitle>Транзакции</CardTitle>
+                <CardDescription>
+                  {filteredPayments.length} из {payments.length} транзакций
+                </CardDescription>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                {/* Search - full width on mobile */}
+                <div className="relative w-full sm:w-80">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Поиск..."
+                    value={filters.search}
+                    onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                    className="pl-10 w-full"
+                  />
                 </div>
                 
-                {/* Filters panel */}
-                {showFilters && (
-                  <PaymentsFilters filters={filters} setFilters={setFilters} />
-                )}
-              </CardHeader>
-              
-              <CardContent>
-                {/* Batch actions */}
-                {selectedItems.size > 0 && (
-                  <PaymentsBatchActions
-                    selectedPayments={filteredPayments.filter(p => selectedItems.has(p.id))}
-                    onSuccess={() => {
-                      setSelectedItems(new Set());
-                      refetch();
-                    }}
-                    onClearSelection={() => setSelectedItems(new Set())}
-                  />
-                )}
-                
-                {/* Table */}
-                <PaymentsTable
-                  payments={filteredPayments}
-                  isLoading={isLoading}
-                  selectedItems={selectedItems}
-                  onToggleSelectAll={toggleSelectAll}
-                  onToggleItem={toggleItem}
-                  onRefetch={refetch}
-                />
-              </CardContent>
-            </Card>
+                {/* Filter buttons */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button 
+                    variant={showFilters ? "secondary" : "outline"} 
+                    onClick={() => setShowFilters(!showFilters)}
+                    className="gap-2"
+                  >
+                    <Filter className="h-4 w-4" />
+                    Фильтры
+                    {activeFiltersCount > 0 && (
+                      <Badge variant="secondary" className="ml-1">{activeFiltersCount}</Badge>
+                    )}
+                  </Button>
+                  
+                  {activeFiltersCount > 0 && (
+                    <Button variant="ghost" size="sm" onClick={resetFilters}>
+                      <X className="h-4 w-4 mr-1" />
+                      Сбросить
+                    </Button>
+                  )}
+                  
+                  <Button variant="outline" onClick={handleExport} disabled={filteredPayments.length === 0}>
+                    <Download className="h-4 w-4 mr-2" />
+                    CSV
+                  </Button>
+                </div>
+              </div>
+            </div>
             
-            {/* Import dialog */}
-            <SmartImportDialog
-              open={importDialogOpen}
-              onOpenChange={setImportDialogOpen}
-              onSuccess={() => {
-                refetch();
-                setImportDialogOpen(false);
-              }}
-            />
+            {/* Filters panel */}
+            {showFilters && (
+              <PaymentsFilters filters={filters} setFilters={setFilters} />
+            )}
+          </CardHeader>
+          
+          <CardContent>
+            {/* Batch actions */}
+            {selectedItems.size > 0 && (
+              <PaymentsBatchActions
+                selectedPayments={filteredPayments.filter(p => selectedItems.has(p.id))}
+                onSuccess={() => {
+                  setSelectedItems(new Set());
+                  refetch();
+                }}
+                onClearSelection={() => setSelectedItems(new Set())}
+              />
+            )}
             
-            {/* Full Sync dialog */}
-            {/* New unified sync dialog */}
-            <SyncRunDialog 
-              open={syncDialogOpen}
-              onOpenChange={setSyncDialogOpen}
-              onComplete={refetch}
-            />
-            
-            {/* Legacy full sync dialog (kept for fallback) */}
-            <BepaidFullSyncDialog
-              open={fullSyncDialogOpen}
-              onOpenChange={setFullSyncDialogOpen}
-              onComplete={refetch}
-              defaultFromDate="2026-01-01"
-            />
-          </>
-        )}
+            {/* Table with horizontal scroll */}
+            <div className="overflow-x-auto -mx-4 sm:mx-0">
+              <PaymentsTable
+                payments={filteredPayments}
+                isLoading={isLoading}
+                selectedItems={selectedItems}
+                onToggleSelectAll={toggleSelectAll}
+                onToggleItem={toggleItem}
+                onRefetch={refetch}
+              />
+            </div>
+          </CardContent>
+        </Card>
+        
+        {/* Import dialog */}
+        <SmartImportDialog
+          open={importDialogOpen}
+          onOpenChange={setImportDialogOpen}
+          onSuccess={() => {
+            refetch();
+            setImportDialogOpen(false);
+          }}
+        />
+        
+        {/* Sync dialog */}
+        <SyncRunDialog 
+          open={syncDialogOpen}
+          onOpenChange={setSyncDialogOpen}
+          onComplete={refetch}
+        />
       </div>
     </AdminLayout>
   );
