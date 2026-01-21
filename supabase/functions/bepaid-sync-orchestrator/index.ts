@@ -214,6 +214,11 @@ async function fetchFromBepaidWithProbing(
 
   // Extended candidate endpoints to try (including /api/v1/ paths and beyag)
   const candidates = [
+    // v2 endpoints (we know single-transaction endpoints exist under /v2/transactions)
+    { name: "gateway:/v2/transactions", base: "https://gateway.bepaid.by/v2/transactions", includeShopId: false },
+    { name: "gateway:/v2/transactions?shop_id", base: "https://gateway.bepaid.by/v2/transactions", includeShopId: true },
+    { name: "api:/v2/transactions", base: "https://api.bepaid.by/v2/transactions", includeShopId: false },
+    { name: "api:/v2/transactions?shop_id", base: "https://api.bepaid.by/v2/transactions", includeShopId: true },
     { name: "gateway:/transactions", base: "https://gateway.bepaid.by/transactions", includeShopId: false },
     { name: "gateway:/transactions?shop_id", base: "https://gateway.bepaid.by/transactions", includeShopId: true },
     { name: "gateway:/api/v1/transactions", base: "https://gateway.bepaid.by/api/v1/transactions", includeShopId: false },
@@ -229,6 +234,106 @@ async function fetchFromBepaidWithProbing(
 
   const endpointAttempts: EndpointAttempt[] = [];
 
+  const tryReportsApi = async (): Promise<{ success: boolean; transactions: any[]; endpoint_used?: string; error?: string } > => {
+    // Reports API endpoints seen working in other backend functions.
+    const reportEndpoints = [
+      { name: 'reports:api:/api/reports', url: 'https://api.bepaid.by/api/reports' },
+      { name: 'reports:gateway:/api/reports', url: 'https://gateway.bepaid.by/api/reports' },
+      { name: 'reports:api:/reports', url: 'https://api.bepaid.by/reports' },
+      { name: 'reports:gateway:/reports', url: 'https://gateway.bepaid.by/reports' },
+    ];
+
+    const formatDate = (d: Date) => d.toISOString().replace('T', ' ').substring(0, 19);
+
+    const requestBody = {
+      report_params: {
+        date_type: 'created_at',
+        from: formatDate(fromDate),
+        to: formatDate(toDate),
+        status: 'all',
+        payment_method_type: 'all',
+        time_zone: 'Europe/Minsk',
+      },
+    };
+
+    for (const ep of reportEndpoints) {
+      if (Date.now() - startTime > 25000) break;
+
+      try {
+        console.log(`[Sync] Trying Reports API: ${ep.name}`);
+
+        const response = await fetch(ep.url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${auth}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            // Reports API in our codebase uses v2.
+            'X-API-Version': '2',
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        const attempt: EndpointAttempt = {
+          name: ep.name,
+          url: ep.url,
+          status: response.status,
+          ok: response.ok,
+          keys_found: null,
+          error: null,
+        };
+
+        if (!response.ok) {
+          let errorBody = '';
+          try {
+            errorBody = await response.text();
+            if (errorBody.length > 200) errorBody = errorBody.slice(0, 200) + '...';
+          } catch {
+            /* ignore */
+          }
+          attempt.error = `HTTP ${response.status}: ${errorBody || 'no body'}`;
+          console.log(`[Sync] ${ep.name} failed: ${attempt.error}`);
+          endpointAttempts.push(attempt);
+          continue;
+        }
+
+        const data = await response.json();
+        const transactions = data.transactions || data.data?.transactions || data.items || data.data || [];
+        attempt.keys_found = data && typeof data === 'object' ? Object.keys(data).slice(0, 8) : null;
+        attempt.tx_count = Array.isArray(transactions) ? transactions.length : undefined;
+
+        if (!Array.isArray(transactions) || transactions.length === 0) {
+          attempt.error = '0 transactions returned';
+          endpointAttempts.push(attempt);
+          continue;
+        }
+
+        const firstTx = transactions[0];
+        if (!firstTx?.uid && !firstTx?.id) {
+          attempt.error = 'No uid/id in transactions';
+          endpointAttempts.push(attempt);
+          continue;
+        }
+
+        endpointAttempts.push(attempt);
+        console.log(`[Sync] Success! ${ep.name} returned ${transactions.length} transactions`);
+        return { success: true, transactions: transactions.slice(0, maxTransactions), endpoint_used: ep.name };
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        endpointAttempts.push({
+          name: ep.name,
+          url: ep.url,
+          status: null,
+          ok: false,
+          keys_found: null,
+          error: errMsg,
+        });
+      }
+    }
+
+    return { success: false, transactions: [], error: 'All Reports API endpoints failed' };
+  };
+
   for (const candidate of candidates) {
     // Timeout check
     if (Date.now() - startTime > 25000) {
@@ -240,13 +345,13 @@ async function fetchFromBepaidWithProbing(
     try {
       console.log(`[Sync] Trying endpoint: ${candidate.name}`);
       
-      // CRITICAL: Add X-Api-Version: 3 header for bePaid gateway
+      // CRITICAL: Include API version header (some routes require it)
       const response = await fetch(url, {
         method: "GET",
         headers: {
           "Authorization": `Basic ${auth}`,
           "Accept": "application/json",
-          "X-Api-Version": "3",
+          "X-API-Version": "3",
         },
       });
 
@@ -314,7 +419,8 @@ async function fetchFromBepaidWithProbing(
           method: "GET",
           headers: {
             "Authorization": `Basic ${auth}`,
-            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-API-Version": "3",
           },
         });
 
@@ -353,6 +459,18 @@ async function fetchFromBepaidWithProbing(
         error: errMsg,
       });
     }
+  }
+
+  // Fallback: Reports API (POST) – for accounts where /transactions list routes don't exist.
+  const reportsResult = await tryReportsApi();
+  if (reportsResult.success) {
+    return {
+      success: true,
+      transactions: reportsResult.transactions,
+      pages: 1,
+      endpoint_used: reportsResult.endpoint_used,
+      endpoint_attempts: endpointAttempts,
+    };
   }
 
   // All endpoints failed
@@ -535,8 +653,55 @@ serve(async (req) => {
         stats.error_samples = listResult.endpoint_attempts.map(e => ({
           uid: e.name,
           error: e.error || 'unknown',
-        }));
-        throw new Error(stats.stopped_reason);
+        })).slice(0, MAX_ERROR_SAMPLES);
+
+        const duration = Date.now() - startTime;
+        stats.dry_run = dry_run;
+
+        // Persist run as failed (controlled failure)
+        await supabase
+          .from("payments_sync_runs")
+          .update({
+            status: 'failed',
+            finished_at: new Date().toISOString(),
+            error: stats.stopped_reason,
+            stats: { ...stats, duration_ms: duration },
+          })
+          .eq("id", runId);
+
+        // Audit proof even on failure
+        await supabase.from("audit_logs").insert({
+          actor_user_id: null,
+          actor_type: 'system',
+          actor_label: 'bepaid-sync-orchestrator',
+          action: 'bepaid_sync_run',
+          meta: {
+            run_id: runId,
+            mode,
+            period: { from_date, to_date },
+            dry_run,
+            status: 'failed',
+            stopped_reason: stats.stopped_reason,
+            stats,
+            duration_ms: duration,
+            initiated_by: user.id,
+            endpoint_used: listResult.endpoint_used,
+          },
+        });
+
+        // Return 200 so the UI can show the STOP reason without treating it as a transport failure.
+        return new Response(JSON.stringify({
+          success: false,
+          run_id: runId,
+          status: 'failed',
+          error: stats.stopped_reason,
+          dry_run,
+          stats,
+          duration_ms: duration,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
       console.log(`[Sync] Fetched ${listResult.transactions.length} transactions from bePaid via ${listResult.endpoint_used}`);
