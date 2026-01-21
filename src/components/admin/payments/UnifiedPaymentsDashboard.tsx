@@ -187,15 +187,20 @@ export default function UnifiedPaymentsDashboard({
   const { data: feeRules, isLoading: isLoadingRules } = useBepaidFeeRules();
   
   // Fetch accurate server-side statistics
+  // Use explicit primitives in queryKey for stable caching
+  const effectiveIncludeImport = (dateFilter as any)?.includeImport ?? includeImport;
+  
   const { data: serverStats, isLoading: isLoadingStats, isFetching: isFetchingStats } = useQuery({
-    queryKey: ["payment-stats", dateFilter?.from, dateFilter?.to, includeImport],
+    queryKey: ["payment-stats", dateFilter?.from || null, dateFilter?.to || null, effectiveIncludeImport],
     queryFn: async () => {
       if (!dateFilter?.from || !dateFilter?.to) return null;
+      
+      console.log(`[Dashboard Stats] Fetching: ${dateFilter.from} to ${dateFilter.to}, includeImport=${effectiveIncludeImport}`);
       
       const { data, error } = await supabase.rpc('get_payments_stats', {
         from_date: dateFilter.from,
         to_date: dateFilter.to,
-        include_import: includeImport,
+        include_import: effectiveIncludeImport,
       });
       
       if (error) {
@@ -203,6 +208,7 @@ export default function UnifiedPaymentsDashboard({
         return null;
       }
       
+      console.log(`[Dashboard Stats] Result:`, data);
       return data as unknown as ServerStats | null;
     },
     enabled: !!dateFilter?.from && !!dateFilter?.to,
@@ -449,11 +455,11 @@ export default function UnifiedPaymentsDashboard({
           {/* Dataset indicator badge */}
           <span className={cn(
             "ml-2 text-[10px] font-normal px-2 py-0.5 rounded-full",
-            includeImport 
+            effectiveIncludeImport 
               ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" 
               : "bg-muted text-muted-foreground"
           )}>
-            {includeImport ? "bePaid + импорт" : "только bePaid"}
+            {effectiveIncludeImport ? "bePaid + импорт" : "только bePaid"}
           </span>
         </h3>
         {activeFilter && (

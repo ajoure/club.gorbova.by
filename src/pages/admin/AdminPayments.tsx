@@ -458,7 +458,7 @@ export default function AdminPayments() {
           <UnlinkedPaymentsReport onComplete={refetch} />
         ) : (
           <>
-            {/* Unified Financial Dashboard - with includeImport support */}
+            {/* Unified Financial Dashboard - computed from same dataset as table */}
             <UnifiedPaymentsDashboard 
               payments={payments} 
               isLoading={isLoading} 
@@ -471,7 +471,7 @@ export default function AdminPayments() {
                   console.debug(`[Payments] Dashboard filter: ${filter}, expected count: ${expectedCount}`);
                 }
               }}
-              dateFilter={dateFilter}
+              dateFilter={effectiveDateFilter}
               includeImport={includeImport}
             />
 
