@@ -25,6 +25,7 @@ import PaymentSecurityTab from "@/components/admin/payments/PaymentSecurityTab";
 import UnlinkedPaymentsReport from "@/components/admin/payments/UnlinkedPaymentsReport";
 import BepaidFullSyncDialog from "@/components/admin/payments/BepaidFullSyncDialog";
 import AutolinkAllCardsButton from "@/components/admin/payments/AutolinkAllCardsButton";
+import SyncRunDialog from "@/components/admin/payments/SyncRunDialog";
 
 export type PaymentFilters = {
   search: string;
@@ -81,8 +82,11 @@ export default function AdminPayments() {
   // Import dialog
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   
-  // Full sync dialog
+  // Full sync dialog (old)
   const [fullSyncDialogOpen, setFullSyncDialogOpen] = useState(false);
+  
+  // New unified sync dialog
+  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
   
   // Refresh from API state
   const [isRefreshingFromApi, setIsRefreshingFromApi] = useState(false);
@@ -260,9 +264,9 @@ export default function AdminPayments() {
     }
   };
   
-  // Open full sync dialog (replaces old handleBepaidSync)
+  // Open new unified sync dialog
   const handleBepaidSync = () => {
-    setFullSyncDialogOpen(true);
+    setSyncDialogOpen(true);
   };
 
   // Export to CSV
@@ -515,6 +519,14 @@ export default function AdminPayments() {
             />
             
             {/* Full Sync dialog */}
+            {/* New unified sync dialog */}
+            <SyncRunDialog 
+              open={syncDialogOpen}
+              onOpenChange={setSyncDialogOpen}
+              onComplete={refetch}
+            />
+            
+            {/* Legacy full sync dialog (kept for fallback) */}
             <BepaidFullSyncDialog
               open={fullSyncDialogOpen}
               onOpenChange={setFullSyncDialogOpen}

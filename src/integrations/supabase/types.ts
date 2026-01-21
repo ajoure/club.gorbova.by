@@ -3716,6 +3716,60 @@ export type Database = {
         }
         Relationships: []
       }
+      payments_sync_runs: {
+        Row: {
+          created_at: string
+          current_cursor: Json | null
+          error: string | null
+          finished_at: string | null
+          id: string
+          initiated_by: string | null
+          period_from: string
+          period_to: string
+          processed_pages: number | null
+          source_mode: string
+          started_at: string | null
+          stats: Json | null
+          status: string
+          total_pages: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_cursor?: Json | null
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          initiated_by?: string | null
+          period_from: string
+          period_to: string
+          processed_pages?: number | null
+          source_mode: string
+          started_at?: string | null
+          stats?: Json | null
+          status?: string
+          total_pages?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_cursor?: Json | null
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          initiated_by?: string | null
+          period_from?: string
+          period_to?: string
+          processed_pages?: number | null
+          source_mode?: string
+          started_at?: string | null
+          stats?: Json | null
+          status?: string
+          total_pages?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       payments_v2: {
         Row: {
           amount: number

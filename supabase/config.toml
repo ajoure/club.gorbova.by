@@ -254,4 +254,6 @@ verify_jwt = false
 
 [functions.admin-materialize-queue-payments]
 verify_jwt = false
+
+[functions.bepaid-sync-orchestrator]
 verify_jwt = false
