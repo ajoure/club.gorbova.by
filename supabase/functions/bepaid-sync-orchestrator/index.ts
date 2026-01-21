@@ -296,14 +296,19 @@ serve(async (req) => {
 
     console.log(`[Sync] Starting ${mode} sync for ${from_date} to ${to_date}, dry_run=${dry_run}`);
 
-    // === GET BEPAID CREDENTIALS ===
-    const { data: settings } = await supabase
-      .from("payment_settings")
-      .select("key, value")
-      .in("key", ["bepaid_shop_id", "bepaid_secret_key"]);
+    // === GET BEPAID CREDENTIALS (standard pattern: integration_instances > env) ===
+    const { data: integrations } = await supabase
+      .from("integration_instances")
+      .select("config")
+      .eq("provider", "bepaid")
+      .in("status", ["active", "connected"])
+      .limit(1);
 
-    const shopId = settings?.find(s => s.key === "bepaid_shop_id")?.value;
-    const secretKey = settings?.find(s => s.key === "bepaid_secret_key")?.value;
+    const config = integrations?.[0]?.config as Record<string, any> | null;
+    const shopId = config?.shop_id || Deno.env.get("BEPAID_SHOP_ID");
+    const secretKey = config?.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
+
+    console.log(`[Sync] Credentials: shopId=${shopId ? 'found' : 'missing'}, secretKey=${secretKey ? 'found' : 'missing'}, source=${config ? 'db' : 'env'}`);
 
     if (!shopId || !secretKey) {
       return new Response(JSON.stringify({ error: "bePaid credentials not configured" }), {
