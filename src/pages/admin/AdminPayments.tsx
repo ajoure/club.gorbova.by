@@ -26,6 +26,7 @@ import UnlinkedPaymentsReport from "@/components/admin/payments/UnlinkedPayments
 import BepaidFullSyncDialog from "@/components/admin/payments/BepaidFullSyncDialog";
 import AutolinkAllCardsButton from "@/components/admin/payments/AutolinkAllCardsButton";
 import SyncRunDialog from "@/components/admin/payments/SyncRunDialog";
+import { classifyPayment } from "@/lib/paymentClassification";
 
 export type PaymentFilters = {
   search: string;
@@ -121,35 +122,14 @@ export default function AdminPayments() {
 
     return payments.filter(p => {
       // Unified dashboard filter (from clickable cards)
+      // Uses centralized classifyPayment for EXACT match with RPC logic
       if (dashboardFilter) {
-        const failedStatuses = ['failed', 'expired', 'declined', 'error', 'incomplete'];
-        switch (dashboardFilter) {
-          case 'successful': {
-            // Successful = successful status AND NOT a cancellation/void
-            const isSuccess = ['successful', 'succeeded'].includes(p.status_normalized);
-            const isCancel = isCancelledTransaction(p);
-            if (!isSuccess || isCancel) return false;
-            break;
-          }
-          case 'refunded': {
-            const isRefundTx = normalizeType(p.transaction_type) === 'refund';
-            const isNegativeAmount = p.amount < 0;
-            const hasRefundedStatus = ['refunded', 'refund'].includes(p.status_normalized);
-            if (!isRefundTx && !isNegativeAmount && !hasRefundedStatus && p.total_refunded <= 0) return false;
-            break;
-          }
-          case 'cancelled': {
-            // Cancelled = by transaction_type, not status
-            if (!isCancelledTransaction(p)) return false;
-            break;
-          }
-          case 'failed': {
-            // Failed = failed status, but NOT cancellations
-            const isCancel = isCancelledTransaction(p);
-            if (!failedStatuses.includes(p.status_normalized) || isCancel) return false;
-            break;
-          }
-        }
+        const category = classifyPayment(
+          p.status_normalized,
+          p.transaction_type,
+          p.amount
+        );
+        if (category !== dashboardFilter) return false;
       }
 
       // Search filter - include linked profile data

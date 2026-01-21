@@ -12,6 +12,7 @@ import {
   detectPaymentChannel, 
   extractIssuerCountry 
 } from "@/hooks/useBepaidFeeRules";
+import { classifyPayment, PaymentCategory } from "@/lib/paymentClassification";
 
 interface ServerStats {
   successful_amount: number;
@@ -25,18 +26,10 @@ interface ServerStats {
   pending_amount: number;
   pending_count: number;
   total_count: number;
-  net_revenue?: number; // Added: server-calculated net revenue
+  net_revenue?: number; // Server-calculated net revenue
 }
 
 export type UnifiedDashboardFilter = 'successful' | 'refunded' | 'cancelled' | 'failed' | null;
-
-// Constants for status classification
-// Note: cancelled/voided are NOT in failed - they are separate category
-const FAILED_STATUSES = ['failed', 'expired', 'declined', 'error', 'incomplete'];
-const SUCCESSFUL_STATUSES = ['successful', 'succeeded'];
-// Pending statuses should NOT be counted as successful
-const PENDING_STATUSES = ['pending', 'processing'];
-const CANCELLED_TX_TYPES = ['отмена', 'void', 'cancellation', 'authorization_void', 'canceled', 'cancelled'];
 
 interface UnifiedPaymentsDashboardProps {
   payments: UnifiedPayment[];
@@ -234,6 +227,7 @@ export default function UnifiedPaymentsDashboard({
     const result = {
       successful: { BYN: 0, count: 0 } as { [key: string]: number; count: number },
       refunded: { BYN: 0, count: 0 } as { [key: string]: number; count: number },
+      cancelled: { BYN: 0, count: 0 } as { [key: string]: number; count: number },
       failed: { BYN: 0, count: 0 } as { [key: string]: number; count: number },
       fees: { BYN: 0 } as Record<string, number>,
       feesUnknown: 0,
@@ -244,127 +238,117 @@ export default function UnifiedPaymentsDashboard({
     const currencyCount: Record<string, number> = {};
     const processedRefundUids = new Set<string>();
 
+    // Use centralized classifyPayment for EXACT match with RPC logic
     payments.forEach(p => {
       const currency = p.currency || 'BYN';
       currencyCount[currency] = (currencyCount[currency] || 0) + 1;
 
-      const statusNormalized = (p.status_normalized || '').toLowerCase();
+      // Single source of truth: classifyPayment
+      const category = classifyPayment(
+        p.status_normalized,
+        p.transaction_type,
+        p.amount
+      );
       
-      // Check if this is a refund transaction (negative amount or refund type)
-      const txType = (p.transaction_type || '').toLowerCase();
-      const isRefundTx = p.amount < 0 
-        || txType === 'возврат средств' 
-        || txType === 'refund'
-        || txType.includes('возврат')
-        || statusNormalized === 'refunded';
-        
-      // Check if this is a cancellation/void transaction
-      const isCancelledTx = CANCELLED_TX_TYPES.some(ct => txType.includes(ct));
-      
-      // Check if this is a pending/processing transaction (not completed yet)
-      const isPendingTx = PENDING_STATUSES.includes(statusNormalized);
-      
-      // Only count successful if it's NOT a refund, NOT a cancellation, and NOT pending
-      if (SUCCESSFUL_STATUSES.includes(statusNormalized) && !isRefundTx && !isCancelledTx && !isPendingTx && p.amount > 0) {
-        result.successful[currency] = (result.successful[currency] || 0) + p.amount;
-        result.successful.count++;
-        
-        // Try to extract fee from provider response
-        let feeAmount: number | null = null;
-        let feeSource: 'provider' | 'fallback' | null = null;
-        const providerResponse = p.provider_response;
-        
-        if (providerResponse) {
-          const fee = providerResponse.transaction?.fee 
-            ?? providerResponse.transaction?.processing?.fee
-            ?? providerResponse.transaction?.payment?.fee
-            ?? providerResponse.fee
-            ?? null;
+      switch (category) {
+        case 'successful': {
+          result.successful[currency] = (result.successful[currency] || 0) + p.amount;
+          result.successful.count++;
           
-          if (fee !== null && fee !== undefined && Number(fee) > 0) {
-            feeAmount = Number(fee) / 100;
+          // Fee calculation for successful payments
+          let feeAmount: number | null = null;
+          let feeSource: 'provider' | 'fallback' | null = null;
+          const providerResponse = p.provider_response;
+          
+          if (providerResponse) {
+            const fee = providerResponse.transaction?.fee 
+              ?? providerResponse.transaction?.processing?.fee
+              ?? providerResponse.transaction?.payment?.fee
+              ?? providerResponse.fee
+              ?? null;
+            
+            if (fee !== null && fee !== undefined && Number(fee) > 0) {
+              feeAmount = Number(fee) / 100;
+              feeSource = 'provider';
+            }
+          }
+          
+          // Fallback to provider_fee_amount column
+          if (feeAmount === null && (p as any).provider_fee_amount != null && (p as any).provider_fee_amount > 0) {
+            feeAmount = (p as any).provider_fee_amount;
             feeSource = 'provider';
           }
+          
+          // Apply fallback calculation if no provider fee found
+          if (feeAmount === null || feeAmount <= 0) {
+            const channel = detectPaymentChannel(
+              (p as any).payment_method,
+              p.transaction_type,
+              providerResponse
+            );
+            const issuerCountry = extractIssuerCountry(providerResponse);
+            
+            const fallbackResult = calculateFallbackFee(
+              p.amount,
+              currency,
+              channel,
+              issuerCountry,
+              feeRules
+            );
+            
+            feeAmount = fallbackResult.fee;
+            feeSource = 'fallback';
+          }
+          
+          // Add fee to totals
+          if (feeAmount !== null && !isNaN(feeAmount) && feeAmount > 0) {
+            result.fees[currency] = (result.fees[currency] || 0) + feeAmount;
+            
+            if (feeSource === 'provider') {
+              result.feesKnown++;
+            } else if (feeSource === 'fallback') {
+              result.feesFallback++;
+            }
+          } else {
+            result.feesUnknown++;
+          }
+          break;
         }
         
-        // Fallback to provider_fee_amount column
-        if (feeAmount === null && (p as any).provider_fee_amount != null && (p as any).provider_fee_amount > 0) {
-          feeAmount = (p as any).provider_fee_amount;
-          feeSource = 'provider';
+        case 'refunded': {
+          // Handle refunds - use ABS to ensure positive
+          if (!processedRefundUids.has(p.uid || '')) {
+            result.refunded[currency] = (result.refunded[currency] || 0) + Math.abs(p.amount);
+            result.refunded.count++;
+            if (p.uid) {
+              processedRefundUids.add(p.uid);
+            }
+          }
+          // Also count total_refunded from parent payment if available
+          if (p.total_refunded > 0 && !processedRefundUids.has(`${p.uid}_total`)) {
+            result.refunded[currency] = (result.refunded[currency] || 0) + p.total_refunded;
+            if (p.uid) {
+              processedRefundUids.add(`${p.uid}_total`);
+            }
+          }
+          break;
         }
         
-        // Apply fallback calculation if no provider fee found
-        if (feeAmount === null || feeAmount <= 0) {
-          const channel = detectPaymentChannel(
-            (p as any).payment_method,
-            p.transaction_type,
-            providerResponse
-          );
-          const issuerCountry = extractIssuerCountry(providerResponse);
-          
-          const fallbackResult = calculateFallbackFee(
-            p.amount,
-            currency,
-            channel,
-            issuerCountry,
-            feeRules
-          );
-          
-          feeAmount = fallbackResult.fee;
-          feeSource = 'fallback';
+        case 'cancelled': {
+          result.cancelled[currency] = (result.cancelled[currency] || 0) + Math.abs(p.amount);
+          result.cancelled.count++;
+          break;
         }
         
-        // Add fee to totals
-        if (feeAmount !== null && !isNaN(feeAmount) && feeAmount > 0) {
-          result.fees[currency] = (result.fees[currency] || 0) + feeAmount;
-          
-          if (feeSource === 'provider') {
-            result.feesKnown++;
-          } else if (feeSource === 'fallback') {
-            result.feesFallback++;
-          }
-        } else {
-          result.feesUnknown++;
+        case 'failed': {
+          result.failed[currency] = (result.failed[currency] || 0) + Math.abs(p.amount);
+          result.failed.count++;
+          break;
         }
-      }
-
-      // Count failed - but NOT if it's a cancellation
-      if (FAILED_STATUSES.includes(statusNormalized) && !isCancelledTx) {
-        result.failed[currency] = (result.failed[currency] || 0) + Math.abs(p.amount);
-        result.failed.count++;
-      }
-
-      // Handle refunds from payments_v2 via total_refunded field
-      if (p.rawSource === 'payments_v2' && p.total_refunded > 0) {
-        result.refunded[currency] = (result.refunded[currency] || 0) + p.total_refunded;
-        result.refunded.count++;
-        if (p.uid) {
-          processedRefundUids.add(p.uid);
-        }
-      }
-      
-      // Handle standalone refund records
-      if (p.rawSource === 'payments_v2' && statusNormalized === 'refunded' && p.amount < 0) {
-        const shouldSkip = p.uid && processedRefundUids.has(p.uid);
-        if (!shouldSkip) {
-          result.refunded[currency] = (result.refunded[currency] || 0) + Math.abs(p.amount);
-          result.refunded.count++;
-          if (p.uid) {
-            processedRefundUids.add(p.uid);
-          }
-        }
-      }
-      
-      // Handle refunds from queue
-      if (p.rawSource === 'queue' && isRefundTx) {
-        const shouldSkip = p.uid && processedRefundUids.has(p.uid);
-        if (!shouldSkip) {
-          result.refunded[currency] = (result.refunded[currency] || 0) + Math.abs(p.amount);
-          result.refunded.count++;
-          if (p.uid) {
-            processedRefundUids.add(p.uid);
-          }
-        }
+        
+        // pending and unknown are not displayed in dashboard cards
+        default:
+          break;
       }
     });
 
