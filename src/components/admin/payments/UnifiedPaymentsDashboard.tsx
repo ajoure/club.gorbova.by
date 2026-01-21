@@ -376,9 +376,11 @@ export default function UnifiedPaymentsDashboard({
       : (result.failed[primaryCurrency] || 0);
     const finalFailedCount = serverStats?.failed_count ?? result.failed.count;
     
-    // Get cancelled stats from server (now ABS value from RPC)
-    const finalCancelledAmount = Math.abs(serverStats?.cancelled_amount ?? 0);
-    const finalCancelledCount = serverStats?.cancelled_count ?? 0;
+    // Get cancelled stats from server or client fallback
+    const finalCancelledAmount = serverStats?.cancelled_amount != null
+      ? Math.abs(serverStats.cancelled_amount)
+      : (result.cancelled[primaryCurrency] || 0);
+    const finalCancelledCount = serverStats?.cancelled_count ?? result.cancelled.count;
     
     // Net revenue: prefer server-calculated, fallback to client calculation
     // Server formula: Successful - Refunds - Cancellations (fees client-side)
