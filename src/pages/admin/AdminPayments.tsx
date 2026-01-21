@@ -20,7 +20,6 @@ import SmartImportDialog from "@/components/admin/bepaid/SmartImportDialog";
 import PaymentsTable from "@/components/admin/payments/PaymentsTable";
 import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
-import UnifiedPaymentsDashboard, { UnifiedDashboardFilter } from "@/components/admin/payments/UnifiedPaymentsDashboard";
 import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
 import PaymentsSettingsDropdown from "@/components/admin/payments/PaymentsSettingsDropdown";
 import PaymentSecurityTab from "@/components/admin/payments/PaymentSecurityTab";
@@ -28,7 +27,6 @@ import UnlinkedPaymentsReport from "@/components/admin/payments/UnlinkedPayments
 import BepaidFullSyncDialog from "@/components/admin/payments/BepaidFullSyncDialog";
 import AutolinkAllCardsButton from "@/components/admin/payments/AutolinkAllCardsButton";
 import SyncRunDialog from "@/components/admin/payments/SyncRunDialog";
-import { classifyPayment } from "@/lib/paymentClassification";
 
 export type PaymentFilters = {
   search: string;
@@ -80,8 +78,6 @@ export default function AdminPayments() {
   const [filters, setFilters] = useState<PaymentFilters>(defaultFilters);
   const [showFilters, setShowFilters] = useState(false);
   
-  // Dashboard filter (clickable cards) - unified with analytics
-  const [dashboardFilter, setDashboardFilter] = useState<UnifiedDashboardFilter>(null);
   
   // Include import toggle - persistent via URL + localStorage
   // Priority: URL > localStorage > default TRUE (show all by default)
@@ -126,11 +122,10 @@ export default function AdminPayments() {
   // Refresh from API state
   const [isRefreshingFromApi, setIsRefreshingFromApi] = useState(false);
   
-  // Handler for include import toggle - resets selection and dashboard filter
+  // Handler for include import toggle - resets selection
   const handleIncludeImportChange = (value: boolean) => {
     setIncludeImport(value);
     setSelectedItems(new Set());
-    setDashboardFilter(null);
   };
   
   // Fetch unified payment data with includeImport toggle
@@ -167,17 +162,6 @@ export default function AdminPayments() {
     };
 
     return payments.filter(p => {
-      // Unified dashboard filter (from clickable cards)
-      // Uses centralized classifyPayment for EXACT match with RPC logic
-      if (dashboardFilter) {
-        const category = classifyPayment(
-          p.status_normalized,
-          p.transaction_type,
-          p.amount
-        );
-        if (category !== dashboardFilter) return false;
-      }
-
       // Search filter - include linked profile data
       if (filters.search) {
         const search = filters.search.toLowerCase();
@@ -257,7 +241,7 @@ export default function AdminPayments() {
 
       return true;
     });
-  }, [payments, filters, dashboardFilter]);
+  }, [payments, filters]);
 
   // Refresh from bePaid API
   const handleRefreshFromApi = async () => {
@@ -458,23 +442,6 @@ export default function AdminPayments() {
           <UnlinkedPaymentsReport onComplete={refetch} />
         ) : (
           <>
-            {/* Unified Financial Dashboard - computed from same dataset as table */}
-            <UnifiedPaymentsDashboard 
-              payments={payments} 
-              isLoading={isLoading} 
-              activeFilter={dashboardFilter}
-              onFilterChange={(filter) => {
-                setDashboardFilter(filter);
-                // Debug verification: log expected count vs table count
-                if (filter && stats) {
-                  const expectedCount = stats[filter] || 0;
-                  console.debug(`[Payments] Dashboard filter: ${filter}, expected count: ${expectedCount}`);
-                }
-              }}
-              dateFilter={effectiveDateFilter}
-              includeImport={includeImport}
-            />
-
             {/* Main content */}
             <Card>
               <CardHeader className="pb-4">
@@ -483,7 +450,6 @@ export default function AdminPayments() {
                     <CardTitle>Транзакции</CardTitle>
                     <CardDescription>
                       {filteredPayments.length} из {payments.length} транзакций
-                      {dashboardFilter && <Badge variant="outline" className="ml-2 text-xs">Фильтр: {dashboardFilter}</Badge>}
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
