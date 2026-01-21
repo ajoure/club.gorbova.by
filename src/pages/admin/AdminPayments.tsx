@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { 
   Download, Upload, ArrowLeft, Search, Filter, X, RefreshCw, Loader2, Shield, FileSpreadsheet
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -60,9 +60,13 @@ const defaultFilters: PaymentFilters = {
   source: "all",
 };
 
+// LocalStorage key for include import toggle persistence
+const INCLUDE_IMPORT_KEY = 'admin_payments_include_import';
+
 export default function AdminPayments() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<"payments" | "unlinked" | "security">("payments");
   
   // Date filter - default to current month
@@ -79,8 +83,30 @@ export default function AdminPayments() {
   // Dashboard filter (clickable cards) - unified with analytics
   const [dashboardFilter, setDashboardFilter] = useState<UnifiedDashboardFilter>(null);
   
-  // Include import toggle - when ON, shows bepaid + import origin records
-  const [includeImport, setIncludeImport] = useState(false);
+  // Include import toggle - persistent via URL + localStorage
+  // Priority: URL > localStorage > default false
+  const [includeImport, setIncludeImport] = useState(() => {
+    const urlValue = searchParams.get('include_import');
+    if (urlValue !== null) {
+      return urlValue === '1' || urlValue === 'true';
+    }
+    const storedValue = localStorage.getItem(INCLUDE_IMPORT_KEY);
+    return storedValue === 'true';
+  });
+  
+  // Sync includeImport to localStorage and URL
+  useEffect(() => {
+    localStorage.setItem(INCLUDE_IMPORT_KEY, String(includeImport));
+    
+    // Update URL without navigation
+    const newParams = new URLSearchParams(searchParams);
+    if (includeImport) {
+      newParams.set('include_import', '1');
+    } else {
+      newParams.delete('include_import');
+    }
+    setSearchParams(newParams, { replace: true });
+  }, [includeImport]);
   
   // Selection for batch operations
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -96,6 +122,13 @@ export default function AdminPayments() {
   
   // Refresh from API state
   const [isRefreshingFromApi, setIsRefreshingFromApi] = useState(false);
+  
+  // Handler for include import toggle - resets selection and dashboard filter
+  const handleIncludeImportChange = (value: boolean) => {
+    setIncludeImport(value);
+    setSelectedItems(new Set());
+    setDashboardFilter(null);
+  };
   
   // Fetch unified payment data with includeImport toggle
   const effectiveDateFilter = useMemo(() => ({
@@ -391,7 +424,7 @@ export default function AdminPayments() {
               <Switch 
                 id="includeImport" 
                 checked={includeImport} 
-                onCheckedChange={setIncludeImport}
+                onCheckedChange={handleIncludeImportChange}
                 className="scale-75"
               />
             </div>
@@ -424,7 +457,7 @@ export default function AdminPayments() {
           <>
             {/* Unified Financial Dashboard - with includeImport support */}
             <UnifiedPaymentsDashboard 
-              payments={payments.filter(p => p.rawSource === 'payments_v2')} 
+              payments={payments} 
               isLoading={isLoading} 
               activeFilter={dashboardFilter}
               onFilterChange={(filter) => {
@@ -446,7 +479,7 @@ export default function AdminPayments() {
                   <div>
                     <CardTitle>Транзакции</CardTitle>
                     <CardDescription>
-                      {filteredPayments.length} из {dashboardFilter ? payments.filter(p => p.rawSource === 'payments_v2').length : payments.length} транзакций
+                      {filteredPayments.length} из {payments.length} транзакций
                       {dashboardFilter && <Badge variant="outline" className="ml-2 text-xs">Фильтр: {dashboardFilter}</Badge>}
                     </CardDescription>
                   </div>
