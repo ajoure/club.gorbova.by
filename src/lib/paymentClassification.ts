@@ -1,6 +1,8 @@
 /**
  * Centralized payment status and type classification
  * Single source of truth for all payment categorization logic
+ * 
+ * MUST MATCH RPC: get_payments_stats exactly!
  */
 
 // Status classifications
@@ -9,9 +11,9 @@ export const FAILED_STATUSES = ['failed', 'error', 'declined', 'expired', 'incom
 export const PENDING_STATUSES = ['pending', 'processing'] as const;
 export const CANCELLED_STATUSES = ['cancelled', 'canceled', 'void'] as const;
 
-// Transaction type classifications
+// Transaction type classifications - MUST match RPC exactly
 export const PAYMENT_TYPES = [
-  'Платеж', 
+  'платеж', 
   'payment', 
   'payment_card', 
   'payment_erip', 
@@ -20,13 +22,13 @@ export const PAYMENT_TYPES = [
 ] as const;
 
 export const REFUND_TYPES = [
-  'Возврат средств', 
+  'возврат средств', 
   'refund', 
   'refunded'
 ] as const;
 
 export const CANCEL_TYPES = [
-  'Отмена', 
+  'отмена', 
   'void', 
   'cancellation', 
   'authorization_void',
@@ -63,6 +65,7 @@ export function isPendingStatus(status: string | null | undefined): boolean {
 
 /**
  * Check if a payment is a refund transaction
+ * Priority 1 in classification
  */
 export function isRefundTransaction(
   transactionType: string | null | undefined,
@@ -72,17 +75,17 @@ export function isRefundTransaction(
   const txType = (transactionType || '').toLowerCase();
   const statusNorm = (status || '').toLowerCase();
   
-  // Check by transaction type
+  // Check by transaction type - includes partial match
   if (REFUND_TYPES.some(rt => txType.includes(rt.toLowerCase()))) {
     return true;
   }
   
-  // Check by status
+  // Check by status = 'refunded'
   if (statusNorm === 'refunded') {
     return true;
   }
   
-  // Check by negative amount with refund indicators
+  // Negative amount with refund keyword
   if (amount !== undefined && amount < 0 && txType.includes('возврат')) {
     return true;
   }
@@ -92,6 +95,7 @@ export function isRefundTransaction(
 
 /**
  * Check if a payment is a cancellation/void transaction
+ * Priority 2 in classification (after refund check)
  */
 export function isCancelTransaction(
   transactionType: string | null | undefined,
@@ -115,15 +119,25 @@ export function isCancelTransaction(
 
 /**
  * Check if a payment is a regular payment transaction
+ * Required for successful classification
  */
 export function isPaymentTransaction(transactionType: string | null | undefined): boolean {
   if (!transactionType) return false;
   const txType = transactionType.toLowerCase();
+  // Must match one of payment types
   return PAYMENT_TYPES.some(pt => txType.includes(pt.toLowerCase()));
 }
 
 /**
  * Classify a payment into a category
+ * 
+ * Priority order (MUST match RPC):
+ * 1. refund - if isRefundTransaction
+ * 2. cancelled - if isCancelTransaction (and NOT refund)
+ * 3. pending - if isPendingStatus
+ * 4. failed - if isFailedStatus (and NOT refund/cancel - already returned)
+ * 5. successful - if isSuccessStatus AND isPaymentTransaction AND amount > 0
+ * 6. unknown - fallback
  */
 export type PaymentCategory = 'successful' | 'refunded' | 'cancelled' | 'failed' | 'pending' | 'unknown';
 
@@ -132,28 +146,36 @@ export function classifyPayment(
   transactionType: string | null | undefined,
   amount?: number
 ): PaymentCategory {
-  // First check for refunds (takes priority)
+  // Priority 1: Refund (ALWAYS check first)
   if (isRefundTransaction(transactionType, status, amount)) {
     return 'refunded';
   }
   
-  // Check for cancellations
+  // Priority 2: Cancellation/void (refunds already returned)
   if (isCancelTransaction(transactionType, status)) {
     return 'cancelled';
   }
   
-  // Check for pending
+  // Priority 3: Pending
   if (isPendingStatus(status)) {
     return 'pending';
   }
   
-  // Check for failed
+  // Priority 4: Failed (refunds/cancels already returned)
   if (isFailedStatus(status)) {
     return 'failed';
   }
   
-  // Check for successful
-  if (isSuccessStatus(status) && isPaymentTransaction(transactionType) && (amount === undefined || amount > 0)) {
+  // Priority 5: Successful
+  // CRITICAL: Must match RPC logic exactly:
+  // - status IN (successful, succeeded)
+  // - transaction_type must be payment type
+  // - amount > 0
+  if (
+    isSuccessStatus(status) && 
+    isPaymentTransaction(transactionType) && 
+    (amount === undefined || amount > 0)
+  ) {
     return 'successful';
   }
   
