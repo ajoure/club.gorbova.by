@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Database, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Database, Loader2, AlertTriangle, CheckCircle2, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,21 +29,25 @@ interface MaterializeResult {
   dry_run: boolean;
   stats: {
     scanned: number;
-    eligible: number;
+    to_create: number;
     created: number;
     updated: number;
     skipped: number;
-    duplicates: number;
     errors: number;
   };
+  next_cursor: {
+    paid_at: string | null;
+    id: string | null;
+  } | null;
   samples: Array<{
     queue_id: string;
     stable_uid: string;
     payment_id: string | null;
-    result: 'created' | 'updated' | 'skipped' | 'duplicate' | 'error';
+    result: 'created' | 'updated' | 'skipped' | 'error';
     error?: string;
   }>;
   warnings: string[];
+  duration_ms: number;
   error?: string;
 }
 
@@ -56,67 +60,79 @@ export default function MaterializeQueueDialog({
   const [limit, setLimit] = useState(200);
   const [dryRun, setDryRun] = useState(true);
   const [result, setResult] = useState<MaterializeResult | null>(null);
-  const [startTime, setStartTime] = useState<number | null>(null);
-  const [duration, setDuration] = useState<number | null>(null);
+  const [cursor, setCursor] = useState<{ paid_at: string | null; id: string | null } | null>(null);
 
-  const handleRun = async () => {
+  const handleRun = async (useCursor: boolean = false) => {
     if (isRunning) return;
     
-    // Validate limit
     const safeLimit = Math.min(Math.max(1, limit), 1000);
     
     setIsRunning(true);
-    setResult(null);
-    setStartTime(Date.now());
-    setDuration(null);
+    if (!useCursor) {
+      setResult(null);
+      setCursor(null);
+    }
 
     try {
+      const body: any = {
+        dry_run: dryRun,
+        limit: safeLimit,
+      };
+
+      // Use cursor for pagination if requested
+      if (useCursor && cursor) {
+        body.cursor_paid_at = cursor.paid_at;
+        body.cursor_id = cursor.id;
+      }
+
       const { data, error } = await supabase.functions.invoke(
         'admin-materialize-queue-payments',
-        {
-          body: {
-            dry_run: dryRun,
-            limit: safeLimit,
-          },
-        }
+        { body }
       );
-
-      const endTime = Date.now();
-      setDuration(endTime - (startTime || endTime));
 
       if (error) {
         toast.error(`Ошибка: ${error.message}`);
         setResult({
           success: false,
           dry_run: dryRun,
-          stats: { scanned: 0, eligible: 0, created: 0, updated: 0, skipped: 0, duplicates: 0, errors: 1 },
+          stats: { scanned: 0, to_create: 0, created: 0, updated: 0, skipped: 0, errors: 1 },
+          next_cursor: null,
           samples: [],
           warnings: [],
+          duration_ms: 0,
           error: error.message,
         });
         return;
       }
 
-      setResult(data as MaterializeResult);
+      const typedData = data as MaterializeResult;
+      setResult(typedData);
 
-      if (data.success) {
+      // Save cursor for next batch
+      if (typedData.next_cursor) {
+        setCursor(typedData.next_cursor);
+      }
+
+      if (typedData.success) {
         if (dryRun) {
-          toast.info(`Dry-run завершён: ${data.stats.eligible} eligible, ${data.stats.created} к созданию`);
+          toast.info(`Dry-run: найдено ${typedData.stats.to_create} записей для создания`);
         } else {
-          toast.success(`Выполнено: создано ${data.stats.created}, обновлено ${data.stats.updated}, дублей ${data.stats.duplicates}`);
+          toast.success(`Выполнено: создано ${typedData.stats.created}, обновлено ${typedData.stats.updated}`);
           onComplete?.();
         }
       } else {
-        toast.error(`Ошибка: ${data.error || 'Неизвестная ошибка'}`);
+        toast.error(`Ошибка: ${typedData.error || 'Неизвестная ошибка'}`);
       }
     } catch (err: any) {
       toast.error(`Ошибка вызова: ${err.message}`);
       setResult({
         success: false,
         dry_run: dryRun,
-        stats: { scanned: 0, eligible: 0, created: 0, updated: 0, skipped: 0, duplicates: 0, errors: 1 },
+        stats: { scanned: 0, to_create: 0, created: 0, updated: 0, skipped: 0, errors: 1 },
+        next_cursor: null,
         samples: [],
         warnings: [],
+        duration_ms: 0,
         error: err.message,
       });
     } finally {
@@ -128,7 +144,7 @@ export default function MaterializeQueueDialog({
     if (!isRunning) {
       setOpen(false);
       setResult(null);
-      setDuration(null);
+      setCursor(null);
     }
   };
 
@@ -137,7 +153,7 @@ export default function MaterializeQueueDialog({
       setOpen(newOpen);
       if (!newOpen) {
         setResult(null);
-        setDuration(null);
+        setCursor(null);
       }
     }
   };
@@ -146,12 +162,13 @@ export default function MaterializeQueueDialog({
     switch (resultType) {
       case 'created': return 'default';
       case 'updated': return 'secondary';
-      case 'duplicate': return 'outline';
       case 'skipped': return 'outline';
       case 'error': return 'destructive';
       default: return 'outline';
     }
   };
+
+  const hasMoreItems = result?.next_cursor?.paid_at && result?.stats.scanned === limit;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -172,7 +189,7 @@ export default function MaterializeQueueDialog({
             Материализация очереди → payments_v2
           </DialogTitle>
           <DialogDescription>
-            Перенос completed записей из payment_reconcile_queue в payments_v2 (идемпотентно).
+            Перенос ТОЛЬКО незаматериализованных completed записей (ANTI-JOIN).
           </DialogDescription>
         </DialogHeader>
 
@@ -211,7 +228,7 @@ export default function MaterializeQueueDialog({
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                Режим EXECUTE: записи будут созданы/обновлены в payments_v2. Действие идемпотентно.
+                Режим EXECUTE: записи будут созданы в payments_v2. Действие идемпотентно.
               </AlertDescription>
             </Alert>
           )}
@@ -230,22 +247,22 @@ export default function MaterializeQueueDialog({
                   <span className="font-medium">
                     {result.dry_run ? 'Dry-run' : 'Execute'} — {result.success ? 'Успешно' : 'Ошибка'}
                   </span>
-                  {duration && (
+                  {result.duration_ms > 0 && (
                     <Badge variant="outline" className="ml-auto">
-                      {duration}ms
+                      {result.duration_ms}ms
                     </Badge>
                   )}
                 </div>
 
-                {/* Stats grid */}
-                <div className="grid grid-cols-4 gap-2 text-sm">
+                {/* Stats grid - NEW METRICS */}
+                <div className="grid grid-cols-3 gap-2 text-sm">
                   <div className="bg-background rounded p-2 text-center">
                     <div className="text-muted-foreground text-xs">Scanned</div>
                     <div className="font-mono font-medium">{result.stats.scanned}</div>
                   </div>
                   <div className="bg-background rounded p-2 text-center">
-                    <div className="text-muted-foreground text-xs">Eligible</div>
-                    <div className="font-mono font-medium">{result.stats.eligible}</div>
+                    <div className="text-muted-foreground text-xs">To Create</div>
+                    <div className="font-mono font-medium text-blue-600">{result.stats.to_create}</div>
                   </div>
                   <div className="bg-background rounded p-2 text-center">
                     <div className="text-muted-foreground text-xs">Created</div>
@@ -253,23 +270,29 @@ export default function MaterializeQueueDialog({
                   </div>
                   <div className="bg-background rounded p-2 text-center">
                     <div className="text-muted-foreground text-xs">Updated</div>
-                    <div className="font-mono font-medium text-blue-600">{result.stats.updated}</div>
+                    <div className="font-mono font-medium">{result.stats.updated}</div>
                   </div>
                   <div className="bg-background rounded p-2 text-center">
                     <div className="text-muted-foreground text-xs">Skipped</div>
                     <div className="font-mono font-medium">{result.stats.skipped}</div>
                   </div>
                   <div className="bg-background rounded p-2 text-center">
-                    <div className="text-muted-foreground text-xs">Duplicates</div>
-                    <div className="font-mono font-medium text-orange-600">{result.stats.duplicates}</div>
-                  </div>
-                  <div className="bg-background rounded p-2 text-center col-span-2">
                     <div className="text-muted-foreground text-xs">Errors</div>
                     <div className={cn("font-mono font-medium", result.stats.errors > 0 && "text-destructive")}>
                       {result.stats.errors}
                     </div>
                   </div>
                 </div>
+
+                {/* Next batch indicator */}
+                {hasMoreItems && (
+                  <Alert>
+                    <ChevronRight className="h-4 w-4" />
+                    <AlertDescription>
+                      Есть ещё записи. Используйте "Следующий батч" для продолжения.
+                    </AlertDescription>
+                  </Alert>
+                )}
 
                 {/* Warnings */}
                 {result.warnings.length > 0 && (
@@ -323,9 +346,21 @@ export default function MaterializeQueueDialog({
             <Button variant="outline" onClick={handleClose} disabled={isRunning}>
               Закрыть
             </Button>
+            {hasMoreItems && (
+              <Button
+                variant="outline"
+                onClick={() => handleRun(true)}
+                disabled={isRunning}
+                className="gap-2"
+              >
+                {isRunning && <Loader2 className="h-4 w-4 animate-spin" />}
+                <ChevronRight className="h-4 w-4" />
+                Следующий батч
+              </Button>
+            )}
             <Button
               variant={dryRun ? "secondary" : "default"}
-              onClick={handleRun}
+              onClick={() => handleRun(false)}
               disabled={isRunning}
               className="gap-2"
             >
