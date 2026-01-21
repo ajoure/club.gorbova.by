@@ -212,16 +212,19 @@ async function fetchFromBepaidWithProbing(
     return `${base}?${params.toString()}`;
   };
 
-  // 8 candidate endpoints to try
+  // Extended candidate endpoints to try (including /api/v1/ paths and beyag)
   const candidates = [
     { name: "gateway:/transactions", base: "https://gateway.bepaid.by/transactions", includeShopId: false },
     { name: "gateway:/transactions?shop_id", base: "https://gateway.bepaid.by/transactions", includeShopId: true },
     { name: "gateway:/api/v1/transactions", base: "https://gateway.bepaid.by/api/v1/transactions", includeShopId: false },
+    { name: "gateway:/api/v1/transactions?shop_id", base: "https://gateway.bepaid.by/api/v1/transactions", includeShopId: true },
     { name: "api:/transactions", base: "https://api.bepaid.by/transactions", includeShopId: false },
     { name: "api:/transactions?shop_id", base: "https://api.bepaid.by/transactions", includeShopId: true },
+    { name: "api:/api/v1/transactions", base: "https://api.bepaid.by/api/v1/transactions", includeShopId: false },
     { name: "api:/reports/transactions", base: "https://api.bepaid.by/reports/transactions", includeShopId: false },
     { name: "gateway:/reports/transactions", base: "https://gateway.bepaid.by/reports/transactions", includeShopId: false },
     { name: "checkout:/transactions", base: "https://checkout.bepaid.by/transactions", includeShopId: false },
+    { name: "api:/beyag/transactions", base: "https://api.bepaid.by/beyag/transactions", includeShopId: false },
   ];
 
   const endpointAttempts: EndpointAttempt[] = [];
@@ -237,12 +240,13 @@ async function fetchFromBepaidWithProbing(
     try {
       console.log(`[Sync] Trying endpoint: ${candidate.name}`);
       
+      // CRITICAL: Add X-Api-Version: 3 header for bePaid gateway
       const response = await fetch(url, {
         method: "GET",
         headers: {
           "Authorization": `Basic ${auth}`,
-          "Content-Type": "application/json",
           "Accept": "application/json",
+          "X-Api-Version": "3",
         },
       });
 
@@ -256,7 +260,14 @@ async function fetchFromBepaidWithProbing(
       };
 
       if (!response.ok) {
-        attempt.error = `HTTP ${response.status}`;
+        // Try to get error body for debugging
+        let errorBody = '';
+        try {
+          errorBody = await response.text();
+          if (errorBody.length > 200) errorBody = errorBody.slice(0, 200) + '...';
+        } catch { /* ignore */ }
+        attempt.error = `HTTP ${response.status}: ${errorBody || 'no body'}`;
+        console.log(`[Sync] ${candidate.name} failed: ${attempt.error}`);
         endpointAttempts.push(attempt);
         continue;
       }
