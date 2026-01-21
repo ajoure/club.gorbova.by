@@ -37,6 +37,7 @@ interface UnifiedPaymentsDashboardProps {
   activeFilter?: UnifiedDashboardFilter;
   onFilterChange?: (filter: UnifiedDashboardFilter) => void;
   dateFilter?: DateFilter; // For server-side stats
+  includeImport?: boolean; // Toggle to include origin='import' in stats
 }
 
 interface DashboardCardProps {
@@ -180,19 +181,21 @@ export default function UnifiedPaymentsDashboard({
   activeFilter,
   onFilterChange,
   dateFilter,
+  includeImport = false,
 }: UnifiedPaymentsDashboardProps) {
   // Fetch fee rules from integration settings
   const { data: feeRules, isLoading: isLoadingRules } = useBepaidFeeRules();
   
   // Fetch accurate server-side statistics
   const { data: serverStats, isLoading: isLoadingStats, isFetching: isFetchingStats } = useQuery({
-    queryKey: ["payment-stats", dateFilter?.from, dateFilter?.to],
+    queryKey: ["payment-stats", dateFilter?.from, dateFilter?.to, includeImport],
     queryFn: async () => {
       if (!dateFilter?.from || !dateFilter?.to) return null;
       
       const { data, error } = await supabase.rpc('get_payments_stats', {
         from_date: dateFilter.from,
         to_date: dateFilter.to,
+        include_import: includeImport,
       });
       
       if (error) {
@@ -439,10 +442,19 @@ export default function UnifiedPaymentsDashboard({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
           <Wallet className="h-4 w-4 text-primary" />
           Финансовая сводка
+          {/* Dataset indicator badge */}
+          <span className={cn(
+            "ml-2 text-[10px] font-normal px-2 py-0.5 rounded-full",
+            includeImport 
+              ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" 
+              : "bg-muted text-muted-foreground"
+          )}>
+            {includeImport ? "bePaid + импорт" : "только bePaid"}
+          </span>
         </h3>
         {activeFilter && (
           <div className="flex items-center gap-2 text-xs text-primary bg-primary/10 px-2.5 py-1 rounded-full animate-in fade-in">

@@ -6839,10 +6839,16 @@ export type Database = {
         Args: { p_document_type: string; p_prefix?: string }
         Returns: string
       }
-      get_payments_stats: {
-        Args: { from_date: string; to_date: string }
-        Returns: Json
-      }
+      get_payments_stats:
+        | { Args: { from_date: string; to_date: string }; Returns: Json }
+        | {
+            Args: {
+              from_date: string
+              include_import?: boolean
+              to_date: string
+            }
+            Returns: Json
+          }
       get_pending_notifications_for_user: {
         Args: { p_user_id: string }
         Returns: {

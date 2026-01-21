@@ -16,7 +16,8 @@ export const PAYMENT_TYPES = [
   'платеж', 
   'payment', 
   'payment_card', 
-  'payment_erip', 
+  'payment_erip',
+  'erip', // Add standalone ERIP
   'payment_apple_pay', 
   'payment_google_pay'
 ] as const;

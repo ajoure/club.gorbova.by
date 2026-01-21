@@ -161,7 +161,8 @@ function detectSheetsByName(workbook: XLSX.WorkBook): DetectedSheet[] {
 }
 
 // Parse bePaid CSV/Excel row using improved parser
-function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
+// CRITICAL: Normalizes ERIP transactions to payment_erip for proper classification
+function parseCSVRow(row: Record<string, string>, sheetType?: 'cards' | 'erip'): ParsedTransaction | null {
   const uid = row['UID'] || row['uid'] || row['ID транзакции'];
   if (!uid) return null;
 
@@ -191,8 +192,32 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
   const card_last4 = extractCardLast4(cardMask);
   
   const paymentMethodRaw = row['Способ оплаты'] || row['Payment method'] || '';
-  const payment_method = detectPaymentMethod(row);
-  const card_brand = payment_method === 'erip' ? 'erip' : detectCardBrand(cardMask, paymentMethodRaw);
+  
+  // Detect if ERIP - by sheet type, column, or payment method
+  const isErip = sheetType === 'erip' || 
+                 row['_source'] === 'erip' ||
+                 paymentMethodRaw.toLowerCase().includes('erip') ||
+                 !!row['Номер операции ЕРИП'] ||
+                 !!row['Расчетный агент'] ||
+                 !!row['Код услуги'];
+  
+  const payment_method = isErip ? 'erip' : detectPaymentMethod(row);
+  const card_brand = isErip ? 'erip' : detectCardBrand(cardMask, paymentMethodRaw);
+  
+  // CRITICAL: Normalize transaction_type for ERIP to be recognized by classifyPayment
+  let normalizedTransactionType = typeRaw;
+  if (isErip) {
+    const typeLower = typeRaw.toLowerCase();
+    if (typeLower.includes('платеж') || typeLower.includes('payment') || typeLower === '' || typeLower === 'платёж') {
+      normalizedTransactionType = 'payment_erip'; // Canonical ERIP payment type
+    }
+  } else {
+    // Normalize card payment types
+    const typeLower = typeRaw.toLowerCase();
+    if (typeLower.includes('платеж') || typeLower.includes('payment') || typeLower === '' || typeLower === 'платёж') {
+      normalizedTransactionType = 'payment_card';
+    }
+  }
 
   const parse3DSecure = (val: string | undefined): boolean | undefined => {
     if (!val) return undefined;
@@ -207,7 +232,7 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
     bepaid_order_id: row['ID заказа'] || row['Order ID'] || undefined,
     status: row['Статус'] || row['Status'] || 'Unknown',
     status_normalized,
-    transaction_type: typeRaw,
+    transaction_type: normalizedTransactionType,
     amount,
     currency: row['Валюта'] || row['Currency'] || 'BYN',
     description: row['Описание'] || row['Description'] || undefined,
@@ -218,7 +243,7 @@ function parseCSVRow(row: Record<string, string>): ParsedTransaction | null {
     card_last4,
     card_holder: row['Владелец карты'] || row['Card holder'] || undefined,
     card_brand,
-    payment_method: payment_method === 'erip' ? 'erip' : paymentMethodRaw.toLowerCase() || undefined,
+    payment_method: isErip ? 'erip' : paymentMethodRaw.toLowerCase() || undefined,
     fee_percent: parseAmount(row['Комиссия,%'] || row['Fee %']),
     fee_amount: parseAmount(row['Комиссия за операцию'] || row['Fee amount']),
     total_fee: parseAmount(row['Сумма комиссий'] || row['Total fee']),
@@ -801,11 +826,14 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
   };
 
   // Map status_normalized to canonical DB values for overrides
+  // CRITICAL: Must match RPC exactly
   const toCanonicalStatus = (status: string): string => {
     switch (status) {
       case 'successful': return 'succeeded';
       case 'refund': return 'refunded';
       case 'cancel': return 'canceled';
+      case 'cancelled': return 'canceled';
+      case 'void': return 'canceled';
       default: return status;
     }
   };

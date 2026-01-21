@@ -5,8 +5,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { 
-  Download, Upload, ArrowLeft, Search, Filter, X, RefreshCw, Loader2, Shield
+  Download, Upload, ArrowLeft, Search, Filter, X, RefreshCw, Loader2, Shield, FileSpreadsheet
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -77,6 +79,9 @@ export default function AdminPayments() {
   // Dashboard filter (clickable cards) - unified with analytics
   const [dashboardFilter, setDashboardFilter] = useState<UnifiedDashboardFilter>(null);
   
+  // Include import toggle - when ON, shows bepaid + import origin records
+  const [includeImport, setIncludeImport] = useState(false);
+  
   // Selection for batch operations
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   
@@ -92,13 +97,18 @@ export default function AdminPayments() {
   // Refresh from API state
   const [isRefreshingFromApi, setIsRefreshingFromApi] = useState(false);
   
-  // Fetch unified payment data
+  // Fetch unified payment data with includeImport toggle
+  const effectiveDateFilter = useMemo(() => ({
+    ...dateFilter,
+    includeImport,
+  }), [dateFilter, includeImport]);
+  
   const { 
     payments, 
     isLoading, 
     stats, 
     refetch 
-  } = useUnifiedPayments(dateFilter);
+  } = useUnifiedPayments(effectiveDateFilter);
 
   // Apply filters to payments (including dashboard + analytics filters)
   const filteredPayments = useMemo(() => {
@@ -371,6 +381,21 @@ export default function AdminPayments() {
         {activeTab === "payments" && (
           <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-background/30 backdrop-blur-sm border border-border/20">
             <DatePeriodSelector value={dateFilter} onChange={setDateFilter} />
+            
+            {/* Include import toggle */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-background/60 border border-border/40">
+              <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
+              <Label htmlFor="includeImport" className="text-xs text-muted-foreground cursor-pointer">
+                CSV импорт
+              </Label>
+              <Switch 
+                id="includeImport" 
+                checked={includeImport} 
+                onCheckedChange={setIncludeImport}
+                className="scale-75"
+              />
+            </div>
+            
             <div className="flex-1" />
             <Button variant="outline" onClick={handleBepaidSync} className="gap-2 h-9 bg-background/60">
               <RefreshCw className="h-4 w-4" />
@@ -397,7 +422,7 @@ export default function AdminPayments() {
           <UnlinkedPaymentsReport onComplete={refetch} />
         ) : (
           <>
-            {/* Unified Financial Dashboard - only bepaid payments for accurate stats */}
+            {/* Unified Financial Dashboard - with includeImport support */}
             <UnifiedPaymentsDashboard 
               payments={payments.filter(p => p.rawSource === 'payments_v2')} 
               isLoading={isLoading} 
@@ -411,6 +436,7 @@ export default function AdminPayments() {
                 }
               }}
               dateFilter={dateFilter}
+              includeImport={includeImport}
             />
 
             {/* Main content */}

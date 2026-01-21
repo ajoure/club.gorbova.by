@@ -6,6 +6,7 @@ import { classifyPayment } from "@/lib/paymentClassification";
 export interface DateFilter {
   from: string;
   to?: string;
+  includeImport?: boolean; // Toggle to include origin='import' records
 }
 
 // Source types for UI filtering
@@ -165,21 +166,31 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
       };
       
       // Build payments query factory for pagination
+      // includeImport: if true, include origin='import' records
+      const includeImport = dateFilter.includeImport || false;
+      
       const buildPaymentsQuery = () => {
         let query = supabase
           .from("payments_v2")
           .select(`
             id, provider_payment_id, order_id, user_id, profile_id,
-            amount, currency, status, transaction_type, provider,
+            amount, currency, status, transaction_type, provider, origin,
             card_last4, card_brand, paid_at, created_at,
             receipt_url, refunds, refunded_amount, provider_response, meta,
             orders:order_id(id, order_number, status, product_id, purchase_snapshot, profile_id, profiles(id, full_name, email, phone, user_id)),
             profiles:profile_id(id, full_name, email, phone, user_id)
           `)
           .eq("provider", "bepaid")
-          .eq("origin", "bepaid") // Sync with RPC: only real bepaid transactions, exclude imports
-          .not("paid_at", "is", null) // Sync with RPC: exclude pending/manual with null paid_at
-          .gte("paid_at", `${fromDate}T00:00:00Z`);
+          .not("paid_at", "is", null); // Sync with RPC: exclude pending/manual with null paid_at
+        
+        // Filter by origin based on includeImport toggle
+        if (includeImport) {
+          query = query.in("origin", ["bepaid", "import"]);
+        } else {
+          query = query.eq("origin", "bepaid");
+        }
+        
+        query = query.gte("paid_at", `${fromDate}T00:00:00Z`);
         
         if (toDate) {
           query = query.lte("paid_at", `${toDate}T23:59:59Z`);
