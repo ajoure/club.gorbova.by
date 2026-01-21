@@ -39,6 +39,7 @@ interface SyncStats {
   updated: number;
   unchanged: number;
   errors: number;
+  not_found?: number;
   stopped_reason: string | null;
   error_samples: Array<{ uid: string; error: string }>;
   amount_sum_db: number;
@@ -47,6 +48,11 @@ interface SyncStats {
   diff_amount: number;
   endpoint_used?: string;
   endpoint_attempts?: any[];
+  selected_host?: string;
+  strategy_used?: 'list' | 'uid_fallback';
+  not_found_rate?: number;
+  sample_uids?: string[];
+  uid_probe_attempts?: Array<{ host: string; uid: string; status: number | null; ok: boolean; error: string | null }>;
   dry_run?: boolean;
   auth_mode?: string;
   pages_fetched?: number;
@@ -68,6 +74,85 @@ const MAX_CONSECUTIVE_ERRORS = 50;
 const MAX_DELTA_PER_TX_BYN = 1000;
 const MAX_TRANSACTIONS = 10000;
 const MAX_ERROR_SAMPLES = 20;
+
+const BEPAID_HOSTS_FOR_UID = [
+  'https://merchant.bepaid.by',
+  'https://api.bepaid.by',
+  'https://gateway.bepaid.by',
+] as const;
+
+function truncateText(s: string, max = 200): string {
+  return s.length > max ? s.slice(0, max) + '...' : s;
+}
+
+async function readErrorBody(resp: Response): Promise<string> {
+  try {
+    const t = await resp.text();
+    return truncateText(t || 'no body');
+  } catch {
+    return 'no body';
+  }
+}
+
+async function fetchBeyagTransactionByUid(
+  host: string,
+  auth: string,
+  uid: string
+): Promise<{ ok: boolean; status: number; data?: any; errorBody?: string }>{
+  const url = `${host}/beyag/transactions/${encodeURIComponent(uid)}`;
+  const resp = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Basic ${auth}`,
+      Accept: 'application/json',
+      'X-API-Version': '3',
+    },
+  });
+
+  if (!resp.ok) {
+    return { ok: false, status: resp.status, errorBody: await readErrorBody(resp) };
+  }
+
+  const data = await resp.json();
+  return { ok: true, status: resp.status, data };
+}
+
+async function pickWorkingBeyagHost(
+  auth: string,
+  sampleUids: string[],
+  startTime: number
+): Promise<{ selected_host: string | null; attempts: SyncStats['uid_probe_attempts'] }>{
+  const attempts: NonNullable<SyncStats['uid_probe_attempts']> = [];
+
+  if (!sampleUids.length) {
+    return { selected_host: BEPAID_HOSTS_FOR_UID[0], attempts };
+  }
+
+  for (const host of BEPAID_HOSTS_FOR_UID) {
+    for (const uid of sampleUids) {
+      if (Date.now() - startTime > 25000) break;
+
+      try {
+        const res = await fetchBeyagTransactionByUid(host, auth, uid);
+        attempts.push({
+          host,
+          uid,
+          status: res.status,
+          ok: res.ok,
+          error: res.ok ? null : `HTTP ${res.status}: ${res.errorBody || 'no body'}`,
+        });
+        if (res.ok) {
+          return { selected_host: host, attempts };
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        attempts.push({ host, uid, status: null, ok: false, error: msg });
+      }
+    }
+  }
+
+  return { selected_host: null, attempts };
+}
 
 // ============ HELPERS ============
 
@@ -214,6 +299,14 @@ async function fetchFromBepaidWithProbing(
 
   // Extended candidate endpoints to try (including /api/v1/ paths and beyag)
   const candidates = [
+    // merchant host MUST be included in probes
+    { name: "merchant:/v2/transactions", base: "https://merchant.bepaid.by/v2/transactions", includeShopId: false },
+    { name: "merchant:/v2/transactions?shop_id", base: "https://merchant.bepaid.by/v2/transactions", includeShopId: true },
+    { name: "merchant:/transactions", base: "https://merchant.bepaid.by/transactions", includeShopId: false },
+    { name: "merchant:/transactions?shop_id", base: "https://merchant.bepaid.by/transactions", includeShopId: true },
+    { name: "merchant:/api/v1/transactions", base: "https://merchant.bepaid.by/api/v1/transactions", includeShopId: false },
+    { name: "merchant:/api/v1/transactions?shop_id", base: "https://merchant.bepaid.by/api/v1/transactions", includeShopId: true },
+
     // v2 endpoints (we know single-transaction endpoints exist under /v2/transactions)
     { name: "gateway:/v2/transactions", base: "https://gateway.bepaid.by/v2/transactions", includeShopId: false },
     { name: "gateway:/v2/transactions?shop_id", base: "https://gateway.bepaid.by/v2/transactions", includeShopId: true },
@@ -237,8 +330,10 @@ async function fetchFromBepaidWithProbing(
   const tryReportsApi = async (): Promise<{ success: boolean; transactions: any[]; endpoint_used?: string; error?: string } > => {
     // Reports API endpoints seen working in other backend functions.
     const reportEndpoints = [
+      { name: 'reports:merchant:/api/reports', url: 'https://merchant.bepaid.by/api/reports' },
       { name: 'reports:api:/api/reports', url: 'https://api.bepaid.by/api/reports' },
       { name: 'reports:gateway:/api/reports', url: 'https://gateway.bepaid.by/api/reports' },
+      { name: 'reports:merchant:/reports', url: 'https://merchant.bepaid.by/reports' },
       { name: 'reports:api:/reports', url: 'https://api.bepaid.by/reports' },
       { name: 'reports:gateway:/reports', url: 'https://gateway.bepaid.by/reports' },
     ];
@@ -284,14 +379,7 @@ async function fetchFromBepaidWithProbing(
         };
 
         if (!response.ok) {
-          let errorBody = '';
-          try {
-            errorBody = await response.text();
-            if (errorBody.length > 200) errorBody = errorBody.slice(0, 200) + '...';
-          } catch {
-            /* ignore */
-          }
-          attempt.error = `HTTP ${response.status}: ${errorBody || 'no body'}`;
+         attempt.error = `HTTP ${response.status}: ${await readErrorBody(response)}`;
           console.log(`[Sync] ${ep.name} failed: ${attempt.error}`);
           endpointAttempts.push(attempt);
           continue;
@@ -366,12 +454,7 @@ async function fetchFromBepaidWithProbing(
 
       if (!response.ok) {
         // Try to get error body for debugging
-        let errorBody = '';
-        try {
-          errorBody = await response.text();
-          if (errorBody.length > 200) errorBody = errorBody.slice(0, 200) + '...';
-        } catch { /* ignore */ }
-        attempt.error = `HTTP ${response.status}: ${errorBody || 'no body'}`;
+         attempt.error = `HTTP ${response.status}: ${await readErrorBody(response)}`;
         console.log(`[Sync] ${candidate.name} failed: ${attempt.error}`);
         endpointAttempts.push(attempt);
         continue;
@@ -600,12 +683,13 @@ serve(async (req) => {
     console.log(`[Sync] Created run ${runId}`);
 
     // === INITIALIZE STATS ===
-    const stats: SyncStats = {
+     const stats: SyncStats = {
       scanned: 0,
       inserted: 0,
       updated: 0,
       unchanged: 0,
       errors: 0,
+       not_found: 0,
       stopped_reason: null,
       error_samples: [],
       amount_sum_db: 0,
@@ -619,7 +703,35 @@ serve(async (req) => {
     let stopped = false;
 
     try {
-      // ========== STEP 1: FETCH ALL TRANSACTIONS FROM BEPAID API ==========
+      // ========== STEP 0: AUTO-PROBE HOST FOR UID FETCH (3 samples) ==========
+      const { data: sampleRows } = await supabase
+        .from('payments_v2')
+        .select('provider_payment_id')
+        .eq('provider', 'bepaid')
+        .not('provider_payment_id', 'is', null)
+        .order('paid_at', { ascending: false })
+        .limit(3);
+
+      const sampleUids = (sampleRows || [])
+        .map((r: any) => r.provider_payment_id)
+        .filter(Boolean)
+        .map(String);
+
+      stats.sample_uids = sampleUids;
+
+      const hostProbe = await pickWorkingBeyagHost(auth, sampleUids, startTime);
+      stats.selected_host = hostProbe.selected_host || 'https://merchant.bepaid.by';
+      stats.uid_probe_attempts = hostProbe.attempts;
+
+      await supabase
+        .from('payments_sync_runs')
+        .update({
+          stats: { ...stats, phase: 'host_probed' },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', runId);
+
+      // ========== STEP 1: TRY LIST → DB (only if LIST returns >= 1 transaction) ==========
       const fromDate = new Date(`${from_date}T00:00:00Z`);
       const toDate = new Date(`${to_date}T23:59:59Z`);
 
@@ -637,6 +749,244 @@ serve(async (req) => {
       stats.pages_fetched = listResult.pages;
       stats.api_total_count = listResult.transactions.length;
 
+      // If list returned any transactions, we proceed with list strategy.
+      const canUseList = listResult.success && Array.isArray(listResult.transactions) && listResult.transactions.length > 0;
+
+      if (!canUseList) {
+        stats.strategy_used = 'uid_fallback';
+
+        // ========== STEP 2 (fallback): DB → API by UID via /beyag/transactions/{uid} ==========
+        const startISO = `${from_date}T00:00:00Z`;
+        const endISO = `${to_date}T23:59:59Z`;
+
+        // Pull candidate UIDs from DB (paged) within period.
+        const uidSet = new Set<string>();
+        const existingMap = new Map<string, any>();
+        let offset = 0;
+        const pageSize = 1000;
+
+        while (uidSet.size < Math.min(limit, MAX_TRANSACTIONS)) {
+          const { data: rows, error: rowsErr } = await supabase
+            .from('payments_v2')
+            .select('id, provider_payment_id, amount, status, transaction_type, paid_at, card_last4, card_brand, meta')
+            .eq('provider', 'bepaid')
+            .not('provider_payment_id', 'is', null)
+            .gte('paid_at', startISO)
+            .lte('paid_at', endISO)
+            .order('paid_at', { ascending: false })
+            .range(offset, offset + pageSize - 1);
+
+          if (rowsErr) {
+            throw new Error(rowsErr.message);
+          }
+
+          if (!rows || rows.length === 0) break;
+
+          for (const r of rows) {
+            const uid = String(r.provider_payment_id);
+            if (!uidSet.has(uid)) {
+              uidSet.add(uid);
+              existingMap.set(uid, r);
+              stats.amount_sum_db += Number(r.amount) || 0;
+              if (uidSet.size >= Math.min(limit, MAX_TRANSACTIONS)) break;
+            }
+          }
+
+          offset += pageSize;
+          if (rows.length < pageSize) break;
+        }
+
+        const uids = Array.from(uidSet);
+        const total = uids.length;
+
+        await supabase
+          .from('payments_sync_runs')
+          .update({
+            stats: { ...stats, phase: 'uid_candidates_loaded', uid_candidates: total },
+            total_pages: Math.max(1, Math.ceil(total / 100)),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', runId);
+
+        let notFound = 0;
+        const host = stats.selected_host || 'https://merchant.bepaid.by';
+
+        for (let i = 0; i < uids.length; i++) {
+          if (stopped) break;
+
+          const uid = uids[i];
+          const existing = existingMap.get(uid);
+          if (!existing) continue;
+
+          stats.scanned++;
+
+          // Fetch transaction by UID
+          let rawTx: any | null = null;
+          try {
+            const res = await fetchBeyagTransactionByUid(host, auth, uid);
+            if (!res.ok) {
+              if (res.status === 404) {
+                notFound++;
+                // NOT_FOUND ≠ ERROR
+              } else {
+                consecutiveErrors++;
+                stats.errors++;
+                if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+                  stats.error_samples.push({ uid, error: `HTTP ${res.status}: ${res.errorBody || 'no body'}` });
+                }
+                if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                  stopped = true;
+                  stats.stopped_reason = `STOP: ${MAX_CONSECUTIVE_ERRORS} consecutive fetch errors`;
+                }
+              }
+              // update not_found_rate and stop guard
+              const processed = i + 1;
+              const rate = processed > 0 ? notFound / processed : 0;
+              stats.not_found_rate = rate;
+              stats.not_found = notFound;
+              if (processed >= 20 && rate > 0.10) {
+                stopped = true;
+                stats.stopped_reason = 'UID exists in bePaid UI but API host mismatch detected';
+              }
+              continue;
+            }
+
+            rawTx = res.data?.transaction || res.data?.data?.transaction || res.data;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            consecutiveErrors++;
+            stats.errors++;
+            if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+              stats.error_samples.push({ uid, error: msg });
+            }
+            if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+              stopped = true;
+              stats.stopped_reason = `STOP: ${MAX_CONSECUTIVE_ERRORS} consecutive fetch errors`;
+            }
+            continue;
+          }
+
+          consecutiveErrors = 0;
+
+          if (!rawTx) continue;
+
+          // Normalize
+          const { tx: normalized, error: normalizeErr } = normalizeTx(rawTx);
+          if (normalizeErr) {
+            consecutiveErrors++;
+            stats.errors++;
+            if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+              stats.error_samples.push({ uid, error: normalizeErr });
+            }
+            if (normalizeErr.includes('STOP')) {
+              stopped = true;
+              stats.stopped_reason = normalizeErr;
+              break;
+            }
+            if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+              stopped = true;
+              stats.stopped_reason = `STOP: ${MAX_CONSECUTIVE_ERRORS} consecutive normalization errors`;
+              break;
+            }
+            continue;
+          }
+
+          consecutiveErrors = 0;
+          if (!normalized) continue;
+
+          stats.amount_sum_api += normalized.amount;
+
+          // Update only (UID-based path works on existing DB payments)
+          const dbAmount = Number(existing.amount);
+          const apiAmount = normalized.amount;
+          const diff = Math.abs(dbAmount - apiAmount);
+
+          if (diff > MAX_DELTA_PER_TX_BYN) {
+            stopped = true;
+            stats.stopped_reason = `STOP: Delta ${diff.toFixed(2)} BYN exceeds ${MAX_DELTA_PER_TX_BYN} for UID ${normalized.uid}`;
+            break;
+          }
+
+          const needsUpdate =
+            diff > 0.01 ||
+            existing.status !== normalized.status ||
+            existing.transaction_type !== normalized.transaction_type ||
+            (!existing.card_last4 && normalized.card_last4) ||
+            (!existing.card_brand && normalized.card_brand);
+
+          if (!needsUpdate) {
+            stats.unchanged++;
+          } else {
+            if (diff > 0.01) {
+              stats.diff_count++;
+              stats.diff_amount += (apiAmount - dbAmount);
+            }
+
+            if (dry_run) {
+              stats.updated++;
+            } else {
+              const { error: updateError } = await supabase
+                .from('payments_v2')
+                .update({
+                  amount: normalized.amount,
+                  status: normalized.status,
+                  transaction_type: normalized.transaction_type,
+                  paid_at: normalized.paid_at,
+                  card_last4: normalized.card_last4 || existing.card_last4,
+                  card_brand: normalized.card_brand || existing.card_brand,
+                  customer_email: normalized.customer_email || existing.meta?.customer_email,
+                  updated_at: new Date().toISOString(),
+                  meta: {
+                    ...existing.meta,
+                    last_synced_at: new Date().toISOString(),
+                    sync_run_id: runId,
+                    previous_amount: dbAmount,
+                    sync_source: 'bepaid_uid',
+                    selected_host: host,
+                  },
+                })
+                .eq('id', existing.id);
+
+              if (updateError) {
+                stats.errors++;
+                if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+                  stats.error_samples.push({ uid: normalized.uid, error: updateError.message });
+                }
+              } else {
+                stats.updated++;
+              }
+            }
+          }
+
+          // progress
+          if ((i + 1) % 100 === 0) {
+            const progress = total > 0 ? Math.round(((i + 1) / total) * 100) : 0;
+            const processedPages = Math.ceil((i + 1) / 100);
+            await supabase
+              .from('payments_sync_runs')
+              .update({
+                processed_pages: processedPages,
+                stats: { ...stats, progress },
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', runId);
+          }
+        }
+
+        // Final not_found_rate guard
+        stats.not_found = notFound;
+        stats.not_found_rate = total > 0 ? notFound / total : 0;
+        if (!stopped && stats.not_found_rate > 0.10) {
+          stopped = true;
+          stats.stopped_reason = 'UID exists in bePaid UI but API host mismatch detected';
+        }
+
+        // UID-based path done → finalize below
+
+      } else {
+        stats.strategy_used = 'list';
+      }
+
       // Update run with endpoint info
       await supabase
         .from("payments_sync_runs")
@@ -647,254 +997,201 @@ serve(async (req) => {
         })
         .eq("id", runId);
 
-      if (!listResult.success) {
-        stopped = true;
-        stats.stopped_reason = listResult.error || 'API fetch failed';
-        stats.error_samples = listResult.endpoint_attempts.map(e => ({
-          uid: e.name,
-          error: e.error || 'unknown',
-        })).slice(0, MAX_ERROR_SAMPLES);
+      if (stats.strategy_used === 'list') {
+        console.log(`[Sync] Fetched ${listResult.transactions.length} transactions from bePaid via ${listResult.endpoint_used}`);
 
-        const duration = Date.now() - startTime;
-        stats.dry_run = dry_run;
+        // ========== STEP 2: FETCH EXISTING PAYMENTS FROM DB ==========
+        const uids = listResult.transactions
+          .map(tx => tx.uid || tx.id)
+          .filter(Boolean)
+          .map(String);
 
-        // Persist run as failed (controlled failure)
-        await supabase
-          .from("payments_sync_runs")
-          .update({
-            status: 'failed',
-            finished_at: new Date().toISOString(),
-            error: stats.stopped_reason,
-            stats: { ...stats, duration_ms: duration },
-          })
-          .eq("id", runId);
+        // Batch UIDs to avoid query limits (1000 max per IN clause)
+        const batchSize = 500;
+        const existingMap = new Map<string, any>();
 
-        // Audit proof even on failure
-        await supabase.from("audit_logs").insert({
-          actor_user_id: null,
-          actor_type: 'system',
-          actor_label: 'bepaid-sync-orchestrator',
-          action: 'bepaid_sync_run',
-          meta: {
-            run_id: runId,
-            mode,
-            period: { from_date, to_date },
-            dry_run,
-            status: 'failed',
-            stopped_reason: stats.stopped_reason,
-            stats,
-            duration_ms: duration,
-            initiated_by: user.id,
-            endpoint_used: listResult.endpoint_used,
-          },
-        });
+        for (let i = 0; i < uids.length; i += batchSize) {
+          const batchUids = uids.slice(i, i + batchSize);
+          const { data: batchPayments } = await supabase
+            .from("payments_v2")
+            .select("id, provider_payment_id, amount, status, transaction_type, paid_at, card_last4, card_brand, meta")
+            .in("provider_payment_id", batchUids);
 
-        // Return 200 so the UI can show the STOP reason without treating it as a transport failure.
-        return new Response(JSON.stringify({
-          success: false,
-          run_id: runId,
-          status: 'failed',
-          error: stats.stopped_reason,
-          dry_run,
-          stats,
-          duration_ms: duration,
-        }), {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      console.log(`[Sync] Fetched ${listResult.transactions.length} transactions from bePaid via ${listResult.endpoint_used}`);
-
-      // ========== STEP 2: FETCH EXISTING PAYMENTS FROM DB ==========
-      const uids = listResult.transactions
-        .map(tx => tx.uid || tx.id)
-        .filter(Boolean)
-        .map(String);
-
-      // Batch UIDs to avoid query limits (1000 max per IN clause)
-      const batchSize = 500;
-      const existingMap = new Map<string, any>();
-
-      for (let i = 0; i < uids.length; i += batchSize) {
-        const batchUids = uids.slice(i, i + batchSize);
-        const { data: batchPayments } = await supabase
-          .from("payments_v2")
-          .select("id, provider_payment_id, amount, status, transaction_type, paid_at, card_last4, card_brand, meta")
-          .in("provider_payment_id", batchUids);
-
-        if (batchPayments) {
-          for (const p of batchPayments) {
-            existingMap.set(p.provider_payment_id, p);
-            stats.amount_sum_db += Number(p.amount) || 0;
+          if (batchPayments) {
+            for (const p of batchPayments) {
+              existingMap.set(p.provider_payment_id, p);
+              stats.amount_sum_db += Number(p.amount) || 0;
+            }
           }
         }
-      }
 
-      console.log(`[Sync] Found ${existingMap.size} existing payments in DB`);
+        console.log(`[Sync] Found ${existingMap.size} existing payments in DB`);
 
-      // ========== STEP 3: PROCESS EACH API TRANSACTION → UPSERT ==========
-      for (const rawTx of listResult.transactions) {
-        if (stopped) break;
+        // ========== STEP 3: PROCESS EACH API TRANSACTION → UPSERT ==========
+        for (const rawTx of listResult.transactions) {
+          if (stopped) break;
 
-        stats.scanned++;
+          stats.scanned++;
 
-        // Normalize transaction
-        const { tx: normalized, error: normalizeErr } = normalizeTx(rawTx);
+          // Normalize transaction
+          const { tx: normalized, error: normalizeErr } = normalizeTx(rawTx);
 
-        if (normalizeErr) {
-          consecutiveErrors++;
-          stats.errors++;
+          if (normalizeErr) {
+            consecutiveErrors++;
+            stats.errors++;
 
-          if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
-            stats.error_samples.push({ uid: rawTx.uid || rawTx.id || 'unknown', error: normalizeErr });
-          }
+            if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+              stats.error_samples.push({ uid: rawTx.uid || rawTx.id || 'unknown', error: normalizeErr });
+            }
 
-          // STOP on currency mismatch or critical error
-          if (normalizeErr.includes('STOP')) {
-            stopped = true;
-            stats.stopped_reason = normalizeErr;
-            break;
-          }
+            // STOP on currency mismatch or critical error
+            if (normalizeErr.includes('STOP')) {
+              stopped = true;
+              stats.stopped_reason = normalizeErr;
+              break;
+            }
 
-          // STOP if too many consecutive errors
-          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-            stopped = true;
-            stats.stopped_reason = `STOP: ${MAX_CONSECUTIVE_ERRORS} consecutive normalization errors`;
-            break;
-          }
+            // STOP if too many consecutive errors
+            if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+              stopped = true;
+              stats.stopped_reason = `STOP: ${MAX_CONSECUTIVE_ERRORS} consecutive normalization errors`;
+              break;
+            }
 
-          continue;
-        }
-
-        consecutiveErrors = 0; // Reset on success
-
-        if (!normalized) continue;
-
-        stats.amount_sum_api += normalized.amount;
-
-        const existing = existingMap.get(normalized.uid);
-
-        if (existing) {
-          // ========== UPDATE EXISTING ==========
-          const dbAmount = Number(existing.amount);
-          const apiAmount = normalized.amount;
-          const diff = Math.abs(dbAmount - apiAmount);
-
-          // STOP if delta too large
-          if (diff > MAX_DELTA_PER_TX_BYN) {
-            stopped = true;
-            stats.stopped_reason = `STOP: Delta ${diff.toFixed(2)} BYN exceeds ${MAX_DELTA_PER_TX_BYN} for UID ${normalized.uid}`;
-            break;
-          }
-
-          // Check if update needed
-          const needsUpdate =
-            diff > 0.01 ||
-            existing.status !== normalized.status ||
-            existing.transaction_type !== normalized.transaction_type ||
-            (!existing.card_last4 && normalized.card_last4) ||
-            (!existing.card_brand && normalized.card_brand);
-
-          if (!needsUpdate) {
-            stats.unchanged++;
             continue;
           }
 
-          if (diff > 0.01) {
-            stats.diff_count++;
-            stats.diff_amount += (apiAmount - dbAmount);
-          }
+          consecutiveErrors = 0; // Reset on success
 
-          if (dry_run) {
+          if (!normalized) continue;
+
+          stats.amount_sum_api += normalized.amount;
+
+          const existing = existingMap.get(normalized.uid);
+
+          if (existing) {
+            // ========== UPDATE EXISTING ==========
+            const dbAmount = Number(existing.amount);
+            const apiAmount = normalized.amount;
+            const diff = Math.abs(dbAmount - apiAmount);
+
+            // STOP if delta too large
+            if (diff > MAX_DELTA_PER_TX_BYN) {
+              stopped = true;
+              stats.stopped_reason = `STOP: Delta ${diff.toFixed(2)} BYN exceeds ${MAX_DELTA_PER_TX_BYN} for UID ${normalized.uid}`;
+              break;
+            }
+
+            // Check if update needed
+            const needsUpdate =
+              diff > 0.01 ||
+              existing.status !== normalized.status ||
+              existing.transaction_type !== normalized.transaction_type ||
+              (!existing.card_last4 && normalized.card_last4) ||
+              (!existing.card_brand && normalized.card_brand);
+
+            if (!needsUpdate) {
+              stats.unchanged++;
+              continue;
+            }
+
+            if (diff > 0.01) {
+              stats.diff_count++;
+              stats.diff_amount += (apiAmount - dbAmount);
+            }
+
+            if (dry_run) {
+              stats.updated++;
+              continue;
+            }
+
+            // Execute update
+            const { error: updateError } = await supabase
+              .from("payments_v2")
+              .update({
+                amount: normalized.amount,
+                status: normalized.status,
+                transaction_type: normalized.transaction_type,
+                paid_at: normalized.paid_at,
+                card_last4: normalized.card_last4 || existing.card_last4,
+                card_brand: normalized.card_brand || existing.card_brand,
+                customer_email: normalized.customer_email || existing.meta?.customer_email,
+                updated_at: new Date().toISOString(),
+                meta: {
+                  ...existing.meta,
+                  last_synced_at: new Date().toISOString(),
+                  sync_run_id: runId,
+                  previous_amount: dbAmount,
+                  sync_source: 'bepaid_api',
+                  selected_host: stats.selected_host,
+                },
+              })
+              .eq("id", existing.id);
+
+            if (updateError) {
+              stats.errors++;
+              if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+                stats.error_samples.push({ uid: normalized.uid, error: updateError.message });
+              }
+              continue;
+            }
+
             stats.updated++;
-            continue;
-          }
 
-          // Execute update
-          const { error: updateError } = await supabase
-            .from("payments_v2")
-            .update({
-              amount: normalized.amount,
-              status: normalized.status,
-              transaction_type: normalized.transaction_type,
-              paid_at: normalized.paid_at,
-              card_last4: normalized.card_last4 || existing.card_last4,
-              card_brand: normalized.card_brand || existing.card_brand,
-              customer_email: normalized.customer_email || existing.meta?.customer_email,
-              updated_at: new Date().toISOString(),
-              meta: {
-                ...existing.meta,
-                last_synced_at: new Date().toISOString(),
-                sync_run_id: runId,
-                previous_amount: dbAmount,
-                sync_source: 'bepaid_api',
-              },
-            })
-            .eq("id", existing.id);
-
-          if (updateError) {
-            stats.errors++;
-            if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
-              stats.error_samples.push({ uid: normalized.uid, error: updateError.message });
+          } else {
+            // ========== INSERT NEW ==========
+            if (dry_run) {
+              stats.inserted++;
+              continue;
             }
-            continue;
-          }
 
-          stats.updated++;
+            const { error: insertError } = await supabase
+              .from("payments_v2")
+              .insert({
+                provider: 'bepaid',
+                provider_payment_id: normalized.uid,
+                amount: normalized.amount,
+                currency: 'BYN',
+                status: normalized.status,
+                transaction_type: normalized.transaction_type,
+                paid_at: normalized.paid_at,
+                card_last4: normalized.card_last4,
+                card_brand: normalized.card_brand,
+                customer_email: normalized.customer_email,
+                provider_response: normalized.provider_response,
+                meta: {
+                  sync_run_id: runId,
+                  imported_at: new Date().toISOString(),
+                  sync_source: 'bepaid_api',
+                  selected_host: stats.selected_host,
+                },
+              });
 
-        } else {
-          // ========== INSERT NEW ==========
-          if (dry_run) {
+            if (insertError) {
+              stats.errors++;
+              if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
+                stats.error_samples.push({ uid: normalized.uid, error: insertError.message });
+              }
+              continue;
+            }
+
             stats.inserted++;
-            continue;
           }
 
-          const { error: insertError } = await supabase
-            .from("payments_v2")
-            .insert({
-              provider: 'bepaid',
-              provider_payment_id: normalized.uid,
-              amount: normalized.amount,
-              currency: 'BYN',
-              status: normalized.status,
-              transaction_type: normalized.transaction_type,
-              paid_at: normalized.paid_at,
-              card_last4: normalized.card_last4,
-              card_brand: normalized.card_brand,
-              customer_email: normalized.customer_email,
-              provider_response: normalized.provider_response,
-              meta: {
-                sync_run_id: runId,
-                imported_at: new Date().toISOString(),
-                sync_source: 'bepaid_api',
-              },
-            });
+          // Update progress periodically
+          if (stats.scanned % 100 === 0) {
+            const progress = Math.round((stats.scanned / listResult.transactions.length) * 100);
+            await supabase
+              .from("payments_sync_runs")
+              .update({
+                processed_pages: Math.ceil(stats.scanned / 100),
+                stats: { ...stats, progress },
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", runId);
 
-          if (insertError) {
-            stats.errors++;
-            if (stats.error_samples.length < MAX_ERROR_SAMPLES) {
-              stats.error_samples.push({ uid: normalized.uid, error: insertError.message });
-            }
-            continue;
+            console.log(`[Sync] Progress: ${stats.scanned}/${listResult.transactions.length} (${progress}%)`);
           }
-
-          stats.inserted++;
-        }
-
-        // Update progress periodically
-        if (stats.scanned % 100 === 0) {
-          const progress = Math.round((stats.scanned / listResult.transactions.length) * 100);
-          await supabase
-            .from("payments_sync_runs")
-            .update({
-              processed_pages: Math.ceil(stats.scanned / 100),
-              stats: { ...stats, progress },
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", runId);
-
-          console.log(`[Sync] Progress: ${stats.scanned}/${listResult.transactions.length} (${progress}%)`);
         }
       }
 
@@ -927,6 +1224,10 @@ serve(async (req) => {
           mode,
           period: { from_date, to_date },
           dry_run,
+          selected_host: stats.selected_host,
+          strategy_used: stats.strategy_used,
+          not_found_rate: stats.not_found_rate,
+          sample_uids: stats.sample_uids,
           stats,
           duration_ms: duration,
           initiated_by: user.id,
@@ -962,6 +1263,32 @@ serve(async (req) => {
         })
         .eq("id", runId);
 
+      // Audit proof even on fatal error
+      try {
+        await supabase.from("audit_logs").insert({
+          actor_user_id: null,
+          actor_type: 'system',
+          actor_label: 'bepaid-sync-orchestrator',
+          action: 'bepaid_sync_run',
+          meta: {
+            run_id: runId,
+            mode,
+            period: { from_date, to_date },
+            dry_run,
+            status: 'failed',
+            error: message,
+            selected_host: stats.selected_host,
+            strategy_used: stats.strategy_used,
+            not_found_rate: stats.not_found_rate,
+            sample_uids: stats.sample_uids,
+            stats,
+            initiated_by: user.id,
+          },
+        });
+      } catch {
+        // ignore audit insert failures
+      }
+
       return new Response(JSON.stringify({
         success: false,
         run_id: runId,
@@ -969,7 +1296,7 @@ serve(async (req) => {
         error: message,
         stats,
       }), {
-        status: 500,
+        status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
