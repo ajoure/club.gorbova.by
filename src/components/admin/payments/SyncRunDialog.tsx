@@ -34,6 +34,18 @@ interface SyncStats {
   diff_amount: number;
   duration_ms?: number;
   dry_run?: boolean;
+  // Origin-based filtering
+  excluded_import_count?: number;
+  strategy_used?: 'list' | 'uid_fallback' | 'unknown';
+  selected_host?: string;
+  uid_breakdown?: {
+    ok_tx_found: number;
+    uid_not_transaction_404: number;
+    auth_errors: number;
+    rate_limited: number;
+    server_errors: number;
+    other_4xx: number;
+  };
 }
 
 interface SyncRunDialogProps {
@@ -266,9 +278,18 @@ export default function SyncRunDialog({ open, onOpenChange, onComplete }: SyncRu
             <div className="space-y-3">
               <div className="flex items-center justify-between text-sm font-medium">
                 <span>Результаты</span>
-                {stats.dry_run && (
-                  <Badge variant="outline">Dry-run</Badge>
-                )}
+                <div className="flex gap-2">
+                  {stats.strategy_used && (
+                    <Badge variant="secondary">
+                      {stats.strategy_used === 'list' ? 'API List' : 
+                       stats.strategy_used === 'uid_fallback' ? 'UID Probe' : 
+                       'Unknown'}
+                    </Badge>
+                  )}
+                  {stats.dry_run && (
+                    <Badge variant="outline">Dry-run</Badge>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-sm">
@@ -290,6 +311,12 @@ export default function SyncRunDialog({ open, onOpenChange, onComplete }: SyncRu
                     {stats.errors}
                   </span>
                 </div>
+                {stats.excluded_import_count !== undefined && stats.excluded_import_count > 0 && (
+                  <div className="flex justify-between p-2 rounded bg-yellow-500/10 border border-yellow-500/20 col-span-2">
+                    <span className="text-yellow-700 dark:text-yellow-400">Исключено (import):</span>
+                    <span className="font-mono text-yellow-700 dark:text-yellow-400">{stats.excluded_import_count}</span>
+                  </div>
+                )}
               </div>
 
               {/* Diff summary */}
