@@ -454,17 +454,17 @@ Deno.serve(async (req) => {
     });
 
     // Log the notification in telegram_logs (PATCH 13E: include message_text)
+    // PATCH 13F: use message_type as action for proper filtering
     await supabase
       .from('telegram_logs')
       .insert({
         user_id: user_id,
-        action: 'manual_notification',
+        action: message_type, // Use message_type directly (legacy_card_notification, access_revoked, etc.)
         target: 'user',
         status: sendResult.ok ? 'success' : 'error',
         error_message: sendResult.ok ? null : sendResult.description,
         message_text: message, // PATCH 13E: save full text for history
         meta: {
-          message_type,
           sent_by_admin: user.id,
           idempotency_key: idempotencyKey,
         }
