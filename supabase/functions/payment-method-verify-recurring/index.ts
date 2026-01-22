@@ -36,12 +36,21 @@ interface PaymentMethod {
   user_id: string;
 }
 
+interface RejectedCardForNotification {
+  id: string;
+  user_id: string;
+  brand: string;
+  last4: string;
+  verification_checked_at: string | null;
+}
+
 interface ProcessingResult {
   verified: number;
   rejected: number;
   retried: number;
   failed: number;
   skipped: number;
+  notified: number;
   errors: string[];
 }
 
@@ -58,10 +67,138 @@ serve(async (req) => {
   const body = await req.json().catch(() => ({}));
   const dryRun = body.dry_run ?? true; // Default to dry_run for safety
   const limit = Math.min(body.limit ?? 10, 50); // Max 50 per run for safety
+  const notifyOnly = body.notify_only ?? false; // MODE D: Only send notifications for already rejected cards
 
-  console.log(`[payment-method-verify-recurring] Starting: dry_run=${dryRun}, limit=${limit}`);
+  console.log(`[payment-method-verify-recurring] Starting: dry_run=${dryRun}, limit=${limit}, notify_only=${notifyOnly}`);
 
   const now = new Date().toISOString();
+
+  // ===========================================================================
+  // MODE D: notify_only — backfill notifications for already rejected cards
+  // ===========================================================================
+  if (notifyOnly) {
+    // Find payment_methods with verification_status='rejected' that haven't been notified
+    const { data: rejectedCards, error: fetchRejectedError } = await supabase
+      .from('payment_methods')
+      .select('id, user_id, brand, last4, verification_status, verification_checked_at')
+      .eq('verification_status', 'rejected')
+      .eq('status', 'active')
+      .order('verification_checked_at', { ascending: true })
+      .limit(limit);
+
+    if (fetchRejectedError) {
+      console.error('[notify_only] Error fetching rejected cards:', fetchRejectedError);
+      return new Response(JSON.stringify({ error: fetchRejectedError.message }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (!rejectedCards || rejectedCards.length === 0) {
+      return new Response(JSON.stringify({
+        mode: dryRun ? 'dry_run' : 'execute',
+        notify_only: true,
+        message: 'No rejected cards found for notification',
+        count: 0,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // Filter out cards that already have a notification sent after verification_checked_at
+    const cardsToNotify: RejectedCardForNotification[] = [];
+    for (const card of rejectedCards) {
+      const checkedAt = card.verification_checked_at || '2000-01-01';
+      
+      // Check if notification already sent via notification_outbox OR telegram_logs
+      const { data: existingNotification } = await supabase
+        .from('notification_outbox')
+        .select('id')
+        .eq('user_id', card.user_id)
+        .eq('message_type', 'card_not_suitable_for_autopay')
+        .eq('status', 'sent')
+        .gt('created_at', checkedAt)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingNotification) {
+        console.log(`[notify_only] Skipping ${card.id} - already notified via outbox`);
+        continue;
+      }
+
+      // Also check telegram_logs
+      const { data: existingLog } = await supabase
+        .from('telegram_logs')
+        .select('id')
+        .eq('user_id', card.user_id)
+        .eq('action', 'card_not_suitable_for_autopay')
+        .eq('status', 'success')
+        .gt('created_at', checkedAt)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingLog) {
+        console.log(`[notify_only] Skipping ${card.id} - already notified via telegram_logs`);
+        continue;
+      }
+
+      cardsToNotify.push(card as RejectedCardForNotification);
+    }
+
+    // DRY RUN for notify_only
+    if (dryRun) {
+      return new Response(JSON.stringify({
+        mode: 'dry_run',
+        notify_only: true,
+        would_notify: cardsToNotify.length,
+        total_rejected: rejectedCards.length,
+        already_notified: rejectedCards.length - cardsToNotify.length,
+        cards: cardsToNotify.map(c => ({
+          id: c.id,
+          user_id: c.user_id,
+          brand: c.brand,
+          last4: c.last4,
+          checked_at: c.verification_checked_at,
+        })),
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // EXECUTE notify_only
+    let notifiedCount = 0;
+    let failedCount = 0;
+    const errors: string[] = [];
+
+    for (const card of cardsToNotify) {
+      try {
+        await sendNotification(
+          supabaseUrl, 
+          supabaseServiceKey, 
+          card.user_id, 
+          'card_not_suitable_for_autopay',
+          { id: card.id, brand: card.brand, last4: card.last4 }
+        );
+        notifiedCount++;
+        console.log(`[notify_only] Sent notification for ${card.id} to user ${card.user_id}`);
+        
+        // Rate limit protection: small delay between notifications
+        await new Promise(resolve => setTimeout(resolve, 200));
+      } catch (e) {
+        console.error(`[notify_only] Failed to notify for ${card.id}:`, e);
+        errors.push(card.id);
+        failedCount++;
+      }
+    }
+
+    return new Response(JSON.stringify({
+      mode: 'execute',
+      notify_only: true,
+      notified: notifiedCount,
+      failed: failedCount,
+      errors,
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+
+  // ===========================================================================
+  // NORMAL MODE: Process verification jobs
+  // ===========================================================================
 
   // SELECT pending jobs ready for processing
   const { data: jobs, error: fetchError } = await supabase
@@ -135,6 +272,7 @@ serve(async (req) => {
     retried: 0,
     failed: 0,
     skipped: 0,
+    notified: 0,
     errors: [],
   };
 
@@ -410,8 +548,19 @@ serve(async (req) => {
           },
         });
 
-        // FIX #3: Queue notification via telegram-send-notification edge function
-        await sendCardNotSuitableNotification(supabase, supabaseUrl, supabaseServiceKey, pm);
+        // FIX C1: Send notification for REJECTED (3DS required) - use card_not_suitable_for_autopay
+        try {
+          await sendNotification(
+            supabaseUrl, 
+            supabaseServiceKey, 
+            pm.user_id, 
+            'card_not_suitable_for_autopay',
+            { id: pm.id, brand: pm.brand, last4: pm.last4 }
+          );
+          results.notified++;
+        } catch (notifyError) {
+          console.error(`[job ${job.id}] Failed to send rejection notification:`, notifyError);
+        }
 
         results.rejected++;
       }
@@ -477,8 +626,19 @@ serve(async (req) => {
             },
           });
 
-          // FIX #3: Notify user about failed verification
-          await sendCardNotSuitableNotification(supabase, supabaseUrl, supabaseServiceKey, pm);
+          // FIX C2: Send notification for FAILED (not 3DS) - use card_verification_failed
+          try {
+            await sendNotification(
+              supabaseUrl, 
+              supabaseServiceKey, 
+              pm.user_id, 
+              'card_verification_failed',
+              { id: pm.id, brand: pm.brand, last4: pm.last4 }
+            );
+            results.notified++;
+          } catch (notifyError) {
+            console.error(`[job ${job.id}] Failed to send failure notification:`, notifyError);
+          }
 
           results.failed++;
         } else {
@@ -515,7 +675,7 @@ serve(async (req) => {
     }
   }
 
-  console.log(`[payment-method-verify-recurring] Completed: verified=${results.verified}, rejected=${results.rejected}, retried=${results.retried}, failed=${results.failed}, skipped=${results.skipped}`);
+  console.log(`[payment-method-verify-recurring] Completed: verified=${results.verified}, rejected=${results.rejected}, retried=${results.retried}, failed=${results.failed}, skipped=${results.skipped}, notified=${results.notified}`);
 
   return new Response(JSON.stringify({
     mode: 'execute',
@@ -555,51 +715,37 @@ async function updatePaymentMethodStatus(
 }
 
 // FIX #3: Send notification via telegram-send-notification edge function (NOT direct Telegram API)
-// FIX #4: Do NOT write to telegram_logs directly - let the edge function handle it
-async function sendCardNotSuitableNotification(
-  supabase: any,
+// FIX C: Different message_type for rejected (3DS) vs failed (error)
+async function sendNotification(
   supabaseUrl: string,
   supabaseServiceKey: string,
-  pm: PaymentMethod
+  userId: string,
+  messageType: 'card_not_suitable_for_autopay' | 'card_verification_failed',
+  paymentMethodMeta: { id: string; brand: string; last4: string }
 ) {
-  try {
-    const brandUpper = pm.brand?.toUpperCase() || '';
-    const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
-    
-    const customMessage = `⚠️ *Карта не подходит для автоплатежей*
+  // SECURITY: Do NOT pass custom_message - let the edge function use its secure template
+  const resp = await fetch(`${supabaseUrl}/functions/v1/telegram-send-notification`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${supabaseServiceKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      user_id: userId,
+      message_type: messageType,
+      // Pass card info for template substitution (NOT custom_message!)
+      payment_method_meta: paymentMethodMeta,
+    }),
+  });
 
-Ваша карта ${brandUpper} ****${pm.last4} успешно добавлена, но *требует подтверждения 3D-Secure* на каждую операцию.
-
-📋 *Что это значит:*
-Автопродление подписки не сможет работать с этой картой — каждый платёж потребует ввода кода из SMS.
-
-💡 *Рекомендуем:*
-• Привязать другую карту (Visa или Mastercard)
-• Или оплачивать вручную на сайте
-
-🔗 [Привязать другую карту](${siteUrl}/settings/payment-methods)`;
-
-    // FIX #3: Use telegram-send-notification edge function instead of direct API
-    const resp = await fetch(`${supabaseUrl}/functions/v1/telegram-send-notification`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${supabaseServiceKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        user_id: pm.user_id,
-        message_type: 'card_not_suitable_for_autopay',
-        custom_message: customMessage,
-      }),
-    });
-
-    const result = await resp.json();
-    if (result.success) {
-      console.log(`[notification] Sent card rejection notice to user ${pm.user_id} via telegram-send-notification`);
-    } else {
-      console.error(`[notification] telegram-send-notification failed:`, result.error);
-    }
-  } catch (error) {
-    console.error('[notification] Error sending card rejection notice:', error);
+  const result = await resp.json();
+  if (result.success) {
+    console.log(`[notification] Sent ${messageType} to user ${userId} via telegram-send-notification`);
+  } else if (result.skipped) {
+    console.log(`[notification] Skipped ${messageType} for user ${userId}: ${result.error}`);
+  } else {
+    console.error(`[notification] telegram-send-notification failed for ${userId}:`, result.error);
   }
+  
+  return result;
 }

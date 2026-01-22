@@ -16,6 +16,14 @@ async function telegramRequest(botToken: string, method: string, params?: Record
   return response.json();
 }
 
+// ===========================================================================
+// SECURITY: Whitelist of message_types allowed for service_role invocations
+// ===========================================================================
+const SERVICE_ROLE_ALLOWED_MESSAGE_TYPES = [
+  'card_not_suitable_for_autopay',
+  'card_verification_failed',
+];
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -26,7 +34,9 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Verify auth
+    // ===========================================================================
+    // AUTH: Detect service_role invocation vs user invocation
+    // ===========================================================================
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -36,32 +46,47 @@ Deno.serve(async (req) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    // Check if this is a service_role invocation (system-to-system)
+    const isServiceInvocation = token === supabaseServiceKey;
+    
+    let actorUserId: string | null = null;
+    let actorLabel = 'system';
 
-    // Check permissions
-    const { data: hasPermission } = await supabase.rpc('has_permission', {
-      _user_id: user.id,
-      _permission_code: 'entitlements.manage',
-    });
+    if (!isServiceInvocation) {
+      // User authentication path
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+      
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
 
-    if (!hasPermission) {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      // Check permissions for user calls
+      const { data: hasPermission } = await supabase.rpc('has_permission', {
+        _user_id: user.id,
+        _permission_code: 'entitlements.manage',
       });
+
+      if (!hasPermission) {
+        return new Response(JSON.stringify({ error: 'Forbidden' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      actorUserId = user.id;
+      actorLabel = user.email || user.id;
+    } else {
+      console.log('[telegram-send-notification] Service role invocation detected');
     }
 
     const body = await req.json();
-    const { user_id, message_type, custom_message } = body;
+    const { user_id, message_type, custom_message, payment_method_meta } = body;
 
-    console.log(`[telegram-send-notification] Starting: user_id=${user_id}, type=${message_type}`);
+    console.log(`[telegram-send-notification] Starting: user_id=${user_id}, type=${message_type}, isService=${isServiceInvocation}`);
 
     if (!user_id || !message_type) {
       return new Response(JSON.stringify({ 
@@ -71,6 +96,36 @@ Deno.serve(async (req) => {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // ===========================================================================
+    // SECURITY: For service_role, only allow whitelisted message_types
+    // ===========================================================================
+    if (isServiceInvocation) {
+      if (!SERVICE_ROLE_ALLOWED_MESSAGE_TYPES.includes(message_type)) {
+        console.log(`[telegram-send-notification] BLOCKED: service_role tried non-whitelisted type: ${message_type}`);
+        
+        await supabase.from('audit_logs').insert({
+          action: 'telegram.notification.blocked',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'telegram-send-notification',
+          target_user_id: user_id,
+          meta: {
+            reason: 'message_type_not_whitelisted',
+            message_type,
+            invocation: 'service_role',
+          }
+        });
+
+        return new Response(JSON.stringify({ 
+          success: false, 
+          error: `message_type '${message_type}' is not allowed for service invocations` 
+        }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // =================================================================
@@ -112,14 +167,14 @@ Deno.serve(async (req) => {
           user_id,
           message_type,
           idempotency_key: idempotencyKey,
-          source: 'manual',
+          source: isServiceInvocation ? 'system' : 'manual',
           status: 'blocked',
           blocked_reason: 'active_access_exists',
           meta: {
             subscription_id: activeSub?.id,
             telegram_access_id: activeAccess?.id,
             access_end_at: accessEndAt,
-            attempted_by_admin: user.id,
+            attempted_by_admin: actorUserId,
           }
         });
         // Ignore duplicate key errors (23505) - this is expected for repeated attempts
@@ -130,8 +185,8 @@ Deno.serve(async (req) => {
         // Логируем BLOCKED в audit_logs
         await supabase.from('audit_logs').insert({
           action: 'notifications.send_blocked',
-          actor_type: 'system',
-          actor_user_id: null,
+          actor_type: isServiceInvocation ? 'system' : 'user',
+          actor_user_id: actorUserId,
           actor_label: 'telegram-send-notification',
           target_user_id: user_id,
           meta: {
@@ -141,8 +196,9 @@ Deno.serve(async (req) => {
             subscription_status: activeSub?.status,
             telegram_access_id: activeAccess?.id,
             access_end_at: accessEndAt,
-            attempted_by_admin: user.id,
-            source: 'manual'
+            attempted_by_admin: actorUserId,
+            source: isServiceInvocation ? 'system' : 'manual',
+            invocation: isServiceInvocation ? 'service_role' : 'user',
           }
         });
 
@@ -169,9 +225,13 @@ Deno.serve(async (req) => {
         user_id,
         message_type,
         idempotency_key: idempotencyKey,
-        source: 'manual',
+        source: isServiceInvocation ? 'system' : 'manual',
         status: 'queued',
-        meta: { attempted_by: user.id }
+        meta: { 
+          attempted_by: actorUserId,
+          invocation: isServiceInvocation ? 'service_role' : 'user',
+          payment_method_meta,
+        }
       });
 
     // =================================================================
@@ -193,15 +253,16 @@ Deno.serve(async (req) => {
         
         await supabase.from('audit_logs').insert({
           action: 'notifications.outbox_skipped',
-          actor_type: 'system',
-          actor_user_id: null,
+          actor_type: isServiceInvocation ? 'system' : 'user',
+          actor_user_id: actorUserId,
           actor_label: 'telegram-send-notification',
           target_user_id: user_id,
           meta: {
             notification_type: message_type,
             reason: 'already_sent',
             idempotency_key: idempotencyKey,
-            attempted_by_admin: user.id
+            attempted_by_admin: actorUserId,
+            invocation: isServiceInvocation ? 'service_role' : 'user',
           }
         });
 
@@ -229,15 +290,16 @@ Deno.serve(async (req) => {
               retry_at: new Date().toISOString(),
               previous_status: existingOutbox.status,
               previous_reason: existingOutbox.blocked_reason,
-              attempted_by: user.id,
+              attempted_by: actorUserId,
+              invocation: isServiceInvocation ? 'service_role' : 'user',
             }
           })
           .eq('id', existingOutbox.id);
 
         await supabase.from('audit_logs').insert({
           action: 'notifications.outbox_retry',
-          actor_type: 'system',
-          actor_user_id: null,
+          actor_type: isServiceInvocation ? 'system' : 'user',
+          actor_user_id: actorUserId,
           actor_label: 'telegram-send-notification',
           target_user_id: user_id,
           meta: {
@@ -245,6 +307,7 @@ Deno.serve(async (req) => {
             previous_status: existingOutbox.status,
             attempt_count: newAttemptCount,
             idempotency_key: idempotencyKey,
+            invocation: isServiceInvocation ? 'service_role' : 'user',
           }
         });
 
@@ -348,7 +411,7 @@ Deno.serve(async (req) => {
     }
 
     // =================================================================
-    // Prepare message based on type (includes PATCH 10E: apology template)
+    // Prepare message based on type
     // =================================================================
     let message = '';
     const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
@@ -357,7 +420,15 @@ Deno.serve(async (req) => {
     const accessEndFormatted = subscription?.access_end_at 
       ? new Date(subscription.access_end_at).toLocaleDateString('ru-RU')
       : null;
+
+    // Extract card info from payment_method_meta if provided (for service invocations)
+    const cardBrand = payment_method_meta?.brand?.toUpperCase() || '';
+    const cardLast4 = payment_method_meta?.last4 || '';
+    const cardDisplay = cardBrand && cardLast4 ? `${cardBrand} ****${cardLast4}` : 'вашу карту';
     
+    // ===========================================================================
+    // SECURITY: For service_role, IGNORE custom_message and use deterministic templates
+    // ===========================================================================
     const messageTemplates: Record<string, string> = {
       reminder_3_days: `⏰ Небольшое напоминание
 
@@ -402,15 +473,33 @@ Deno.serve(async (req) => {
 Пожалуйста, привяжите карту заново для продолжения автопродления:
 🔗 ${siteUrl}/settings/payment-methods`,
 
-      // PATCH: Card not suitable for recurring (3DS required each time)
-      card_not_suitable_for_autopay: custom_message || `⚠️ Карта не подходит для автоплатежей
+      // SECURE TEMPLATE: Card not suitable for recurring (3DS required each time)
+      // For service_role: use deterministic template, ignore custom_message
+      card_not_suitable_for_autopay: `⚠️ Карта не подходит для автоплатежей
 
-Ваша сохранённая карта требует подтверждения 3D-Secure на каждую операцию.
+Ваша карта ${cardDisplay} успешно добавлена, но требует подтверждения 3D-Secure на каждую операцию.
 
+📋 Что это значит:
 Автопродление подписки не сможет работать с этой картой — каждый платёж потребует ввода кода из SMS.
 
-💡 Рекомендуем привязать другую карту (Visa/Mastercard):
-🔗 ${siteUrl}/settings/payment-methods`,
+💡 Рекомендуем:
+• Привязать другую карту (Visa или Mastercard)
+• Или оплачивать вручную на сайте
+
+🔗 Привязать другую карту: ${siteUrl}/settings/payment-methods`,
+
+      // SECURE TEMPLATE: Card verification failed (temporary error, not 3DS rejection)
+      card_verification_failed: `⚠️ Не удалось проверить карту
+
+Мы попытались проверить ${cardDisplay} для автоматических платежей, но произошла ошибка.
+
+Это может быть временная проблема с банком или платёжной системой.
+
+💡 Что делать:
+• Попробуйте позже (кнопка "Перепроверить" в настройках)
+• Или привяжите другую карту
+
+🔗 Настройки карт: ${siteUrl}/settings/payment-methods`,
       
       welcome: `👋 Привет${profile.full_name ? ', ' + profile.full_name : ''}!
 
@@ -418,10 +507,17 @@ Deno.serve(async (req) => {
 
 Если возникнут вопросы — мы всегда на связи 💙`,
       
-      custom: custom_message || 'Сообщение от администратора клуба.',
+      // For user invocations, custom_message is allowed
+      custom: isServiceInvocation ? 'Сообщение от системы.' : (custom_message || 'Сообщение от администратора клуба.'),
     };
 
-    message = messageTemplates[message_type] || messageTemplates.custom;
+    // For service invocations with whitelisted types, ALWAYS use template (ignore custom_message)
+    if (isServiceInvocation && SERVICE_ROLE_ALLOWED_MESSAGE_TYPES.includes(message_type)) {
+      message = messageTemplates[message_type];
+      console.log(`[telegram-send-notification] Using secure template for ${message_type}`);
+    } else {
+      message = messageTemplates[message_type] || messageTemplates.custom;
+    }
 
     // Prepare keyboard
     const keyboard = message_type === 'access_revoked' || message_type === 'reminder_3_days' || message_type === 'reminder_1_day'
@@ -447,57 +543,65 @@ Deno.serve(async (req) => {
       .eq('idempotency_key', idempotencyKey);
 
     // =================================================================
-    // PATCH 10H: SYSTEM ACTOR audit для outbox state transitions
+    // SYSTEM ACTOR audit for service_role invocations
     // =================================================================
     await supabase.from('audit_logs').insert({
-      action: sendResult.ok ? 'notifications.outbox_sent' : 'notifications.outbox_failed',
-      actor_type: 'system',
-      actor_user_id: null,
-      actor_label: 'telegram-send-notification',
+      action: sendResult.ok ? 'telegram.notification.sent' : 'telegram.notification.failed',
+      actor_type: isServiceInvocation ? 'system' : 'user',
+      actor_user_id: actorUserId,
+      actor_label: isServiceInvocation ? 'telegram-send-notification' : actorLabel,
       target_user_id: user_id,
       meta: {
         notification_type: message_type,
         telegram_user_id: profile.telegram_user_id,
         idempotency_key: idempotencyKey,
         error: sendResult.ok ? null : sendResult.description,
+        invocation: isServiceInvocation ? 'service_role' : 'user',
+        template_used: isServiceInvocation && SERVICE_ROLE_ALLOWED_MESSAGE_TYPES.includes(message_type),
+        payment_method_meta: isServiceInvocation ? payment_method_meta : undefined,
       }
     });
 
-    // Log the notification in telegram_logs (PATCH 13E: include message_text)
-    // PATCH 13F: use message_type as action for proper filtering
+    // Log the notification in telegram_logs (correct schema: action, status, message_text, meta)
     await supabase
       .from('telegram_logs')
       .insert({
         user_id: user_id,
-        action: message_type, // Use message_type directly (legacy_card_notification, access_revoked, etc.)
+        action: message_type,
         target: 'user',
         status: sendResult.ok ? 'success' : 'error',
         error_message: sendResult.ok ? null : sendResult.description,
-        message_text: message, // PATCH 13E: save full text for history
+        message_text: message,
         meta: {
-          sent_by_admin: user.id,
+          invocation: isServiceInvocation ? 'service_role' : 'user',
+          sent_by: isServiceInvocation ? 'system' : actorUserId,
           idempotency_key: idempotencyKey,
+          payment_method_id: payment_method_meta?.id,
+          last4: payment_method_meta?.last4,
+          brand: payment_method_meta?.brand,
         }
       });
 
-    // Legacy audit log (user actor for backwards compatibility)
-    await supabase
-      .from('audit_logs')
-      .insert({
-        action: sendResult.ok ? 'notifications.send_success' : 'notifications.send_error',
-        actor_type: 'user',
-        actor_user_id: user.id,
-        actor_label: 'telegram-send-notification',
-        target_user_id: user_id,
-        meta: {
-          notification_type: message_type,
-          telegram_user_id: profile.telegram_user_id,
-          success: sendResult.ok,
-          error: sendResult.ok ? null : sendResult.description,
-          idempotency_key: idempotencyKey,
-          source: 'manual'
-        }
-      });
+    // Legacy audit log for backwards compatibility (user actor only for manual)
+    if (!isServiceInvocation) {
+      await supabase
+        .from('audit_logs')
+        .insert({
+          action: sendResult.ok ? 'notifications.send_success' : 'notifications.send_error',
+          actor_type: 'user',
+          actor_user_id: actorUserId,
+          actor_label: 'telegram-send-notification',
+          target_user_id: user_id,
+          meta: {
+            notification_type: message_type,
+            telegram_user_id: profile.telegram_user_id,
+            success: sendResult.ok,
+            error: sendResult.ok ? null : sendResult.description,
+            idempotency_key: idempotencyKey,
+            source: 'manual'
+          }
+        });
+    }
 
     return new Response(JSON.stringify({ 
       success: sendResult.ok,
