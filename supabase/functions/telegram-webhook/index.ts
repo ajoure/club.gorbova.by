@@ -698,14 +698,15 @@ Deno.serve(async (req) => {
                 else if (fileType === 'voice') contentType = 'audio/ogg';
                 else if (fileType === 'audio') contentType = 'audio/mpeg';
                 
-                // Upload to Supabase Storage with retry (PATCH 1)
-                storageBucket = 'documents';
+                // Upload to Supabase Storage with retry (PATCH A: use telegram-media bucket)
+                storageBucket = 'telegram-media';
                 storagePath = `chat-media/${profile.user_id}/${Date.now()}_${fileName}`;
                 
                 let uploadSuccess = false;
                 let lastUploadError: any = null;
+                const MAX_RETRIES = 3;
                 
-                for (let attempt = 1; attempt <= 2 && !uploadSuccess; attempt++) {
+                for (let attempt = 1; attempt <= MAX_RETRIES && !uploadSuccess; attempt++) {
                   const { data: uploadData, error: uploadError } = await supabase.storage
                     .from(storageBucket)
                     .upload(storagePath, arrayBuffer, { 
@@ -716,17 +717,39 @@ Deno.serve(async (req) => {
                   if (uploadData && !uploadError) {
                     console.log(`[WEBHOOK] Uploaded incoming file to storage: ${storagePath}, size: ${arrayBuffer.byteLength}, attempt: ${attempt}`);
                     uploadSuccess = true;
+                    
+                    // SYSTEM ACTOR Proof: audit_logs on success
+                    try {
+                      await supabase.from('audit_logs').insert({
+                        actor_type: 'system',
+                        actor_user_id: null,
+                        actor_label: 'telegram-webhook',
+                        action: 'telegram_inbound_media_saved',
+                        meta: {
+                          message_id: msg.message_id,
+                          telegram_user_id: telegramUserId,
+                          telegram_file_id: fileId,
+                          storage_bucket: storageBucket,
+                          storage_path: storagePath,
+                          file_type: fileType,
+                          mime_type: contentType,
+                          size: arrayBuffer.byteLength
+                        }
+                      });
+                    } catch (auditErr) {
+                      console.error('[WEBHOOK] Failed to log audit success:', auditErr);
+                    }
                   } else {
                     lastUploadError = uploadError;
                     console.warn(`[WEBHOOK] Storage upload attempt ${attempt} failed:`, uploadError);
-                    if (attempt < 2) {
-                      await new Promise(r => setTimeout(r, 500)); // Wait before retry
+                    if (attempt < MAX_RETRIES) {
+                      await new Promise(r => setTimeout(r, 500 * attempt)); // Exponential backoff: 500ms, 1s, 1.5s
                     }
                   }
                 }
                 
                 if (!uploadSuccess) {
-                  console.error(`[WEBHOOK] Storage upload FAILED after retries for ${storagePath}:`, {
+                  console.error(`[WEBHOOK] Storage upload FAILED after ${MAX_RETRIES} retries for ${storagePath}:`, {
                     error: lastUploadError,
                     bucket: storageBucket,
                     size: arrayBuffer.byteLength,
@@ -740,11 +763,34 @@ Deno.serve(async (req) => {
                       action: 'MEDIA_UPLOAD_FAILED',
                       status: 'error',
                       error_message: JSON.stringify(lastUploadError),
-                      meta: { bucket: storageBucket, path: storagePath, file_type: fileType, size: arrayBuffer.byteLength, attempts: 2 }
+                      meta: { bucket: storageBucket, path: storagePath, file_type: fileType, size: arrayBuffer.byteLength, attempts: MAX_RETRIES }
                     });
                   } catch (logErr) {
                     console.error('[WEBHOOK] Failed to log upload error:', logErr);
                   }
+                  
+                  // SYSTEM ACTOR Proof: audit_logs on failure
+                  try {
+                    await supabase.from('audit_logs').insert({
+                      actor_type: 'system',
+                      actor_user_id: null,
+                      actor_label: 'telegram-webhook',
+                      action: 'telegram_inbound_media_failed',
+                      meta: {
+                        message_id: msg.message_id,
+                        telegram_user_id: telegramUserId,
+                        telegram_file_id: fileId,
+                        file_type: fileType,
+                        mime_type: contentType,
+                        size: arrayBuffer.byteLength,
+                        error: lastUploadError?.message || String(lastUploadError),
+                        attempts: MAX_RETRIES
+                      }
+                    });
+                  } catch (auditErr) {
+                    console.error('[WEBHOOK] Failed to log audit failure:', auditErr);
+                  }
+                  
                   storageBucket = null;
                   storagePath = null;
                 }

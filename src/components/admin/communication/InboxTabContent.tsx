@@ -495,9 +495,9 @@ export function InboxTabContent() {
 
   return (
     <TooltipProvider>
-      <div className="h-full flex flex-col p-4">
+      <div className="h-full flex flex-col overflow-hidden p-4">
         {/* Channel Tabs */}
-        <div className="mb-4">
+        <div className="mb-4 shrink-0">
           <Tabs value={channel} onValueChange={(v) => setChannel(v as "telegram" | "email")}>
             <TabsList className="grid w-full max-w-md grid-cols-2">
               <TabsTrigger value="telegram" className="gap-2">
@@ -522,7 +522,7 @@ export function InboxTabContent() {
             />
           </div>
         ) : (
-          <div className="flex flex-1 gap-3 min-h-0">
+          <div className="flex flex-1 gap-3 min-h-0 overflow-hidden">
             {/* Dialog List */}
             <div className={cn(
               "flex flex-col w-full md:w-[380px] md:min-w-[320px] md:max-w-[400px] shrink-0 overflow-hidden",

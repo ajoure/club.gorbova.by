@@ -33,7 +33,7 @@ export default function AdminCommunication() {
     <AdminLayout>
       <div className="h-full flex flex-col">
         {/* Header */}
-        <div className="p-4 md:p-6 border-b">
+        <div className="px-4 md:px-6 pt-4 md:pt-6 pb-4 border-b shrink-0">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center">
               <MessageCircle className="h-5 w-5 text-primary-foreground" />
@@ -70,7 +70,7 @@ export default function AdminCommunication() {
         </div>
 
         {/* Tab Content */}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden">
           {activeTab === "inbox" && <InboxTabContent />}
           {activeTab === "support" && <SupportTabContent />}
           {activeTab === "broadcasts" && <BroadcastsTabContent />}

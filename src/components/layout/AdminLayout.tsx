@@ -108,7 +108,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
           </header>
           <PullToRefresh>
             <div 
-              className="flex-1 p-4 md:p-6"
+              className="flex-1 flex flex-col overflow-hidden"
               style={{
                 paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
                 paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
