@@ -174,32 +174,93 @@ Deno.serve(async (req) => {
         meta: { attempted_by: user.id }
       });
 
-    if (outboxInsertError?.code === '23505') { // Unique constraint violation = duplicate
-      console.log(`[DEDUP] Notification ${message_type} already processed for user ${user_id} in current window`);
+    // =================================================================
+    // PATCH 10G: Умная обработка дубликатов — разрешаем retry для failed/blocked
+    // =================================================================
+    if (outboxInsertError?.code === '23505') { // Unique constraint violation
+      console.log(`[DEDUP] Checking existing outbox entry for ${idempotencyKey}`);
       
-      // Логируем SKIPPED в audit_logs
-      await supabase.from('audit_logs').insert({
-        action: 'notifications.send_skipped',
-        actor_type: 'system',
-        actor_user_id: null,
-        actor_label: 'telegram-send-notification',
-        target_user_id: user_id,
-        meta: {
-          notification_type: message_type,
-          reason: 'duplicate_idempotency_key',
-          idempotency_key: idempotencyKey,
-          window_minutes: 10,
-          attempted_by_admin: user.id
-        }
-      });
+      // Читаем существующую запись
+      const { data: existingOutbox } = await supabase
+        .from('notification_outbox')
+        .select('id, status, attempt_count, blocked_reason')
+        .eq('idempotency_key', idempotencyKey)
+        .single();
 
-      return new Response(JSON.stringify({ 
-        success: false, 
-        skipped: true,
-        error: 'Уведомление уже отправлено в последние 10 минут'
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      if (existingOutbox?.status === 'sent') {
+        // Реально отправлено — skip
+        console.log(`[DEDUP] Already sent, skipping`);
+        
+        await supabase.from('audit_logs').insert({
+          action: 'notifications.outbox_skipped',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'telegram-send-notification',
+          target_user_id: user_id,
+          meta: {
+            notification_type: message_type,
+            reason: 'already_sent',
+            idempotency_key: idempotencyKey,
+            attempted_by_admin: user.id
+          }
+        });
+
+        return new Response(JSON.stringify({ 
+          success: false, 
+          skipped: true,
+          error: 'Уведомление уже отправлено в последние 10 минут'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      
+      if (existingOutbox?.status === 'failed' || existingOutbox?.status === 'blocked') {
+        // Была ошибка — разрешаем retry
+        console.log(`[RETRY] Previous attempt was ${existingOutbox.status}, allowing retry`);
+        
+        const newAttemptCount = (existingOutbox.attempt_count || 1) + 1;
+        
+        await supabase.from('notification_outbox')
+          .update({ 
+            status: 'queued', 
+            attempt_count: newAttemptCount,
+            last_attempt_at: new Date().toISOString(),
+            meta: { 
+              retry_at: new Date().toISOString(),
+              previous_status: existingOutbox.status,
+              previous_reason: existingOutbox.blocked_reason,
+              attempted_by: user.id,
+            }
+          })
+          .eq('id', existingOutbox.id);
+
+        await supabase.from('audit_logs').insert({
+          action: 'notifications.outbox_retry',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'telegram-send-notification',
+          target_user_id: user_id,
+          meta: {
+            notification_type: message_type,
+            previous_status: existingOutbox.status,
+            attempt_count: newAttemptCount,
+            idempotency_key: idempotencyKey,
+          }
+        });
+
+        // Продолжаем отправку (не return, идём дальше)
+      } else if (existingOutbox?.status === 'queued') {
+        // В процессе — skip
+        console.log(`[DEDUP] Already queued/processing, skipping`);
+        
+        return new Response(JSON.stringify({ 
+          success: false, 
+          skipped: true,
+          error: 'Уведомление уже обрабатывается'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // =================================================================
@@ -330,6 +391,16 @@ Deno.serve(async (req) => {
 На самом деле ваша подписка в ${clubName} активна${accessEndFormatted ? ` до ${accessEndFormatted}` : ''}.
 
 Всё работает, доступ открыт! 💙`,
+
+      // PATCH 9: Шаблон для legacy карт
+      legacy_card_notification: `⚠️ Обновление платёжной системы
+
+Ваша сохранённая карта была удалена из личного кабинета.
+
+Причина: карта была привязана в старом формате и не поддерживает автоматическое продление.
+
+Пожалуйста, привяжите карту заново для продолжения автопродления:
+🔗 ${siteUrl}/settings/payment-methods`,
       
       welcome: `👋 Привет${profile.full_name ? ', ' + profile.full_name : ''}!
 
@@ -355,13 +426,32 @@ Deno.serve(async (req) => {
     });
 
     // Update notification_outbox status
+    const outboxStatus = sendResult.ok ? 'sent' : 'failed';
     await supabase.from('notification_outbox')
       .update({ 
-        status: sendResult.ok ? 'sent' : 'failed',
+        status: outboxStatus,
         sent_at: sendResult.ok ? new Date().toISOString() : null,
         blocked_reason: sendResult.ok ? null : sendResult.description,
+        last_attempt_at: new Date().toISOString(),
       })
       .eq('idempotency_key', idempotencyKey);
+
+    // =================================================================
+    // PATCH 10H: SYSTEM ACTOR audit для outbox state transitions
+    // =================================================================
+    await supabase.from('audit_logs').insert({
+      action: sendResult.ok ? 'notifications.outbox_sent' : 'notifications.outbox_failed',
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'telegram-send-notification',
+      target_user_id: user_id,
+      meta: {
+        notification_type: message_type,
+        telegram_user_id: profile.telegram_user_id,
+        idempotency_key: idempotencyKey,
+        error: sendResult.ok ? null : sendResult.description,
+      }
+    });
 
     // Log the notification in telegram_logs
     await supabase
@@ -379,7 +469,7 @@ Deno.serve(async (req) => {
         }
       });
 
-    // Audit log with SYSTEM ACTOR proof
+    // Legacy audit log (user actor for backwards compatibility)
     await supabase
       .from('audit_logs')
       .insert({
