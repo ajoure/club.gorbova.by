@@ -142,26 +142,65 @@ const EVENT_ICONS: Record<string, React.ReactNode> = {
   CONTACT_UNMERGED: <UserMinus className="w-3 h-3 text-orange-500" />,
 };
 
+// PATCH 13.6: Человеческие названия всех событий на русском
 const EVENT_LABELS: Record<string, string> = {
+  // Telegram привязка
   LINK_SUCCESS: "Привязал Telegram",
   RELINK_SUCCESS: "Перепривязал Telegram",
   UNLINK: "Отвязал Telegram",
+  link_token_created: "Создана ссылка привязки",
+  link_token_expired: "Ссылка привязки истекла",
+  user_linked: "Telegram привязан",
+  user_unlinked: "Telegram отвязан",
+  
+  // Доступ
   AUTO_GRANT: "Автоматическая выдача доступа",
   MANUAL_GRANT: "Ручная выдача доступа",
   MANUAL_EXTEND: "Продление доступа",
   AUTO_REVOKE: "Автоматический отзыв доступа",
   MANUAL_REVOKE: "Ручной отзыв доступа",
   AUTO_KICK_VIOLATOR: "Исключён из группы",
+  access_granted: "Доступ выдан",
+  access_revoked: "Доступ отозван",
+  regrant_access: "Доступ восстановлен",
+  
+  // Уведомления
   manual_notification: "Уведомление отправлено",
+  system_notification: "Системное уведомление",
+  legacy_card_notification: "Уведомление о карте",
+  
+  // Сообщения
+  ADMIN_CHAT_MESSAGE: "Сообщение от администратора",
+  ADMIN_CHAT_FILE: "Файл от администратора",
   ADMIN_DELETE_MESSAGE: "Сообщение удалено администратором",
   ADMIN_EDIT_MESSAGE: "Сообщение отредактировано",
   BOT_START: "Запустил бота",
+  
+  // Подписки
   SUBSCRIPTION_EXPIRED: "Подписка истекла",
   SUBSCRIPTION_ACTIVATED: "Подписка активирована",
+  subscription_created: "Подписка создана",
+  subscription_renewed: "Подписка продлена",
+  subscription_canceled: "Подписка отменена",
+  
+  // Платежи
   PAYMENT_SUCCESS: "Платёж успешен",
   PAYMENT_FAILED: "Платёж не прошёл",
+  payment_successful: "Платёж успешен",
+  payment_failed: "Платёж не прошёл",
+  
+  // Биллинг
+  'billing.charge_date_aligned': "Дата списания выровнена",
+  'billing.auto_charge_success': "Автосписание успешно",
+  'billing.auto_charge_failed': "Автосписание не прошло",
+  
+  // Контакты
   CONTACT_MERGED: "Объединены контакты",
   CONTACT_UNMERGED: "Контакты разъединены",
+  
+  // Карты
+  card_revoked: "Карта отвязана",
+  card_added: "Карта добавлена",
 };
 
 export function ContactTelegramChat({

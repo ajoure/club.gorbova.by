@@ -188,6 +188,25 @@ export function CreateDealFromPaymentDialog({
     return c.email || "Без имени";
   };
 
+  // PATCH 13.5: Запрет создания сделки из неуспешного платежа
+  const getPaymentStatus = async (): Promise<string | null> => {
+    if (rawSource === 'queue') {
+      const { data } = await supabase
+        .from('payment_reconcile_queue')
+        .select('status')
+        .eq('id', paymentId)
+        .single();
+      return data?.status || null;
+    } else {
+      const { data } = await supabase
+        .from('payments_v2')
+        .select('status')
+        .eq('id', paymentId)
+        .single();
+      return data?.status || null;
+    }
+  };
+
   const handleCreate = async () => {
     if (!selectedContact) {
       toast.error("Выберите контакт");
@@ -199,6 +218,14 @@ export function CreateDealFromPaymentDialog({
     }
     if (!dateRange?.from || !dateRange?.to) {
       toast.error("Выберите период");
+      return;
+    }
+
+    // PATCH 13.5: Проверка статуса платежа — нельзя создавать сделки из failed платежей
+    const failedStatuses = ['failed', 'declined', 'error', 'cancelled', 'expired', 'incomplete'];
+    const paymentStatus = await getPaymentStatus();
+    if (paymentStatus && failedStatuses.includes(paymentStatus.toLowerCase())) {
+      toast.error(`Нельзя создать сделку из неуспешного платежа (статус: ${paymentStatus})`);
       return;
     }
 
@@ -293,7 +320,7 @@ export function CreateDealFromPaymentDialog({
       // 4. Grant access if requested and not ghost
       let subscriptionId: string | null = null;
       if (grantAccess && !isGhostContact && selectedContact.user_id) {
-        // Create subscription
+        // Create subscription with auto_renew = true by default (PATCH 13.4)
         const { data: newSub, error: subError } = await supabase.from("subscriptions_v2").insert({
           user_id: selectedContact.user_id,
           order_id: newOrder.id,
@@ -303,6 +330,8 @@ export function CreateDealFromPaymentDialog({
           is_trial: false,
           access_start_at: accessStart.toISOString(),
           access_end_at: accessEnd.toISOString(),
+          next_charge_at: accessEnd.toISOString(), // PATCH 13.1: Списание = дата окончания доступа
+          auto_renew: true, // PATCH 13.4: Автопродление включено по умолчанию
         }).select().single();
 
         if (subError) throw subError;
