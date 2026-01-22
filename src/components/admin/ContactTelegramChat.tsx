@@ -142,7 +142,7 @@ const EVENT_ICONS: Record<string, React.ReactNode> = {
   CONTACT_UNMERGED: <UserMinus className="w-3 h-3 text-orange-500" />,
 };
 
-// PATCH 13.6: Человеческие названия всех событий на русском
+// PATCH 13.6+: Человеческие названия всех событий на русском
 const EVENT_LABELS: Record<string, string> = {
   // Telegram привязка
   LINK_SUCCESS: "Привязал Telegram",
@@ -182,6 +182,8 @@ const EVENT_LABELS: Record<string, string> = {
   subscription_created: "Подписка создана",
   subscription_renewed: "Подписка продлена",
   subscription_canceled: "Подписка отменена",
+  'admin.subscription.auto_renew_enabled': "Автопродление включено",
+  'admin.subscription.auto_renew_disabled': "Автопродление отключено",
   
   // Платежи
   PAYMENT_SUCCESS: "Платёж успешен",
@@ -189,18 +191,49 @@ const EVENT_LABELS: Record<string, string> = {
   payment_successful: "Платёж успешен",
   payment_failed: "Платёж не прошёл",
   
-  // Биллинг
+  // Биллинг расширенный
   'billing.charge_date_aligned': "Дата списания выровнена",
+  'billing.charge_date_auto_corrected': "Дата списания автоисправлена",
   'billing.auto_charge_success': "Автосписание успешно",
   'billing.auto_charge_failed': "Автосписание не прошло",
+  'billing.alignment_dry_run': "Проверка выравнивания биллинга",
+  'subscription.charge_cron_completed': "Автосписание завершено",
+  'subscription.charge_amount_calculated': "Сумма списания рассчитана",
+  
+  // Платёжные методы
+  'payment_methods.legacy_cards_revoked': "Устаревшие карты отозваны",
+  'payment_methods.3ds_pre_fix_revoked': "Карта отозвана (3DS)",
+  card_revoked: "Карта отвязана",
+  card_added: "Карта добавлена",
+  
+  // Telegram regrant
+  'telegram.regrant_dry_run': "Проверка восстановления доступов",
+  'telegram.regrant_wrongly_revoked_completed': "Доступы восстановлены",
+  'telegram.mass_revoke': "Массовый отзыв доступов",
+  
+  // Notification outbox
+  'notifications.send_success': "Уведомление отправлено",
+  'notifications.send_error': "Ошибка отправки уведомления",
+  'notifications.send_blocked': "Уведомление заблокировано",
+  'notifications.outbox_sent': "Уведомление доставлено",
+  'notifications.outbox_failed': "Ошибка доставки уведомления",
+  'notifications.outbox_skipped': "Уведомление пропущено (дубль)",
+  'notifications.outbox_retry': "Повторная отправка уведомления",
+  
+  // Система
+  'system.cleanup_orphaned_mappings': "Очистка orphan-записей",
+  'ghost_tokens_cleanup': "Очистка ghost-токенов",
+  'delete_ghost_orders_20260120': "Удаление ghost-заказов",
+  'rollback_ghost_orders': "Откат ghost-заказов",
   
   // Контакты
   CONTACT_MERGED: "Объединены контакты",
   CONTACT_UNMERGED: "Контакты разъединены",
   
-  // Карты
-  card_revoked: "Карта отвязана",
-  card_added: "Карта добавлена",
+  // Sync/cron
+  'bepaid_fetch_transactions_cron': "Синхронизация транзакций bePaid",
+  'payments_autolink_by_card': "Автопривязка платежей по карте",
+  'queue_materialize_to_payments_v2': "Обработка очереди платежей",
 };
 
 export function ContactTelegramChat({
