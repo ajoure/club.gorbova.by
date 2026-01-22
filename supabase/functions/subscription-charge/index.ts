@@ -47,6 +47,116 @@ function translatePaymentError(error: string): string {
   return `Ошибка платежа: ${error}`;
 }
 
+// PATCH 2: Classify failure reasons for diagnostics
+interface DiagnosticResult {
+  subscription_id: string;
+  user_id: string;
+  status: string;
+  next_charge_at: string | null;
+  access_end_at: string | null;
+  charge_attempts: number;
+  failure_reason: string;
+  payment_method_id: string | null;
+  payment_method_status: string | null;
+  has_token: boolean;
+  amount: number | null;
+  currency: string;
+  user_email: string | null;
+  user_name: string | null;
+  ready_to_charge: boolean;
+}
+
+function classifyFailureReason(sub: any): string {
+  if (!sub.payment_method_id) return 'no_card';
+  if (!sub.payment_methods?.provider_token) return 'no_token';
+  if (sub.payment_methods?.status !== 'active') return 'pm_inactive';
+  if ((sub.charge_attempts || 0) >= 3) return 'max_attempts';
+  
+  // Check cooldown (6 hours since last attempt)
+  const lastAttempt = sub.meta?.last_charge_attempt_at;
+  if (lastAttempt) {
+    const hoursSinceLastAttempt = (Date.now() - new Date(lastAttempt).getTime()) / (1000 * 60 * 60);
+    if (hoursSinceLastAttempt < 6) return 'cooldown';
+  }
+  
+  return 'ready';
+}
+
+// PATCH 4: Check correlation issues between next_charge_at and access_end_at
+interface CorrelationIssue {
+  subscription_id: string;
+  user_id: string;
+  issue_type: string;
+  next_charge_at: string | null;
+  access_end_at: string | null;
+  gap_days: number | null;
+}
+
+async function getCorrelationIssues(supabase: any): Promise<CorrelationIssue[]> {
+  const issues: CorrelationIssue[] = [];
+  const now = new Date();
+
+  // Find subscriptions without next_charge_at
+  const { data: noChargeDate } = await supabase
+    .from('subscriptions_v2')
+    .select('id, user_id, next_charge_at, access_end_at')
+    .in('status', ['active', 'trial'])
+    .eq('auto_renew', true)
+    .is('next_charge_at', null)
+    .limit(50);
+
+  for (const sub of noChargeDate || []) {
+    issues.push({
+      subscription_id: sub.id,
+      user_id: sub.user_id,
+      issue_type: 'no_next_charge_at',
+      next_charge_at: sub.next_charge_at,
+      access_end_at: sub.access_end_at,
+      gap_days: null,
+    });
+  }
+
+  // Find subscriptions where access ends before charge
+  const { data: accessBeforeCharge } = await supabase
+    .from('subscriptions_v2')
+    .select('id, user_id, next_charge_at, access_end_at')
+    .in('status', ['active', 'trial'])
+    .eq('auto_renew', true)
+    .not('next_charge_at', 'is', null)
+    .not('access_end_at', 'is', null)
+    .limit(100);
+
+  for (const sub of accessBeforeCharge || []) {
+    if (sub.access_end_at && sub.next_charge_at) {
+      const accessEnd = new Date(sub.access_end_at);
+      const chargeAt = new Date(sub.next_charge_at);
+      const gapDays = Math.round((chargeAt.getTime() - accessEnd.getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (accessEnd < chargeAt) {
+        issues.push({
+          subscription_id: sub.id,
+          user_id: sub.user_id,
+          issue_type: 'access_ends_before_charge',
+          next_charge_at: sub.next_charge_at,
+          access_end_at: sub.access_end_at,
+          gap_days: gapDays,
+        });
+      } else if (gapDays < -7) {
+        issues.push({
+          subscription_id: sub.id,
+          user_id: sub.user_id,
+          issue_type: 'large_gap',
+          next_charge_at: sub.next_charge_at,
+          access_end_at: sub.access_end_at,
+          gap_days: gapDays,
+        });
+      }
+    }
+  }
+
+  return issues;
+}
+
 // Send email notification for successful renewal
 async function sendRenewalSuccessEmail(
   supabase: any,
@@ -58,7 +168,6 @@ async function sendRenewalSuccessEmail(
   newExpiryDate: Date
 ): Promise<void> {
   try {
-    // Get user email
     const { data: profile } = await supabase
       .from('profiles')
       .select('email')
@@ -131,7 +240,6 @@ async function sendPaymentFailureEmail(
   attemptsLeft: number
 ): Promise<void> {
   try {
-    // Get user email
     const { data: profile } = await supabase
       .from('profiles')
       .select('email')
@@ -168,7 +276,7 @@ async function sendPaymentFailureEmail(
         </ul>
         
         ${attemptsLeft > 0 
-          ? `<p style="color: #d97706;">⚠️ Мы повторим попытку списания через 24 часа. Осталось попыток: ${attemptsLeft}</p>`
+          ? `<p style="color: #d97706;">⚠️ Мы повторим попытку списания через 12 часов. Осталось попыток: ${attemptsLeft}</p>`
           : `<p style="color: #dc2626;">❗ Это была последняя попытка. Доступ будет закрыт.</p>`
         }
         
@@ -307,7 +415,7 @@ ${userName}, к сожалению, не удалось продлить под�
 • Убедитесь, что карта не заблокирована
 • Попробуйте оплатить другой картой
 
-⚠️ Мы повторим попытку списания через 24 часа.
+⚠️ Мы повторим попытку списания через 12 часов.
 
 🔗 [Обновить карту](https://club.gorbova.by/settings/payment-methods)`;
 
@@ -331,6 +439,16 @@ interface ChargeResult {
   success: boolean;
   error?: string;
   payment_id?: string;
+  amount_source?: string;
+}
+
+// PATCH 3: Check idempotency (6-hour cooldown)
+function isInCooldown(sub: any): boolean {
+  const lastAttempt = sub.meta?.last_charge_attempt_at;
+  if (!lastAttempt) return false;
+  
+  const hoursSinceLastAttempt = (Date.now() - new Date(lastAttempt).getTime()) / (1000 * 60 * 60);
+  return hoursSinceLastAttempt < 6;
 }
 
 // Attempt to charge a subscription using saved payment token
@@ -341,13 +459,16 @@ async function chargeSubscription(
 ): Promise<ChargeResult> {
   const { id, user_id, payment_token, payment_method_id, tariffs, next_charge_at, is_trial, order_id, tariff_id, meta: subMeta } = subscription;
   
-  // === CRITICAL FIX: Only charge if payment_method is linked and active ===
-  // This prevents "ghost token" charges where user doesn't see/control the card
+  // PATCH 3: Idempotency check - skip if in cooldown
+  if (isInCooldown(subscription)) {
+    console.log(`Subscription ${id}: Cooldown active (last attempt < 6h ago), skipping`);
+    return { subscription_id: id, success: false, error: 'Cooldown: retry too soon' };
+  }
   
+  // === CRITICAL FIX: Only charge if payment_method is linked and active ===
   if (!payment_method_id) {
     console.log(`Subscription ${id}: No payment_method_id linked, skipping charge`);
     
-    // Send notification to user asking to link a card
     try {
       await supabase.functions.invoke('telegram-send-notification', {
         body: {
@@ -379,7 +500,6 @@ async function chargeSubscription(
   if (paymentMethod.status !== 'active') {
     console.log(`Subscription ${id}: payment_method ${payment_method_id} is ${paymentMethod.status}, not active`);
     
-    // Send notification to user
     try {
       await supabase.functions.invoke('telegram-send-notification', {
         body: {
@@ -396,7 +516,6 @@ async function chargeSubscription(
     return { subscription_id: id, success: false, error: `Payment method status: ${paymentMethod.status}` };
   }
   
-  // Use the token from payment_method (trusted source)
   const effectiveToken = paymentMethod.provider_token;
   
   if (!effectiveToken) {
@@ -404,13 +523,11 @@ async function chargeSubscription(
     return { subscription_id: id, success: false, error: 'Payment method has no token' };
   }
 
-  // Get tariff price
   const tariff = tariffs;
   if (!tariff) {
     return { subscription_id: id, success: false, error: 'No tariff linked' };
   }
 
-  // Get order info to find the original offer
   const { data: orderData } = await supabase
     .from('orders_v2')
     .select('id, meta, customer_email')
@@ -426,14 +543,13 @@ async function chargeSubscription(
   let currency = 'BYN';
   let fullPaymentOfferId: string | null = null;
   let fullPaymentGcOfferId: string | null = null;
+  let amountSource: string = 'unknown'; // PATCH 5: Track amount source
   
   // For trial subscriptions, get the linked auto_charge_offer_id and its amount
   if (is_trial) {
-    // First check if we have auto_charge_offer_id in order meta or fetch from trial offer
     let autoChargeOfferId = orderMeta.auto_charge_offer_id || subMeta?.auto_charge_offer_id;
     
     if (!autoChargeOfferId) {
-      // Find the trial offer to get auto_charge_offer_id
       const { data: trialOffer } = await supabase
         .from('tariff_offers')
         .select('auto_charge_offer_id, auto_charge_amount')
@@ -445,14 +561,13 @@ async function chargeSubscription(
       
       autoChargeOfferId = trialOffer?.auto_charge_offer_id;
       
-      // Fallback to deprecated auto_charge_amount if no linked offer
       if (!autoChargeOfferId && trialOffer?.auto_charge_amount) {
         amount = Number(trialOffer.auto_charge_amount);
+        amountSource = 'trial_auto_charge_amount';
         console.log(`Trial subscription ${id}: using legacy auto_charge_amount ${amount}`);
       }
     }
     
-    // If we have auto_charge_offer_id, get the amount and GC offer from that offer
     if (autoChargeOfferId) {
       const { data: chargeOffer } = await supabase
         .from('tariff_offers')
@@ -464,11 +579,12 @@ async function chargeSubscription(
         amount = Number(chargeOffer.amount);
         fullPaymentOfferId = chargeOffer.id;
         fullPaymentGcOfferId = chargeOffer.getcourse_offer_id;
+        amountSource = 'auto_charge_offer';
         console.log(`Trial subscription ${id}: using linked offer "${chargeOffer.button_label}" with amount ${amount}, GC offer: ${fullPaymentGcOfferId}`);
       }
     }
     
-    // Final fallback: find primary pay_now offer for this tariff
+    // Final fallback
     if (!amount || amount <= 0) {
       const { data: fallbackOffer } = await supabase
         .from('tariff_offers')
@@ -484,15 +600,16 @@ async function chargeSubscription(
         amount = Number(fallbackOffer.amount);
         fullPaymentOfferId = fallbackOffer.id;
         fullPaymentGcOfferId = fallbackOffer.getcourse_offer_id;
+        amountSource = 'fallback_pay_now_offer';
         console.log(`Trial subscription ${id}: using fallback primary offer with amount ${amount}`);
       } else {
-        // Last resort: use tariff original_price
         amount = tariff.original_price || 0;
+        amountSource = 'tariff_original_price';
         console.log(`Trial subscription ${id}: using tariff original_price ${amount}`);
       }
     }
   } else {
-    // Regular subscription - get current price from tariff_prices
+    // Regular subscription
     const { data: priceData } = await supabase
       .from('tariff_prices')
       .select('price, final_price, currency')
@@ -508,13 +625,43 @@ async function chargeSubscription(
 
     amount = priceData.final_price || priceData.price;
     currency = priceData.currency || 'BYN';
+    amountSource = 'tariff_price';
   }
 
   if (!amount || amount <= 0) {
     return { subscription_id: id, success: false, error: 'Invalid charge amount' };
   }
 
-  console.log(`Charging subscription ${id}: ${amount} ${currency} (is_trial: ${is_trial})`);
+  // PATCH 5: Log amount calculation
+  await supabase.from('audit_logs').insert({
+    action: 'subscription.charge_amount_calculated',
+    actor_type: 'system',
+    actor_user_id: null,
+    actor_label: 'subscription-charge',
+    target_user_id: user_id,
+    meta: {
+      subscription_id: id,
+      amount,
+      currency,
+      source: amountSource,
+      tariff_id,
+      offer_id: fullPaymentOfferId,
+    }
+  });
+
+  console.log(`Charging subscription ${id}: ${amount} ${currency} (is_trial: ${is_trial}, source: ${amountSource})`);
+
+  // PATCH 3: Record attempt timestamp for idempotency
+  await supabase
+    .from('subscriptions_v2')
+    .update({
+      meta: {
+        ...(subMeta || {}),
+        last_charge_attempt_at: new Date().toISOString(),
+        last_charge_billing_period: next_charge_at,
+      }
+    })
+    .eq('id', id);
 
   const { data: payment, error: paymentError } = await supabase
     .from('payments_v2')
@@ -525,13 +672,14 @@ async function chargeSubscription(
       currency,
       status: 'processing',
       provider: 'bepaid',
-      payment_token: effectiveToken, // Use token from verified payment_method
+      payment_token: effectiveToken,
       is_recurring: true,
       installment_number: (subscription.charge_attempts || 0) + 1,
       meta: {
         is_trial_conversion: is_trial,
         full_payment_offer_id: fullPaymentOfferId,
         full_payment_gc_offer_id: fullPaymentGcOfferId,
+        amount_source: amountSource,
       },
     })
     .select()
@@ -551,18 +699,17 @@ async function chargeSubscription(
       throw new Error('bePaid not configured');
     }
 
-    // Use bePaid Gateway API for token charges
     const bepaidAuth = btoa(`${shopId}:${secretKey}`);
 
     const chargePayload = {
       request: {
-        amount: Math.round(amount * 100), // Convert to cents
+        amount: Math.round(amount * 100),
         currency,
         description: `Subscription renewal - ${tariff.name}`,
         tracking_id: payment.id,
         test: testMode,
         credit_card: {
-          token: effectiveToken, // Use token from verified payment_method
+          token: effectiveToken,
         },
         additional_data: {
           contract: ["recurring"],
@@ -572,7 +719,6 @@ async function chargeSubscription(
 
     console.log('Sending recurring charge to bePaid Gateway');
 
-    // Charge using token via Gateway API
     const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
       method: 'POST',
       headers: {
@@ -588,7 +734,6 @@ async function chargeSubscription(
     console.log('bePaid charge result:', chargeResult);
 
     if (chargeResult.transaction?.status === 'successful') {
-      // Update payment
       await supabase
         .from('payments_v2')
         .update({
@@ -602,7 +747,6 @@ async function chargeSubscription(
         })
         .eq('id', payment.id);
 
-      // Schedule receipt fetch in background (fire and forget)
       fetch(
         `${Deno.env.get('SUPABASE_URL')}/functions/v1/bepaid-fetch-receipt`,
         {
@@ -620,7 +764,7 @@ async function chargeSubscription(
       newEndDate.setDate(newEndDate.getDate() + (tariff.access_days || 30));
 
       const nextChargeDate = new Date(newEndDate);
-      nextChargeDate.setDate(nextChargeDate.getDate() - 3); // Charge 3 days before expiry
+      nextChargeDate.setDate(nextChargeDate.getDate() - 3);
 
       await supabase
         .from('subscriptions_v2')
@@ -630,6 +774,11 @@ async function chargeSubscription(
           access_end_at: newEndDate.toISOString(),
           next_charge_at: nextChargeDate.toISOString(),
           charge_attempts: 0,
+          meta: {
+            ...(subMeta || {}),
+            last_charge_attempt_at: new Date().toISOString(),
+            last_successful_charge_at: new Date().toISOString(),
+          }
         })
         .eq('id', id);
 
@@ -637,7 +786,6 @@ async function chargeSubscription(
       if (is_trial && fullPaymentGcOfferId && orderData.customer_email) {
         console.log(`Sending trial conversion to GetCourse: offer=${fullPaymentGcOfferId}`);
         
-        // Get user profile for name
         const { data: profile } = await supabase
           .from('profiles')
           .select('first_name, last_name, phone')
@@ -698,7 +846,7 @@ async function chargeSubscription(
         },
       });
 
-      // Send success notifications (Telegram + Email to customer)
+      // Send success notifications
       await sendRenewalSuccessTelegram(
         supabase,
         user_id,
@@ -718,7 +866,7 @@ async function chargeSubscription(
         newEndDate
       );
 
-      // Notify admins about successful renewal
+      // Notify admins
       try {
         const { data: profile } = await supabase
           .from('profiles')
@@ -762,7 +910,7 @@ async function chargeSubscription(
         console.error('Admin notification error (non-critical):', adminNotifyError);
       }
 
-      return { subscription_id: id, success: true, payment_id: payment.id };
+      return { subscription_id: id, success: true, payment_id: payment.id, amount_source: amountSource };
     } else {
       // Payment failed
       const attempts = (subscription.charge_attempts || 0) + 1;
@@ -778,39 +926,66 @@ async function chargeSubscription(
         })
         .eq('id', payment.id);
 
-      // Update subscription status
+      // PATCH 6: Update subscription status - NO early revoke
       if (attempts >= maxAttempts) {
-        await supabase
-          .from('subscriptions_v2')
-          .update({
-            status: 'expired',
-            charge_attempts: attempts,
-          })
-          .eq('id', id);
+        // Check if access has also expired before revoking
+        const accessEndAt = new Date(subscription.access_end_at);
+        const now = new Date();
+        
+        if (accessEndAt < now) {
+          // Both max attempts reached AND access expired - revoke
+          await supabase
+            .from('subscriptions_v2')
+            .update({
+              status: 'expired',
+              charge_attempts: attempts,
+              meta: {
+                ...(subMeta || {}),
+                last_charge_attempt_at: new Date().toISOString(),
+                last_charge_error: errorMsg,
+              }
+            })
+            .eq('id', id);
 
-        // Revoke Telegram access
-        await supabase.functions.invoke('telegram-revoke-access', {
-          body: {
-            user_id,
-            reason: 'payment_failed_max_attempts',
-          },
-        });
+          await supabase.functions.invoke('telegram-revoke-access', {
+            body: {
+              user_id,
+              reason: 'payment_failed_max_attempts',
+            },
+          });
+        } else {
+          // Max attempts but access still valid - just mark past_due, don't revoke yet
+          await supabase
+            .from('subscriptions_v2')
+            .update({
+              status: 'past_due',
+              charge_attempts: attempts,
+              meta: {
+                ...(subMeta || {}),
+                last_charge_attempt_at: new Date().toISOString(),
+                last_charge_error: errorMsg,
+                max_attempts_reached: true,
+              }
+            })
+            .eq('id', id);
+        }
       } else {
-        // Schedule retry in 24 hours
-        const retryDate = new Date();
-        retryDate.setHours(retryDate.getHours() + 24);
-
+        // Not at max attempts yet - schedule next try (next cron run in ~12h)
         await supabase
           .from('subscriptions_v2')
           .update({
             status: 'past_due',
             charge_attempts: attempts,
-            next_charge_at: retryDate.toISOString(),
+            meta: {
+              ...(subMeta || {}),
+              last_charge_attempt_at: new Date().toISOString(),
+              last_charge_error: errorMsg,
+            }
           })
           .eq('id', id);
       }
 
-      // Send failure notifications (Telegram + Email)
+      // Send failure notifications
       const attemptsLeft = maxAttempts - attempts;
       await sendPaymentFailureNotification(
         supabase,
@@ -834,6 +1009,7 @@ async function chargeSubscription(
         subscription_id: id, 
         success: false, 
         error: errorMsg,
+        amount_source: amountSource,
       };
     }
   } catch (err) {
@@ -865,23 +1041,102 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const now = new Date().toISOString();
+    // Parse request body
+    const body = await req.json().catch(() => ({}));
+    const mode = body.mode || 'execute'; // 'dry_run' | 'execute'
+    const source = body.source || 'manual'; // 'cron-morning' | 'cron-evening' | 'manual'
 
-    console.log('Starting subscription charge job...');
+    const now = new Date();
+    const nowIso = now.toISOString();
 
-    // Find subscriptions that need to be charged
-    // next_charge_at <= now AND status IN (active, trial, past_due) AND payment_method_id IS NOT NULL
-    // CRITICAL: Only charge subscriptions with linked payment_method (user can see/control the card)
+    console.log(`Starting subscription charge job... Mode: ${mode}, Source: ${source}`);
+
+    // PATCH 2: DRY-RUN mode - only diagnostics, no charges
+    if (mode === 'dry_run') {
+      // Get due subscriptions with diagnostic info
+      const { data: dueSubscriptions } = await supabase
+        .from('subscriptions_v2')
+        .select(`
+          id,
+          user_id,
+          status,
+          next_charge_at,
+          access_end_at,
+          charge_attempts,
+          payment_method_id,
+          tariff_id,
+          meta,
+          payment_methods (
+            id,
+            status,
+            provider_token,
+            last4,
+            brand
+          ),
+          profiles!subscriptions_v2_user_id_fkey (
+            email,
+            full_name
+          )
+        `)
+        .lte('next_charge_at', nowIso)
+        .in('status', ['active', 'trial', 'past_due'])
+        .lt('charge_attempts', 3)
+        .limit(100);
+
+      const diagnostics: DiagnosticResult[] = (dueSubscriptions || []).map((sub: any) => ({
+        subscription_id: sub.id,
+        user_id: sub.user_id,
+        status: sub.status,
+        next_charge_at: sub.next_charge_at,
+        access_end_at: sub.access_end_at,
+        charge_attempts: sub.charge_attempts || 0,
+        failure_reason: classifyFailureReason(sub),
+        payment_method_id: sub.payment_method_id,
+        payment_method_status: sub.payment_methods?.status || null,
+        has_token: !!sub.payment_methods?.provider_token,
+        amount: null, // Would need price lookup
+        currency: 'BYN',
+        user_email: sub.profiles?.email || null,
+        user_name: sub.profiles?.full_name || null,
+        ready_to_charge: classifyFailureReason(sub) === 'ready',
+      }));
+
+      // PATCH 4: Get correlation issues
+      const correlationIssues = await getCorrelationIssues(supabase);
+
+      const summary = {
+        mode: 'dry_run',
+        run_at: nowIso,
+        source,
+        total_due: diagnostics.length,
+        ready_to_charge: diagnostics.filter(d => d.ready_to_charge).length,
+        no_card: diagnostics.filter(d => d.failure_reason === 'no_card').length,
+        no_token: diagnostics.filter(d => d.failure_reason === 'no_token').length,
+        pm_inactive: diagnostics.filter(d => d.failure_reason === 'pm_inactive').length,
+        max_attempts: diagnostics.filter(d => d.failure_reason === 'max_attempts').length,
+        cooldown: diagnostics.filter(d => d.failure_reason === 'cooldown').length,
+        diagnostics,
+        correlation_issues: correlationIssues,
+      };
+
+      return new Response(JSON.stringify(summary), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // EXECUTE mode - actually charge subscriptions
+    // Find subscriptions that need to be charged (with payment_method linked)
     const { data: subscriptions, error: queryError } = await supabase
       .from('subscriptions_v2')
       .select(`
         *,
         tariffs(id, name, access_days)
       `)
-      .lte('next_charge_at', now)
+      .lte('next_charge_at', nowIso)
       .in('status', ['active', 'trial', 'past_due'])
       .not('payment_method_id', 'is', null)
-      .lt('charge_attempts', 3);
+      .lt('charge_attempts', 3)
+      .limit(50); // STOP-condition: max 50 per run
 
     if (queryError) {
       console.error('Query error:', queryError);
@@ -890,7 +1145,7 @@ Deno.serve(async (req) => {
 
     console.log(`Found ${subscriptions?.length || 0} subscriptions to charge`);
 
-    // Get bePaid config from integration_instances
+    // Get bePaid config
     const { data: bepaidInstance } = await supabase
       .from('integration_instances')
       .select('config')
@@ -906,11 +1161,10 @@ Deno.serve(async (req) => {
     for (const sub of subscriptions || []) {
       const result = await chargeSubscription(supabase, sub, bepaidConfig);
       results.push(result);
-      console.log(`Subscription ${sub.id}: ${result.success ? 'charged' : 'failed'}`);
+      console.log(`Subscription ${sub.id}: ${result.success ? 'charged' : 'failed'} (${result.error || 'ok'})`);
     }
 
     // Also check for trial subscriptions that need to auto-charge
-    // Only those with linked payment_method
     const { data: trialEnding } = await supabase
       .from('subscriptions_v2')
       .select(`
@@ -919,18 +1173,18 @@ Deno.serve(async (req) => {
       `)
       .eq('status', 'trial')
       .eq('is_trial', true)
-      .lte('trial_end_at', now)
-      .not('payment_method_id', 'is', null);
+      .lte('trial_end_at', nowIso)
+      .not('payment_method_id', 'is', null)
+      .limit(50);
 
     for (const sub of trialEnding || []) {
       const tariff = sub.tariffs as any;
       
       if (tariff?.trial_auto_charge && sub.payment_method_id) {
-        // Set next_charge_at to trigger immediate charge
         await supabase
           .from('subscriptions_v2')
           .update({
-            next_charge_at: now,
+            next_charge_at: nowIso,
             is_trial: false,
           })
           .eq('id', sub.id);
@@ -939,37 +1193,60 @@ Deno.serve(async (req) => {
         results.push(result);
         console.log(`Trial auto-charge ${sub.id}: ${result.success ? 'charged' : 'failed'}`);
       } else {
-        // No auto-charge, expire the subscription
-        await supabase
-          .from('subscriptions_v2')
-          .update({
-            status: 'expired',
-            is_trial: false,
-          })
-          .eq('id', sub.id);
+        // No auto-charge, expire the subscription only if access_end_at has passed
+        const accessEndAt = new Date(sub.access_end_at);
+        if (accessEndAt < now) {
+          await supabase
+            .from('subscriptions_v2')
+            .update({
+              status: 'expired',
+              is_trial: false,
+            })
+            .eq('id', sub.id);
 
-        // Revoke access
-        await supabase.functions.invoke('telegram-revoke-access', {
-          body: {
-            user_id: sub.user_id,
-            reason: 'trial_ended_no_payment',
-          },
-        });
+          await supabase.functions.invoke('telegram-revoke-access', {
+            body: {
+              user_id: sub.user_id,
+              reason: 'trial_ended_no_payment',
+            },
+          });
+        }
 
         results.push({ 
           subscription_id: sub.id, 
           success: false, 
-          error: 'Trial ended, no auto-charge',
+          error: 'Trial ended, no auto-charge or no card',
         });
       }
     }
 
     const summary = {
+      mode: 'execute',
+      source,
+      run_at: nowIso,
       total: results.length,
       success: results.filter(r => r.success).length,
       failed: results.filter(r => !r.success).length,
+      no_card: results.filter(r => r.error?.includes('No payment')).length,
       results,
     };
+
+    // PATCH 7: SYSTEM ACTOR audit log
+    await supabase.from('audit_logs').insert({
+      action: 'subscription.charge_cron_completed',
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'subscription-charge',
+      meta: {
+        source,
+        mode,
+        run_at: nowIso,
+        total_processed: results.length,
+        success_count: results.filter(r => r.success).length,
+        failed_count: results.filter(r => !r.success).length,
+        no_card_count: results.filter(r => r.error?.includes('No payment')).length,
+      }
+    });
 
     console.log('Subscription charge job completed:', summary);
 

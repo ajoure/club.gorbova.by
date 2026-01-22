@@ -13,6 +13,7 @@ interface ReminderResult {
   telegram_sent: boolean;
   email_sent: boolean;
   error?: string;
+  reminder_type?: string;
 }
 
 // Format currency
@@ -161,6 +162,87 @@ ${userName}, это последнее напоминание.
   }
 }
 
+// PATCH 5: Send "No Card" warning
+async function sendNoCardWarning(
+  supabase: any,
+  userId: string,
+  productName: string,
+  accessEndAt: string,
+  daysLeft: number
+): Promise<boolean> {
+  try {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('telegram_user_id, telegram_link_status, full_name, email')
+      .eq('user_id', userId)
+      .single();
+
+    if (!profile?.telegram_user_id || profile.telegram_link_status !== 'active') {
+      return false;
+    }
+
+    const { data: linkBot } = await supabase
+      .from('telegram_bots')
+      .select('token')
+      .eq('is_link_bot', true)
+      .eq('is_active', true)
+      .limit(1)
+      .single();
+
+    if (!linkBot?.token) return false;
+
+    const userName = profile.full_name?.split(' ')[0] || 'Клиент';
+    const formattedDate = new Date(accessEndAt).toLocaleDateString('ru-RU', { 
+      day: 'numeric', 
+      month: 'long' 
+    });
+
+    const message = `⚠️ *Карта не привязана*
+
+${userName}, через ${daysLeft} ${getDaysWord(daysLeft)} заканчивается ваша подписка на *${productName}*.
+
+Без привязанной карты:
+❌ Списание не пройдёт
+❌ Доступ не продлится
+
+❗ *При повторном вступлении цена будет выше!*
+
+📆 Доступ до: ${formattedDate}
+
+Уделите 1 минуту сейчас — привяжите карту:
+🔗 [Привязать карту](https://club.gorbova.by/settings/payment-methods)`;
+
+    await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: profile.telegram_user_id,
+        text: message,
+        parse_mode: 'Markdown',
+      }),
+    });
+
+    // Log no-card warning sent
+    await supabase.from('telegram_logs').insert({
+      event_type: 'subscription_no_card_warning',
+      user_id: userId,
+      status: 'success',
+      payload: { days_left: daysLeft, product: productName },
+    });
+
+    return true;
+  } catch (err) {
+    console.error('Failed to send no-card warning:', err);
+    return false;
+  }
+}
+
+function getDaysWord(days: number): string {
+  if (days === 1) return 'день';
+  if (days >= 2 && days <= 4) return 'дня';
+  return 'дней';
+}
+
 // Send email reminder
 async function sendEmailReminder(
   supabase: any,
@@ -281,7 +363,6 @@ async function sendEmailReminder(
 
     if (!subject) return false;
 
-    // Send email via send-email function
     const { error } = await supabase.functions.invoke('send-email', {
       body: {
         to: email,
@@ -306,7 +387,7 @@ async function sendEmailReminder(
 async function wasReminderSentToday(
   supabase: any,
   userId: string,
-  daysLeft: number
+  eventType: string
 ): Promise<boolean> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -315,7 +396,7 @@ async function wasReminderSentToday(
     .from('telegram_logs')
     .select('id')
     .eq('user_id', userId)
-    .eq('event_type', `subscription_reminder_${daysLeft}d`)
+    .eq('event_type', eventType)
     .gte('created_at', today.toISOString())
     .limit(1);
 
@@ -332,12 +413,15 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log('Starting subscription renewal reminders job...');
+    const body = await req.json().catch(() => ({}));
+    const source = body.source || 'manual';
+
+    console.log(`Starting subscription renewal reminders job... Source: ${source}`);
 
     const now = new Date();
     const results: ReminderResult[] = [];
 
-    // Find subscriptions expiring in 7, 3, or 1 days
+    // ============ STANDARD REMINDERS (7, 3, 1 days by access_end_at) ============
     for (const daysLeft of [7, 3, 1]) {
       const targetDate = new Date(now);
       targetDate.setDate(targetDate.getDate() + daysLeft);
@@ -356,6 +440,7 @@ Deno.serve(async (req) => {
           access_end_at,
           payment_token,
           tariff_id,
+          payment_method_id,
           tariffs (
             id,
             name,
@@ -382,7 +467,7 @@ Deno.serve(async (req) => {
         const userId = sub.user_id;
         
         // Check if already sent today
-        if (await wasReminderSentToday(supabase, userId, daysLeft)) {
+        if (await wasReminderSentToday(supabase, userId, `subscription_reminder_${daysLeft}d`)) {
           console.log(`Reminder already sent today for user ${userId}, skipping`);
           continue;
         }
@@ -394,7 +479,6 @@ Deno.serve(async (req) => {
           .eq('user_id', userId)
           .single();
 
-        // Get user email from auth if not in profile
         let userEmail = profile?.email;
         if (!userEmail) {
           const { data: authUser } = await supabase.auth.admin.getUserById(userId);
@@ -442,6 +526,7 @@ Deno.serve(async (req) => {
           days_until_expiry: daysLeft,
           telegram_sent: false,
           email_sent: false,
+          reminder_type: 'expiry_reminder',
         };
 
         // Send Telegram reminder
@@ -478,12 +563,89 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ============ PATCH 5: NO-CARD WARNING ============
+    // Find subscriptions WITHOUT card, access expiring within 7 days, auto_renew=true
+    console.log('Checking for no-card warnings...');
+    
+    const sevenDaysFromNow = new Date(now);
+    sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+
+    const { data: noCardSubs } = await supabase
+      .from('subscriptions_v2')
+      .select(`
+        id,
+        user_id,
+        access_end_at,
+        tariff_id,
+        tariffs (
+          name,
+          products_v2 (name)
+        )
+      `)
+      .eq('auto_renew', true)
+      .in('status', ['active', 'trial'])
+      .is('payment_method_id', null)
+      .lte('access_end_at', sevenDaysFromNow.toISOString())
+      .gte('access_end_at', now.toISOString())
+      .limit(100);
+
+    console.log(`Found ${noCardSubs?.length || 0} subscriptions without card expiring within 7 days`);
+
+    for (const sub of noCardSubs || []) {
+      const userId = sub.user_id;
+
+      // Check if already sent today
+      if (await wasReminderSentToday(supabase, userId, 'subscription_no_card_warning')) {
+        console.log(`No-card warning already sent today for user ${userId}, skipping`);
+        continue;
+      }
+
+      const tariff = sub.tariffs as any;
+      const product = tariff?.products_v2 as any;
+      const productName = product?.name || tariff?.name || 'Подписка';
+
+      const accessEndAt = new Date(sub.access_end_at);
+      const daysLeft = Math.ceil((accessEndAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+      const sent = await sendNoCardWarning(supabase, userId, productName, sub.access_end_at, daysLeft);
+
+      results.push({
+        user_id: userId,
+        subscription_id: sub.id,
+        days_until_expiry: daysLeft,
+        telegram_sent: sent,
+        email_sent: false,
+        reminder_type: 'no_card_warning',
+      });
+
+      console.log(`No-card warning for user ${userId}: sent=${sent}`);
+    }
+
     const summary = {
+      source,
+      run_at: now.toISOString(),
       total: results.length,
+      expiry_reminders: results.filter(r => r.reminder_type === 'expiry_reminder').length,
+      no_card_warnings: results.filter(r => r.reminder_type === 'no_card_warning').length,
       telegram_sent: results.filter(r => r.telegram_sent).length,
       email_sent: results.filter(r => r.email_sent).length,
       results,
     };
+
+    // PATCH 7: SYSTEM ACTOR audit log
+    await supabase.from('audit_logs').insert({
+      action: 'subscription.reminders_cron_completed',
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'subscription-renewal-reminders',
+      meta: {
+        source,
+        run_at: now.toISOString(),
+        total_processed: results.length,
+        expiry_reminders_sent: results.filter(r => r.reminder_type === 'expiry_reminder' && r.telegram_sent).length,
+        no_card_warnings_sent: results.filter(r => r.reminder_type === 'no_card_warning' && r.telegram_sent).length,
+      }
+    });
 
     console.log('Subscription renewal reminders job completed:', summary);
 
