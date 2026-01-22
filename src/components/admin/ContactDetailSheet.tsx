@@ -2045,8 +2045,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                           )}
                           {sub.next_charge_at && !isCanceled && (
                             <div className="col-span-2">
-                              <span className="text-muted-foreground">Списание: </span>
-                              <span>{format(new Date(sub.next_charge_at), "dd.MM.yy")}</span>
+                              <span className="text-muted-foreground">Попытка списания: </span>
+                              <span className="text-muted-foreground">{format(new Date(sub.next_charge_at), "dd.MM.yy")}</span>
                             </div>
                           )}
                         </div>

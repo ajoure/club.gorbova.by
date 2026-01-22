@@ -3054,11 +3054,13 @@ export type Database = {
       }
       notification_outbox: {
         Row: {
+          attempt_count: number | null
           blocked_reason: string | null
           channel: string
           created_at: string
           id: string
           idempotency_key: string
+          last_attempt_at: string | null
           message_type: string
           meta: Json | null
           sent_at: string | null
@@ -3067,11 +3069,13 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          attempt_count?: number | null
           blocked_reason?: string | null
           channel?: string
           created_at?: string
           id?: string
           idempotency_key: string
+          last_attempt_at?: string | null
           message_type: string
           meta?: Json | null
           sent_at?: string | null
@@ -3080,11 +3084,13 @@ export type Database = {
           user_id: string
         }
         Update: {
+          attempt_count?: number | null
           blocked_reason?: string | null
           channel?: string
           created_at?: string
           id?: string
           idempotency_key?: string
+          last_attempt_at?: string | null
           message_type?: string
           meta?: Json | null
           sent_at?: string | null
@@ -6906,6 +6912,34 @@ export type Database = {
           access_samples: string[]
           grant_samples: string[]
           grants_count: number
+        }[]
+      }
+      find_false_revoke_notifications: {
+        Args: { since_timestamp: string }
+        Returns: {
+          access_end_at: string
+          email: string
+          full_name: string
+          last_notification_at: string
+          notification_count: number
+          sub_status: string
+          telegram_user_id: number
+          user_id: string
+        }[]
+      }
+      find_wrongly_revoked_users: {
+        Args: never
+        Returns: {
+          access_end_at: string
+          access_status: string
+          club_id: string
+          email: string
+          full_name: string
+          in_chat: boolean
+          profile_id: string
+          status: string
+          telegram_user_id: number
+          user_id: string
         }[]
       }
       generate_order_number: { Args: never; Returns: string }

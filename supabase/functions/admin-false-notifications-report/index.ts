@@ -67,97 +67,49 @@ Deno.serve(async (req) => {
     console.log(`[admin-false-notifications-report] mode=${mode}, since_hours=${since_hours}, batch_size=${batch_size}`);
 
     // =================================================================
-    // Find false access_revoked notifications
+    // PATCH 10J: Оптимизированный поиск через RPC (проверка на момент уведомления)
     // =================================================================
     const sinceDate = new Date(Date.now() - since_hours * 60 * 60 * 1000).toISOString();
     
-    // Get all access_revoked notifications in the period
-    const { data: notifications, error: notifError } = await supabase
+    // Use optimized RPC that does the JOIN and checks status AT TIME of notification
+    const { data: incidents, error: rpcError } = await supabase.rpc(
+      'find_false_revoke_notifications',
+      { since_timestamp: sinceDate }
+    );
+
+    if (rpcError) {
+      console.error('RPC error:', rpcError);
+      throw new Error(`Failed to fetch incidents: ${rpcError.message}`);
+    }
+
+    // Also get total count of revoked notifications for stats
+    const { data: allRevoked } = await supabase
       .from('telegram_logs')
-      .select('user_id, created_at, meta')
+      .select('id', { count: 'exact', head: true })
       .eq('action', 'manual_notification')
       .eq('status', 'success')
-      .gte('created_at', sinceDate)
-      .order('created_at', { ascending: false });
+      .gte('created_at', sinceDate);
 
-    if (notifError) {
-      throw new Error(`Failed to fetch notifications: ${notifError.message}`);
-    }
+    const totalRevokedCount = allRevoked?.length || 0;
 
-    // Filter to access_revoked only
-    const revokedNotifications = notifications?.filter(n => 
-      (n.meta as any)?.message_type === 'access_revoked'
-    ) || [];
-
-    // Group by user_id
-    const userNotifications = new Map<string, { count: number; last_at: string }>();
-    for (const n of revokedNotifications) {
-      const userId = n.user_id;
-      const existing = userNotifications.get(userId);
-      if (existing) {
-        existing.count++;
-        if (n.created_at > existing.last_at) {
-          existing.last_at = n.created_at;
-        }
-      } else {
-        userNotifications.set(userId, { count: 1, last_at: n.created_at });
-      }
-    }
-
-    // Check each user's subscription status at time of notification
-    const incidents: FalseNotificationIncident[] = [];
-    
-    for (const [userId, info] of userNotifications) {
-      // Get profile
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('full_name, email, telegram_user_id')
-        .eq('user_id', userId)
-        .single();
-
-      // Check if they had active subscription
-      const { data: activeSub } = await supabase
-        .from('subscriptions_v2')
-        .select('id, status, access_end_at')
-        .eq('user_id', userId)
-        .in('status', ['active', 'trial'])
-        .gt('access_end_at', new Date().toISOString())
-        .order('access_end_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      // If they have active subscription, this was a false positive
-      if (activeSub) {
-        incidents.push({
-          user_id: userId,
-          full_name: profile?.full_name || null,
-          email: profile?.email || null,
-          telegram_user_id: profile?.telegram_user_id || null,
-          notification_count: info.count,
-          last_notification_at: info.last_at,
-          sub_status: activeSub.status,
-          access_end_at: activeSub.access_end_at,
-        });
-      }
-    }
+    const incidentList = (incidents || []) as FalseNotificationIncident[];
 
     // =================================================================
     // DRY RUN - just return the report
     // =================================================================
     if (mode === 'dry_run') {
-      const withTelegram = incidents.filter(i => i.telegram_user_id);
+      const withTelegram = incidentList.filter(i => i.telegram_user_id);
       
-      // Log the dry run
+      // Log the dry run with SYSTEM ACTOR
       await supabase.from('audit_logs').insert({
         action: 'notifications.false_report_dry_run',
-        actor_type: 'user',
-        actor_user_id: user.id,
+        actor_type: 'system',
+        actor_user_id: null,
         actor_label: 'admin-false-notifications-report',
         meta: {
+          initiated_by: user.id,
           since_hours,
-          total_revoked_notifications: revokedNotifications.length,
-          unique_users_notified: userNotifications.size,
-          false_positives_found: incidents.length,
+          false_positives_found: incidentList.length,
           can_send_apology_to: withTelegram.length,
         }
       });
@@ -166,13 +118,11 @@ Deno.serve(async (req) => {
         mode: 'dry_run',
         since_hours,
         summary: {
-          total_access_revoked_notifications: revokedNotifications.length,
-          unique_users_notified: userNotifications.size,
-          false_positives_found: incidents.length,
-          duplicates: revokedNotifications.length - userNotifications.size,
+          false_positives_found: incidentList.length,
           users_with_telegram: withTelegram.length,
+          note: 'Uses optimized RPC that checks subscription status AT TIME of notification',
         },
-        incidents: incidents.slice(0, 100), // Limit to first 100
+        incidents: incidentList.slice(0, 100),
         execute_info: {
           will_send_apology_to: withTelegram.length,
           batch_size,
@@ -187,10 +137,10 @@ Deno.serve(async (req) => {
     // =================================================================
     if (mode === 'execute') {
       // STOP-предохранитель
-      if (incidents.length > 200) {
+      if (incidentList.length > 200) {
         return new Response(JSON.stringify({
           error: 'Too many affected users. Use batch processing with smaller time windows.',
-          affected_count: incidents.length,
+          affected_count: incidentList.length,
           max_allowed: 200,
           suggestion: 'Use since_hours=12 or smaller to batch process',
         }), {
@@ -199,7 +149,7 @@ Deno.serve(async (req) => {
         });
       }
 
-      const usersWithTelegram = incidents.filter(i => i.telegram_user_id);
+      const usersWithTelegram = incidentList.filter(i => i.telegram_user_id);
       const toProcess = usersWithTelegram.slice(0, batch_size);
       
       let sent = 0;
@@ -243,35 +193,37 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Log the execute action
+      // Log the execute action with SYSTEM ACTOR
       await supabase.from('audit_logs').insert({
         action: 'notifications.false_report_execute',
-        actor_type: 'user',
-        actor_user_id: user.id,
+        actor_type: 'system',
+        actor_user_id: null,
         actor_label: 'admin-false-notifications-report',
         meta: {
+          initiated_by: user.id,
           since_hours,
           batch_size,
-          total_incidents: incidents.length,
+          total_incidents: incidentList.length,
           processed: toProcess.length,
           sent,
           skipped,
           failed,
           remaining: usersWithTelegram.length - toProcess.length,
+          sample_sent: results.filter(r => r.status === 'sent').slice(0, 10).map(r => r.user_id),
         }
       });
 
       return new Response(JSON.stringify({
         mode: 'execute',
         summary: {
-          total_incidents: incidents.length,
+          total_incidents: incidentList.length,
           processed: toProcess.length,
           sent,
           skipped,
           failed,
           remaining: usersWithTelegram.length - toProcess.length,
         },
-        results: results.slice(0, 50), // Limit results in response
+        results: results.slice(0, 50),
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

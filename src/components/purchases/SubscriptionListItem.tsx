@@ -103,7 +103,7 @@ export function SubscriptionListItem({ subscription, onClick }: SubscriptionList
             Пробный период до: {formatShortDate(subscription.trial_end_at)}
             {subscription.next_charge_at && (
               <span className="ml-2">
-                • Следующее списание: {formatShortDate(subscription.next_charge_at)}
+                • Попытка списания: {formatShortDate(subscription.next_charge_at)}
               </span>
             )}
           </div>

@@ -150,6 +150,7 @@ Deno.serve(async (req) => {
 
     const body: RevokeAccessRequest = await req.json();
     let { user_id, telegram_user_id, club_id, reason, is_manual, admin_id } = body;
+    const forceRevoke = (body as any).force_revoke === true;
 
     console.log('Revoke access request:', body);
 
@@ -157,6 +158,51 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'user_id or telegram_user_id required' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // =================================================================
+    // PATCH 11A: Guard — запрет revoke если access_end_at в будущем
+    // Исключение: force_revoke=true или is_manual=true (явное действие админа)
+    // =================================================================
+    if (user_id && !forceRevoke && !is_manual) {
+      const { data: activeSub } = await supabase
+        .from('subscriptions_v2')
+        .select('id, status, access_end_at')
+        .eq('user_id', user_id)
+        .in('status', ['active', 'trial', 'past_due'])
+        .gt('access_end_at', new Date().toISOString())
+        .limit(1)
+        .maybeSingle();
+
+      if (activeSub) {
+        console.log(`[BLOCKED REVOKE] User ${user_id} has access until ${activeSub.access_end_at}`);
+        
+        // Log blocked revoke with SYSTEM ACTOR
+        await supabase.from('audit_logs').insert({
+          action: 'telegram.revoke_blocked',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'telegram-revoke-access',
+          target_user_id: user_id,
+          meta: {
+            reason: 'access_still_valid',
+            subscription_id: activeSub.id,
+            subscription_status: activeSub.status,
+            access_end_at: activeSub.access_end_at,
+            original_revoke_reason: reason,
+          }
+        });
+
+        return new Response(JSON.stringify({
+          success: false,
+          blocked: true,
+          reason: 'access_still_valid',
+          access_end_at: activeSub.access_end_at,
+          message: `Revoke blocked: user has active access until ${activeSub.access_end_at}`,
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // Determine telegram_user_id and profileUserId first
