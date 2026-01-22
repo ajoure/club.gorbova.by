@@ -62,6 +62,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { LegacyCardsNotificationPanel } from "@/components/admin/LegacyCardsNotificationPanel";
 import { LoyaltyBadge } from "@/components/admin/LoyaltyPulse";
 import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
 import { useDragSelect } from "@/hooks/useDragSelect";
@@ -1034,6 +1035,11 @@ export default function AdminContacts() {
         type="demo"
         onSuccess={() => refetch()}
       />
+
+      {/* Legacy Cards Panel - shows below filters */}
+      <div className="mt-4">
+        <LegacyCardsNotificationPanel />
+      </div>
 
       {/* Search and Filters */}
       <div className="flex flex-col gap-4">

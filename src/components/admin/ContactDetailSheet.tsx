@@ -1719,6 +1719,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             <TabsContent value="email" className="m-0 space-y-4">
               <ContactEmailHistory
                 userId={contact.user_id}
+                profileId={contact.id}
                 email={contact.email}
                 clientName={contact.full_name}
               />

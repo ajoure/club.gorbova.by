@@ -27,6 +27,7 @@ import { useState } from "react";
 
 interface ContactEmailHistoryProps {
   userId: string | null;
+  profileId?: string | null;
   email: string | null;
   clientName?: string | null;
 }
@@ -48,32 +49,60 @@ interface EmailLog {
   clicked_at: string | null;
 }
 
-export function ContactEmailHistory({ userId, email, clientName }: ContactEmailHistoryProps) {
+export function ContactEmailHistory({ userId, profileId, email, clientName }: ContactEmailHistoryProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Fetch email logs
-  const { data: emails, isLoading } = useQuery({
-    queryKey: ["email-logs", userId, email],
+  // Fetch outgoing email logs
+  const { data: emails, isLoading: isLoadingLogs } = useQuery({
+    queryKey: ["email-logs", userId, profileId, email],
     queryFn: async () => {
-      // Query by user_id or email
       let query = supabase
         .from("email_logs")
         .select("*")
         .order("created_at", { ascending: false })
         .limit(50);
 
-      if (userId) {
-        query = query.eq("user_id", userId);
-      } else if (email) {
-        query = query.or(`to_email.eq.${email},from_email.eq.${email}`);
+      // Build OR conditions for broader search
+      const conditions: string[] = [];
+      if (userId) conditions.push(`user_id.eq.${userId}`);
+      if (profileId) conditions.push(`profile_id.eq.${profileId}`);
+      if (email) conditions.push(`to_email.eq.${email}`, `from_email.eq.${email}`);
+
+      if (conditions.length > 0) {
+        query = query.or(conditions.join(','));
       }
 
       const { data, error } = await query;
       if (error) throw error;
       return data as EmailLog[];
     },
-    enabled: !!(userId || email),
+    enabled: !!(userId || profileId || email),
   });
+
+  // Fetch incoming emails from email_inbox
+  const { data: inboxEmails, isLoading: isLoadingInbox } = useQuery({
+    queryKey: ["email-inbox-contact", profileId, email],
+    queryFn: async () => {
+      let query = supabase
+        .from("email_inbox")
+        .select("*")
+        .order("received_at", { ascending: false })
+        .limit(50);
+
+      if (profileId) {
+        query = query.eq("linked_profile_id", profileId);
+      } else if (email) {
+        query = query.eq("from_email", email);
+      }
+
+      const { data, error } = await query;
+      if (error) return [];
+      return data || [];
+    },
+    enabled: !!(profileId || email),
+  });
+
+  const isLoading = isLoadingLogs || isLoadingInbox;
 
   // Also fetch contact_requests as "incoming" emails
   const { data: contactRequests } = useQuery({
@@ -111,9 +140,26 @@ export function ContactEmailHistory({ userId, email, clientName }: ContactEmailH
     }
   };
 
-  // Combine email logs and contact requests
+  // Combine email logs, inbox emails and contact requests
   const allEmails = [
-    ...(emails || []),
+    ...(emails || []).map(e => ({ ...e, _source: 'log' as const })),
+    ...(inboxEmails || []).map((e) => ({
+      id: e.id,
+      direction: "incoming" as const,
+      from_email: e.from_email,
+      to_email: e.to_email,
+      subject: e.subject,
+      body_html: e.body_html,
+      body_text: e.body_text,
+      template_code: null,
+      provider: null,
+      status: e.is_read ? "read" : "unread",
+      error_message: null,
+      created_at: e.received_at || e.created_at,
+      opened_at: null,
+      clicked_at: null,
+      _source: 'inbox' as const,
+    })),
     ...(contactRequests || []).map((cr) => ({
       id: cr.id,
       direction: "incoming" as const,
@@ -129,7 +175,7 @@ export function ContactEmailHistory({ userId, email, clientName }: ContactEmailH
       created_at: cr.created_at,
       opened_at: null,
       clicked_at: null,
-      _isContactRequest: true,
+      _source: 'contact_request' as const,
     })),
   ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
