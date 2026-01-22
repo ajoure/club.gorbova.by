@@ -57,6 +57,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { getEventLabel } from "@/lib/eventLabels";
 import { VideoNoteRecorder } from "./VideoNoteRecorder";
 
 interface ContactTelegramChatProps {
@@ -142,99 +143,7 @@ const EVENT_ICONS: Record<string, React.ReactNode> = {
   CONTACT_UNMERGED: <UserMinus className="w-3 h-3 text-orange-500" />,
 };
 
-// PATCH 13.6+: Человеческие названия всех событий на русском
-const EVENT_LABELS: Record<string, string> = {
-  // Telegram привязка
-  LINK_SUCCESS: "Привязал Telegram",
-  RELINK_SUCCESS: "Перепривязал Telegram",
-  UNLINK: "Отвязал Telegram",
-  link_token_created: "Создана ссылка привязки",
-  link_token_expired: "Ссылка привязки истекла",
-  user_linked: "Telegram привязан",
-  user_unlinked: "Telegram отвязан",
-  
-  // Доступ
-  AUTO_GRANT: "Автоматическая выдача доступа",
-  MANUAL_GRANT: "Ручная выдача доступа",
-  MANUAL_EXTEND: "Продление доступа",
-  AUTO_REVOKE: "Автоматический отзыв доступа",
-  MANUAL_REVOKE: "Ручной отзыв доступа",
-  AUTO_KICK_VIOLATOR: "Исключён из группы",
-  access_granted: "Доступ выдан",
-  access_revoked: "Доступ отозван",
-  regrant_access: "Доступ восстановлен",
-  
-  // Уведомления
-  manual_notification: "Уведомление отправлено",
-  system_notification: "Системное уведомление",
-  legacy_card_notification: "Уведомление о карте",
-  
-  // Сообщения
-  ADMIN_CHAT_MESSAGE: "Сообщение от администратора",
-  ADMIN_CHAT_FILE: "Файл от администратора",
-  ADMIN_DELETE_MESSAGE: "Сообщение удалено администратором",
-  ADMIN_EDIT_MESSAGE: "Сообщение отредактировано",
-  BOT_START: "Запустил бота",
-  
-  // Подписки
-  SUBSCRIPTION_EXPIRED: "Подписка истекла",
-  SUBSCRIPTION_ACTIVATED: "Подписка активирована",
-  subscription_created: "Подписка создана",
-  subscription_renewed: "Подписка продлена",
-  subscription_canceled: "Подписка отменена",
-  'admin.subscription.auto_renew_enabled': "Автопродление включено",
-  'admin.subscription.auto_renew_disabled': "Автопродление отключено",
-  
-  // Платежи
-  PAYMENT_SUCCESS: "Платёж успешен",
-  PAYMENT_FAILED: "Платёж не прошёл",
-  payment_successful: "Платёж успешен",
-  payment_failed: "Платёж не прошёл",
-  
-  // Биллинг расширенный
-  'billing.charge_date_aligned': "Дата списания выровнена",
-  'billing.charge_date_auto_corrected': "Дата списания автоисправлена",
-  'billing.auto_charge_success': "Автосписание успешно",
-  'billing.auto_charge_failed': "Автосписание не прошло",
-  'billing.alignment_dry_run': "Проверка выравнивания биллинга",
-  'subscription.charge_cron_completed': "Автосписание завершено",
-  'subscription.charge_amount_calculated': "Сумма списания рассчитана",
-  
-  // Платёжные методы
-  'payment_methods.legacy_cards_revoked': "Устаревшие карты отозваны",
-  'payment_methods.3ds_pre_fix_revoked': "Карта отозвана (3DS)",
-  card_revoked: "Карта отвязана",
-  card_added: "Карта добавлена",
-  
-  // Telegram regrant
-  'telegram.regrant_dry_run': "Проверка восстановления доступов",
-  'telegram.regrant_wrongly_revoked_completed': "Доступы восстановлены",
-  'telegram.mass_revoke': "Массовый отзыв доступов",
-  
-  // Notification outbox
-  'notifications.send_success': "Уведомление отправлено",
-  'notifications.send_error': "Ошибка отправки уведомления",
-  'notifications.send_blocked': "Уведомление заблокировано",
-  'notifications.outbox_sent': "Уведомление доставлено",
-  'notifications.outbox_failed': "Ошибка доставки уведомления",
-  'notifications.outbox_skipped': "Уведомление пропущено (дубль)",
-  'notifications.outbox_retry': "Повторная отправка уведомления",
-  
-  // Система
-  'system.cleanup_orphaned_mappings': "Очистка orphan-записей",
-  'ghost_tokens_cleanup': "Очистка ghost-токенов",
-  'delete_ghost_orders_20260120': "Удаление ghost-заказов",
-  'rollback_ghost_orders': "Откат ghost-заказов",
-  
-  // Контакты
-  CONTACT_MERGED: "Объединены контакты",
-  CONTACT_UNMERGED: "Контакты разъединены",
-  
-  // Sync/cron
-  'bepaid_fetch_transactions_cron': "Синхронизация транзакций bePaid",
-  'payments_autolink_by_card': "Автопривязка платежей по карте",
-  'queue_materialize_to_payments_v2': "Обработка очереди платежей",
-};
+// PATCH 13.6+: Используется централизованный словарь EVENT_LABELS из @/lib/eventLabels
 
 export function ContactTelegramChat({
   userId,
@@ -616,7 +525,7 @@ export function ContactTelegramChat({
           <div className="flex flex-col items-center gap-1 max-w-[85%]">
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-xs text-muted-foreground">
               {EVENT_ICONS[event.action] || <Bell className="w-3 h-3" />}
-              <span>{EVENT_LABELS[event.action] || event.action}</span>
+              <span>{getEventLabel(event.action)}</span>
               <span className="opacity-60">
                 {format(new Date(event.created_at), "dd.MM HH:mm", { locale: ru })}
               </span>

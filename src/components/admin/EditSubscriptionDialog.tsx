@@ -475,7 +475,18 @@ export function EditSubscriptionDialog({
 
   const currentStatus = STATUS_OPTIONS.find(s => s.value === formData.status);
   const hasTelegramClub = !!currentClubId;
-  const isTelegramGranted = telegramAccess?.state_chat === "granted" || telegramAccess?.state_channel === "granted";
+  // Определить статус доступа: granted, pending, revoked или none
+  const telegramStatus = (() => {
+    if (!telegramAccess) return 'none';
+    const chatState = telegramAccess.state_chat;
+    const channelState = telegramAccess.state_channel;
+    
+    if (chatState === 'granted' || channelState === 'granted') return 'granted';
+    if (chatState === 'pending' || channelState === 'pending') return 'pending';
+    if (chatState === 'revoked' || channelState === 'revoked') return 'revoked';
+    return 'unknown';
+  })();
+  const isTelegramGranted = telegramStatus === 'granted';
   const hasOrderId = !!subscription?.order_id;
 
   // GC disabled reasons - only disable if no order (dry-run shows other reasons)
@@ -712,10 +723,15 @@ export function EditSubscriptionDialog({
                   </div>
                   <div className="flex items-center gap-2">
                     {telegramAccess ? (
-                      isTelegramGranted ? (
+                      telegramStatus === 'granted' ? (
                         <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
                           <Check className="w-3 h-3 mr-1" />
                           Доступ выдан
+                        </Badge>
+                      ) : telegramStatus === 'pending' ? (
+                        <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">
+                          <Clock className="w-3 h-3 mr-1" />
+                          Ожидает присоединения
                         </Badge>
                       ) : (
                         <Badge className="bg-red-500/10 text-red-600 border-red-500/20">
@@ -724,7 +740,7 @@ export function EditSubscriptionDialog({
                         </Badge>
                       )
                     ) : (
-                      <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">
+                      <Badge className="bg-muted text-muted-foreground border-border">
                         Не привязан
                       </Badge>
                     )}
