@@ -806,9 +806,18 @@ export default function TelegramClubMembers() {
           </Card>
         </div>
 
-        {/* Unknown counter badge - not a tab, just an indicator */}
-        {(stats?.unknown ?? 0) > 0 && (
-          <div className="flex items-center gap-2">
+        {/* Unknown counter badge + search indicator */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Search scope indicator - показываем при активном поиске */}
+          {debouncedSearch.length >= 2 && (
+            <Badge variant="secondary" className="gap-1">
+              <Search className="h-3 w-3" />
+              Поиск по всем записям
+            </Badge>
+          )}
+          
+          {/* Unknown counter badge */}
+          {(stats?.unknown ?? 0) > 0 && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Badge variant="outline" className="gap-1 cursor-help">
@@ -817,13 +826,15 @@ export default function TelegramClubMembers() {
                 </Badge>
               </TooltipTrigger>
               <TooltipContent className="max-w-xs">
-                <p className="font-medium">Не относятся к клубу</p>
-                <p className="text-sm mt-1">Синхронизированные записи без доступа и без присутствия в чате. 
-                Это пользователи, привязавшие Telegram, но не покупавшие доступ к этому клубу.</p>
+                <p className="font-medium">Неуправляемые записи</p>
+                <p className="text-sm mt-1">
+                  Синхронизированные Telegram-записи без активного доступа, без истории доступа 
+                  и без присутствия в чате/канале. Не попадают ни в одну рабочую вкладку.
+                </p>
               </TooltipContent>
             </Tooltip>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Tab Filters */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)} className="w-full">

@@ -6714,6 +6714,7 @@ export type Database = {
           club_id: string | null
           created_at: string | null
           email: string | null
+          external_id_amo: string | null
           full_name: string | null
           has_active_access: boolean | null
           has_any_access_history: boolean | null
@@ -6875,6 +6876,7 @@ export type Database = {
           club_id: string
           created_at: string
           email: string
+          external_id_amo: string
           full_name: string
           has_active_access: boolean
           has_any_access_history: boolean
@@ -7048,6 +7050,7 @@ export type Database = {
           club_id: string
           created_at: string
           email: string
+          external_id_amo: string
           full_name: string
           has_active_access: boolean
           has_any_access_history: boolean

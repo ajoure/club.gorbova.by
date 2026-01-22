@@ -594,8 +594,11 @@ export function useClubMembers(
   const scope = opts?.scope ?? 'relevant';
   const search = opts?.search?.trim() || null;
   
+  // При активном поиске (>=2 символов) используем scope='all' чтобы не "потерять" результаты
+  const effectiveScope = (search && search.length >= 2) ? 'all' : scope;
+  
   return useQuery({
-    queryKey: ['telegram-club-members', clubId, scope, search],
+    queryKey: ['telegram-club-members', clubId, effectiveScope, search],
     queryFn: async () => {
       if (!clubId) return [];
       
@@ -604,7 +607,7 @@ export function useClubMembers(
         const { data, error } = await supabase.rpc('search_club_members_enriched', {
           p_club_id: clubId,
           p_query: search,
-          p_scope: scope,
+          p_scope: effectiveScope,
         });
         if (error) throw error;
         return mapToEnrichedMembers(data);
@@ -613,7 +616,7 @@ export function useClubMembers(
       // Default: get all members via RPC
       const { data, error } = await supabase.rpc('get_club_members_enriched', {
         p_club_id: clubId,
-        p_scope: scope,
+        p_scope: effectiveScope,
       });
       if (error) throw error;
       return mapToEnrichedMembers(data);
