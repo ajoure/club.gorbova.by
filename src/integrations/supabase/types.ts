@@ -1220,6 +1220,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "email_inbox_email_account_id_fkey"
+            columns: ["email_account_id"]
+            isOneToOne: false
+            referencedRelation: "email_accounts_safe"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "email_inbox_linked_profile_id_fkey"
             columns: ["linked_profile_id"]
             isOneToOne: false
@@ -4217,6 +4224,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "product_email_mappings_email_account_id_fkey"
+            columns: ["email_account_id"]
+            isOneToOne: false
+            referencedRelation: "email_accounts_safe"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "product_email_mappings_product_id_fkey"
             columns: ["product_id"]
             isOneToOne: true
@@ -4551,6 +4565,13 @@ export type Database = {
             columns: ["telegram_link_bot_id"]
             isOneToOne: false
             referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profiles_telegram_link_bot_id_fkey"
+            columns: ["telegram_link_bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
             referencedColumns: ["id"]
           },
         ]
@@ -5889,6 +5910,13 @@ export type Database = {
             referencedRelation: "telegram_bots"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "telegram_clubs_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
         ]
       }
       telegram_invites: {
@@ -5984,6 +6012,13 @@ export type Database = {
             columns: ["bot_id"]
             isOneToOne: false
             referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_link_tokens_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
             referencedColumns: ["id"]
           },
         ]
@@ -6142,6 +6177,13 @@ export type Database = {
             referencedRelation: "telegram_bots"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "telegram_messages_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
         ]
       }
       telegram_mtproto_sessions: {
@@ -6223,6 +6265,13 @@ export type Database = {
             columns: ["bot_id"]
             isOneToOne: false
             referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_publish_channels_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
             referencedColumns: ["id"]
           },
         ]
@@ -6782,6 +6831,126 @@ export type Database = {
       }
     }
     Views: {
+      email_accounts_safe: {
+        Row: {
+          created_at: string | null
+          display_name: string | null
+          email: string | null
+          from_email: string | null
+          from_name: string | null
+          has_password: boolean | null
+          id: string | null
+          imap_enabled: boolean | null
+          imap_encryption: string | null
+          imap_host: string | null
+          imap_port: number | null
+          is_active: boolean | null
+          is_default: boolean | null
+          last_fetched_at: string | null
+          last_fetched_uid: string | null
+          provider: string | null
+          reply_to: string | null
+          smtp_encryption: string | null
+          smtp_host: string | null
+          smtp_port: number | null
+          smtp_username: string | null
+          updated_at: string | null
+          use_for: Json | null
+        }
+        Insert: {
+          created_at?: string | null
+          display_name?: string | null
+          email?: string | null
+          from_email?: string | null
+          from_name?: string | null
+          has_password?: never
+          id?: string | null
+          imap_enabled?: boolean | null
+          imap_encryption?: string | null
+          imap_host?: string | null
+          imap_port?: number | null
+          is_active?: boolean | null
+          is_default?: boolean | null
+          last_fetched_at?: string | null
+          last_fetched_uid?: string | null
+          provider?: string | null
+          reply_to?: string | null
+          smtp_encryption?: string | null
+          smtp_host?: string | null
+          smtp_port?: number | null
+          smtp_username?: string | null
+          updated_at?: string | null
+          use_for?: Json | null
+        }
+        Update: {
+          created_at?: string | null
+          display_name?: string | null
+          email?: string | null
+          from_email?: string | null
+          from_name?: string | null
+          has_password?: never
+          id?: string | null
+          imap_enabled?: boolean | null
+          imap_encryption?: string | null
+          imap_host?: string | null
+          imap_port?: number | null
+          is_active?: boolean | null
+          is_default?: boolean | null
+          last_fetched_at?: string | null
+          last_fetched_uid?: string | null
+          provider?: string | null
+          reply_to?: string | null
+          smtp_encryption?: string | null
+          smtp_host?: string | null
+          smtp_port?: number | null
+          smtp_username?: string | null
+          updated_at?: string | null
+          use_for?: Json | null
+        }
+        Relationships: []
+      }
+      telegram_bots_safe: {
+        Row: {
+          bot_id: number | null
+          bot_name: string | null
+          bot_username: string | null
+          created_at: string | null
+          error_message: string | null
+          has_token: boolean | null
+          id: string | null
+          is_primary: boolean | null
+          last_check_at: string | null
+          status: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          bot_id?: number | null
+          bot_name?: string | null
+          bot_username?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          has_token?: never
+          id?: string | null
+          is_primary?: boolean | null
+          last_check_at?: string | null
+          status?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          bot_id?: number | null
+          bot_name?: string | null
+          bot_username?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          has_token?: never
+          id?: string | null
+          is_primary?: boolean | null
+          last_check_at?: string | null
+          status?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       v_club_members_enriched: {
         Row: {
           access_status: string | null
