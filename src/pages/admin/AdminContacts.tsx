@@ -75,6 +75,7 @@ import { CleanupDialog } from "@/components/admin/CleanupDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { formatTelegramDisplay, getTelegramLink } from "@/utils/telegramUtils";
+import { formatContactName } from "@/lib/nameUtils";
 
 // DnD imports
 import {
@@ -127,20 +128,7 @@ interface Contact {
   communication_style?: CommunicationStyle | null;
 }
 
-// Helper function to format contact name as "Фамилия Имя"
-function formatContactName(contact: { 
-  first_name?: string | null; 
-  last_name?: string | null; 
-  full_name?: string | null;
-}): string {
-  if (contact.last_name && contact.first_name) {
-    return `${contact.last_name} ${contact.first_name}`;
-  }
-  if (contact.last_name) return contact.last_name;
-  if (contact.first_name) return contact.first_name;
-  if (contact.full_name) return contact.full_name;
-  return "—";
-}
+// formatContactName imported from @/lib/nameUtils
 
 // Simplified filters - only 4 (status_account combines status + account check)
 const CONTACT_FILTER_FIELDS: FilterField[] = [

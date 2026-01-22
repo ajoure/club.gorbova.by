@@ -179,20 +179,74 @@ export function PhoneInput({
     setTimeout(() => inputRef.current?.focus(), 100);
   };
 
-  const handleNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    // Only allow digits
-    const digits = e.target.value.replace(/\D/g, '');
-    setLocalNumber(digits);
-    // Update full value with country code
-    const newValue = selectedCountry.dial + digits;
-    onChange(newValue);
+  // Smart paste/input handler: detect full phone numbers with country codes
+  const processPhoneInput = (input: string): { country: typeof defaultCountry; number: string } | null => {
+    // Normalize: remove spaces, dashes, parentheses
+    let normalized = input.replace(/[\s\-\(\)]/g, '');
+    
+    // Convert 00 prefix to +
+    if (normalized.startsWith('00')) {
+      normalized = '+' + normalized.slice(2);
+    }
+    
+    // If starts with +, try to detect country code
+    if (normalized.startsWith('+')) {
+      // Sort by dial code length (longest first) to match correctly
+      const sortedCountries = [...countries].sort((a, b) => b.dial.length - a.dial.length);
+      for (const country of sortedCountries) {
+        if (normalized.startsWith(country.dial)) {
+          const numberPart = normalized.slice(country.dial.length).replace(/\D/g, '');
+          return { country, number: numberPart };
+        }
+      }
+    }
+    
+    // Check if input contains the currently selected country dial code
+    const cleanInput = input.replace(/[\s\-\(\)]/g, '');
+    if (cleanInput.startsWith(selectedCountry.dial)) {
+      const numberPart = cleanInput.slice(selectedCountry.dial.length).replace(/\D/g, '');
+      return { country: selectedCountry, number: numberPart };
+    }
+    
+    return null;
   };
 
-  // Format number for display
-  const formatNumber = (num: string) => {
-    if (!num) return "";
-    // Simple formatting - add spaces every 3 digits
-    return num.replace(/(\d{2,3})(?=\d)/g, '$1 ').trim();
+  const handleNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.target.value;
+    
+    // Try smart detection first
+    const detected = processPhoneInput(input);
+    if (detected) {
+      setSelectedCountry(detected.country);
+      setLocalNumber(detected.number);
+      onChange(detected.country.dial + detected.number);
+      return;
+    }
+    
+    // Standard logic: only digits
+    const digits = input.replace(/\D/g, '');
+    setLocalNumber(digits);
+    onChange(selectedCountry.dial + digits);
+  };
+
+  // Handle paste event for smart country detection
+  const handlePaste = (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text');
+    
+    // Try smart detection
+    const detected = processPhoneInput(pasted);
+    if (detected) {
+      setSelectedCountry(detected.country);
+      setLocalNumber(detected.number);
+      onChange(detected.country.dial + detected.number);
+      return;
+    }
+    
+    // Fallback: just extract digits
+    const digits = pasted.replace(/\D/g, '');
+    setLocalNumber(digits);
+    onChange(selectedCountry.dial + digits);
   };
 
   return (
@@ -248,8 +302,9 @@ export function PhoneInput({
           id={id}
           type="tel"
           inputMode="numeric"
-          value={formatNumber(localNumber)}
+          value={localNumber}
           onChange={handleNumberChange}
+          onPaste={handlePaste}
           onBlur={onBlur}
           className={cn(
             "h-12 rounded-l-none rounded-r-xl bg-background/50 border-border/50 focus:border-primary",

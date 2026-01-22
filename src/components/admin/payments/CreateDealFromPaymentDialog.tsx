@@ -16,6 +16,7 @@ import { format, addDays, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
+import { formatContactName } from "@/lib/nameUtils";
 
 interface Contact {
   id: string;
@@ -180,12 +181,10 @@ export function CreateDealFromPaymentDialog({
     }
   };
 
-  const formatContactName = (c: Contact) => {
-    if (c.last_name && c.first_name) return `${c.last_name} ${c.first_name}`;
-    if (c.last_name) return c.last_name;
-    if (c.first_name) return c.first_name;
-    if (c.full_name) return c.full_name;
-    return c.email || "Без имени";
+  // formatContactName imported from @/lib/nameUtils - extended for email fallback
+  const formatContactDisplay = (c: Contact) => {
+    const name = formatContactName(c);
+    return name === "—" ? (c.email || "Без имени") : name;
   };
 
   // PATCH 13.5: Запрет создания сделки из неуспешного платежа
@@ -453,7 +452,7 @@ export function CreateDealFromPaymentDialog({
                     <Ghost className="h-5 w-5 text-amber-500" />
                   )}
                   <div>
-                    <p className="font-medium">{formatContactName(selectedContact)}</p>
+                    <p className="font-medium">{formatContactDisplay(selectedContact)}</p>
                     <p className="text-sm text-muted-foreground">{selectedContact.email}</p>
                   </div>
                   {!selectedContact.user_id && (

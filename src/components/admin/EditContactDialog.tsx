@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { cleanTelegramUsername } from "@/utils/telegramUtils";
+import { parseFullName } from "@/lib/nameUtils";
 import {
   Dialog,
   DialogContent,
@@ -40,6 +41,8 @@ interface Contact {
   user_id: string | null;
   email: string | null;
   full_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
   phone: string | null;
   telegram_username: string | null;
   status: string;
@@ -69,7 +72,8 @@ const STATUS_OPTIONS = [
 export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: EditContactDialogProps) {
   const queryClient = useQueryClient();
   const [formData, setFormData] = useState({
-    full_name: "",
+    first_name: "",
+    last_name: "",
     email: "",
     phone: "",
     telegram_username: "",
@@ -91,8 +95,19 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
       // For ghost profiles, set status to blocked if it was active
       const effectiveStatus = isGhost && contact.status === 'active' ? 'blocked' : (contact.status || 'active');
       
+      // Parse name: prioritize first_name/last_name, fallback to parsing full_name
+      let firstName = contact.first_name || "";
+      let lastName = contact.last_name || "";
+      
+      if (!firstName && !lastName && contact.full_name) {
+        const parsed = parseFullName(contact.full_name);
+        firstName = parsed.firstName;
+        lastName = parsed.lastName;
+      }
+      
       setFormData({
-        full_name: contact.full_name || "",
+        first_name: firstName,
+        last_name: lastName,
         email: contact.email || "",
         phone: contact.phone || "",
         telegram_username: contact.telegram_username || "",
@@ -106,10 +121,15 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
   const saveContact = async (forceDuplicate = false) => {
     if (!contact?.id) throw new Error("No contact ID");
     
+    // Sync all name fields
+    const fullName = `${formData.first_name} ${formData.last_name}`.trim();
+    
     const { error } = await supabase
       .from("profiles")
       .update({
-        full_name: formData.full_name || null,
+        first_name: formData.first_name || null,
+        last_name: formData.last_name || null,
+        full_name: fullName || null,
         email: formData.email || null,
         phone: formData.phone || null,
         telegram_username: cleanTelegramUsername(formData.telegram_username),
@@ -215,13 +235,23 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
           </DialogHeader>
 
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Полное имя</Label>
-              <Input
-                value={formData.full_name}
-                onChange={(e) => setFormData(prev => ({ ...prev, full_name: e.target.value }))}
-                placeholder="Имя Фамилия"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Имя</Label>
+                <Input
+                  value={formData.first_name}
+                  onChange={(e) => setFormData(prev => ({ ...prev, first_name: e.target.value }))}
+                  placeholder="Имя"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Фамилия</Label>
+                <Input
+                  value={formData.last_name}
+                  onChange={(e) => setFormData(prev => ({ ...prev, last_name: e.target.value }))}
+                  placeholder="Фамилия"
+                />
+              </div>
             </div>
 
             <div className="space-y-2">

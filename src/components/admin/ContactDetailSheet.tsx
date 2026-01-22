@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 import { getEventLabel } from "@/lib/eventLabels";
+import { formatContactName } from "@/lib/nameUtils";
 import {
   Sheet,
   SheetContent,
@@ -113,20 +114,7 @@ import { ContactPaymentsTab } from "./ContactPaymentsTab";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 
-// Helper function to format contact name as "Фамилия Имя"
-function formatContactName(contact: { 
-  first_name?: string | null; 
-  last_name?: string | null; 
-  full_name?: string | null;
-}): string {
-  if (contact.last_name && contact.first_name) {
-    return `${contact.last_name} ${contact.first_name}`;
-  }
-  if (contact.last_name) return contact.last_name;
-  if (contact.first_name) return contact.first_name;
-  if (contact.full_name) return contact.full_name;
-  return "Без имени";
-}
+// formatContactName imported from @/lib/nameUtils
 
 interface CommunicationStyle {
   tone: string;
