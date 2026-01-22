@@ -6707,7 +6707,47 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      v_club_members_enriched: {
+        Row: {
+          access_status: string | null
+          auth_user_id: string | null
+          club_id: string | null
+          created_at: string | null
+          email: string | null
+          full_name: string | null
+          has_active_access: boolean | null
+          has_any_access_history: boolean | null
+          id: string | null
+          in_any: boolean | null
+          in_channel: boolean | null
+          in_chat: boolean | null
+          is_orphaned: boolean | null
+          link_status: string | null
+          phone: string | null
+          profile_id: string | null
+          telegram_first_name: string | null
+          telegram_last_name: string | null
+          telegram_user_id: number | null
+          telegram_username: string | null
+          updated_at: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_club_members_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_club_members_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       admin_repair_card_links: {
@@ -6827,6 +6867,35 @@ export type Database = {
       }
       generate_order_number: { Args: never; Returns: string }
       generate_ticket_number: { Args: never; Returns: string }
+      get_club_members_enriched: {
+        Args: { p_club_id: string; p_scope?: string }
+        Returns: {
+          access_status: string
+          auth_user_id: string
+          club_id: string
+          created_at: string
+          email: string
+          full_name: string
+          has_active_access: boolean
+          has_any_access_history: boolean
+          id: string
+          in_any: boolean
+          in_channel: boolean
+          in_chat: boolean
+          is_bought_not_joined: boolean
+          is_orphaned: boolean
+          is_relevant: boolean
+          is_violator: boolean
+          link_status: string
+          phone: string
+          profile_id: string
+          telegram_first_name: string
+          telegram_last_name: string
+          telegram_user_id: number
+          telegram_username: string
+          updated_at: string
+        }[]
+      }
       get_demo_profile_ids: {
         Args: never
         Returns: {

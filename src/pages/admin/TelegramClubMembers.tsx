@@ -84,7 +84,7 @@ import {
   useKickViolators,
   useGrantTelegramAccess,
   useRevokeTelegramAccess,
-  TelegramClubMember,
+  EnrichedClubMember,
   ClubMemberScope,
 } from '@/hooks/useTelegramIntegration';
 import { Switch } from '@/components/ui/switch';
@@ -140,7 +140,7 @@ export default function TelegramClubMembers() {
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<FilterTab>('in_club');
   const [showKickDialog, setShowKickDialog] = useState(false);
-  const [selectedMember, setSelectedMember] = useState<TelegramClubMember | null>(null);
+  const [selectedMember, setSelectedMember] = useState<EnrichedClubMember | null>(null);
   
   // Mass selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -160,7 +160,7 @@ export default function TelegramClubMembers() {
   
   // Send message state
   const [showSendMessageDialog, setShowSendMessageDialog] = useState(false);
-  const [messageTarget, setMessageTarget] = useState<TelegramClubMember | null>(null);
+  const [messageTarget, setMessageTarget] = useState<EnrichedClubMember | null>(null);
   const [messageText, setMessageText] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
   
@@ -197,24 +197,25 @@ export default function TelegramClubMembers() {
       toast.error("Не удалось загрузить контакт");
     }
   };
-  // Calculate counts for tabs - используем данные из текущего members (с учётом scope)
+  // Calculate counts for tabs - using computed flags from RPC (A-G definitions)
   const counts = useMemo(() => {
     if (!members) return { in_club: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0 };
     
     return {
-      in_club: members.filter(m => m.in_chat === true || m.in_channel === true).length,
-      with_access: members.filter(m => m.access_status === 'ok').length,
-      bought_not_joined: members.filter(m => 
-        m.access_status === 'ok' && !m.in_chat && !m.in_channel
-      ).length,
-      violators: members.filter(m => 
-        m.access_status !== 'ok' && (m.in_chat === true || m.in_channel === true)
-      ).length,
-      removed: members.filter(m => m.access_status === 'removed' && !m.in_chat && !m.in_channel).length,
+      // C: in_any = in_chat OR in_channel
+      in_club: members.filter(m => m.in_any).length,
+      // A: has_active_access (computed via EXISTS on 3 access tables)
+      with_access: members.filter(m => m.has_active_access).length,
+      // F: is_bought_not_joined = has_active_access AND NOT in_any
+      bought_not_joined: members.filter(m => m.is_bought_not_joined).length,
+      // E: is_violator = in_any AND NOT has_active_access
+      violators: members.filter(m => m.is_violator).length,
+      // Removed: access_status='removed' AND NOT in_any
+      removed: members.filter(m => m.access_status === 'removed' && !m.in_any).length,
     };
   }, [members]);
 
-  // Filter and search members
+  // Filter and search members - using computed flags (A-G definitions)
   const filteredMembers = useMemo(() => {
     if (!members) return [];
     
@@ -226,8 +227,10 @@ export default function TelegramClubMembers() {
           member.telegram_first_name?.toLowerCase().includes(searchLower) ||
           member.telegram_last_name?.toLowerCase().includes(searchLower) ||
           member.telegram_user_id.toString().includes(searchLower) ||
+          member.email?.toLowerCase().includes(searchLower) ||
           member.profiles?.email?.toLowerCase().includes(searchLower) ||
           member.profiles?.phone?.includes(search) ||
+          member.full_name?.toLowerCase().includes(searchLower) ||
           member.profiles?.full_name?.toLowerCase().includes(searchLower);
         
         if (!matchesSearch) return false;
@@ -235,20 +238,20 @@ export default function TelegramClubMembers() {
 
       switch (activeTab) {
         case 'in_club':
-          // Фактически в чате или канале
-          return member.in_chat === true || member.in_channel === true;
+          // C: in_any = in_chat OR in_channel
+          return member.in_any;
         case 'with_access':
-          // access_status = 'ok'
-          return member.access_status === 'ok';
+          // A: has_active_access (computed via EXISTS)
+          return member.has_active_access;
         case 'bought_not_joined':
-          // access_status = 'ok', но не в чате/канале
-          return member.access_status === 'ok' && !member.in_chat && !member.in_channel;
+          // F: is_bought_not_joined = A AND NOT C
+          return member.is_bought_not_joined;
         case 'violators':
-          // В чате/канале, но access_status != 'ok'
-          return (member.in_chat || member.in_channel) && member.access_status !== 'ok';
+          // E: is_violator = C AND NOT A
+          return member.is_violator;
         case 'removed':
-          // Удалённые = статус removed И реально не в чате/канале
-          return member.access_status === 'removed' && !member.in_chat && !member.in_channel;
+          // Удалённые: access_status='removed' AND NOT in_any
+          return member.access_status === 'removed' && !member.in_any;
         default:
           return true;
       }
@@ -538,7 +541,7 @@ export default function TelegramClubMembers() {
   };
 
   // Single member kick from Telegram (for violators)
-  const handleKickSingleMember = async (member: TelegramClubMember) => {
+  const handleKickSingleMember = async (member: EnrichedClubMember) => {
     if (!clubId) return;
     
     try {
@@ -560,7 +563,7 @@ export default function TelegramClubMembers() {
   };
 
   // Single member mark as removed
-  const handleMarkSingleRemoved = async (member: TelegramClubMember) => {
+  const handleMarkSingleRemoved = async (member: EnrichedClubMember) => {
     if (!clubId) return;
     
     try {
@@ -627,7 +630,7 @@ export default function TelegramClubMembers() {
   };
 
   // Telegram status display - CHAT is master, CHANNEL is derived
-  const getTelegramStatus = (member: TelegramClubMember) => {
+  const getTelegramStatus = (member: EnrichedClubMember) => {
     const inChat = member.in_chat;
     const inChannel = member.in_channel;
     const hasTelegramId = !!member.telegram_user_id;
@@ -766,7 +769,7 @@ export default function TelegramClubMembers() {
             </CardContent>
           </Card>
 
-          {/* С доступом */}
+          {/* С доступом (A: has_active_access) */}
           <Card>
             <CardHeader className="pb-2">
               <CardDescription className="flex items-center gap-2">
@@ -775,7 +778,7 @@ export default function TelegramClubMembers() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">{stats?.status_ok ?? 0}</div>
+              <div className="text-2xl font-bold text-green-600">{stats?.has_active_access ?? 0}</div>
             </CardContent>
           </Card>
 
@@ -1119,21 +1122,23 @@ export default function TelegramClubMembers() {
                               <Send className="h-4 w-4 mr-2" />
                               Написать в Telegram
                             </DropdownMenuItem>
-                            {member.profiles && member.access_status !== 'ok' && (
+                            {/* Show grant option if no active access */}
+                            {member.profiles && !member.has_active_access && (
                               <DropdownMenuItem onClick={() => setSelectedMember(member)}>
                                 <Plus className="h-4 w-4 mr-2" />
                                 Выдать доступ
                               </DropdownMenuItem>
                             )}
-                            {member.profiles && member.access_status === 'ok' && (
+                            {/* Show extend option if has active access */}
+                            {member.profiles && member.has_active_access && (
                               <DropdownMenuItem onClick={() => setSelectedMember(member)}>
                                 <Clock className="h-4 w-4 mr-2" />
                                 Продлить доступ
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuSeparator />
-                            {/* Для пользователей с доступом - отозвать и удалить */}
-                            {member.access_status === 'ok' && (
+                            {/* Для пользователей с доступом (A) - отозвать и удалить */}
+                            {member.has_active_access && (
                               <DropdownMenuItem 
                                 onClick={() => {
                                   revokeAccess.mutate({
@@ -1152,8 +1157,8 @@ export default function TelegramClubMembers() {
                                 Отозвать доступ и удалить
                               </DropdownMenuItem>
                             )}
-                            {/* Для нарушителей (без доступа, но в чате/канале) - удалить из Telegram */}
-                            {member.access_status !== 'ok' && (member.in_chat || member.in_channel) && (
+                            {/* Для нарушителей (E: is_violator) - удалить из Telegram */}
+                            {member.is_violator && (
                               <DropdownMenuItem 
                                 onClick={() => handleKickSingleMember(member)}
                                 className="text-destructive"
@@ -1162,8 +1167,8 @@ export default function TelegramClubMembers() {
                                 Удалить из Telegram
                               </DropdownMenuItem>
                             )}
-                            {/* Для удалённых без присутствия - пометить удалённым */}
-                            {member.access_status !== 'ok' && !member.in_chat && !member.in_channel && (
+                            {/* Для не в клубе без active access - пометить удалённым */}
+                            {!member.has_active_access && !member.in_any && member.access_status !== 'removed' && (
                               <DropdownMenuItem 
                                 onClick={() => handleMarkSingleRemoved(member)}
                                 className="text-muted-foreground"

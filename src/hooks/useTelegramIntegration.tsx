@@ -551,8 +551,26 @@ export function useCurrentUserTelegramStatus() {
   });
 }
 
-// Club Members hooks
+// Club Members hooks - using RPC with computed flags (A-G)
 export type ClubMemberScope = 'relevant' | 'all';
+
+// Enriched member type with computed flags from RPC
+// Extends TelegramClubMember with computed flags A-G
+export interface EnrichedClubMember extends TelegramClubMember {
+  // Profile fields from RPC (denormalized for convenience)
+  auth_user_id: string | null;
+  email: string | null;
+  full_name: string | null;
+  phone: string | null;
+  // Computed flags (A-G)
+  has_active_access: boolean;
+  has_any_access_history: boolean;
+  in_any: boolean;
+  is_orphaned: boolean;
+  is_violator: boolean;
+  is_bought_not_joined: boolean;
+  is_relevant: boolean;
+}
 
 export function useClubMembers(clubId: string | null, opts?: { scope?: ClubMemberScope }) {
   const scope = opts?.scope ?? 'relevant';
@@ -562,87 +580,70 @@ export function useClubMembers(clubId: string | null, opts?: { scope?: ClubMembe
     queryFn: async () => {
       if (!clubId) return [];
       
-      let query = supabase
-        .from('telegram_club_members')
-        .select('*, profiles(id, user_id, full_name, email, phone)')
-        .eq('club_id', clubId);
-      
-      // scope='relevant': только те, кто относится к клубу
-      // - в чате/канале ИЛИ
-      // - access_status = 'ok', 'removed' или 'expired' ИЛИ
-      // - имеет связь с профилем и историю доступа
-      if (scope === 'relevant') {
-        query = query
-          .not('profile_id', 'is', null) // исключаем orphaned
-          .or('in_chat.eq.true,in_channel.eq.true,access_status.eq.ok,access_status.eq.removed,access_status.eq.expired');
-      }
-      
-      const { data, error } = await query
-        .order('access_status', { ascending: true })
-        .order('telegram_username', { ascending: true });
+      // Use RPC for correct access checks via EXISTS on 3 access tables
+      const { data, error } = await supabase
+        .rpc('get_club_members_enriched', {
+          p_club_id: clubId,
+          p_scope: scope,
+        });
 
       if (error) throw error;
-      return data as TelegramClubMember[];
+      
+      // Map RPC result to include nested profiles for UI compat
+      const enriched = (data || []).map((m: any) => ({
+        ...m,
+        profiles: m.profile_id ? {
+          id: m.profile_id,
+          user_id: m.auth_user_id,
+          full_name: m.full_name,
+          email: m.email,
+          phone: m.phone,
+        } : null,
+      }));
+      
+      return enriched as EnrichedClubMember[];
     },
     enabled: !!clubId,
   });
 }
 
-// Separate hook for member statistics - не зависит от текущего фильтра
+// Separate hook for member statistics - uses RPC 'all' scope for aggregates
 export function useClubMemberStats(clubId: string | null) {
   return useQuery({
     queryKey: ['telegram-club-member-stats', clubId],
     queryFn: async () => {
       if (!clubId) return null;
       
-      // Получаем всех участников одним запросом (без orphaned)
+      // Get all members with computed flags via RPC
       const { data: members, error } = await supabase
-        .from('telegram_club_members')
-        .select('id, in_chat, in_channel, access_status, profile_id')
-        .eq('club_id', clubId)
-        .not('profile_id', 'is', null);
+        .rpc('get_club_members_enriched', {
+          p_club_id: clubId,
+          p_scope: 'all',
+        });
       
       if (error) throw error;
+      if (!members) return null;
       
-      const total = members?.length ?? 0;
-      const inChat = members?.filter(m => m.in_chat === true).length ?? 0;
-      const inChannel = members?.filter(m => m.in_channel === true).length ?? 0;
-      const inAny = members?.filter(m => m.in_chat || m.in_channel).length ?? 0;
-      const statusOk = members?.filter(m => m.access_status === 'ok').length ?? 0;
-      const statusRemoved = members?.filter(m => m.access_status === 'removed').length ?? 0;
-      const statusNoAccess = members?.filter(m => m.access_status === 'no_access').length ?? 0;
-      const statusExpired = members?.filter(m => m.access_status === 'expired').length ?? 0;
-      
-      // Нарушители: в чате/канале, но access_status != 'ok'
-      const violators = members?.filter(m => 
-        (m.in_chat || m.in_channel) && m.access_status !== 'ok'
-      ).length ?? 0;
-      
-      // Купили, но не вошли: access_status = 'ok', но не в чате/канале
-      const boughtNotJoined = members?.filter(m =>
-        m.access_status === 'ok' && !m.in_chat && !m.in_channel
-      ).length ?? 0;
-      
-      // Релевантные (для отображения счётчика переключателя)
-      const relevant = members?.filter(m =>
-        m.in_chat || m.in_channel || 
-        m.access_status === 'ok' || 
-        m.access_status === 'removed' || 
-        m.access_status === 'expired'
-      ).length ?? 0;
+      // Filter out orphaned for most counts
+      const nonOrphaned = members.filter((m: any) => !m.is_orphaned);
       
       return {
-        total,
-        relevant,
-        in_chat: inChat,
-        in_channel: inChannel,
-        in_any: inAny,
-        status_ok: statusOk,
-        status_removed: statusRemoved,
-        status_no_access: statusNoAccess,
-        status_expired: statusExpired,
-        violators,
-        bought_not_joined: boughtNotJoined,
+        total: members.length,
+        orphaned: members.filter((m: any) => m.is_orphaned).length,
+        relevant: nonOrphaned.filter((m: any) => m.is_relevant).length,
+        in_chat: nonOrphaned.filter((m: any) => m.in_chat === true).length,
+        in_channel: nonOrphaned.filter((m: any) => m.in_channel === true).length,
+        in_any: nonOrphaned.filter((m: any) => m.in_any).length,
+        // Correct: uses has_active_access (computed via EXISTS on 3 tables)
+        has_active_access: nonOrphaned.filter((m: any) => m.has_active_access).length,
+        // Correct: violators = in club but NO active access
+        violators: nonOrphaned.filter((m: any) => m.is_violator).length,
+        // Correct: bought but not joined = has active access but NOT in club
+        bought_not_joined: nonOrphaned.filter((m: any) => m.is_bought_not_joined).length,
+        // Legacy status counts (for reference)
+        status_ok: nonOrphaned.filter((m: any) => m.access_status === 'ok').length,
+        status_removed: nonOrphaned.filter((m: any) => m.access_status === 'removed').length,
+        status_no_access: nonOrphaned.filter((m: any) => m.access_status === 'no_access').length,
       };
     },
     enabled: !!clubId,
