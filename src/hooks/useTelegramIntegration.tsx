@@ -551,18 +551,18 @@ export function useCurrentUserTelegramStatus() {
   });
 }
 
-// Club Members hooks - using RPC with computed flags (A-G)
+// Club Members hooks - using RPC with computed flags (A-H)
 export type ClubMemberScope = 'relevant' | 'all';
 
 // Enriched member type with computed flags from RPC
-// Extends TelegramClubMember with computed flags A-G
+// Extends TelegramClubMember with computed flags A-H
 export interface EnrichedClubMember extends TelegramClubMember {
   // Profile fields from RPC (denormalized for convenience)
   auth_user_id: string | null;
   email: string | null;
   full_name: string | null;
   phone: string | null;
-  // Computed flags (A-G)
+  // Computed flags (A-H)
   has_active_access: boolean;
   has_any_access_history: boolean;
   in_any: boolean;
@@ -570,38 +570,53 @@ export interface EnrichedClubMember extends TelegramClubMember {
   is_violator: boolean;
   is_bought_not_joined: boolean;
   is_relevant: boolean;
+  is_unknown: boolean;  // H: not in any working tab
 }
 
-export function useClubMembers(clubId: string | null, opts?: { scope?: ClubMemberScope }) {
+// Helper to map RPC result to EnrichedClubMember
+function mapToEnrichedMembers(data: any[]): EnrichedClubMember[] {
+  return (data || []).map((m: any) => ({
+    ...m,
+    profiles: m.profile_id ? {
+      id: m.profile_id,
+      user_id: m.auth_user_id,
+      full_name: m.full_name,
+      email: m.email,
+      phone: m.phone,
+    } : null,
+  }));
+}
+
+export function useClubMembers(
+  clubId: string | null, 
+  opts?: { scope?: ClubMemberScope; search?: string }
+) {
   const scope = opts?.scope ?? 'relevant';
+  const search = opts?.search?.trim() || null;
   
   return useQuery({
-    queryKey: ['telegram-club-members', clubId, scope],
+    queryKey: ['telegram-club-members', clubId, scope, search],
     queryFn: async () => {
       if (!clubId) return [];
       
-      // Use RPC for correct access checks via EXISTS on 3 access tables
-      const { data, error } = await supabase
-        .rpc('get_club_members_enriched', {
+      // Server-side search if query >= 2 chars
+      if (search && search.length >= 2) {
+        const { data, error } = await supabase.rpc('search_club_members_enriched', {
           p_club_id: clubId,
+          p_query: search,
           p_scope: scope,
         });
-
+        if (error) throw error;
+        return mapToEnrichedMembers(data);
+      }
+      
+      // Default: get all members via RPC
+      const { data, error } = await supabase.rpc('get_club_members_enriched', {
+        p_club_id: clubId,
+        p_scope: scope,
+      });
       if (error) throw error;
-      
-      // Map RPC result to include nested profiles for UI compat
-      const enriched = (data || []).map((m: any) => ({
-        ...m,
-        profiles: m.profile_id ? {
-          id: m.profile_id,
-          user_id: m.auth_user_id,
-          full_name: m.full_name,
-          email: m.email,
-          phone: m.phone,
-        } : null,
-      }));
-      
-      return enriched as EnrichedClubMember[];
+      return mapToEnrichedMembers(data);
     },
     enabled: !!clubId,
   });
@@ -640,6 +655,8 @@ export function useClubMemberStats(clubId: string | null) {
         violators: nonOrphaned.filter((m: any) => m.is_violator).length,
         // Correct: bought but not joined = has active access but NOT in club
         bought_not_joined: nonOrphaned.filter((m: any) => m.is_bought_not_joined).length,
+        // Unknown: not in any working tab (synced but no access/presence)
+        unknown: nonOrphaned.filter((m: any) => m.is_unknown).length,
         // Legacy status counts (for reference)
         status_ok: nonOrphaned.filter((m: any) => m.access_status === 'ok').length,
         status_removed: nonOrphaned.filter((m: any) => m.access_status === 'removed').length,

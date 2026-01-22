@@ -6885,6 +6885,7 @@ export type Database = {
           is_bought_not_joined: boolean
           is_orphaned: boolean
           is_relevant: boolean
+          is_unknown: boolean
           is_violator: boolean
           link_status: string
           phone: string
@@ -7037,6 +7038,36 @@ export type Database = {
           auth_user_id: string
           profile_id: string
           resolved_from: string
+        }[]
+      }
+      search_club_members_enriched: {
+        Args: { p_club_id: string; p_query: string; p_scope?: string }
+        Returns: {
+          access_status: string
+          auth_user_id: string
+          club_id: string
+          created_at: string
+          email: string
+          full_name: string
+          has_active_access: boolean
+          has_any_access_history: boolean
+          id: string
+          in_any: boolean
+          in_channel: boolean
+          in_chat: boolean
+          is_bought_not_joined: boolean
+          is_orphaned: boolean
+          is_relevant: boolean
+          is_unknown: boolean
+          is_violator: boolean
+          link_status: string
+          phone: string
+          profile_id: string
+          telegram_first_name: string
+          telegram_last_name: string
+          telegram_user_id: number
+          telegram_username: string
+          updated_at: string
         }[]
       }
       search_global: {

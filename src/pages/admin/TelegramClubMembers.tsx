@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { AdminLayout } from '@/components/layout/AdminLayout';
 import { ClubStatistics } from '@/components/telegram/ClubStatistics';
@@ -130,14 +130,26 @@ export default function TelegramClubMembers() {
   const [showAllScope, setShowAllScope] = useState(false);
   const scope: ClubMemberScope = showAllScope ? 'all' : 'relevant';
   
-  const { data: members, isLoading, refetch } = useClubMembers(clubId || null, { scope });
+  // Search with debounce for server-side search
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  
+  // Debounce search input (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+  
+  const { data: members, isLoading, refetch } = useClubMembers(clubId || null, { 
+    scope, 
+    search: debouncedSearch 
+  });
   const { data: stats } = useClubMemberStats(clubId || null);
   const syncMembers = useSyncClubMembers();
   const kickViolators = useKickViolators();
   const grantAccess = useGrantTelegramAccess();
   const revokeAccess = useRevokeTelegramAccess();
 
-  const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<FilterTab>('in_club');
   const [showKickDialog, setShowKickDialog] = useState(false);
   const [selectedMember, setSelectedMember] = useState<EnrichedClubMember | null>(null);
@@ -215,27 +227,11 @@ export default function TelegramClubMembers() {
     };
   }, [members]);
 
-  // Filter and search members - using computed flags (A-G definitions)
+  // Filter members by active tab - search is now server-side via RPC
   const filteredMembers = useMemo(() => {
     if (!members) return [];
     
     return members.filter(member => {
-      if (search) {
-        const searchLower = search.toLowerCase();
-        const matchesSearch = 
-          member.telegram_username?.toLowerCase().includes(searchLower) ||
-          member.telegram_first_name?.toLowerCase().includes(searchLower) ||
-          member.telegram_last_name?.toLowerCase().includes(searchLower) ||
-          member.telegram_user_id.toString().includes(searchLower) ||
-          member.email?.toLowerCase().includes(searchLower) ||
-          member.profiles?.email?.toLowerCase().includes(searchLower) ||
-          member.profiles?.phone?.includes(search) ||
-          member.full_name?.toLowerCase().includes(searchLower) ||
-          member.profiles?.full_name?.toLowerCase().includes(searchLower);
-        
-        if (!matchesSearch) return false;
-      }
-
       switch (activeTab) {
         case 'in_club':
           // C: in_any = in_chat OR in_channel
@@ -256,7 +252,7 @@ export default function TelegramClubMembers() {
           return true;
       }
     });
-  }, [members, search, activeTab]);
+  }, [members, activeTab]);
 
   const handleExportCSV = () => {
     if (!filteredMembers.length) return;
@@ -809,6 +805,25 @@ export default function TelegramClubMembers() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Unknown counter badge - not a tab, just an indicator */}
+        {(stats?.unknown ?? 0) > 0 && (
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="outline" className="gap-1 cursor-help">
+                  <HelpCircle className="h-3 w-3" />
+                  Неизвестные: {stats?.unknown ?? 0}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">
+                <p className="font-medium">Не относятся к клубу</p>
+                <p className="text-sm mt-1">Синхронизированные записи без доступа и без присутствия в чате. 
+                Это пользователи, привязавшие Telegram, но не покупавшие доступ к этому клубу.</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        )}
 
         {/* Tab Filters */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)} className="w-full">
