@@ -821,6 +821,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           subscriptionId = existingSub.id;
         } else {
           // Create new subscription with custom dates
+          // PATCH: Always enable auto_renew for Club/Installment products per policy
+          const activePaymentMethod = paymentMethods?.find(pm => pm.status === 'active');
           const { data: newSub, error: subError } = await supabase.from("subscriptions_v2").insert({
             user_id: contact.user_id!,
             order_id: orderV2.id,
@@ -830,6 +832,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             is_trial: false,
             access_start_at: accessStart.toISOString(),
             access_end_at: accessEnd.toISOString(),
+            next_charge_at: accessEnd.toISOString(),
+            auto_renew: true,
+            payment_method_id: activePaymentMethod?.id || null,
           }).select().single();
           if (subError) throw subError;
           subscriptionId = newSub.id;
@@ -2026,10 +2031,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         {isActive && !isCanceled && (
                           <div className="flex items-center justify-between gap-2 mb-3 p-2 rounded-lg bg-muted/50 text-xs">
                             <div className="flex items-center gap-2">
-                              {sub.payment_method_id && sub.auto_renew ? (
+                              {sub.auto_renew ? (
                                 <>
                                   <CheckCircle className="w-3.5 h-3.5 text-green-600" />
-                                  <span className="text-green-700">Автопродление включено</span>
+                                  <span className="text-green-700">
+                                    Автопродление включено{!sub.payment_method_id && " (нет карты)"}
+                                  </span>
                                   {sub.charge_attempts > 0 && (
                                     <Badge variant="outline" className="text-amber-600 border-amber-200 text-xs">
                                       Попыток: {sub.charge_attempts}/3
@@ -2040,20 +2047,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                 <>
                                   <XCircle className="w-3.5 h-3.5 text-muted-foreground" />
                                   <span className="text-muted-foreground">
-                                    {!paymentMethods || paymentMethods.length === 0 
-                                      ? "Нет привязанной карты" 
-                                      : sub.auto_renew_disabled_by 
-                                        ? (
-                                          <>
-                                            Откл. {sub.auto_renew_disabled_by === 'admin' ? 'админом' : 'клиентом'}
-                                            {sub.auto_renew_disabled_at && (
-                                              <span className="ml-1 opacity-70">
-                                                ({format(new Date(sub.auto_renew_disabled_at), "dd.MM.yy")})
-                                              </span>
-                                            )}
-                                          </>
-                                        )
-                                        : "Автопродление отключено"
+                                    {sub.auto_renew_disabled_by 
+                                      ? (
+                                        <>
+                                          Откл. {sub.auto_renew_disabled_by === 'admin' ? 'админом' : 'клиентом'}
+                                          {sub.auto_renew_disabled_at && (
+                                            <span className="ml-1 opacity-70">
+                                              ({format(new Date(sub.auto_renew_disabled_at), "dd.MM.yy")})
+                                            </span>
+                                          )}
+                                        </>
+                                      )
+                                      : "Автопродление отключено"
                                     }
                                   </span>
                                 </>
