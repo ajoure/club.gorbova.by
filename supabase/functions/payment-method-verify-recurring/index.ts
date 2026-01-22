@@ -41,6 +41,7 @@ interface ProcessingResult {
   rejected: number;
   retried: number;
   failed: number;
+  skipped: number;
   errors: string[];
 }
 
@@ -113,6 +114,10 @@ serve(async (req) => {
   const secretKey = bepaidConfig?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
   const shopId = bepaidConfig?.config?.shop_id || Deno.env.get('BEPAID_SHOP_ID') || '33524';
   
+  // FIX #1: Get test_mode from config or ENV (NOT hardcoded!)
+  const testMode = bepaidConfig?.config?.test_mode ?? (Deno.env.get('BEPAID_TEST_MODE') === 'true');
+  console.log(`[payment-method-verify-recurring] bePaid config: shop=${shopId}, testMode=${testMode}`);
+  
   if (!secretKey) {
     console.error('[payment-method-verify-recurring] No bePaid secret key configured');
     return new Response(JSON.stringify({ error: 'bePaid not configured' }), {
@@ -129,6 +134,7 @@ serve(async (req) => {
     rejected: 0,
     retried: 0,
     failed: 0,
+    skipped: 0,
     errors: [],
   };
 
@@ -142,16 +148,24 @@ serve(async (req) => {
     }
 
     try {
-      // Lock job: UPDATE status='processing'
-      const { error: lockError } = await supabase
+      // FIX #2: Lock job with affected rows check
+      const { data: lockData, error: lockError } = await supabase
         .from('payment_method_verification_jobs')
         .update({ status: 'processing', updated_at: now })
         .eq('id', job.id)
-        .eq('status', job.status); // Optimistic lock
+        .eq('status', job.status)
+        .select('id');
 
       if (lockError) {
         console.error(`[job ${job.id}] Lock error:`, lockError);
         results.errors.push(job.id);
+        continue;
+      }
+
+      // FIX #2: Check if we actually locked the row (prevent race condition)
+      if (!lockData || lockData.length === 0) {
+        console.log(`[job ${job.id}] Already claimed by another worker, skipping`);
+        results.skipped++;
         continue;
       }
 
@@ -181,7 +195,7 @@ serve(async (req) => {
           currency: testCurrency,
           description: 'Проверка карты для автоплатежей (будет возвращено)',
           tracking_id: trackingId,
-          test: true, // Always test mode for verification charges
+          test: testMode, // FIX #1: From config, NOT hardcoded
           skip_three_d_secure_verification: true, // Try to skip 3DS
           credit_card: { token: pm.provider_token },
           additional_data: {
@@ -191,7 +205,7 @@ serve(async (req) => {
         },
       };
 
-      console.log(`[job ${job.id}] Attempting test charge for card ${pm.brand} ****${pm.last4}`);
+      console.log(`[job ${job.id}] Attempting test charge for card ${pm.brand} ****${pm.last4}, testMode=${testMode}`);
 
       const chargeResp = await fetch('https://gateway.bepaid.by/transactions/payments', {
         method: 'POST',
@@ -204,13 +218,23 @@ serve(async (req) => {
         body: JSON.stringify(chargePayload),
       });
 
+      const httpStatus = chargeResp.status;
       const chargeResult = await chargeResp.json();
       const txStatus = chargeResult.transaction?.status;
       const txCode = chargeResult.transaction?.code;
       const txUid = chargeResult.transaction?.uid;
       const txMessage = chargeResult.transaction?.message || chargeResult.message;
 
-      console.log(`[job ${job.id}] Charge result: status=${txStatus}, code=${txCode}, uid=${txUid}`);
+      console.log(`[job ${job.id}] Charge result: http=${httpStatus}, status=${txStatus}, code=${txCode}, uid=${txUid}`);
+
+      // FIX #5: Build raw response for audit logs
+      const rawChargeResponse = {
+        http_status: httpStatus,
+        tx_status: txStatus,
+        tx_code: txCode,
+        tx_message: txMessage,
+        tx_uid: txUid,
+      };
 
       // === CASE A: SUCCESS → Refund ===
       if (txStatus === 'successful') {
@@ -236,11 +260,23 @@ serve(async (req) => {
           body: JSON.stringify(refundPayload),
         });
 
+        const refundHttpStatus = refundResp.status;
         const refundResult = await refundResp.json();
         const refundOk = refundResult.transaction?.status === 'successful';
         const refundUid = refundResult.transaction?.uid;
+        const refundCode = refundResult.transaction?.code;
+        const refundMessage = refundResult.transaction?.message;
 
         console.log(`[job ${job.id}] Refund result: ok=${refundOk}, uid=${refundUid}`);
+
+        // FIX #5: Raw refund response
+        const rawRefundResponse = {
+          http_status: refundHttpStatus,
+          tx_status: refundResult.transaction?.status,
+          tx_code: refundCode,
+          tx_message: refundMessage,
+          tx_uid: refundUid,
+        };
 
         // Update payment_method as verified (even if refund failed - charge worked!)
         await supabase.from('payment_methods').update({
@@ -248,7 +284,7 @@ serve(async (req) => {
           verification_status: 'verified',
           verification_checked_at: new Date().toISOString(),
           verification_tx_uid: txUid,
-          verification_error: refundOk ? null : `Refund pending: ${refundResult.transaction?.message || 'unknown'}`,
+          verification_error: refundOk ? null : `Refund pending: ${refundMessage || 'unknown'}`,
         }).eq('id', pm.id);
 
         // Mark job done
@@ -259,7 +295,7 @@ serve(async (req) => {
           updated_at: new Date().toISOString(),
         }).eq('id', job.id);
 
-        // SYSTEM ACTOR audit
+        // SYSTEM ACTOR audit with raw response (FIX #5)
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
@@ -273,6 +309,10 @@ serve(async (req) => {
             charge_tx_uid: txUid,
             refund_tx_uid: refundUid,
             refund_status: refundResult.transaction?.status,
+            raw: {
+              charge: rawChargeResponse,
+              refund: rawRefundResponse,
+            },
           },
         });
 
@@ -286,8 +326,9 @@ serve(async (req) => {
             meta: {
               payment_method_id: pm.id,
               charge_tx_uid: txUid,
-              refund_error: refundResult.transaction?.message,
+              refund_error: refundMessage,
               requires_manual_refund: true,
+              raw: rawRefundResponse,
             },
           });
         }
@@ -352,7 +393,7 @@ serve(async (req) => {
           updated_at: new Date().toISOString(),
         }).eq('id', job.id);
 
-        // SYSTEM ACTOR audit
+        // SYSTEM ACTOR audit with raw response (FIX #5)
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
@@ -365,17 +406,18 @@ serve(async (req) => {
             brand: pm.brand,
             code: txCode,
             reason: '3ds_required',
+            raw: rawChargeResponse,
           },
         });
 
-        // Queue notification to user
+        // FIX #3: Queue notification via telegram-send-notification edge function
         await sendCardNotSuitableNotification(supabase, supabaseUrl, supabaseServiceKey, pm);
 
         results.rejected++;
       }
 
       // === CASE C: Rate limit → Stop batch ===
-      else if (txCode === 'G.9999' || chargeResp.status === 429) {
+      else if (txCode === 'G.9999' || httpStatus === 429) {
         console.log(`[job ${job.id}] Rate limit hit: ${txCode}`);
         rateLimitHit = true;
 
@@ -393,7 +435,7 @@ serve(async (req) => {
           actor_user_id: null,
           actor_label: 'payment-method-verify-recurring',
           action: 'card.verification.rate_limited',
-          meta: { job_id: job.id, next_retry_at: nextRetry },
+          meta: { job_id: job.id, next_retry_at: nextRetry, raw: rawChargeResponse },
         });
       }
 
@@ -419,6 +461,7 @@ serve(async (req) => {
             updated_at: new Date().toISOString(),
           }).eq('id', job.id);
 
+          // Audit with raw response (FIX #5)
           await supabase.from('audit_logs').insert({
             actor_type: 'system',
             actor_user_id: null,
@@ -430,8 +473,12 @@ serve(async (req) => {
               attempts: newAttempt,
               last_error: txMessage,
               code: txCode,
+              raw: rawChargeResponse,
             },
           });
+
+          // FIX #3: Notify user about failed verification
+          await sendCardNotSuitableNotification(supabase, supabaseUrl, supabaseServiceKey, pm);
 
           results.failed++;
         } else {
@@ -468,13 +515,14 @@ serve(async (req) => {
     }
   }
 
-  console.log(`[payment-method-verify-recurring] Completed: verified=${results.verified}, rejected=${results.rejected}, retried=${results.retried}, failed=${results.failed}`);
+  console.log(`[payment-method-verify-recurring] Completed: verified=${results.verified}, rejected=${results.rejected}, retried=${results.retried}, failed=${results.failed}, skipped=${results.skipped}`);
 
   return new Response(JSON.stringify({
     mode: 'execute',
     processed: jobs.length,
     results,
     rate_limit_hit: rateLimitHit,
+    test_mode: testMode,
   }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 });
 
@@ -506,7 +554,8 @@ async function updatePaymentMethodStatus(
   }).eq('id', pmId);
 }
 
-// Helper: Send notification for rejected card
+// FIX #3: Send notification via telegram-send-notification edge function (NOT direct Telegram API)
+// FIX #4: Do NOT write to telegram_logs directly - let the edge function handle it
 async function sendCardNotSuitableNotification(
   supabase: any,
   supabaseUrl: string,
@@ -514,39 +563,12 @@ async function sendCardNotSuitableNotification(
   pm: PaymentMethod
 ) {
   try {
-    // Get profile for notification
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('telegram_user_id, telegram_link_status, full_name')
-      .eq('user_id', pm.user_id)
-      .single();
-
-    if (!profile?.telegram_user_id || profile.telegram_link_status !== 'active') {
-      console.log(`[notification] User ${pm.user_id} has no active Telegram link`);
-      return;
-    }
-
-    // Get link bot
-    const { data: linkBot } = await supabase
-      .from('telegram_bots')
-      .select('token')
-      .eq('is_link_bot', true)
-      .eq('is_active', true)
-      .limit(1)
-      .single();
-
-    if (!linkBot?.token) {
-      console.log('[notification] No link bot configured');
-      return;
-    }
-
-    const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
-    const userName = profile.full_name || 'Клиент';
     const brandUpper = pm.brand?.toUpperCase() || '';
+    const siteUrl = Deno.env.get('SITE_URL') || 'https://club.gorbova.by';
+    
+    const customMessage = `⚠️ *Карта не подходит для автоплатежей*
 
-    const message = `⚠️ *Карта не подходит для автоплатежей*
-
-${userName}, ваша карта ${brandUpper} ****${pm.last4} успешно добавлена, но *требует подтверждения 3D-Secure* на каждую операцию.
+Ваша карта ${brandUpper} ****${pm.last4} успешно добавлена, но *требует подтверждения 3D-Secure* на каждую операцию.
 
 📋 *Что это значит:*
 Автопродление подписки не сможет работать с этой картой — каждый платёж потребует ввода кода из SMS.
@@ -557,36 +579,25 @@ ${userName}, ваша карта ${brandUpper} ****${pm.last4} успешно д
 
 🔗 [Привязать другую карту](${siteUrl}/settings/payment-methods)`;
 
-    const resp = await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
+    // FIX #3: Use telegram-send-notification edge function instead of direct API
+    const resp = await fetch(`${supabaseUrl}/functions/v1/telegram-send-notification`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
-        chat_id: profile.telegram_user_id,
-        text: message,
-        parse_mode: 'Markdown',
+        user_id: pm.user_id,
+        message_type: 'card_not_suitable_for_autopay',
+        custom_message: customMessage,
       }),
     });
 
     const result = await resp.json();
-    if (result.ok) {
-      console.log(`[notification] Sent card rejection notice to user ${pm.user_id}`);
-
-      // Log to telegram_logs for history
-      await supabase.from('telegram_logs').insert({
-        user_id: pm.user_id,
-        direction: 'out',
-        message_type: 'card_not_suitable_for_autopay',
-        message_text: message,
-        telegram_user_id: profile.telegram_user_id,
-        status: 'sent',
-        meta: {
-          payment_method_id: pm.id,
-          card_last4: pm.last4,
-          card_brand: pm.brand,
-        },
-      });
+    if (result.success) {
+      console.log(`[notification] Sent card rejection notice to user ${pm.user_id} via telegram-send-notification`);
     } else {
-      console.error(`[notification] Failed to send:`, result);
+      console.error(`[notification] telegram-send-notification failed:`, result.error);
     }
   } catch (error) {
     console.error('[notification] Error sending card rejection notice:', error);
