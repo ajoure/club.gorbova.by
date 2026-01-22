@@ -2071,7 +2071,19 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                   <span className="text-muted-foreground">
                                     {!paymentMethods || paymentMethods.length === 0 
                                       ? "Нет привязанной карты" 
-                                      : "Автопродление отключено"}
+                                      : sub.auto_renew_disabled_by 
+                                        ? (
+                                          <>
+                                            Откл. {sub.auto_renew_disabled_by === 'admin' ? 'админом' : 'клиентом'}
+                                            {sub.auto_renew_disabled_at && (
+                                              <span className="ml-1 opacity-70">
+                                                ({format(new Date(sub.auto_renew_disabled_at), "dd.MM.yy")})
+                                              </span>
+                                            )}
+                                          </>
+                                        )
+                                        : "Автопродление отключено"
+                                    }
                                   </span>
                                 </>
                               )}
