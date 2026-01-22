@@ -99,6 +99,7 @@ interface TelegramEvent {
   status: string;
   created_at: string;
   meta?: Record<string, unknown> | null;
+  message_text?: string | null; // PATCH 13E: notification text
 }
 
 type ChatItem = TelegramMessage | TelegramEvent;
@@ -214,7 +215,7 @@ export function ContactTelegramChat({
     queryFn: async () => {
       const { data, error } = await supabase
         .from("telegram_logs")
-        .select("id, action, status, created_at, meta")
+        .select("id, action, status, created_at, meta, message_text")
         .eq("user_id", userId)
         .not("action", "in", "(ADMIN_CHAT_MESSAGE,ADMIN_CHAT_FILE)")
         .order("created_at", { ascending: true })
@@ -535,14 +536,29 @@ export function ContactTelegramChat({
   const renderChatItem = (item: ChatItem) => {
     if (item.type === "event") {
       const event = item as TelegramEvent;
+      const isNotification = event.action === 'manual_notification' || event.action === 'system_notification';
+      const hasMessageText = isNotification && event.message_text;
+      
       return (
         <div key={event.id} className="flex justify-center my-2">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-xs text-muted-foreground">
-            {EVENT_ICONS[event.action] || <Bell className="w-3 h-3" />}
-            <span>{EVENT_LABELS[event.action] || event.action}</span>
-            <span className="opacity-60">
-              {format(new Date(event.created_at), "dd.MM HH:mm", { locale: ru })}
-            </span>
+          <div className="flex flex-col items-center gap-1 max-w-[85%]">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-xs text-muted-foreground">
+              {EVENT_ICONS[event.action] || <Bell className="w-3 h-3" />}
+              <span>{EVENT_LABELS[event.action] || event.action}</span>
+              <span className="opacity-60">
+                {format(new Date(event.created_at), "dd.MM HH:mm", { locale: ru })}
+              </span>
+              {event.status === 'success' && <CheckCircle className="w-3 h-3 text-green-500" />}
+              {event.status === 'error' && <AlertCircle className="w-3 h-3 text-destructive" />}
+            </div>
+            {/* PATCH 13E: Show notification text */}
+            {hasMessageText && (
+              <div className="w-full px-4 py-2 bg-muted/50 rounded-lg text-xs text-muted-foreground border border-border/30">
+                <div className="whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+                  {event.message_text}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       );

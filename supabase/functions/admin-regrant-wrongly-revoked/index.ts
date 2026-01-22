@@ -157,6 +157,13 @@ Deno.serve(async (req) => {
 
       for (const u of toProcess) {
         try {
+          // PATCH 13C: Skip if already in_chat (idempotency)
+          if (u.in_chat === true) {
+            skipped++;
+            results.push({ user_id: u.user_id, status: 'skipped', error: 'already_in_chat' });
+            continue;
+          }
+
           // Re-grant via telegram-grant-access
           const { data, error } = await supabase.functions.invoke('telegram-grant-access', {
             body: {
@@ -173,6 +180,22 @@ Deno.serve(async (req) => {
           } else if (data?.success) {
             regranted++;
             results.push({ user_id: u.user_id, status: 'regranted' });
+
+            // PATCH 13C: Send access_granted notification after successful regrant
+            try {
+              await supabase.functions.invoke('telegram-send-notification', {
+                body: {
+                  user_id: u.user_id,
+                  message_type: 'access_granted',
+                },
+                headers: {
+                  Authorization: `Bearer ${supabaseServiceKey}`,
+                },
+              });
+            } catch (notifyErr) {
+              console.log(`[regrant] Failed to send notification to ${u.user_id}:`, notifyErr);
+              // Don't fail the regrant if notification fails
+            }
           } else {
             failed++;
             results.push({ user_id: u.user_id, status: 'error', error: data?.error || 'Unknown' });

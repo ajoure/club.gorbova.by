@@ -69,61 +69,69 @@ Deno.serve(async (req) => {
 
     console.log(`[telegram-notify-admins] Starting notification, source=${source || 'unknown'}, order=${order_number || order_id || 'N/A'}`);
 
-    // Get only super_admin role ID (not regular admins)
-    const { data: adminRoles } = await supabase
+    // =================================================================
+    // PATCH 13D: RBAC - super_admin + admin with deals.edit permission
+    // =================================================================
+    
+    // 1. Get super_admin role ID
+    const { data: superAdminRoles } = await supabase
       .from('roles')
       .select('id')
       .eq('code', 'super_admin');
 
-    if (!adminRoles || adminRoles.length === 0) {
-      console.log('No admin roles defined in system');
-      // Log the skip
+    const superAdminRoleIds = superAdminRoles?.map((r: any) => r.id) || [];
+
+    // 2. Get users with super_admin role
+    let superAdminUserIds: string[] = [];
+    if (superAdminRoleIds.length > 0) {
+      const { data: superAdminUsers } = await supabase
+        .from('user_roles_v2')
+        .select('user_id')
+        .in('role_id', superAdminRoleIds);
+      superAdminUserIds = superAdminUsers?.map((ur: any) => ur.user_id) || [];
+    }
+
+    // 3. Get admins with deals.edit permission via RPC
+    const { data: adminsWithDealsEdit } = await supabase.rpc('find_users_with_permission', {
+      permission_code: 'deals.edit'
+    });
+    const dealsEditUserIds = adminsWithDealsEdit?.map((u: any) => u.user_id) || [];
+
+    // 4. Combine and deduplicate
+    const allEligibleUserIds = [...new Set([...superAdminUserIds, ...dealsEditUserIds])];
+
+    if (allEligibleUserIds.length === 0) {
+      console.log('No eligible admins found (super_admin or deals.edit)');
       await supabase.from('telegram_logs').insert({
         action: 'ADMIN_NOTIFY_SKIPPED',
         status: 'info',
-        meta: { reason: 'no_admin_roles', source, order_id, order_number, payment_id },
+        meta: { 
+          reason: 'no_eligible_admins', 
+          super_admins: superAdminUserIds.length,
+          deals_edit_admins: dealsEditUserIds.length,
+          source, order_id, order_number, payment_id 
+        },
       });
-      return new Response(JSON.stringify({ success: true, sent: 0, reason: 'no_admin_roles' }), {
+      return new Response(JSON.stringify({ success: true, sent: 0, reason: 'no_eligible_admins' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const adminRoleIds = adminRoles.map((r: any) => r.id);
-
-    // Get user_ids with admin roles
-    const { data: adminUserRoles } = await supabase
-      .from('user_roles_v2')
-      .select('user_id')
-      .in('role_id', adminRoleIds);
-
-    if (!adminUserRoles || adminUserRoles.length === 0) {
-      console.log('No users with admin roles found');
-      await supabase.from('telegram_logs').insert({
-        action: 'ADMIN_NOTIFY_SKIPPED',
-        status: 'info',
-        meta: { reason: 'no_super_admins', source, order_id, order_number, payment_id },
-      });
-      return new Response(JSON.stringify({ success: true, sent: 0, reason: 'no_super_admins' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const superAdminUserIds = adminUserRoles.map((ur: any) => ur.user_id);
-    console.log(`Found ${superAdminUserIds.length} admin users to notify`);
+    console.log(`Found ${allEligibleUserIds.length} eligible admins (${superAdminUserIds.length} super_admin + ${dealsEditUserIds.length} with deals.edit)`);
 
     // Get admin profiles with telegram info
     const { data: adminProfiles } = await supabase
       .from('profiles')
       .select('telegram_user_id, telegram_link_bot_id, full_name')
-      .in('user_id', superAdminUserIds)
+      .in('user_id', allEligibleUserIds)
       .not('telegram_user_id', 'is', null);
 
     if (!adminProfiles || adminProfiles.length === 0) {
-      console.log('No super admins with Telegram linked');
+      console.log('No eligible admins with Telegram linked');
       await supabase.from('telegram_logs').insert({
         action: 'ADMIN_NOTIFY_SKIPPED',
         status: 'info',
-        meta: { reason: 'no_telegram_linked', admin_count: superAdminUserIds.length, source, order_id, order_number, payment_id },
+        meta: { reason: 'no_telegram_linked', admin_count: allEligibleUserIds.length, source, order_id, order_number, payment_id },
       });
       return new Response(JSON.stringify({ success: true, sent: 0, reason: 'no_telegram_linked' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -216,7 +224,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`Notified ${sentCount}/${adminProfiles.length} super admins, source=${source || 'unknown'}`);
+    console.log(`Notified ${sentCount}/${adminProfiles.length} eligible admins (super_admin + deals.edit), source=${source || 'unknown'}`);
 
     // Log success summary
     await supabase.from('telegram_logs').insert({

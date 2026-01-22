@@ -5971,6 +5971,7 @@ export type Database = {
           created_at: string
           error_message: string | null
           id: string
+          message_text: string | null
           meta: Json | null
           status: string
           target: string | null
@@ -5982,6 +5983,7 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           id?: string
+          message_text?: string | null
           meta?: Json | null
           status: string
           target?: string | null
@@ -5993,6 +5995,7 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           id?: string
+          message_text?: string | null
           meta?: Json | null
           status?: string
           target?: string | null
@@ -6850,6 +6853,13 @@ export type Database = {
           unlinked_queue_count: number
         }[]
       }
+      align_billing_dates: {
+        Args: { p_batch_size?: number }
+        Returns: {
+          sample_ids: string[]
+          updated_count: number
+        }[]
+      }
       cleanup_demo_counts: {
         Args: never
         Returns: {
@@ -6924,6 +6934,26 @@ export type Database = {
           notification_count: number
           sub_status: string
           telegram_user_id: number
+          user_id: string
+        }[]
+      }
+      find_misaligned_subscriptions: {
+        Args: { p_limit?: number }
+        Returns: {
+          access_end_at: string
+          days_difference: number
+          email: string
+          full_name: string
+          id: string
+          next_charge_at: string
+          profile_id: string
+          status: string
+          user_id: string
+        }[]
+      }
+      find_users_with_permission: {
+        Args: { permission_code: string }
+        Returns: {
           user_id: string
         }[]
       }

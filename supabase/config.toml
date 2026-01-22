@@ -263,3 +263,6 @@ verify_jwt = false
 
 [functions.admin-legacy-cards-report]
 verify_jwt = false
+
+[functions.admin-billing-alignment]
+verify_jwt = false

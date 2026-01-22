@@ -371,11 +371,11 @@ Deno.serve(async (req) => {
 
 Продли сейчас, чтобы не потерять доступ 💙`,
       
-      access_granted: `✅ Всё отлично!
+      access_granted: `✅ Доступ восстановлен!
 
-Твоя подписка активна, я уже открыл тебе доступ 🙌
+Твоя подписка в ${clubName} активна${accessEndFormatted ? ` до ${accessEndFormatted}` : ''}.
 
-Добро пожаловать в ${clubName} 💙`,
+Добро пожаловать! 💙`,
       
       access_revoked: `❌ Подписка завершена
 
@@ -453,7 +453,7 @@ Deno.serve(async (req) => {
       }
     });
 
-    // Log the notification in telegram_logs
+    // Log the notification in telegram_logs (PATCH 13E: include message_text)
     await supabase
       .from('telegram_logs')
       .insert({
@@ -462,6 +462,7 @@ Deno.serve(async (req) => {
         target: 'user',
         status: sendResult.ok ? 'success' : 'error',
         error_message: sendResult.ok ? null : sendResult.description,
+        message_text: message, // PATCH 13E: save full text for history
         meta: {
           message_type,
           sent_by_admin: user.id,
