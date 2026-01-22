@@ -36,7 +36,7 @@ export const EVENT_LABELS: Record<string, string> = {
   // ===== Уведомления =====
   manual_notification: "Уведомление отправлено",
   system_notification: "Системное уведомление",
-  legacy_card_notification: "Уведомление о карте",
+  legacy_card_notification: "Уведомление об устаревшей карте",
   MASS_NOTIFICATION: "Массовая рассылка",
   ADMIN_NOTIFY_SENT: "Уведомление админов",
   ADMIN_NOTIFY_SKIPPED: "Уведомление пропущено",
