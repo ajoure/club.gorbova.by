@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
@@ -14,7 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Loader2, Send } from "lucide-react";
+import { Loader2, Send, AlertTriangle } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface SendNotificationDialogProps {
   open: boolean;
@@ -30,6 +31,7 @@ const notificationTypes = [
   { value: "welcome", label: "Приветствие" },
   { value: "access_granted", label: "Доступ выдан" },
   { value: "access_revoked", label: "Доступ отозван" },
+  { value: "access_still_active_apology", label: "Извинение (ошибочный revoke)" }, // PATCH 10E
   { value: "custom", label: "Произвольное сообщение" },
 ];
 
@@ -42,6 +44,30 @@ export function SendNotificationDialog({
 }: SendNotificationDialogProps) {
   const [messageType, setMessageType] = useState("welcome");
   const [customMessage, setCustomMessage] = useState("");
+  const [clickGuard, setClickGuard] = useState(false); // PATCH 10D: Double-click protection
+
+  // PATCH 10D: Check user subscription status for UI guard
+  const { data: userSubscription } = useQuery({
+    queryKey: ['user-subscription-status-guard', userId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('subscriptions_v2')
+        .select('id, status, access_end_at')
+        .eq('user_id', userId)
+        .in('status', ['active', 'trial'])
+        .gt('access_end_at', new Date().toISOString())
+        .order('access_end_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data;
+    },
+    enabled: open && !!userId
+  });
+
+  const hasActiveSubscription = !!userSubscription;
+  const accessEndDate = userSubscription?.access_end_at 
+    ? new Date(userSubscription.access_end_at).toLocaleDateString('ru-RU')
+    : null;
 
   const sendNotification = useMutation({
     mutationFn: async () => {
@@ -54,7 +80,18 @@ export function SendNotificationDialog({
       });
 
       if (error) throw error;
-      if (!data.success) throw new Error(data.error || "Ошибка отправки");
+      
+      // Handle blocked/skipped responses from PATCH 10A/10B
+      if (data?.blocked) {
+        throw new Error(data.error || 'Отправка заблокирована: у пользователя активный доступ');
+      }
+      if (data?.skipped) {
+        throw new Error(data.error || 'Уведомление уже было отправлено недавно');
+      }
+      if (!data?.success) {
+        throw new Error(data?.error || "Ошибка отправки");
+      }
+      
       return data;
     },
     onSuccess: () => {
@@ -63,10 +100,21 @@ export function SendNotificationDialog({
       setMessageType("welcome");
       setCustomMessage("");
     },
-    onError: (error) => {
+    onError: (error: Error) => {
       toast.error(`Ошибка: ${error.message}`);
     },
   });
+
+  // PATCH 10D: Handle send with double-click protection
+  const handleSend = async () => {
+    if (clickGuard || sendNotification.isPending) return;
+    setClickGuard(true);
+    try {
+      await sendNotification.mutateAsync();
+    } finally {
+      setTimeout(() => setClickGuard(false), 2000); // 2 sec cooldown
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -85,14 +133,35 @@ export function SendNotificationDialog({
           <div className="space-y-3">
             <Label>Тип сообщения</Label>
             <RadioGroup value={messageType} onValueChange={setMessageType}>
-              {notificationTypes.map((type) => (
-                <div key={type.value} className="flex items-center space-x-2">
-                  <RadioGroupItem value={type.value} id={type.value} />
-                  <Label htmlFor={type.value} className="font-normal cursor-pointer">
-                    {type.label}
-                  </Label>
-                </div>
-              ))}
+              {notificationTypes.map((type) => {
+                // PATCH 10D: Disable access_revoked if user has active subscription
+                const isRevokeDisabled = type.value === 'access_revoked' && hasActiveSubscription;
+                
+                return (
+                  <div key={type.value} className="flex items-center space-x-2">
+                    <RadioGroupItem 
+                      value={type.value} 
+                      id={type.value} 
+                      disabled={isRevokeDisabled}
+                    />
+                    <Label 
+                      htmlFor={type.value} 
+                      className={cn(
+                        "font-normal cursor-pointer",
+                        isRevokeDisabled && "text-muted-foreground cursor-not-allowed"
+                      )}
+                    >
+                      {type.label}
+                      {isRevokeDisabled && (
+                        <span className="ml-2 text-xs text-amber-600 inline-flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3" />
+                          подписка до {accessEndDate}
+                        </span>
+                      )}
+                    </Label>
+                  </div>
+                );
+              })}
             </RadioGroup>
           </div>
 
@@ -115,8 +184,8 @@ export function SendNotificationDialog({
             Отмена
           </Button>
           <Button
-            onClick={() => sendNotification.mutate()}
-            disabled={sendNotification.isPending || (messageType === "custom" && !customMessage.trim())}
+            onClick={handleSend}
+            disabled={sendNotification.isPending || clickGuard || (messageType === "custom" && !customMessage.trim())}
           >
             {sendNotification.isPending ? (
               <>

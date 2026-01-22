@@ -3052,6 +3052,48 @@ export type Database = {
         }
         Relationships: []
       }
+      notification_outbox: {
+        Row: {
+          blocked_reason: string | null
+          channel: string
+          created_at: string
+          id: string
+          idempotency_key: string
+          message_type: string
+          meta: Json | null
+          sent_at: string | null
+          source: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          blocked_reason?: string | null
+          channel?: string
+          created_at?: string
+          id?: string
+          idempotency_key: string
+          message_type: string
+          meta?: Json | null
+          sent_at?: string | null
+          source?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          blocked_reason?: string | null
+          channel?: string
+          created_at?: string
+          id?: string
+          idempotency_key?: string
+          message_type?: string
+          meta?: Json | null
+          sent_at?: string | null
+          source?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       orders: {
         Row: {
           amount: number
