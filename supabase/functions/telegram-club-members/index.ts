@@ -333,13 +333,32 @@ Deno.serve(async (req) => {
         last_status_check_at: new Date().toISOString(),
       }).eq('id', club_id);
 
-      // Log audit
+      // Log audit in telegram_access_audit
       await logAudit(supabase, {
         club_id,
         event_type: 'STATUS_CHECK',
         actor_type: 'admin',
         actor_id: requesterId,
         meta: { checked_count: checkedCount },
+      });
+
+      // SYSTEM ACTOR audit for batch status checks (PATCH 8)
+      const inChatCount = results.filter((r: any) => r.in_chat === true).length;
+      const notInChatCount = results.filter((r: any) => r.in_chat === false).length;
+      
+      await supabase.from('audit_logs').insert({
+        action: 'telegram.status_check_completed',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'telegram-club-members',
+        meta: {
+          club_id,
+          checked_count: checkedCount,
+          in_chat_count: inChatCount,
+          not_in_chat_count: notInChatCount,
+          sample_ids: results.slice(0, 10).map((r: any) => r.telegram_user_id),
+          requester: requesterId || 'internal',
+        },
       });
 
       return new Response(JSON.stringify({
