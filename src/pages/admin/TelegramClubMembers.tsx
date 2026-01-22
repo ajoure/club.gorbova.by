@@ -79,12 +79,15 @@ import {
 import { 
   useTelegramClubs, 
   useClubMembers, 
+  useClubMemberStats,
   useSyncClubMembers,
   useKickViolators,
   useGrantTelegramAccess,
   useRevokeTelegramAccess,
   TelegramClubMember,
+  ClubMemberScope,
 } from '@/hooks/useTelegramIntegration';
+import { Switch } from '@/components/ui/switch';
 import { format, addDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { MemberDetailsDrawer } from '@/components/telegram/MemberDetailsDrawer';
@@ -113,7 +116,7 @@ interface SheetContact {
   last_deal_at: string | null;
 }
 
-type FilterTab = 'all' | 'clients' | 'with_access' | 'violators' | 'removed';
+type FilterTab = 'in_club' | 'with_access' | 'bought_not_joined' | 'violators' | 'removed';
 
 export default function TelegramClubMembers() {
   const { clubId } = useParams<{ clubId: string }>();
@@ -123,14 +126,19 @@ export default function TelegramClubMembers() {
   const { data: clubs } = useTelegramClubs();
   const club = clubs?.find(c => c.id === clubId);
   
-  const { data: members, isLoading, refetch } = useClubMembers(clubId || null);
+  // Scope toggle: 'relevant' = only club-related, 'all' = all synced
+  const [showAllScope, setShowAllScope] = useState(false);
+  const scope: ClubMemberScope = showAllScope ? 'all' : 'relevant';
+  
+  const { data: members, isLoading, refetch } = useClubMembers(clubId || null, { scope });
+  const { data: stats } = useClubMemberStats(clubId || null);
   const syncMembers = useSyncClubMembers();
   const kickViolators = useKickViolators();
   const grantAccess = useGrantTelegramAccess();
   const revokeAccess = useRevokeTelegramAccess();
 
   const [search, setSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<FilterTab>('all');
+  const [activeTab, setActiveTab] = useState<FilterTab>('in_club');
   const [showKickDialog, setShowKickDialog] = useState(false);
   const [selectedMember, setSelectedMember] = useState<TelegramClubMember | null>(null);
   
@@ -189,15 +197,16 @@ export default function TelegramClubMembers() {
       toast.error("Не удалось загрузить контакт");
     }
   };
-  // Calculate counts for tabs
-  // Нарушитель = без доступа (не ok) И реально находится в чате или канале
+  // Calculate counts for tabs - используем данные из текущего members (с учётом scope)
   const counts = useMemo(() => {
-    if (!members) return { all: 0, clients: 0, with_access: 0, violators: 0, removed: 0 };
+    if (!members) return { in_club: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0 };
     
     return {
-      all: members.length,
-      clients: members.filter(m => m.link_status === 'linked').length,
+      in_club: members.filter(m => m.in_chat === true || m.in_channel === true).length,
       with_access: members.filter(m => m.access_status === 'ok').length,
+      bought_not_joined: members.filter(m => 
+        m.access_status === 'ok' && !m.in_chat && !m.in_channel
+      ).length,
       violators: members.filter(m => 
         m.access_status !== 'ok' && (m.in_chat === true || m.in_channel === true)
       ).length,
@@ -225,13 +234,18 @@ export default function TelegramClubMembers() {
       }
 
       switch (activeTab) {
-        case 'clients':
-          return member.link_status === 'linked';
+        case 'in_club':
+          // Фактически в чате или канале
+          return member.in_chat === true || member.in_channel === true;
         case 'with_access':
+          // access_status = 'ok'
           return member.access_status === 'ok';
+        case 'bought_not_joined':
+          // access_status = 'ok', но не в чате/канале
+          return member.access_status === 'ok' && !member.in_chat && !member.in_channel;
         case 'violators':
-          // Нарушитель = без доступа И реально в чате/канале
-          return member.access_status !== 'ok' && (member.in_chat === true || member.in_channel === true);
+          // В чате/канале, но access_status != 'ok'
+          return (member.in_chat || member.in_channel) && member.access_status !== 'ok';
         case 'removed':
           // Удалённые = статус removed И реально не в чате/канале
           return member.access_status === 'removed' && !member.in_chat && !member.in_channel;
@@ -716,30 +730,56 @@ export default function TelegramClubMembers() {
           </CollapsibleContent>
         </Collapsible>
 
-        {/* Quick Stats */}
-        <div className="grid gap-4 md:grid-cols-4">
+        {/* Quick Stats - 5 блоков */}
+        <div className="grid gap-4 md:grid-cols-5">
+          {/* Telegram API */}
           <Card>
             <CardHeader className="pb-2">
               <CardDescription className="flex items-center gap-2">
                 <MessageSquare className="h-4 w-4" />
-                Чат
+                Telegram API
+                <Tooltip>
+                  <TooltipTrigger>
+                    <HelpCircle className="h-3 w-3 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p>Telegram API показывает всех участников (включая админов и ботов).</p>
+                    <p className="text-xs mt-1">DB tracked — только синхронизированные системой.</p>
+                  </TooltipContent>
+                </Tooltip>
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{club.members_count_chat || 0}</div>
+              <div className="text-lg font-bold">Чат: {club.members_count_chat ?? '—'}</div>
+              <div className="text-lg font-bold">Канал: {club.members_count_channel ?? '—'}</div>
             </CardContent>
           </Card>
+
+          {/* DB Tracked */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardDescription>DB Tracked</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg">В чате: <span className="font-bold">{stats?.in_chat ?? 0}</span></div>
+              <div className="text-lg">В канале: <span className="font-bold">{stats?.in_channel ?? 0}</span></div>
+            </CardContent>
+          </Card>
+
+          {/* С доступом */}
           <Card>
             <CardHeader className="pb-2">
               <CardDescription className="flex items-center gap-2">
-                <Megaphone className="h-4 w-4" />
-                Канал
+                <UserCheck className="h-4 w-4 text-green-600" />
+                С доступом
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{club.members_count_channel || 0}</div>
+              <div className="text-2xl font-bold text-green-600">{stats?.status_ok ?? 0}</div>
             </CardContent>
           </Card>
+
+          {/* Нарушители */}
           <Card>
             <CardHeader className="pb-2">
               <CardDescription className="flex items-center gap-2">
@@ -748,20 +788,21 @@ export default function TelegramClubMembers() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-destructive">{counts.violators}</div>
+              <div className="text-2xl font-bold text-destructive">{stats?.violators ?? 0}</div>
             </CardContent>
           </Card>
+
+          {/* Купили, но не вошли */}
           <Card>
             <CardHeader className="pb-2">
-              <CardDescription>Последняя синхронизация</CardDescription>
+              <CardDescription className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-yellow-600" />
+                Не вошли
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-sm">
-                {club.last_members_sync_at 
-                  ? format(new Date(club.last_members_sync_at), 'dd.MM.yyyy HH:mm', { locale: ru })
-                  : 'Никогда'
-                }
-              </div>
+              <div className="text-2xl font-bold text-yellow-600">{stats?.bought_not_joined ?? 0}</div>
+              <p className="text-xs text-muted-foreground">с доступом</p>
             </CardContent>
           </Card>
         </div>
@@ -770,20 +811,20 @@ export default function TelegramClubMembers() {
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)} className="w-full">
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
             <TabsList className="inline-flex w-auto min-w-full sm:grid sm:w-full sm:grid-cols-5 gap-1">
-              <TabsTrigger value="all" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
+              <TabsTrigger value="in_club" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
                 <span className="hidden sm:inline"><Users className="h-4 w-4" /></span>
-                Все
-                <Badge variant="secondary" className="h-5 px-1.5 text-xs">{counts.all}</Badge>
-              </TabsTrigger>
-              <TabsTrigger value="clients" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
-                <span className="hidden sm:inline"><Link2 className="h-4 w-4" /></span>
-                Клиенты
-                <Badge variant="secondary" className="h-5 px-1.5 text-xs">{counts.clients}</Badge>
+                В клубе
+                <Badge variant="secondary" className="h-5 px-1.5 text-xs">{counts.in_club}</Badge>
               </TabsTrigger>
               <TabsTrigger value="with_access" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
                 <span className="hidden sm:inline"><UserCheck className="h-4 w-4" /></span>
                 С доступом
                 <Badge variant="secondary" className="h-5 px-1.5 text-xs">{counts.with_access}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="bought_not_joined" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
+                <span className="hidden sm:inline"><Clock className="h-4 w-4" /></span>
+                Не вошли
+                <Badge variant="outline" className="h-5 px-1.5 text-xs bg-yellow-500/10 text-yellow-600">{counts.bought_not_joined}</Badge>
               </TabsTrigger>
               <TabsTrigger value="violators" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
                 <span className="hidden sm:inline"><AlertTriangle className="h-4 w-4" /></span>
@@ -803,14 +844,27 @@ export default function TelegramClubMembers() {
         <Card>
           <CardHeader>
             <div className="flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
-              <div className="relative flex-1 sm:w-80">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Поиск по имени, email, телефону..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-9"
-                />
+              <div className="flex flex-col sm:flex-row gap-3 flex-1">
+                <div className="relative flex-1 sm:max-w-80">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Поиск по имени, email, телефону..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                {/* Scope toggle: relevant vs all */}
+                <div className="flex items-center gap-2">
+                  <Switch 
+                    id="show-all-scope" 
+                    checked={showAllScope} 
+                    onCheckedChange={setShowAllScope}
+                  />
+                  <Label htmlFor="show-all-scope" className="text-sm text-muted-foreground whitespace-nowrap cursor-pointer">
+                    Все синхронизированные ({stats?.total ?? 0})
+                  </Label>
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button

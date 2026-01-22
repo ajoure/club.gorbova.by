@@ -552,20 +552,98 @@ export function useCurrentUserTelegramStatus() {
 }
 
 // Club Members hooks
-export function useClubMembers(clubId: string | null) {
+export type ClubMemberScope = 'relevant' | 'all';
+
+export function useClubMembers(clubId: string | null, opts?: { scope?: ClubMemberScope }) {
+  const scope = opts?.scope ?? 'relevant';
+  
   return useQuery({
-    queryKey: ['telegram-club-members', clubId],
+    queryKey: ['telegram-club-members', clubId, scope],
     queryFn: async () => {
       if (!clubId) return [];
-      const { data, error } = await supabase
+      
+      let query = supabase
         .from('telegram_club_members')
         .select('*, profiles(id, user_id, full_name, email, phone)')
-        .eq('club_id', clubId)
+        .eq('club_id', clubId);
+      
+      // scope='relevant': только те, кто относится к клубу
+      // - в чате/канале ИЛИ
+      // - access_status = 'ok', 'removed' или 'expired' ИЛИ
+      // - имеет связь с профилем и историю доступа
+      if (scope === 'relevant') {
+        query = query
+          .not('profile_id', 'is', null) // исключаем orphaned
+          .or('in_chat.eq.true,in_channel.eq.true,access_status.eq.ok,access_status.eq.removed,access_status.eq.expired');
+      }
+      
+      const { data, error } = await query
         .order('access_status', { ascending: true })
         .order('telegram_username', { ascending: true });
 
       if (error) throw error;
       return data as TelegramClubMember[];
+    },
+    enabled: !!clubId,
+  });
+}
+
+// Separate hook for member statistics - не зависит от текущего фильтра
+export function useClubMemberStats(clubId: string | null) {
+  return useQuery({
+    queryKey: ['telegram-club-member-stats', clubId],
+    queryFn: async () => {
+      if (!clubId) return null;
+      
+      // Получаем всех участников одним запросом (без orphaned)
+      const { data: members, error } = await supabase
+        .from('telegram_club_members')
+        .select('id, in_chat, in_channel, access_status, profile_id')
+        .eq('club_id', clubId)
+        .not('profile_id', 'is', null);
+      
+      if (error) throw error;
+      
+      const total = members?.length ?? 0;
+      const inChat = members?.filter(m => m.in_chat === true).length ?? 0;
+      const inChannel = members?.filter(m => m.in_channel === true).length ?? 0;
+      const inAny = members?.filter(m => m.in_chat || m.in_channel).length ?? 0;
+      const statusOk = members?.filter(m => m.access_status === 'ok').length ?? 0;
+      const statusRemoved = members?.filter(m => m.access_status === 'removed').length ?? 0;
+      const statusNoAccess = members?.filter(m => m.access_status === 'no_access').length ?? 0;
+      const statusExpired = members?.filter(m => m.access_status === 'expired').length ?? 0;
+      
+      // Нарушители: в чате/канале, но access_status != 'ok'
+      const violators = members?.filter(m => 
+        (m.in_chat || m.in_channel) && m.access_status !== 'ok'
+      ).length ?? 0;
+      
+      // Купили, но не вошли: access_status = 'ok', но не в чате/канале
+      const boughtNotJoined = members?.filter(m =>
+        m.access_status === 'ok' && !m.in_chat && !m.in_channel
+      ).length ?? 0;
+      
+      // Релевантные (для отображения счётчика переключателя)
+      const relevant = members?.filter(m =>
+        m.in_chat || m.in_channel || 
+        m.access_status === 'ok' || 
+        m.access_status === 'removed' || 
+        m.access_status === 'expired'
+      ).length ?? 0;
+      
+      return {
+        total,
+        relevant,
+        in_chat: inChat,
+        in_channel: inChannel,
+        in_any: inAny,
+        status_ok: statusOk,
+        status_removed: statusRemoved,
+        status_no_access: statusNoAccess,
+        status_expired: statusExpired,
+        violators,
+        bought_not_joined: boughtNotJoined,
+      };
     },
     enabled: !!clubId,
   });
