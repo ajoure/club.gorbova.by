@@ -414,6 +414,17 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
                       </Badge>
                     )}
                   </div>
+                  
+                  {/* PATCH 8: Show sync warning if access is OK but not in TG */}
+                  {member.access_status === 'ok' && (member.in_chat === false || member.in_channel === false) && (
+                    <div className="flex items-center gap-2 p-2 bg-amber-500/10 rounded-md border border-amber-500/20">
+                      <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
+                      <span className="text-sm text-amber-600">
+                        Доступ активен, но пользователь не в Telegram
+                      </span>
+                    </div>
+                  )}
+                  
                   <div className="flex justify-between items-center">
                     <span className="text-muted-foreground flex items-center gap-1">
                       <MessageSquare className="h-4 w-4" />
@@ -484,6 +495,19 @@ export function MemberDetailsDrawer({ member, clubId, onClose, onRefresh }: Memb
                       <Copy className="h-4 w-4 mr-2" />
                       ID
                     </Button>
+                    
+                    {/* PATCH 8: Re-grant button when access OK but not in TG */}
+                    {member.access_status === 'ok' && (member.in_chat === false || member.in_channel === false) && userId && (
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        className="text-amber-600 border-amber-500/50 hover:bg-amber-500/10"
+                        onClick={() => setShowGrantDialog(true)}
+                      >
+                        <UserCheck className="h-4 w-4 mr-2" />
+                        Восстановить
+                      </Button>
+                    )}
                   </div>
                   
                   {/* Diagnostic results */}

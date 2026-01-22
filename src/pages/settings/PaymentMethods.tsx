@@ -128,15 +128,20 @@ export default function PaymentMethodsSettings() {
       if (!user) return [];
       const { data, error } = await supabase
         .from("subscriptions_v2")
-        .select("id, status, payment_method_id")
+        .select("id, status, payment_method_id, auto_renew")
         .eq("user_id", user.id)
         .in("status", ["active", "trial"]);
       
       if (error) throw error;
-      return data as Subscription[];
+      return data as (Subscription & { auto_renew?: boolean })[];
     },
     enabled: !!user,
   });
+
+  // PATCH 9: Check for auto_renew subscriptions without payment method
+  const hasAutoRenewWithoutCard = activeSubscriptions?.some(
+    s => s.auto_renew === true && !s.payment_method_id
+  );
 
   const setDefaultMutation = useMutation({
     mutationFn: async (methodId: string) => {
@@ -285,7 +290,7 @@ export default function PaymentMethodsSettings() {
           <p className="text-muted-foreground">Управление способами оплаты</p>
         </div>
 
-        {/* Price Protection Alert */}
+        {/* Price Protection Alert - original */}
         {hasActiveSubsWithoutCard && (
           <Alert className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
             <AlertTriangle className="h-5 w-5 text-amber-600" />
@@ -297,6 +302,28 @@ export default function PaymentMethodsSettings() {
               Чтобы сохранить эти условия и избежать повышения цены при следующем продлении, 
               пожалуйста, привяжите карту для автоматического списания.
             </AlertDescription>
+          </Alert>
+        )}
+
+        {/* PATCH 9: Alert for auto_renew subscriptions without payment method */}
+        {hasAutoRenewWithoutCard && !hasActiveSubsWithoutCard && (
+          <Alert className="border-destructive/50 bg-destructive/5">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            <AlertTitle className="text-destructive">
+              Привяжите карту для автопродления
+            </AlertTitle>
+            <AlertDescription className="text-muted-foreground">
+              У вас есть активная подписка с автопродлением, но карта не привязана.
+              Без карты доступ не продлится автоматически и потребуется ручная оплата.
+            </AlertDescription>
+            <Button 
+              onClick={handleAddCard} 
+              className="mt-3 gap-2"
+              variant="default"
+            >
+              <CreditCard className="h-4 w-4" />
+              Привязать карту сейчас
+            </Button>
           </Alert>
         )}
 

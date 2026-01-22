@@ -260,3 +260,6 @@ verify_jwt = false
 
 [functions.bepaid-reconcile-file]
 verify_jwt = false
+
+[functions.admin-legacy-cards-report]
+verify_jwt = false
