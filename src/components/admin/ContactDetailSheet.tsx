@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
+import { getEventLabel } from "@/lib/eventLabels";
 import {
   Sheet,
   SheetContent,
@@ -1015,27 +1016,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     return labels[status] || status;
   };
 
-  const getActionLabel = (action: string) => {
-    const labels: Record<string, string> = {
-      "subscription.purchased": "Покупка подписки",
-      "subscription.created": "Подписка создана",
-      "subscription.activated": "Подписка активирована",
-      "subscription.canceled": "Подписка отменена",
-      "subscription.expired": "Подписка истекла",
-      "admin.subscription.refund": "Возврат средств",
-      "admin.subscription.extend": "Продление доступа",
-      "admin.subscription.cancel": "Отмена подписки",
-      "admin.grant_access": "Выдача доступа",
-      "admin.revoke_access": "Отзыв доступа",
-      "payment.success": "Успешная оплата",
-      "payment.failed": "Ошибка оплаты",
-      "trial.started": "Начало триала",
-      "trial.ended": "Окончание триала",
-      "telegram.access_granted": "Доступ в Telegram",
-      "telegram.access_revoked": "Отзыв доступа в Telegram",
-    };
-    return labels[action] || action;
-  };
+  // Используем централизованный словарь событий из @/lib/eventLabels
+  // import { getEventLabel } from "@/lib/eventLabels" - добавлен в импорты
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -2348,7 +2330,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   <Card key={comm.id}>
                     <CardContent className="p-4 space-y-2">
                       <div className="flex items-start justify-between gap-2">
-                        <span className="font-medium text-sm">{getActionLabel(comm.action)}</span>
+                        <span className="font-medium text-sm">{getEventLabel(comm.action)}</span>
                         <span className="text-xs text-muted-foreground whitespace-nowrap">
                           {format(new Date(comm.created_at), "dd.MM.yy HH:mm")}
                         </span>
