@@ -137,6 +137,8 @@ const EVENT_ICONS: Record<string, React.ReactNode> = {
   manual_notification: <Bell className="w-3 h-3 text-blue-500" />,
   ADMIN_CHAT_MESSAGE: <MessageCircle className="w-3 h-3 text-primary" />,
   ADMIN_CHAT_FILE: <Paperclip className="w-3 h-3 text-primary" />,
+  CONTACT_MERGED: <UserPlus className="w-3 h-3 text-purple-500" />,
+  CONTACT_UNMERGED: <UserMinus className="w-3 h-3 text-orange-500" />,
 };
 
 const EVENT_LABELS: Record<string, string> = {
@@ -157,6 +159,8 @@ const EVENT_LABELS: Record<string, string> = {
   SUBSCRIPTION_ACTIVATED: "Подписка активирована",
   PAYMENT_SUCCESS: "Платёж успешен",
   PAYMENT_FAILED: "Платёж не прошёл",
+  CONTACT_MERGED: "Объединены контакты",
+  CONTACT_UNMERGED: "Контакты разъединены",
 };
 
 export function ContactTelegramChat({

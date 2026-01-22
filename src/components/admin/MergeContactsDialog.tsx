@@ -149,10 +149,10 @@ export function MergeContactsDialog({
         </DialogHeader>
 
         <div className="py-4 space-y-4">
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-            <p className="text-sm text-amber-700 dark:text-amber-400">
-              После объединения остальные контакты будут архивированы. Это действие нельзя отменить.
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+            <AlertTriangle className="h-4 w-4 text-blue-600 shrink-0" />
+            <p className="text-sm text-blue-700 dark:text-blue-400">
+              Все данные будут перенесены в главный контакт. В истории событий появится запись о слиянии с возможностью разъединения.
             </p>
           </div>
 
