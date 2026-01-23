@@ -230,10 +230,10 @@ export function ContactTelegramChat({
       return mergeByIdPreferEnriched(prevMessages, nextMessages);
     },
     enabled: !!userId,
-    staleTime: 5000,
-    refetchOnWindowFocus: true,
-    refetchOnMount: "always",
-    refetchInterval: 10000, // Poll every 10 seconds as backup
+    staleTime: 15000,              // 15s before stale - reduces refetch frequency
+    refetchOnWindowFocus: false,   // Disable - causes mobile "infinite reload" feel
+    refetchOnMount: true,          // Once on mount, not "always"
+    refetchInterval: false,        // Disable polling - realtime is enough
   });
 
   // Fetch events from telegram_logs - optimized
@@ -266,6 +266,25 @@ export function ContactTelegramChat({
     refetchEvents();
   }, [refetchMessages, refetchEvents]);
 
+  // Debounced refetch to prevent parallel requests on mobile
+  const refetchTimerRef = useRef<number | null>(null);
+  const isRefetchingRef = useRef(false);
+
+  const debouncedRefetch = useCallback(() => {
+    if (refetchTimerRef.current) {
+      window.clearTimeout(refetchTimerRef.current);
+    }
+    refetchTimerRef.current = window.setTimeout(async () => {
+      if (isRefetchingRef.current) return;
+      isRefetchingRef.current = true;
+      try {
+        await refetchMessages();
+      } finally {
+        isRefetchingRef.current = false;
+      }
+    }, 1000);
+  }, [refetchMessages]);
+
   // Subscribe to realtime messages for this user
   useEffect(() => {
     if (!userId) return;
@@ -282,30 +301,27 @@ export function ContactTelegramChat({
         },
         (payload) => {
           console.log("New message received:", payload);
-          refetchMessages();
           
-          // Two-phase refetch for media messages: storage/enrichment may not be ready immediately
+          // Single debounced refetch instead of 3 immediate calls
+          debouncedRefetch();
+          
+          // Auto-scroll only if user is at bottom OR it's an outgoing message
           const newMsg = payload.new as any;
-          const meta = newMsg?.meta ?? {};
-          const hasMediaHint = !!(
-            meta.file_type || meta.fileType ||
-            meta.mime_type || meta.mimeType ||
-            meta.storage_bucket || meta.storageBucket ||
-            meta.storage_path || meta.storagePath
-          );
-          if (hasMediaHint) {
-            setTimeout(() => refetchMessages(), 800);
-            setTimeout(() => refetchMessages(), 2500);
-          }
+          const isFromAdmin = newMsg?.direction === "outgoing";
           
-          // Auto-scroll to bottom on new message - use scrollTo on viewport to avoid layout shift
           setTimeout(() => {
             const root = scrollRef.current;
             const viewport = root?.querySelector(
               "[data-radix-scroll-area-viewport]"
             ) as HTMLElement | null;
+            
             if (viewport) {
-              viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+              const isAtBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 100;
+              
+              // Scroll only if at bottom OR it's our own message
+              if (isAtBottom || isFromAdmin) {
+                viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+              }
             }
           }, 100);
         }
@@ -313,9 +329,12 @@ export function ContactTelegramChat({
       .subscribe();
 
     return () => {
+      if (refetchTimerRef.current) {
+        window.clearTimeout(refetchTimerRef.current);
+      }
       supabase.removeChannel(channel);
     };
-  }, [userId, refetchMessages]);
+  }, [userId, debouncedRefetch]);
 
   // Helper function to translate Telegram API errors to Russian
   const translateTelegramError = (errorMessage: string): string => {
