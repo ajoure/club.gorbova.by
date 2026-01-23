@@ -177,6 +177,42 @@ export function ContactTelegramChat({
 
   const prevMessageCountRef = useRef<number>(0);
 
+  function mergeByIdPreferEnriched(prev: TelegramMessage[], next: TelegramMessage[]) {
+    const map = new Map<string, TelegramMessage>();
+    for (const m of prev) map.set(m.id, m);
+
+    for (const m of next) {
+      const old = map.get(m.id);
+      if (!old) {
+        map.set(m.id, m);
+        continue;
+      }
+
+      const oldMeta: any = (old as any).meta ?? {};
+      const newMeta: any = (m as any).meta ?? {};
+
+      const oldUrl: string | null =
+        oldMeta.file_url ?? (old as any).file_url ?? (old as any).fileUrl ?? null;
+      const newUrl: string | null =
+        newMeta.file_url ?? (m as any).file_url ?? (m as any).fileUrl ?? null;
+
+      // Prefer already-enriched item if the new one is worse (no URL)
+      if (oldUrl && !newUrl) {
+        map.set(m.id, {
+          ...m,
+          meta: {
+            ...newMeta,
+            file_url: oldUrl,
+          },
+        });
+      } else {
+        map.set(m.id, m);
+      }
+    }
+
+    return Array.from(map.values());
+  }
+
   // Fetch messages - with polling interval as backup
   const { data: messages, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
     queryKey: ["telegram-messages", userId],
@@ -185,7 +221,10 @@ export function ContactTelegramChat({
         body: { action: "get_messages", user_id: userId, limit: 50 },
       });
       if (error) throw error;
-      return (data.messages || []).map((m: any) => ({ ...m, type: "message" })) as TelegramMessage[];
+
+      const nextMessages = (data.messages || []).map((m: any) => ({ ...m, type: "message" })) as TelegramMessage[];
+      const prevMessages = (queryClient.getQueryData(["telegram-messages", userId]) as TelegramMessage[] | undefined) || [];
+      return mergeByIdPreferEnriched(prevMessages, nextMessages);
     },
     enabled: !!userId,
     staleTime: 5000,
@@ -563,10 +602,16 @@ export function ContactTelegramChat({
     }
 
     const msg = item as TelegramMessage;
-    const fileType = msg.meta?.file_type as string | null;
-    const fileName = msg.meta?.file_name as string | null;
-    const isEdited = msg.meta?.edited as boolean | undefined;
-    const isDeleted = msg.status === "deleted" || msg.meta?.deleted as boolean | undefined;
+    const metaAny: any = (msg as any).meta ?? {};
+    const fileType = (metaAny.file_type ?? (msg as any).file_type ?? (msg as any).fileType ?? null) as string | null;
+    const fileName = (metaAny.file_name ?? (msg as any).file_name ?? (msg as any).fileName ?? null) as string | null;
+    const fileUrl = (metaAny.file_url ?? (msg as any).file_url ?? (msg as any).fileUrl ?? null) as string | null;
+    const bucket = (metaAny.storage_bucket ?? (msg as any).storage_bucket ?? null) as string | null;
+    const path = (metaAny.storage_path ?? (msg as any).storage_path ?? null) as string | null;
+    const uploadError = (metaAny.upload_error ?? (msg as any).upload_error ?? null) as string | null;
+
+    const isEdited = (metaAny.edited ?? (msg as any).edited) as boolean | undefined;
+    const isDeleted = (msg.status === "deleted" || metaAny.deleted || (msg as any).deleted) as boolean;
     const canEdit = msg.direction === "outgoing" && msg.message_id && msg.status === "sent" && !fileType && !isDeleted;
     const canDelete = msg.direction === "outgoing" && msg.message_id && msg.status === "sent" && !isDeleted;
 
@@ -664,14 +709,26 @@ export function ContactTelegramChat({
               <div className="mb-2">
                 <ChatMediaMessage
                   fileType={fileType}
-                  fileUrl={msg.meta?.file_url as string | null}
+                  fileUrl={fileUrl}
                   fileName={fileName}
-                  errorMessage={msg.meta?.upload_error as string | null}
+                  errorMessage={uploadError}
                   isOutgoing={msg.direction === "outgoing"}
-                  storageBucket={msg.meta?.storage_bucket as string | null}
-                  storagePath={msg.meta?.storage_path as string | null}
-                  onRefresh={refetchMessages}
+                  storageBucket={bucket}
+                  storagePath={path}
+                  onRefresh={() => refetchMessages()}
                 />
+
+                {import.meta.env.DEV && (
+                  <div
+                    className={
+                      "mt-1 text-[10px] " +
+                      (msg.direction === "outgoing" ? "text-primary-foreground/70" : "text-muted-foreground")
+                    }
+                  >
+                    media: {fileType} · url: {fileUrl ? "yes" : "no"}
+                    {fileUrl ? ` · ${fileUrl.slice(0, 30)}…` : ""}
+                  </div>
+                )}
               </div>
             )}
             

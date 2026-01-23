@@ -498,6 +498,12 @@ Deno.serve(async (req) => {
           .order("created_at", { ascending: true })
           .limit(limit);
 
+        const isPdfLike = (meta: any) => {
+          const name = String(meta?.file_name || "").toLowerCase();
+          const mime = String(meta?.mime_type || "").toLowerCase();
+          return name.endsWith(".pdf") || mime === "application/pdf";
+        };
+
         // Helper to generate signed URL for a message
         const enrichMessageWithSignedUrl = async (msg: any) => {
           const meta = msg.meta || {};
@@ -505,9 +511,11 @@ Deno.serve(async (req) => {
           // If we have storage_path, create signed URL
           if (meta.storage_bucket && meta.storage_path) {
             try {
+              const signedOptions = isPdfLike(meta) ? { download: false } : undefined;
               const { data: signedData, error: signedError } = await supabase.storage
                 .from(meta.storage_bucket)
-                .createSignedUrl(meta.storage_path, 3600); // 1 hour
+                // For PDFs we explicitly disable forced download to allow iframe preview.
+                .createSignedUrl(meta.storage_path, 3600, signedOptions as any); // 1 hour
               
               if (signedData && !signedError) {
                 meta.file_url = signedData.signedUrl;
@@ -595,7 +603,19 @@ Deno.serve(async (req) => {
         // Enrich all messages with signed URLs
         const enrichedMessages = await Promise.all((messages || []).map(enrichMessageWithSignedUrl));
 
-        return new Response(JSON.stringify({ messages: enrichedMessages }), {
+        // Temporary debug payload: helps confirm url enrichment without guessing.
+        const debug = enrichedMessages.slice(-5).map((m: any) => {
+          const meta = m?.meta || {};
+          return {
+            msg_id: m?.id ?? null,
+            file_type: meta.file_type ?? null,
+            has_bucket: !!meta.storage_bucket,
+            has_path: !!meta.storage_path,
+            url_set: !!meta.file_url,
+          };
+        });
+
+        return new Response(JSON.stringify({ messages: enrichedMessages, debug }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
