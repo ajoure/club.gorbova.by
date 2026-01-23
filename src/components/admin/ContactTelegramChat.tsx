@@ -280,6 +280,21 @@ export function ContactTelegramChat({
         (payload) => {
           console.log("New message received:", payload);
           refetchMessages();
+          
+          // Two-phase refetch for media messages: storage/enrichment may not be ready immediately
+          const newMsg = payload.new as any;
+          const meta = newMsg?.meta ?? {};
+          const hasMediaHint = !!(
+            meta.file_type || meta.fileType ||
+            meta.mime_type || meta.mimeType ||
+            meta.storage_bucket || meta.storageBucket ||
+            meta.storage_path || meta.storagePath
+          );
+          if (hasMediaHint) {
+            setTimeout(() => refetchMessages(), 800);
+            setTimeout(() => refetchMessages(), 2500);
+          }
+          
           // Auto-scroll to bottom on new message - use scrollTo on viewport to avoid layout shift
           setTimeout(() => {
             const root = scrollRef.current;
@@ -603,12 +618,20 @@ export function ContactTelegramChat({
 
     const msg = item as TelegramMessage;
     const metaAny: any = (msg as any).meta ?? {};
-    const fileType = (metaAny.file_type ?? (msg as any).file_type ?? (msg as any).fileType ?? null) as string | null;
-    const fileName = (metaAny.file_name ?? (msg as any).file_name ?? (msg as any).fileName ?? null) as string | null;
-    const fileUrl = (metaAny.file_url ?? (msg as any).file_url ?? (msg as any).fileUrl ?? null) as string | null;
-    const bucket = (metaAny.storage_bucket ?? (msg as any).storage_bucket ?? null) as string | null;
-    const path = (metaAny.storage_path ?? (msg as any).storage_path ?? null) as string | null;
-    const uploadError = (metaAny.upload_error ?? (msg as any).upload_error ?? null) as string | null;
+    const msgAny: any = msg as any;
+    
+    // Normalize all media fields (snake_case + camelCase fallbacks)
+    const fileType = (metaAny.file_type ?? metaAny.fileType ?? msgAny.file_type ?? msgAny.fileType ?? null) as string | null;
+    const fileName = (metaAny.file_name ?? metaAny.fileName ?? msgAny.file_name ?? msgAny.fileName ?? null) as string | null;
+    const fileUrl = (metaAny.file_url ?? metaAny.fileUrl ?? msgAny.file_url ?? msgAny.fileUrl ?? null) as string | null;
+    const mimeType = (metaAny.mime_type ?? metaAny.mimeType ?? msgAny.mime_type ?? msgAny.mimeType ?? null) as string | null;
+    const bucket = (metaAny.storage_bucket ?? metaAny.storageBucket ?? msgAny.storage_bucket ?? msgAny.storageBucket ?? null) as string | null;
+    const path = (metaAny.storage_path ?? metaAny.storagePath ?? msgAny.storage_path ?? msgAny.storagePath ?? null) as string | null;
+    const uploadError = (metaAny.upload_error ?? metaAny.uploadError ?? msgAny.upload_error ?? msgAny.uploadError ?? null) as string | null;
+    
+    // Detect media-like messages (even if fileType is missing)
+    const fileNameLooksLikeMedia = /\.(pdf|png|jpe?g|webp|gif|mp4|mov|mp3|m4a|ogg|wav|webm|oga|opus)$/i.test(fileName || "");
+    const isMediaLike = !!(fileType || mimeType || (bucket && path) || fileNameLooksLikeMedia);
 
     const isEdited = (metaAny.edited ?? (msg as any).edited) as boolean | undefined;
     const isDeleted = (msg.status === "deleted" || metaAny.deleted || (msg as any).deleted) as boolean;
@@ -704,8 +727,8 @@ export function ContactTelegramChat({
               </span>
             </div>
             
-            {/* Media preview with lightbox support */}
-            {fileType && (
+            {/* Media preview with lightbox support - render if isMediaLike (not just fileType) */}
+            {isMediaLike && (
               <div className="mb-2">
                 <ChatMediaMessage
                   fileType={fileType}
@@ -725,7 +748,7 @@ export function ContactTelegramChat({
                       (msg.direction === "outgoing" ? "text-primary-foreground/70" : "text-muted-foreground")
                     }
                   >
-                    media: {fileType} · url: {fileUrl ? "yes" : "no"}
+                    media: {fileType || mimeType || "unknown"} · url: {fileUrl ? "yes" : "no"} · bucket: {bucket ? "yes" : "no"}
                     {fileUrl ? ` · ${fileUrl.slice(0, 30)}…` : ""}
                   </div>
                 )}
