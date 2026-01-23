@@ -1,17 +1,11 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   Collapsible,
   CollapsibleContent,
@@ -27,8 +21,16 @@ import {
   HelpCircle,
   Clock,
   ChevronDown,
-  Info,
 } from "lucide-react";
+
+interface VerificationJob {
+  id: string;
+  payment_method_id?: string;
+  status: string;
+  attempt_count: number;
+  last_error: string | null;
+  updated_at: string;
+}
 
 interface LinkedCardItemProps {
   method: {
@@ -48,6 +50,7 @@ interface LinkedCardItemProps {
   userId: string;
   contactId: string;
   canReverify: boolean;
+  latestJob?: VerificationJob | null;
 }
 
 type DiagnosisConfig = {
@@ -110,46 +113,25 @@ const DIAGNOSES: Record<string, DiagnosisConfig> = {
   },
 };
 
-interface VerificationJob {
-  id: string;
-  status: string;
-  attempt_count: number;
-  last_error: string | null;
-  updated_at: string;
-}
 
 export function LinkedCardItem({
   method,
   userId,
   contactId,
   canReverify,
+  latestJob,
 }: LinkedCardItemProps) {
   const queryClient = useQueryClient();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isReverifying, setIsReverifying] = useState(false);
 
-  // Get verification status config
+  // Get verification status config - source of truth is payment_methods.verification_status
   const status = method.verification_status?.toLowerCase() || "unknown";
   const config = DIAGNOSES[status] || DIAGNOSES.unknown;
-  const { label, Icon, className, isError } = config;
+  const { label, shortLabel, Icon, className } = config;
   const isAnimated = status === "pending" || status === "processing";
 
-  // Fetch latest verification job for this card
-  const { data: latestJob } = useQuery({
-    queryKey: ["card-job", method.id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("payment_method_verification_jobs")
-        .select("id, status, attempt_count, last_error, updated_at")
-        .eq("payment_method_id", method.id)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      return data as VerificationJob | null;
-    },
-    enabled: !!method.id,
-  });
+  // latestJob is now passed from parent (batch query, no N+1)
 
   const isJobActive = latestJob && ["pending", "processing", "rate_limited"].includes(latestJob.status);
 
@@ -264,39 +246,24 @@ export function LinkedCardItem({
                 </span>
               )}
               {method.is_default && (
-                <Badge variant="secondary" className="text-xs">
+                <Badge variant="secondary" className="text-xs h-5">
                   Основная
                 </Badge>
               )}
+              {/* Inline health badge - compact */}
+              <Badge
+                variant="outline"
+                className={`text-xs h-5 gap-1 ${className}`}
+              >
+                <Icon className={`w-3 h-3 ${isAnimated ? "animate-spin" : ""}`} />
+                {shortLabel}
+              </Badge>
             </div>
           </div>
         </div>
 
-        {/* Health badge */}
+        {/* Expand button if there are details */}
         <div className="flex items-center gap-2 shrink-0">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant="outline"
-                  className={`text-xs gap-1 cursor-default ${className}`}
-                >
-                  <Icon className={`w-3 h-3 ${isAnimated ? "animate-spin" : ""}`} />
-                  <span className="hidden sm:inline">{label}</span>
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs text-xs">
-                <p>{label}</p>
-                {method.verification_checked_at && (
-                  <p className="text-muted-foreground">
-                    Проверена: {format(new Date(method.verification_checked_at), "dd.MM.yy HH:mm", { locale: ru })}
-                  </p>
-                )}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          {/* Expand button if there are details */}
           {hasDetails && (
             <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
               <CollapsibleTrigger asChild>

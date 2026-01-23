@@ -498,6 +498,41 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     enabled: !!contact?.user_id,
   });
 
+  // Batch fetch latest verification jobs for all payment methods (no N+1)
+  const methodIds = paymentMethods?.map(m => m.id) || [];
+  const { data: verificationJobsMap } = useQuery({
+    queryKey: ["card-jobs-batch", contact?.user_id, methodIds.join(",")],
+    queryFn: async () => {
+      if (methodIds.length === 0) return {};
+      
+      // Get jobs for all methods, ordered by updated_at desc
+      const { data, error } = await supabase
+        .from("payment_method_verification_jobs")
+        .select("id, payment_method_id, status, attempt_count, last_error, updated_at")
+        .in("payment_method_id", methodIds)
+        .order("updated_at", { ascending: false });
+      
+      if (error) throw error;
+      
+      // Build map: payment_method_id → latest job (first occurrence per method)
+      const jobMap: Record<string, {
+        id: string;
+        payment_method_id: string;
+        status: string;
+        attempt_count: number;
+        last_error: string | null;
+        updated_at: string;
+      }> = {};
+      for (const job of data || []) {
+        if (!jobMap[job.payment_method_id]) {
+          jobMap[job.payment_method_id] = job;
+        }
+      }
+      return jobMap;
+    },
+    enabled: methodIds.length > 0,
+  });
+
   // Fetch trial history for this contact
   const { data: trialHistory } = useQuery({
     queryKey: ["contact-trial-history", contact?.user_id],
@@ -1367,6 +1402,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                             userId={contact.user_id!}
                             contactId={contact.id}
                             canReverify={hasPermission('admin.payments.write') || isSuperAdmin()}
+                            latestJob={verificationJobsMap?.[method.id] || null}
                           />
                         ))}
                         {/* Charge button for super admin */}
