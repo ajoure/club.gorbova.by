@@ -268,7 +268,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.payment-method-verify-recurring]
-verify_jwt = false
+verify_jwt = true
 
 [functions.admin-manual-charge]
 verify_jwt = false
