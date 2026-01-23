@@ -462,6 +462,17 @@ export function ContactTelegramChat({
         didInitialScrollRef.current = true;
       });
     });
+
+    // Fallback timeout for edge cases where rAF doesn't fire correctly
+    const fallbackTimeout = setTimeout(() => {
+      if (!didInitialScrollRef.current) {
+        const vp = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
+        if (vp) vp.scrollTo({ top: vp.scrollHeight, behavior: "auto" });
+        didInitialScrollRef.current = true;
+      }
+    }, 150);
+
+    return () => clearTimeout(fallbackTimeout);
   }, [userId, isLoading, chatItems.length]);
 
   const handleSend = () => {
