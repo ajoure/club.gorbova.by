@@ -319,7 +319,18 @@ export function CreateDealFromPaymentDialog({
       // 4. Grant access if requested and not ghost
       let subscriptionId: string | null = null;
       if (grantAccess && !isGhostContact && selectedContact.user_id) {
+        // Find active payment method for auto-linking to subscription
+        const { data: activeCard } = await supabase
+          .from("payment_methods")
+          .select("id")
+          .eq("user_id", selectedContact.user_id)
+          .eq("status", "active")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
         // Create subscription with auto_renew = true by default (PATCH 13.4)
+        // PATCH 13.6: Auto-link payment_method_id if card exists
         const { data: newSub, error: subError } = await supabase.from("subscriptions_v2").insert({
           user_id: selectedContact.user_id,
           order_id: newOrder.id,
@@ -331,6 +342,7 @@ export function CreateDealFromPaymentDialog({
           access_end_at: accessEnd.toISOString(),
           next_charge_at: accessEnd.toISOString(), // PATCH 13.1: Списание = дата окончания доступа
           auto_renew: true, // PATCH 13.4: Автопродление включено по умолчанию
+          payment_method_id: activeCard?.id || null, // PATCH 13.6: Auto-link card
         }).select().single();
 
         if (subError) throw subError;

@@ -417,6 +417,43 @@ serve(async (req) => {
           .update({ verification_status: 'pending' })
           .eq('id', newPmForVerify.id);
 
+        // ========== AUTO-LINK ORPHAN SUBSCRIPTIONS ==========
+        // Find subscriptions with auto_renew=true but no payment_method_id
+        try {
+          const { data: orphanSubs, error: orphanError } = await supabase
+            .from('subscriptions_v2')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('auto_renew', true)
+            .is('payment_method_id', null)
+            .in('status', ['active', 'trial']);
+
+          if (orphanSubs && orphanSubs.length > 0) {
+            const subIds = orphanSubs.map(s => s.id);
+            await supabase
+              .from('subscriptions_v2')
+              .update({ payment_method_id: newPmForVerify.id })
+              .in('id', subIds);
+
+            // Audit log for auto-linking
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_user_id: null,
+              actor_label: 'payment-methods-webhook',
+              action: 'subscription.payment_method_auto_linked',
+              meta: {
+                payment_method_id: newPmForVerify.id,
+                user_id: userId,
+                subscription_ids: subIds,
+                count: subIds.length,
+              },
+            });
+            console.log(`[payment-methods-webhook] Auto-linked ${subIds.length} orphan subscriptions to card ${cardLast4}`);
+          }
+        } catch (autoLinkError) {
+          console.error('[payment-methods-webhook] Orphan subscription auto-link error:', autoLinkError);
+        }
+
         // Create verification job with idempotency key (hourly bucket)
         const bucket = Math.floor(Date.now() / 3600000);
         const idempotencyKey = `pm_verify:${newPmForVerify.id}:${bucket}`;
