@@ -39,7 +39,7 @@ export default function AdminCommunication() {
               <MessageCircle className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-xl md:text-2xl font-bold">Общение</h1>
+              <h1 className="text-xl md:text-2xl font-bold">Контакт-центр</h1>
               <p className="text-sm text-muted-foreground">
                 Почта, техподдержка, рассылки и настройки
               </p>

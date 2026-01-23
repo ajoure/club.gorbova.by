@@ -28,6 +28,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  TooltipProvider,
+} from "@/components/ui/tooltip";
+import {
   Send,
   MessageCircle,
   Bot,
@@ -53,12 +56,13 @@ import {
   Edit2,
   Trash2,
   MoreVertical,
-  Play,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getEventLabel } from "@/lib/eventLabels";
 import { VideoNoteRecorder } from "./VideoNoteRecorder";
+import { OutboundMediaPreview } from "./chat/OutboundMediaPreview";
+import { ChatMediaMessage } from "./chat/ChatMediaMessage";
 
 interface ContactTelegramChatProps {
   userId: string;
@@ -642,68 +646,16 @@ export function ContactTelegramChat({
               </span>
             </div>
             
-            {/* Media preview - PATCH 1: Add fallback for missing files */}
+            {/* Media preview with lightbox support */}
             {fileType && (
-              <div className="mb-2 rounded overflow-hidden">
-                {fileType === "photo" && msg.meta?.file_url ? (
-                  <img 
-                    src={msg.meta.file_url as string} 
-                    alt="" 
-                    className="max-w-full max-h-48 rounded cursor-pointer hover:opacity-90 transition-opacity" 
-                    onClick={() => window.open(msg.meta?.file_url as string, '_blank')}
-                  />
-                ) : fileType === "photo" && !msg.meta?.file_url ? (
-                  <div className="flex flex-col items-center justify-center p-4 bg-muted/30 border border-border/30 rounded-lg w-48 h-32">
-                    <ImageIcon className="w-8 h-8 opacity-40 mb-1" />
-                    <span className="text-xs text-muted-foreground">Файл не загружен</span>
-                  </div>
-                ) : (fileType === "video" || fileType === "video_note") ? (
-                  msg.meta?.file_url ? (
-                    <video 
-                      src={msg.meta.file_url as string} 
-                      controls 
-                      className={cn(
-                        "max-h-48",
-                        fileType === "video_note" ? "w-48 h-48 rounded-full object-cover" : "max-w-full rounded"
-                      )}
-                    />
-                  ) : (
-                    <div className={cn(
-                      "flex flex-col items-center justify-center bg-muted/30 border border-border/30",
-                      fileType === "video_note" ? "w-32 h-32 rounded-full" : "w-48 h-32 rounded-lg"
-                    )}>
-                      <Play className="w-8 h-8 opacity-40 mb-1" />
-                      <span className="text-xs text-muted-foreground block">
-                        {fileType === "video_note" ? "Кружок" : "Видео"} не загружено
-                      </span>
-                    </div>
-                  )
-                ) : (fileType === "voice" || fileType === "audio") ? (
-                  msg.meta?.file_url ? (
-                    <audio 
-                      src={msg.meta.file_url as string} 
-                      controls 
-                      className="w-full max-w-[250px]"
-                    />
-                  ) : (
-                    <div className="flex items-center gap-2 p-3 bg-muted/30 border border-border/30 rounded-full w-fit">
-                      <div className="w-8 h-8 rounded-full bg-muted/50 flex items-center justify-center">
-                        <Music className="w-4 h-4 opacity-40" />
-                      </div>
-                      <span className="text-xs text-muted-foreground">
-                        {fileType === "voice" ? "Голосовое" : "Аудио"} не загружено
-                      </span>
-                    </div>
-                  )
-                ) : (
-                  <div className="flex items-center gap-2 p-2 bg-background/20 rounded">
-                    {getFileIcon(fileType)}
-                    <span className="text-xs truncate">{fileName || "Файл"}</span>
-                    {!msg.meta?.file_url && (
-                      <span className="text-xs text-muted-foreground ml-1">(не загружен)</span>
-                    )}
-                  </div>
-                )}
+              <div className="mb-2">
+                <ChatMediaMessage
+                  fileType={fileType}
+                  fileUrl={msg.meta?.file_url as string | null}
+                  fileName={fileName}
+                  errorMessage={msg.meta?.upload_error as string | null}
+                  isOutgoing={msg.direction === "outgoing"}
+                />
               </div>
             )}
             
@@ -733,79 +685,70 @@ export function ContactTelegramChat({
   };
 
   return (
-    <div className="flex flex-col h-full min-w-0 overflow-x-hidden">
-      {/* Header - only show if photo button is visible */}
-      {!hidePhotoButton && (
-        <div className="flex items-center justify-end pb-2 border-b border-border/30">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => fetchPhotoMutation.mutate()}
-            disabled={fetchPhotoMutation.isPending}
-            className="h-7 px-2 text-xs"
-            title="Загрузить фото из Telegram"
-          >
-            {fetchPhotoMutation.isPending ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <ImageIcon className="w-3.5 h-3.5" />
-            )}
-            <span className="ml-1">Фото TG</span>
-          </Button>
-        </div>
-      )}
-
-      {/* Messages + Events */}
-      <ScrollArea className="flex-1 py-3" ref={scrollRef}>
-        {isLoading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-12 w-3/4" />
-            ))}
-          </div>
-        ) : !chatItems?.length ? (
-          <div className="h-full flex items-center justify-center text-muted-foreground">
-            <div className="text-center">
-              <Bot className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Нет сообщений</p>
-              <p className="text-xs">Начните диалог, отправив сообщение</p>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-3 pr-4">
-            {chatItems.map(renderChatItem)}
-            <div ref={bottomRef} />
+    <TooltipProvider>
+      <div className="flex flex-col h-full min-h-0 overflow-hidden">
+        {/* Header - only show if photo button is visible */}
+        {!hidePhotoButton && (
+          <div className="flex items-center justify-end pb-2 border-b border-border/30 shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => fetchPhotoMutation.mutate()}
+              disabled={fetchPhotoMutation.isPending}
+              className="h-7 px-2 text-xs"
+              title="Загрузить фото из Telegram"
+            >
+              {fetchPhotoMutation.isPending ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <ImageIcon className="w-3.5 h-3.5" />
+              )}
+              <span className="ml-1">Фото TG</span>
+            </Button>
           </div>
         )}
-      </ScrollArea>
 
-      {/* Selected file preview */}
-      {selectedFile && (
-        <div className="flex items-center gap-2 px-2 py-1 bg-muted rounded-md mb-2">
-          {getFileIcon(selectedFileType)}
-          <span className="text-sm truncate flex-1">{selectedFile.name}</span>
-          {selectedFileType === "video_note" && (
-            <Badge variant="secondary" className="text-xs">Кружок</Badge>
+        {/* Messages + Events - flex-1 with min-h-0 for proper scrolling */}
+        <ScrollArea className="flex-1 min-h-0 py-3" ref={scrollRef}>
+          {isLoading ? (
+            <div className="space-y-3 px-1">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-12 w-3/4" />
+              ))}
+            </div>
+          ) : !chatItems?.length ? (
+            <div className="h-full flex items-center justify-center text-muted-foreground min-h-[200px]">
+              <div className="text-center">
+                <Bot className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">Нет сообщений</p>
+                <p className="text-xs">Начните диалог, отправив сообщение</p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3 pr-4 px-1">
+              {chatItems.map(renderChatItem)}
+              <div ref={bottomRef} />
+            </div>
           )}
-          <span className="text-xs text-muted-foreground">
-            {(selectedFile.size / 1024).toFixed(0)} KB
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setSelectedFile(null);
-              setSelectedFileType(null);
-            }}
-            className="h-6 w-6 p-0"
-          >
-            <X className="w-4 h-4" />
-          </Button>
-        </div>
-      )}
+        </ScrollArea>
 
-      {/* Input */}
-      <div className="pt-3 border-t">
+        {/* Selected file preview - shrink-0 to stay visible */}
+        {selectedFile && (
+          <div className="shrink-0 px-1">
+            <OutboundMediaPreview
+              file={selectedFile}
+              fileType={selectedFileType}
+              isUploading={isUploading}
+              onRemove={() => {
+                setSelectedFile(null);
+                setSelectedFileType(null);
+              }}
+            />
+          </div>
+        )}
+
+        {/* Input - shrink-0 to always stay visible */}
+        <div className="pt-3 border-t shrink-0">
         <div className="flex gap-2">
           <div className="flex flex-col gap-1">
             <Popover>
@@ -1003,6 +946,7 @@ export function ContactTelegramChat({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }

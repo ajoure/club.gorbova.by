@@ -93,7 +93,7 @@ export const DEFAULT_MENU: MenuSettings = [
     label: "CRM",
     order: 0,
     items: [
-      { id: "communication", label: "Общение", path: "/admin/communication", icon: "MessageCircle", order: 0, permission: "users.view", badge: "unread" },
+      { id: "communication", label: "Контакт-центр", path: "/admin/communication", icon: "MessageCircle", order: 0, permission: "users.view", badge: "unread" },
       { id: "deals", label: "Сделки", path: "/admin/deals", icon: "Handshake", order: 1, permission: "entitlements.view" },
       { id: "contacts", label: "Контакты", path: "/admin/contacts", icon: "Users", order: 2, permission: "users.view", badge: "duplicates" },
       { id: "installments", label: "Рассрочки", path: "/admin/installments", icon: "CalendarClock", order: 3, permission: "entitlements.view" },
