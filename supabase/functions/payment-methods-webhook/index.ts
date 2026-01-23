@@ -173,13 +173,47 @@ serve(async (req) => {
       });
     }
 
-    // Find user by email in profiles table
+    // PATCH 13.7: Find user by email - with fallback to auth.users
     const emailLower = customerEmail?.toLowerCase().trim();
-    const { data: profile } = await supabase
+    
+    // 1. First try to find in profiles table
+    let { data: profile } = await supabase
       .from('profiles')
       .select('user_id')
       .ilike('email', emailLower || '')
-      .single();
+      .maybeSingle();
+
+    // 2. Fallback: search by email in auth.users (via admin client)
+    if (!profile?.user_id && emailLower) {
+      console.log(`[payment-methods-webhook] Profile not found by email, trying auth.users fallback for: ${emailLower}`);
+      
+      // Query auth.users using service role (admin) to find by email
+      const { data: authUsers } = await supabase.auth.admin.listUsers();
+      const matchingUser = authUsers?.users?.find(u => 
+        u.email?.toLowerCase() === emailLower
+      );
+      
+      if (matchingUser?.id) {
+        // Found in auth.users, now find their profile by user_id
+        const { data: profileByUserId } = await supabase
+          .from('profiles')
+          .select('user_id')
+          .eq('user_id', matchingUser.id)
+          .maybeSingle();
+        
+        if (profileByUserId) {
+          profile = profileByUserId;
+          console.log(`[payment-methods-webhook] Found user via auth.users fallback: ${matchingUser.id}`);
+          
+          // Also update profiles.email to match auth.users for future lookups
+          await supabase
+            .from('profiles')
+            .update({ email: matchingUser.email })
+            .eq('user_id', matchingUser.id);
+          console.log(`[payment-methods-webhook] Synced profiles.email to auth.users.email for user: ${matchingUser.id}`);
+        }
+      }
+    }
 
     if (!profile?.user_id) {
       console.error('User not found for email:', customerEmail);
