@@ -479,6 +479,9 @@ Deno.serve(async (req) => {
 
       case "get_messages": {
         const { user_id, limit = 50 } = payload;
+        
+        // STOP-guard: normalize limit to safe range [1, 200]
+        const safeLimit = Math.max(1, Math.min(limit ?? 50, 200));
 
         if (!user_id) {
           return new Response(JSON.stringify({ error: "user_id required" }), {
@@ -496,7 +499,27 @@ Deno.serve(async (req) => {
           `)
           .eq("user_id", user_id)
           .order("created_at", { ascending: false })  // DESC - get LATEST N messages
-          .limit(limit);
+          .limit(safeLimit);
+        
+        // Helper to build raw/ui debug info
+        const buildOrderDebug = (rawMessages: any[], uiMessages: any[]) => {
+          const rawFirst = rawMessages[0]?.created_at || null;
+          const rawLast = rawMessages[rawMessages.length - 1]?.created_at || null;
+          const uiFirst = uiMessages[0]?.created_at || null;
+          const uiLast = uiMessages[uiMessages.length - 1]?.created_at || null;
+          
+          return {
+            safe_limit: safeLimit,
+            raw_count: rawMessages.length,
+            raw_first_created_at: rawFirst,
+            raw_last_created_at: rawLast,
+            raw_order_ok_desc: rawFirst && rawLast ? new Date(rawFirst).getTime() >= new Date(rawLast).getTime() : true,
+            ui_count: uiMessages.length,
+            ui_first_created_at: uiFirst,
+            ui_last_created_at: uiLast,
+            ui_order_ok_asc: uiFirst && uiLast ? new Date(uiFirst).getTime() <= new Date(uiLast).getTime() : true,
+          };
+        };
 
         const isPdfLike = (meta: any) => {
           const name = String(meta?.file_name || "").toLowerCase();
@@ -558,7 +581,7 @@ Deno.serve(async (req) => {
             `)
             .eq("user_id", user_id)
             .order("created_at", { ascending: false })  // DESC - get LATEST N messages
-            .limit(limit);
+            .limit(safeLimit);
           
           if (fallbackError) {
             return new Response(JSON.stringify({ error: fallbackError.message }), {
@@ -586,8 +609,9 @@ Deno.serve(async (req) => {
             }
           }
           
+          const rawFallback = fallbackMessages || [];
           // Reverse to ASC for UI (oldest at top, newest at bottom), then enrich
-          const messagesAsc = [...(fallbackMessages || [])].reverse();
+          const messagesAsc = [...rawFallback].reverse();
           const enrichedMessages = await Promise.all(messagesAsc.map(async (m: any) => {
             const withAdmin = {
               ...m,
@@ -596,17 +620,32 @@ Deno.serve(async (req) => {
             return enrichMessageWithSignedUrl(withAdmin);
           }));
           
-          return new Response(JSON.stringify({ messages: enrichedMessages }), {
+          // Debug for fallback branch
+          const orderDebug = buildOrderDebug(rawFallback, enrichedMessages);
+          const last5 = enrichedMessages.slice(-5).map((m: any) => {
+            const meta = m?.meta || {};
+            return {
+              msg_id: m?.id ?? null,
+              file_type: meta.file_type ?? null,
+              has_bucket: !!meta.storage_bucket,
+              has_path: !!meta.storage_path,
+              url_set: !!meta.file_url,
+            };
+          });
+          
+          return new Response(JSON.stringify({ messages: enrichedMessages, debug: { ...orderDebug, last5 } }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
 
+        const rawMessages = messages || [];
         // Reverse to ASC for UI (oldest at top, newest at bottom), then enrich
-        const messagesAsc = [...(messages || [])].reverse();
+        const messagesAsc = [...rawMessages].reverse();
         const enrichedMessages = await Promise.all(messagesAsc.map(enrichMessageWithSignedUrl));
 
-        // Temporary debug payload: helps confirm url enrichment without guessing.
-        const debug = enrichedMessages.slice(-5).map((m: any) => {
+        // Debug: raw vs UI ordering proof + last5 url enrichment
+        const orderDebug = buildOrderDebug(rawMessages, enrichedMessages);
+        const last5 = enrichedMessages.slice(-5).map((m: any) => {
           const meta = m?.meta || {};
           return {
             msg_id: m?.id ?? null,
@@ -617,7 +656,7 @@ Deno.serve(async (req) => {
           };
         });
 
-        return new Response(JSON.stringify({ messages: enrichedMessages, debug }), {
+        return new Response(JSON.stringify({ messages: enrichedMessages, debug: { ...orderDebug, last5 } }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
