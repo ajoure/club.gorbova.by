@@ -27,6 +27,7 @@ interface ChatMediaMessageProps {
   fileType: string | null;
   fileUrl: string | null;
   fileName: string | null;
+  mimeType?: string | null;
   errorMessage?: string | null;
   isOutgoing: boolean;
   storageBucket?: string | null;
@@ -56,6 +57,7 @@ export function ChatMediaMessage({
   fileType,
   fileUrl,
   fileName,
+  mimeType,
   errorMessage,
   isOutgoing,
   storageBucket,
@@ -78,10 +80,34 @@ export function ChatMediaMessage({
     : hasStorageRef 
       ? 'CAN_ENRICH' 
       : 'NO_STORAGE';
-  const isPhoto = fileType === "photo";
-  const isVideo = fileType === "video";
-  const isVideoNote = fileType === "video_note";
-  const isAudio = fileType === "audio" || fileType === "voice";
+
+  // Derive canonical type from fileType, mimeType, or fileName
+  const canonicalType: string | null = 
+    // If fileType is already canonical, use it
+    ["photo", "video", "video_note", "audio", "voice"].includes(fileType || "") 
+      ? fileType 
+    // Otherwise, derive from mimeType
+    : mimeType?.startsWith("image/") 
+      ? "photo"
+    : mimeType?.startsWith("video/") 
+      ? (fileType === "video_note" ? "video_note" : "video")
+    : mimeType?.startsWith("audio/") 
+      ? (fileType === "voice" ? "voice" : "audio")
+    : mimeType === "application/pdf" 
+      ? "document"
+    // Fallback: try to guess from fileName extension
+    : /\.(jpe?g|png|gif|webp|heic)$/i.test(fileName || "")
+      ? "photo"
+    : /\.(mp4|mov|avi|webm|mkv)$/i.test(fileName || "")
+      ? "video"
+    : /\.(mp3|m4a|ogg|wav|opus|aac)$/i.test(fileName || "")
+      ? "audio"
+    : fileType;  // Last resort: use raw fileType
+
+  const isPhoto = canonicalType === "photo";
+  const isVideo = canonicalType === "video";
+  const isVideoNote = canonicalType === "video_note";
+  const isAudio = canonicalType === "audio" || canonicalType === "voice";
   const isDocument = !isPhoto && !isVideo && !isVideoNote && !isAudio;
   const isPdf = isDocument && isPdfFile(fileName, fileUrl);
 
