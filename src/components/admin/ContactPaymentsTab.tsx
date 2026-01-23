@@ -9,8 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreditCard, RefreshCw, Loader2, ArrowDownLeft, ArrowUpRight, ExternalLink, Package } from "lucide-react";
-import { ContactCardHealthSection } from "./cards/ContactCardHealthSection";
-import { usePermissions } from "@/hooks/usePermissions";
 
 interface ContactPaymentsTabProps {
   contactId: string;
@@ -46,11 +44,7 @@ function getBrandVariants(brand: string): string[] {
 
 export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProps) {
   const queryClient = useQueryClient();
-  const { hasPermission, isSuperAdmin } = usePermissions();
   const [isRelinking, setIsRelinking] = useState(false);
-  
-  // RBAC: check write permission for reverify button
-  const canReverify = hasPermission('admin.payments.write') || isSuperAdmin();
 
   // Fetch contact's linked cards
   const { data: linkedCards } = useQuery({
@@ -293,15 +287,6 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
 
   return (
     <div className="space-y-4">
-      {/* Card Health Section - показываем если есть userId */}
-      {userId && (
-        <ContactCardHealthSection
-          userId={userId}
-          contactId={contactId}
-          canReverify={canReverify}
-        />
-      )}
-
       {/* Header with re-autolink button */}
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold flex items-center gap-2">
