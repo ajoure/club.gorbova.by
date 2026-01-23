@@ -111,7 +111,7 @@ import { AvatarZoomDialog } from "./AvatarZoomDialog";
 import { LoyaltyPulse } from "./LoyaltyPulse";
 import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
-import { ContactCardHealthSection } from "./cards/ContactCardHealthSection";
+import { LinkedCardItem } from "./cards/LinkedCardItem";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 
@@ -484,7 +484,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       if (!contact?.user_id) return [];
       const { data, error } = await supabase
         .from("payment_methods")
-        .select("id, brand, last4, exp_month, exp_year, is_default, status")
+        .select(`
+          id, brand, last4, exp_month, exp_year, is_default, status, provider,
+          verification_status, supports_recurring, recurring_verified,
+          verification_error, verification_checked_at
+        `)
         .eq("user_id", contact.user_id)
         .eq("status", "active")
         .order("is_default", { ascending: false });
@@ -1342,15 +1346,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 </Card>
               )}
 
-              {/* Card Health Section - над блоком Привязанные карты */}
-              {contact.user_id && (
-                <ContactCardHealthSection
-                  userId={contact.user_id}
-                  contactId={contact.id}
-                  canReverify={hasPermission('admin.payments.write') || isSuperAdmin()}
-                />
-              )}
-
+              {/* Привязанные карты с встроенным Card Health */}
               {contact.user_id && (
                 <Card>
                   <CardHeader className="pb-2">
@@ -1365,22 +1361,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                     ) : paymentMethods && paymentMethods.length > 0 ? (
                       <>
                         {paymentMethods.map((method) => (
-                          <div key={method.id} className="flex items-center justify-between p-2 rounded-lg bg-muted/50">
-                            <div className="flex items-center gap-3">
-                              <CreditCard className="w-4 h-4 text-muted-foreground" />
-                              <div>
-                                <span className="font-medium">{method.brand?.toUpperCase() || "Карта"} •••• {method.last4}</span>
-                                {method.exp_month && method.exp_year && (
-                                  <p className="text-xs text-muted-foreground">
-                                    До {String(method.exp_month).padStart(2, "0")}/{String(method.exp_year).slice(-2)}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                            {method.is_default && (
-                              <Badge variant="secondary" className="text-xs">Основная</Badge>
-                            )}
-                          </div>
+                          <LinkedCardItem
+                            key={method.id}
+                            method={method}
+                            userId={contact.user_id!}
+                            contactId={contact.id}
+                            canReverify={hasPermission('admin.payments.write') || isSuperAdmin()}
+                          />
                         ))}
                         {/* Charge button for super admin */}
                         {isSuperAdmin() && (
