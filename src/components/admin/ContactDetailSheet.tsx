@@ -111,6 +111,7 @@ import { AvatarZoomDialog } from "./AvatarZoomDialog";
 import { LoyaltyPulse } from "./LoyaltyPulse";
 import { ContactLoyaltyTab } from "./ContactLoyaltyTab";
 import { ContactPaymentsTab } from "./ContactPaymentsTab";
+import { ContactCardHealthSection } from "./cards/ContactCardHealthSection";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 
@@ -1339,6 +1340,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                     )}
                   </CardContent>
                 </Card>
+              )}
+
+              {/* Card Health Section - над блоком Привязанные карты */}
+              {contact.user_id && (
+                <ContactCardHealthSection
+                  userId={contact.user_id}
+                  contactId={contact.id}
+                  canReverify={hasPermission('admin.payments.write') || isSuperAdmin()}
+                />
               )}
 
               {contact.user_id && (
