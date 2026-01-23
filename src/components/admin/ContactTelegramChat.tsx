@@ -730,10 +730,11 @@ export function ContactTelegramChat({
             {/* Media preview with lightbox support - render if isMediaLike (not just fileType) */}
             {isMediaLike && (
               <div className="mb-2">
-                <ChatMediaMessage
+<ChatMediaMessage
                   fileType={fileType}
                   fileUrl={fileUrl}
                   fileName={fileName}
+                  mimeType={mimeType}
                   errorMessage={uploadError}
                   isOutgoing={msg.direction === "outgoing"}
                   storageBucket={bucket}
