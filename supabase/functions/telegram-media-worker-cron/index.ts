@@ -20,25 +20,32 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  const start = Date.now();
+const start = Date.now();
   
-  // Security check: allow pg_net internal calls or CRON_SECRET
+  // ===== STRICT SECURITY: Always require CRON_SECRET =====
   const cronSecret = Deno.env.get("CRON_SECRET");
-  const authHeader = req.headers.get("authorization");
-  const providedSecret = authHeader?.replace("Bearer ", "");
-  
-  // For pg_net calls, authorization may be absent - we rely on function being internal
-  // For manual calls, require CRON_SECRET if it's set
-  const userAgent = req.headers.get("user-agent") || "";
-  const isInternal = userAgent.includes("Supabase") || !authHeader;
-  
-  if (cronSecret && providedSecret && providedSecret !== cronSecret && !isInternal) {
-    console.error("[CRON] Unauthorized: invalid secret");
+
+  if (!cronSecret) {
+    console.error("[CRON] CRON_SECRET not configured - rejecting request");
+    return new Response(JSON.stringify({ error: "cron_secret_not_configured" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Check x-cron-secret header OR Authorization: Bearer <secret>
+  const providedSecret = 
+    req.headers.get("x-cron-secret") || 
+    req.headers.get("authorization")?.replace("Bearer ", "");
+
+  if (providedSecret !== cronSecret) {
+    console.error("[CRON] Unauthorized: invalid or missing secret");
     return new Response(JSON.stringify({ error: "unauthorized" }), {
       status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+  // ===== END SECURITY CHECK =====
 
   const workerToken = Deno.env.get("TELEGRAM_MEDIA_WORKER_TOKEN");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");

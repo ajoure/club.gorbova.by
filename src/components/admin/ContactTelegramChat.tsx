@@ -394,6 +394,22 @@ export function ContactTelegramChat({
         try {
           console.log(`[AUTO-REFRESH] Refreshing messages (attempt ${pendingRefreshCountRef.current}/${MAX_PENDING_REFRESH_ATTEMPTS})`);
           await refetchMessages();
+          
+          // === EARLY STOP: Check if pending disappeared after refetch ===
+          // Get fresh data from query cache
+          const freshMessages = queryClient.getQueryData(["telegram-messages", userId]) as TelegramMessage[] | undefined;
+          const stillHasPending = freshMessages?.some((m) => m.meta?.upload_status === 'pending');
+          
+          if (!stillHasPending) {
+            console.log("[AUTO-REFRESH] No more pending media, stopping polling early");
+            pendingRefreshCountRef.current = 0;
+            if (pendingAutoRefreshRef.current) {
+              window.clearInterval(pendingAutoRefreshRef.current);
+              pendingAutoRefreshRef.current = null;
+            }
+          }
+          // === END EARLY STOP ===
+          
         } finally {
           isRefetchingRef.current = false;
         }
