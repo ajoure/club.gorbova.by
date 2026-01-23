@@ -230,10 +230,11 @@ export function ContactTelegramChat({
       return mergeByIdPreferEnriched(prevMessages, nextMessages);
     },
     enabled: !!userId,
-    staleTime: 15000,              // 15s before stale - reduces refetch frequency
+    staleTime: 30000,              // 30s before stale - reduces refetch frequency (mobile fix)
     refetchOnWindowFocus: false,   // Disable - causes mobile "infinite reload" feel
     refetchOnMount: true,          // Once on mount, not "always"
     refetchInterval: false,        // Disable polling - realtime is enough
+    refetchOnReconnect: false,     // Prevent mobile reconnect floods
   });
 
   // Fetch events from telegram_logs - optimized
