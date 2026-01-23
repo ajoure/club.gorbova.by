@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { 
   Image as ImageIcon, 
@@ -11,7 +11,9 @@ import {
   RefreshCw,
   Copy,
   Download,
-  ExternalLink
+  ExternalLink,
+  Maximize2,
+  Pause
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MediaLightbox } from "./MediaLightbox";
@@ -40,6 +42,13 @@ const ERROR_MESSAGES: Record<string, string> = {
   "MEDIA_UPLOAD_FAILED": "Загрузка не удалась",
 };
 
+// Helper to determine if file is PDF
+const isPdfFile = (fileName: string | null, fileUrl: string | null): boolean => {
+  if (fileName?.toLowerCase().endsWith('.pdf')) return true;
+  if (fileUrl?.includes('application/pdf') || fileUrl?.includes('.pdf')) return true;
+  return false;
+};
+
 export function ChatMediaMessage({
   fileType,
   fileUrl,
@@ -50,6 +59,8 @@ export function ChatMediaMessage({
 }: ChatMediaMessageProps) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const hasFile = !!fileUrl && !imageError;
   const isPhoto = fileType === "photo";
@@ -57,6 +68,12 @@ export function ChatMediaMessage({
   const isVideoNote = fileType === "video_note";
   const isAudio = fileType === "audio" || fileType === "voice";
   const isDocument = !isPhoto && !isVideo && !isVideoNote && !isAudio;
+  const isPdf = isDocument && isPdfFile(fileName, fileUrl);
+
+  // Reset playing state when video note changes
+  useEffect(() => {
+    setIsPlaying(false);
+  }, [fileUrl]);
 
   const getErrorMessage = () => {
     if (!errorMessage) return "Файл не загружен";
@@ -66,6 +83,17 @@ export function ChatMediaMessage({
   const copyErrorToClipboard = () => {
     if (errorMessage) {
       navigator.clipboard.writeText(errorMessage);
+    }
+  };
+
+  const handleVideoNoteClick = () => {
+    if (!videoRef.current) return;
+    if (videoRef.current.paused) {
+      videoRef.current.play();
+      setIsPlaying(true);
+    } else {
+      videoRef.current.pause();
+      setIsPlaying(false);
     }
   };
 
@@ -115,24 +143,89 @@ export function ChatMediaMessage({
     );
   }
 
-  // Video / Video Note
-  if (isVideo || isVideoNote) {
+  // Video Note (Кружок) - inline play like Telegram
+  if (isVideoNote) {
     if (hasFile) {
       return (
         <>
           <div 
-            className={cn(
-              "relative cursor-pointer hover:opacity-90 transition-opacity",
-              isVideoNote ? "w-48 h-48 rounded-full overflow-hidden" : "max-w-full rounded overflow-hidden"
+            className="relative w-48 h-48 rounded-full overflow-hidden cursor-pointer group"
+            onClick={handleVideoNoteClick}
+          >
+            <video
+              ref={videoRef}
+              src={fileUrl}
+              className="w-full h-full object-cover"
+              loop
+              playsInline
+              muted={false}
+              controlsList="nodownload noplaybackrate"
+              disablePictureInPicture
+              onEnded={() => setIsPlaying(false)}
+              onPause={() => setIsPlaying(false)}
+              onPlay={() => setIsPlaying(true)}
+            />
+            {/* Play/Pause overlay */}
+            {!isPlaying && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                <div className="w-12 h-12 rounded-full bg-black/50 flex items-center justify-center">
+                  <Play className="w-6 h-6 text-white fill-white ml-1" />
+                </div>
+              </div>
             )}
+            {/* Expand button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (videoRef.current) videoRef.current.pause();
+                setIsPlaying(false);
+                setLightboxOpen(true);
+              }}
+              className="absolute bottom-2 right-2 p-1.5 rounded-full bg-black/50 hover:bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Увеличить"
+            >
+              <Maximize2 className="w-3 h-3 text-white" />
+            </button>
+          </div>
+          <MediaLightbox
+            open={lightboxOpen}
+            onOpenChange={setLightboxOpen}
+            type="video_note"
+            url={fileUrl}
+            fileName={fileName}
+          />
+        </>
+      );
+    }
+
+    return (
+      <div className="flex flex-col items-center justify-center bg-muted/30 border border-border/30 w-32 h-32 rounded-full">
+        <Circle className="w-8 h-8 opacity-40 mb-1" />
+        <span className="text-xs text-muted-foreground text-center px-2">
+          Кружок {getErrorMessage().toLowerCase()}
+        </span>
+        {onRetry && (
+          <Button variant="ghost" size="sm" className="h-6 mt-1" onClick={onRetry}>
+            <RefreshCw className="w-3 h-3 mr-1" />
+            Повторить
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  // Video (regular)
+  if (isVideo) {
+    if (hasFile) {
+      return (
+        <>
+          <div 
+            className="relative cursor-pointer hover:opacity-90 transition-opacity max-w-full rounded overflow-hidden"
             onClick={() => setLightboxOpen(true)}
           >
             <video
               src={fileUrl}
-              className={cn(
-                "max-h-48",
-                isVideoNote ? "w-full h-full object-cover" : "max-w-full rounded"
-              )}
+              className="max-h-48 max-w-full rounded"
               muted
               preload="metadata"
             />
@@ -145,7 +238,7 @@ export function ChatMediaMessage({
           <MediaLightbox
             open={lightboxOpen}
             onOpenChange={setLightboxOpen}
-            type={isVideoNote ? "video_note" : "video"}
+            type="video"
             url={fileUrl}
             fileName={fileName}
           />
@@ -154,15 +247,10 @@ export function ChatMediaMessage({
     }
 
     return (
-      <div 
-        className={cn(
-          "flex flex-col items-center justify-center bg-muted/30 border border-border/30",
-          isVideoNote ? "w-32 h-32 rounded-full" : "w-48 h-32 rounded-lg"
-        )}
-      >
+      <div className="flex flex-col items-center justify-center bg-muted/30 border border-border/30 w-48 h-32 rounded-lg">
         <Play className="w-8 h-8 opacity-40 mb-1" />
         <span className="text-xs text-muted-foreground text-center px-2">
-          {isVideoNote ? "Кружок" : "Видео"} {getErrorMessage().toLowerCase()}
+          Видео {getErrorMessage().toLowerCase()}
         </span>
         {onRetry && (
           <Button variant="ghost" size="sm" className="h-6 mt-1" onClick={onRetry}>
@@ -199,22 +287,28 @@ export function ChatMediaMessage({
     );
   }
 
-  // Document
+  // Document (PDF or other)
   if (hasFile) {
     return (
-      <div className="flex items-center gap-2 p-2 bg-background/20 rounded border border-border/30">
-        <FileText className="w-4 h-4" />
-        <span className="text-xs truncate max-w-[150px]">{fileName || "Файл"}</span>
-        <a
-          href={fileUrl}
-          download={fileName || "file"}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center justify-center h-6 w-6 rounded-md text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      <>
+        <div 
+          className="flex items-center gap-2 p-2 bg-background/20 rounded border border-border/30 cursor-pointer hover:bg-background/30 transition-colors"
+          onClick={() => setLightboxOpen(true)}
         >
-          <Download className="w-3 h-3" />
-        </a>
-      </div>
+          <FileText className="w-4 h-4 shrink-0" />
+          <span className="text-xs truncate max-w-[150px]">{fileName || "Файл"}</span>
+          {isPdf && (
+            <span className="text-[10px] text-muted-foreground uppercase">PDF</span>
+          )}
+        </div>
+        <MediaLightbox
+          open={lightboxOpen}
+          onOpenChange={setLightboxOpen}
+          type={isPdf ? "pdf" : "document"}
+          url={fileUrl}
+          fileName={fileName}
+        />
+      </>
     );
   }
 
