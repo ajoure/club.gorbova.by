@@ -43,10 +43,8 @@ interface ProductClubMapping {
   duration_days: number;
   is_active: boolean;
   created_at: string;
-  products?: {
+  products_v2?: {
     name: string;
-    product_type: string;
-    price_byn: number;
   };
   telegram_clubs?: {
     club_name: string;
@@ -56,9 +54,6 @@ interface ProductClubMapping {
 interface Product {
   id: string;
   name: string;
-  product_type: string;
-  price_byn: number;
-  duration_days: number | null;
   is_active: boolean;
 }
 
@@ -78,17 +73,17 @@ export default function ProductClubMappings() {
     duration_days: 30,
   });
 
-  // Fetch products
+  // Fetch products from products_v2 (FK was changed)
   const { data: products = [] } = useQuery({
     queryKey: ['products-for-mapping'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('products')
-        .select('id, name, product_type, price_byn, duration_days, is_active')
+        .from('products_v2')
+        .select('id, name, is_active')
         .eq('is_active', true)
         .order('name');
       if (error) throw error;
-      return data as Product[];
+      return data as { id: string; name: string; is_active: boolean }[];
     },
   });
 
@@ -112,7 +107,7 @@ export default function ProductClubMappings() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('product_club_mappings')
-        .select('*, products(name, product_type, price_byn), telegram_clubs(club_name)')
+        .select('*, products_v2(name), telegram_clubs(club_name)')
         .order('created_at', { ascending: false });
       if (error) throw error;
       return data as ProductClubMapping[];
@@ -181,13 +176,12 @@ export default function ProductClubMappings() {
     },
   });
 
-  // Auto-fill duration from product
+  // Handle product selection
   const handleProductChange = (productId: string) => {
-    const product = products.find(p => p.id === productId);
     setNewMapping({
       ...newMapping,
       product_id: productId,
-      duration_days: product?.duration_days || 30,
+      duration_days: 30, // Default to 30 days
     });
   };
 
@@ -237,7 +231,7 @@ export default function ProductClubMappings() {
                       <SelectContent>
                         {products.map((product) => (
                           <SelectItem key={product.id} value={product.id}>
-                            {product.name} ({(product.price_byn / 100).toFixed(2)} BYN)
+                            {product.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -320,12 +314,10 @@ export default function ProductClubMappings() {
                   {mappings.map((mapping) => (
                     <TableRow key={mapping.id}>
                       <TableCell className="font-medium">
-                        {mapping.products?.name}
+                        {mapping.products_v2?.name || 'Неизвестный продукт'}
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">
-                          {mapping.products?.product_type === 'subscription' ? 'Подписка' : 'Разовый'}
-                        </Badge>
+                        <Badge variant="outline">Продукт</Badge>
                       </TableCell>
                       <TableCell>{mapping.telegram_clubs?.club_name}</TableCell>
                       <TableCell>{mapping.duration_days} дн.</TableCell>

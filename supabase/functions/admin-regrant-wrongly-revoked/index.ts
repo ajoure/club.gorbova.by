@@ -72,6 +72,7 @@ Deno.serve(async (req) => {
       in_chat: boolean | null;
       access_status: string | null;
       club_id: string | null;
+      access_source: string | null; // NEW: subscription, entitlement, or manual_access
     }
 
     const { data: wronglyRevoked, error: rpcError } = await supabase.rpc('find_wrongly_revoked_users');

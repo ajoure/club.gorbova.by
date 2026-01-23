@@ -4223,7 +4223,7 @@ export type Database = {
             foreignKeyName: "product_club_mappings_product_id_fkey"
             columns: ["product_id"]
             isOneToOne: false
-            referencedRelation: "products"
+            referencedRelation: "products_v2"
             referencedColumns: ["id"]
           },
         ]
@@ -7244,40 +7244,22 @@ export type Database = {
           user_id: string
         }[]
       }
-      find_wrongly_revoked_users:
-        | {
-            Args: never
-            Returns: {
-              access_end_at: string
-              access_status: string
-              club_id: string
-              email: string
-              full_name: string
-              in_chat: boolean
-              profile_id: string
-              status: string
-              telegram_user_id: number
-              user_id: string
-            }[]
-          }
-        | {
-            Args: { p_limit?: number }
-            Returns: {
-              access_end_at: string
-              access_status: string
-              club_id: string
-              email: string
-              full_name: string
-              in_chat: boolean
-              invite_sent_at: string
-              invite_status: string
-              profile_id: string
-              status: string
-              subscription_id: string
-              telegram_user_id: number
-              user_id: string
-            }[]
-          }
+      find_wrongly_revoked_users: {
+        Args: never
+        Returns: {
+          access_end_at: string
+          access_source: string
+          access_status: string
+          club_id: string
+          email: string
+          full_name: string
+          in_chat: boolean
+          profile_id: string
+          status: string
+          telegram_user_id: number
+          user_id: string
+        }[]
+      }
       generate_order_number: { Args: never; Returns: string }
       generate_ticket_number: { Args: never; Returns: string }
       get_club_members_enriched: {
