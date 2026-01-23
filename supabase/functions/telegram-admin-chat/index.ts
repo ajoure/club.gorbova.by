@@ -527,6 +527,15 @@ Deno.serve(async (req) => {
           return name.endsWith(".pdf") || mime === "application/pdf";
         };
 
+        // Helper to detect non-PDF documents (DOCX, XLSX, CSV, etc.)
+        const isDocLike = (meta: any) => {
+          const ft = String(meta?.file_type || "").toLowerCase();
+          const mime = String(meta?.mime_type || "").toLowerCase();
+          return ft === "document" || 
+                 (mime.includes("application/") && !mime.includes("application/pdf")) || 
+                 mime.includes("text/");
+        };
+
         // Helper to generate signed URL for a message
         const enrichMessageWithSignedUrl = async (msg: any) => {
           const meta = msg.meta || {};
@@ -534,10 +543,17 @@ Deno.serve(async (req) => {
           // If we have storage_path, create signed URL
           if (meta.storage_bucket && meta.storage_path) {
             try {
-              const signedOptions = isPdfLike(meta) ? { download: false } : undefined;
+              // PDF: inline preview (download: false)
+              // Other documents (DOCX/XLSX/CSV): forced download for mobile compatibility
+              // Media (photo/video): no forced download
+              const signedOptions = isPdfLike(meta) 
+                ? { download: false }
+                : isDocLike(meta) 
+                  ? { download: meta.file_name || "file" }
+                  : undefined;
+              
               const { data: signedData, error: signedError } = await supabase.storage
                 .from(meta.storage_bucket)
-                // For PDFs we explicitly disable forced download to allow iframe preview.
                 .createSignedUrl(meta.storage_path, 3600, signedOptions as any); // 1 hour
               
               if (signedData && !signedError) {

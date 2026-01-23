@@ -371,28 +371,71 @@ export function ChatMediaMessage({
     );
   }
 
-  // Document (PDF or other)
+  // Document (PDF or other) - always show Open/Download buttons
   if (hasFile) {
+    const handleDownload = () => {
+      const a = document.createElement("a");
+      a.href = fileUrl!;
+      a.download = fileName || "file";
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    };
+
+    const handleOpenInNewTab = () => {
+      window.open(fileUrl!, "_blank", "noopener,noreferrer");
+    };
+
     return (
-      <>
-        <div 
-          className="flex items-center gap-2 p-2 bg-background/20 rounded border border-border/30 cursor-pointer hover:bg-background/30 transition-colors"
-          onClick={() => setLightboxOpen(true)}
-        >
+      <div className="flex flex-col gap-2 p-2 bg-background/20 rounded border border-border/30">
+        <div className="flex items-center gap-2">
           <FileText className="w-4 h-4 shrink-0" />
           <span className="text-xs truncate max-w-[150px]">{fileName || "Файл"}</span>
           {isPdf && (
             <span className="text-[10px] text-muted-foreground uppercase">PDF</span>
           )}
         </div>
-        <MediaLightbox
-          open={lightboxOpen}
-          onOpenChange={setLightboxOpen}
-          type={isPdf ? "pdf" : "document"}
-          url={fileUrl}
-          fileName={fileName}
-        />
-      </>
+        <div className="flex gap-2">
+          {isPdf ? (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-6 text-xs"
+              onClick={() => setLightboxOpen(true)}
+            >
+              Открыть
+            </Button>
+          ) : (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-6 text-xs"
+              onClick={handleOpenInNewTab}
+            >
+              Открыть
+            </Button>
+          )}
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-6 text-xs"
+            onClick={handleDownload}
+          >
+            Скачать
+          </Button>
+        </div>
+        {isPdf && (
+          <MediaLightbox
+            open={lightboxOpen}
+            onOpenChange={setLightboxOpen}
+            type="pdf"
+            url={fileUrl}
+            fileName={fileName}
+          />
+        )}
+      </div>
     );
   }
 
