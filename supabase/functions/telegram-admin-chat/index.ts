@@ -396,9 +396,39 @@ Deno.serve(async (req) => {
                 const fileResponse = await fetch(telegramFileUrl);
                 const arrayBuffer = await fileResponse.arrayBuffer();
                 
+                // Sanitize filename for Supabase Storage (no cyrillic, spaces, special chars)
+                const sanitizeOutboundFileName = (name: string): string => {
+                  if (!name) return 'file';
+                  const lastDot = name.lastIndexOf('.');
+                  const ext = lastDot > 0 ? name.slice(lastDot).toLowerCase() : '';
+                  const baseName = lastDot > 0 ? name.slice(0, lastDot) : name;
+                  
+                  const cyrToLat: Record<string, string> = {
+                    'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i',
+                    'й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t',
+                    'у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'',
+                    'э':'e','ю':'yu','я':'ya'
+                  };
+                  
+                  let safe = baseName.toLowerCase();
+                  for (const [cyr, lat] of Object.entries(cyrToLat)) {
+                    safe = safe.replace(new RegExp(cyr, 'g'), lat);
+                  }
+                  
+                  safe = safe
+                    .replace(/\s+/g, '_')
+                    .replace(/[^a-z0-9_.-]/g, '')
+                    .replace(/_+/g, '_')
+                    .slice(0, 100);
+                  
+                  return (safe || 'file') + ext;
+                };
+                
+                const safeOutboundName = sanitizeOutboundFileName(file.name);
+                
                 // Upload to Supabase Storage
                 storageBucket = 'telegram-media';
-                storagePath = `outbound/${user_id}/${Date.now()}_${file.name}`;
+                storagePath = `outbound/${user_id}/${Date.now()}_${safeOutboundName}`;
                 const { data: uploadData, error: uploadError } = await supabase.storage
                   .from(storageBucket)
                   .upload(storagePath, arrayBuffer, { 

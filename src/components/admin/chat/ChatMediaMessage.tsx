@@ -439,20 +439,38 @@ export function ChatMediaMessage({
     );
   }
 
+  // Show upload error state with retry option
+  const hasUploadError = !!errorMessage && !hasFile;
+  
   return (
-    <div className="flex items-center gap-2 p-2 bg-muted/30 border border-border/30 rounded">
-      <FileText className="w-4 h-4 opacity-40" />
-      <span className="text-xs truncate">{fileName || "Файл"}</span>
+    <div className="flex flex-col gap-1 p-2 bg-muted/30 border border-border/30 rounded">
+      <div className="flex items-center gap-2">
+        <FileText className="w-4 h-4 opacity-40" />
+        <span className="text-xs truncate max-w-[150px]">{fileName || "Файл"}</span>
+      </div>
       <span className="text-xs text-muted-foreground">
-        ({mediaState === 'CAN_ENRICH' ? "Загрузка..." : 
-          mediaState === 'NO_STORAGE' && isOutgoing ? "Отправлено" : 
-          getErrorMessage()})
+        {hasUploadError 
+          ? `Ошибка: ${getErrorMessage()}` 
+          : mediaState === 'CAN_ENRICH' 
+            ? "Загрузка..." 
+            : mediaState === 'NO_STORAGE' && isOutgoing 
+              ? "Отправлено в Telegram" 
+              : "Файл недоступен"}
       </span>
-      {mediaState === 'CAN_ENRICH' && onRefresh && (
-        <Button variant="ghost" size="sm" className="h-5 px-1" onClick={onRefresh}>
-          <RefreshCw className="w-3 h-3" />
-        </Button>
-      )}
+      <div className="flex gap-1">
+        {mediaState === 'CAN_ENRICH' && onRefresh && (
+          <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onRefresh}>
+            <RefreshCw className="w-3 h-3 mr-1" />
+            Обновить
+          </Button>
+        )}
+        {hasUploadError && onRetry && (
+          <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onRetry}>
+            <RefreshCw className="w-3 h-3 mr-1" />
+            Повторить
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

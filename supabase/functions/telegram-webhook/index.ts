@@ -697,10 +697,61 @@ Deno.serve(async (req) => {
                 else if (fileType === 'video' || fileType === 'video_note') contentType = 'video/mp4';
                 else if (fileType === 'voice') contentType = 'audio/ogg';
                 else if (fileType === 'audio') contentType = 'audio/mpeg';
+                else if (fileType === 'document') {
+                  // Determine mime_type from file extension for documents
+                  const ext = (fileName || '').split('.').pop()?.toLowerCase();
+                  const mimeMap: Record<string, string> = {
+                    'pdf': 'application/pdf',
+                    'doc': 'application/msword',
+                    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    'xls': 'application/vnd.ms-excel',
+                    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    'csv': 'text/csv',
+                    'txt': 'text/plain',
+                    'png': 'image/png',
+                    'jpg': 'image/jpeg',
+                    'jpeg': 'image/jpeg',
+                    'gif': 'image/gif',
+                    'zip': 'application/zip',
+                    'rar': 'application/x-rar-compressed',
+                  };
+                  contentType = mimeMap[ext || ''] || 'application/octet-stream';
+                }
+                
+                // Sanitize filename for Supabase Storage (no cyrillic, spaces, special chars)
+                const sanitizeFileName = (name: string): string => {
+                  if (!name) return 'file';
+                  const lastDot = name.lastIndexOf('.');
+                  const ext = lastDot > 0 ? name.slice(lastDot).toLowerCase() : '';
+                  const baseName = lastDot > 0 ? name.slice(0, lastDot) : name;
+                  
+                  // Transliterate cyrillic to latin
+                  const cyrToLat: Record<string, string> = {
+                    'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i',
+                    'й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t',
+                    'у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'',
+                    'э':'e','ю':'yu','я':'ya'
+                  };
+                  
+                  let safe = baseName.toLowerCase();
+                  for (const [cyr, lat] of Object.entries(cyrToLat)) {
+                    safe = safe.replace(new RegExp(cyr, 'g'), lat);
+                  }
+                  
+                  safe = safe
+                    .replace(/\s+/g, '_')
+                    .replace(/[^a-z0-9_.-]/g, '')
+                    .replace(/_+/g, '_')
+                    .slice(0, 100);
+                  
+                  return (safe || 'file') + ext;
+                };
+                
+                const safeFileName = sanitizeFileName(fileName);
                 
                 // Upload to Supabase Storage with retry (PATCH A: use telegram-media bucket)
                 storageBucket = 'telegram-media';
-                storagePath = `chat-media/${profile.user_id}/${Date.now()}_${fileName}`;
+                storagePath = `chat-media/${profile.user_id}/${Date.now()}_${safeFileName}`;
                 
                 let uploadSuccess = false;
                 let lastUploadError: any = null;
@@ -827,8 +878,11 @@ Deno.serve(async (req) => {
               file_type: fileType, 
               file_name: fileName,
               file_id: fileId,
+              mime_type: contentType,
+              file_size: arrayBuffer?.byteLength || null,
               storage_bucket: storageBucket,
               storage_path: storagePath,
+              upload_error: (storageBucket && storagePath) ? null : 'storage_upload_failed',
               raw: msg 
             },
           });
