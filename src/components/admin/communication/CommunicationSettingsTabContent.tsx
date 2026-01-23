@@ -23,6 +23,8 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { toast } from "sonner";
+import { format } from "date-fns";
+import { cn } from "@/lib/utils";
 import {
   Mail,
   Edit2,
@@ -33,6 +35,10 @@ import {
   Server,
   Send as SendIcon,
   MessageSquare,
+  HardDrive,
+  RefreshCw,
+  Play,
+  AlertTriangle,
 } from "lucide-react";
 
 interface EmailTemplate {
@@ -68,6 +74,8 @@ export function CommunicationSettingsTabContent() {
     subject: string;
   }>({ open: false, html: "", subject: "" });
 
+  const [isRunningWorker, setIsRunningWorker] = useState(false);
+
   // Fetch email templates
   const { data: templates = [], isLoading: loadingTemplates } = useQuery({
     queryKey: ["email-templates"],
@@ -93,6 +101,69 @@ export function CommunicationSettingsTabContent() {
       return data as EmailAccount[];
     },
   });
+
+  // Fetch media pipeline stats
+  const { data: mediaStats, refetch: refetchMediaStats, isLoading: loadingMediaStats } = useQuery({
+    queryKey: ["media-pipeline-stats"],
+    queryFn: async () => {
+      // Get all jobs for counting
+      const { data: jobs } = await supabase
+        .from("media_jobs")
+        .select("status, locked_at, updated_at");
+      
+      const now = new Date();
+      const fiveMinAgo = new Date(now.getTime() - 5 * 60 * 1000);
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      
+      const jobStats = {
+        pending: jobs?.filter(j => j.status === 'pending').length || 0,
+        processing: jobs?.filter(j => j.status === 'processing').length || 0,
+        ok: jobs?.filter(j => j.status === 'ok').length || 0,
+        error: jobs?.filter(j => j.status === 'error').length || 0,
+        stuckProcessing: jobs?.filter(j => 
+          j.status === 'processing' && 
+          j.locked_at && 
+          new Date(j.locked_at) < fiveMinAgo
+        ).length || 0,
+        errorsLast24h: jobs?.filter(j => 
+          j.status === 'error' && 
+          j.updated_at && 
+          new Date(j.updated_at) > oneDayAgo
+        ).length || 0,
+      };
+      
+      // Get last worker run
+      const { data: lastRun } = await supabase
+        .from("audit_logs")
+        .select("created_at, meta")
+        .eq("actor_label", "telegram-media-worker")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+      
+      return { jobStats, lastRun };
+    },
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
+  const handleRunWorker = async () => {
+    setIsRunningWorker(true);
+    try {
+      const { error } = await supabase.functions.invoke("telegram-admin-chat", {
+        body: { action: "process_media_jobs", limit: 10 }
+      });
+      if (error) {
+        toast.error(`Ошибка: ${error.message}`);
+      } else {
+        toast.success("Worker запущен");
+        setTimeout(() => refetchMediaStats(), 2000);
+      }
+    } catch (e) {
+      toast.error("Ошибка вызова worker");
+    } finally {
+      setIsRunningWorker(false);
+    }
+  };
 
   // Save template mutation
   const saveTemplateMutation = useMutation({
@@ -340,6 +411,100 @@ export function CommunicationSettingsTabContent() {
           <p className="text-xs text-muted-foreground mt-4">
             Для привязки Telegram используйте профиль пользователя в разделе «Клиенты»
           </p>
+        </GlassCard>
+
+        {/* Media Pipeline Health */}
+        <GlassCard className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <HardDrive className="w-5 h-5 text-primary" />
+              <h2 className="text-lg font-semibold">Media Pipeline</h2>
+            </div>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => refetchMediaStats()}
+              disabled={loadingMediaStats}
+            >
+              <RefreshCw className={cn("w-4 h-4", loadingMediaStats && "animate-spin")} />
+            </Button>
+          </div>
+          <p className="text-sm text-muted-foreground mb-4">
+            Обработка медиафайлов из Telegram
+          </p>
+
+          {loadingMediaStats ? (
+            <div className="flex items-center justify-center py-4">
+              <Loader2 className="w-5 h-5 animate-spin" />
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                <div className="text-center p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                  <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
+                    {mediaStats?.jobStats?.pending || 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Pending</p>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                  <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                    {mediaStats?.jobStats?.processing || 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Processing</p>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                  <p className="text-2xl font-bold text-green-600 dark:text-green-400">
+                    {mediaStats?.jobStats?.ok || 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">OK</p>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+                  <p className="text-2xl font-bold text-red-600 dark:text-red-400">
+                    {mediaStats?.jobStats?.error || 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Error</p>
+                </div>
+              </div>
+
+              {/* Warnings */}
+              {(mediaStats?.jobStats?.stuckProcessing || 0) > 0 && (
+                <div className="flex items-center gap-2 p-2 mb-3 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                  <AlertTriangle className="w-4 h-4 text-orange-500" />
+                  <span className="text-sm text-orange-600 dark:text-orange-400">
+                    {mediaStats.jobStats.stuckProcessing} job(s) stuck in processing &gt;5 min
+                  </span>
+                </div>
+              )}
+
+              {/* Last run info */}
+              {mediaStats?.lastRun ? (
+                <p className="text-xs text-muted-foreground mb-3">
+                  Последний запуск: {format(new Date(mediaStats.lastRun.created_at), "dd.MM.yyyy HH:mm:ss")}
+                  {(mediaStats.lastRun.meta as { ms?: number })?.ms && 
+                    ` (${(mediaStats.lastRun.meta as { ms?: number }).ms}ms)`}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground mb-3">
+                  Worker ещё не запускался
+                </p>
+              )}
+
+              {/* Run worker button */}
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={handleRunWorker}
+                disabled={isRunningWorker}
+              >
+                {isRunningWorker ? (
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                ) : (
+                  <Play className="w-4 h-4 mr-1" />
+                )}
+                Run Worker Now
+              </Button>
+            </>
+          )}
         </GlassCard>
       </div>
 
