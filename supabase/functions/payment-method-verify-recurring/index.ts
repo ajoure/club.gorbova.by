@@ -3,9 +3,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
-
 // 3DS-related error codes from bePaid that indicate card requires 3DS for each transaction
 const REQUIRES_3DS_CODES = ['P.4011', 'P.4012', 'P.4013', 'P.4014', 'P.4015'];
 
@@ -62,6 +61,41 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  // === X-Cron-Secret Security Gate ===
+  const cronSecret = Deno.env.get('CRON_SECRET');
+  const providedSecret = req.headers.get('X-Cron-Secret') || req.headers.get('x-cron-secret');
+
+  if (!cronSecret) {
+    console.error('[SECURITY] CRON_SECRET not configured');
+    await supabase.from('audit_logs').insert({
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'payment-method-verify-recurring',
+      action: 'cron.secret.misconfigured',
+      meta: { error: 'CRON_SECRET env not set', timestamp: new Date().toISOString() },
+    });
+    return new Response(JSON.stringify({ error: 'Server misconfigured' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (!providedSecret || providedSecret !== cronSecret) {
+    console.warn('[SECURITY] Invalid or missing X-Cron-Secret');
+    await supabase.from('audit_logs').insert({
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'payment-method-verify-recurring',
+      action: 'cron.secret.invalid',
+      meta: { provided: !!providedSecret, timestamp: new Date().toISOString() },
+    });
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  // === End Security Gate ===
 
   // Parse request body
   const body = await req.json().catch(() => ({}));
@@ -709,6 +743,29 @@ serve(async (req) => {
   }
 
   console.log(`[payment-method-verify-recurring] Completed: verified=${results.verified}, rejected=${results.rejected}, retried=${results.retried}, failed=${results.failed}, skipped=${results.skipped}, notified=${results.notified}`);
+
+  // SYSTEM ACTOR: Log successful cron run
+  await supabase.from('audit_logs').insert({
+    actor_type: 'system',
+    actor_user_id: null,
+    actor_label: 'payment-method-verify-recurring',
+    action: 'cron.run',
+    meta: {
+      run_id: crypto.randomUUID(),
+      source: body.source || 'unknown',
+      mode: dryRun ? 'dry_run' : 'execute',
+      limit,
+      finished_at: new Date().toISOString(),
+      processed: results.verified + results.rejected + results.retried + results.failed + results.skipped,
+      verified: results.verified,
+      rejected: results.rejected,
+      retried: results.retried,
+      failed: results.failed,
+      skipped: results.skipped,
+      notified: results.notified,
+      rate_limit_hit: rateLimitHit,
+    },
+  });
 
   return new Response(JSON.stringify({
     mode: 'execute',

@@ -1,0 +1,50 @@
+name: Payment Method Verification Cron
+
+on:
+  schedule:
+    # Every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run mode (true/false)'
+        required: false
+        default: 'false'
+      limit:
+        description: 'Max jobs to process'
+        required: false
+        default: '20'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger payment method verification
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SUPABASE_URL: https://hdjgkjceownmmnrqqtuz.supabase.co
+        run: |
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+          LIMIT="${{ github.event.inputs.limit || '20' }}"
+          
+          echo "Running payment method verification..."
+          echo "Mode: dry_run=$DRY_RUN, limit=$LIMIT"
+          
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            -d "{\"dry_run\": $DRY_RUN, \"limit\": $LIMIT, \"source\": \"github-cron\"}" \
+            "$SUPABASE_URL/functions/v1/payment-method-verify-recurring")
+          
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          
+          echo "Response: $body"
+          echo "HTTP Code: $http_code"
+          
+          if [ "$http_code" != "200" ]; then
+            echo "::error::Expected 200, got $http_code"
+            exit 1
+          fi
+          
+          echo "✅ Payment method verification completed successfully"
