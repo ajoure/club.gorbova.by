@@ -72,6 +72,11 @@ export function ChatMediaMessage({
   const [isPlaying, setIsPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  // Reset playing state when video note changes - MUST be before any early returns
+  useEffect(() => {
+    setIsPlaying(false);
+  }, [fileUrl]);
+
   // Handle upload_status BEFORE other logic
   if (uploadStatus === 'pending') {
     return (
@@ -169,11 +174,6 @@ export function ChatMediaMessage({
   const isAudio = canonicalType === "audio" || canonicalType === "voice";
   const isDocument = !isPhoto && !isVideo && !isVideoNote && !isAudio;
   const isPdf = isDocument && isPdfFile(fileName, fileUrl);
-
-  // Reset playing state when video note changes
-  useEffect(() => {
-    setIsPlaying(false);
-  }, [fileUrl]);
 
   const getErrorMessage = () => {
     // Explicit error takes priority
