@@ -760,147 +760,50 @@ Deno.serve(async (req) => {
             webhookError = String(insertErr);
           }
 
-          // PHASE 2: Upload file (with timeout) and UPDATE meta
-          if (fileId && botToken && dbMessageId) {
-            try {
-              webhookStage = 'downloading';
-              
-              // AbortController with 1500ms timeout for Telegram API
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 1500);
-              
-              let fileInfo: any = null;
-              try {
-                const fileInfoRes = await fetch(
-                  `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`,
-                  { signal: controller.signal }
-                );
-                clearTimeout(timeoutId);
-                fileInfo = await fileInfoRes.json();
-              } catch (fetchErr: any) {
-                clearTimeout(timeoutId);
-                if (fetchErr.name === 'AbortError') {
-                  throw new Error('timeout_getFile');
-                }
-                throw fetchErr;
-              }
-              
-              if (fileInfo?.ok && fileInfo?.result?.file_path) {
-                // Download with timeout
-                const downloadController = new AbortController();
-                const downloadTimeoutId = setTimeout(() => downloadController.abort(), 1500);
-                
-                let arrayBuffer: ArrayBuffer;
-                try {
-                  const telegramFileUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
-                  const fileResponse = await fetch(telegramFileUrl, { signal: downloadController.signal });
-                  clearTimeout(downloadTimeoutId);
-                  arrayBuffer = await fileResponse.arrayBuffer();
-                  uploadedFileSize = arrayBuffer.byteLength;
-                  webhookStage = 'downloaded';
-                } catch (dlErr: any) {
-                  clearTimeout(downloadTimeoutId);
-                  if (dlErr.name === 'AbortError') {
-                    throw new Error('timeout_download');
-                  }
-                  throw dlErr;
-                }
-                
-                // Determine content type
-                contentType = 'application/octet-stream';
-                if (fileType === 'photo') contentType = 'image/jpeg';
-                else if (fileType === 'video' || fileType === 'video_note') contentType = 'video/mp4';
-                else if (fileType === 'voice') contentType = 'audio/ogg';
-                else if (fileType === 'audio') contentType = 'audio/mpeg';
-                else if (fileType === 'document') {
-                  const ext = (fileName || '').split('.').pop()?.toLowerCase();
-                  const mimeMap: Record<string, string> = {
-                    'pdf': 'application/pdf',
-                    'doc': 'application/msword',
-                    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    'xls': 'application/vnd.ms-excel',
-                    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    'csv': 'text/csv', 'txt': 'text/plain',
-                    'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'gif': 'image/gif',
-                    'zip': 'application/zip', 'rar': 'application/x-rar-compressed',
-                  };
-                  contentType = mimeMap[ext || ''] || 'application/octet-stream';
-                }
-                
-                const safeFileName = safeSanitizeFileName(fileName || 'file', fileType === 'photo' ? '.jpg' : '');
-                storageBucket = 'telegram-media';
-                storagePath = `chat-media/${profile.user_id}/${Date.now()}_${safeFileName}`;
-                
-                webhookStage = 'uploading';
-                
-                // Single upload attempt with shorter timeout
-                const { data: uploadData, error: uploadError } = await supabase.storage
-                  .from(storageBucket)
-                  .upload(storagePath, arrayBuffer, { contentType, upsert: false });
-                
-                if (uploadData && !uploadError) {
-                  webhookStage = 'uploaded';
-                  console.log(`[WEBHOOK] Phase 2: Uploaded ${storagePath}, size: ${uploadedFileSize}`);
-                } else {
-                  console.error('[WEBHOOK] Phase 2: Upload failed:', uploadError);
-                  webhookError = uploadError?.message || 'upload_failed';
-                  storageBucket = null;
-                  storagePath = null;
-                }
-              } else {
-                webhookError = 'telegram_getFile_failed';
-              }
-            } catch (uploadErr: any) {
-              console.error('[WEBHOOK] Phase 2 exception:', uploadErr);
-              webhookError = String(uploadErr.message || uploadErr).slice(0, 100);
-              storageBucket = null;
-              storagePath = null;
-            }
-            
-            // UPDATE message meta with final status
-            const finalMeta = {
-              ...baseMeta,
-              mime_type: contentType,
-              file_size: uploadedFileSize,
-              storage_bucket: storageBucket,
-              storage_path: storagePath,
-              upload_status: storageBucket ? 'ok' : 'error',
-              upload_error: webhookError,
-              webhook_stage: webhookStage,
-              webhook_ms: Date.now() - webhookStartTime
-            };
-            
-            try {
-              await supabase.from('telegram_messages')
-                .update({ meta: finalMeta })
-                .eq('id', dbMessageId);
-              console.log(`[WEBHOOK] Phase 2: Updated meta for ${dbMessageId}, status: ${finalMeta.upload_status}`);
-            } catch (updateErr) {
-              console.error('[WEBHOOK] Phase 2: Meta update failed:', updateErr);
-            }
-          }
+          // ========== HOTFIX: EARLY RETURN ==========
+          // Return IMMEDIATELY to Telegram after Phase 1 INSERT
+          // File processing will be done by async worker (media_jobs queue)
+          // This prevents Telegram webhook timeouts
           
-          // AUDIT LOG: Record webhook processing
-          try {
-            await supabase.from('audit_logs').insert({
-              actor_type: 'system',
-              actor_user_id: null,
-              actor_label: 'telegram-webhook',
-              action: 'webhook_message_processed',
-              meta: {
-                message_id: msg.message_id,
-                db_message_id: dbMessageId,
-                telegram_user_id: telegramUserId,
-                stage: webhookStage,
-                ms: Date.now() - webhookStartTime,
-                has_file: !!fileId,
-                upload_status: storageBucket ? 'ok' : (fileId ? 'error' : null),
-                error: webhookError
-              }
-            });
-          } catch (auditErr) {
-            console.error('[WEBHOOK] Audit log failed:', auditErr);
+          const webhookMs = Date.now() - webhookStartTime;
+          console.log(`[WEBHOOK] Early ACK for message ${msg.message_id}, dbId: ${dbMessageId}, file pending: ${!!fileId}, ms: ${webhookMs}`);
+          
+          // Best-effort audit log (non-blocking via Promise, don't await)
+          supabase.from('audit_logs').insert({
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'telegram-webhook',
+            action: 'webhook_message_received',
+            meta: {
+              message_id: msg.message_id,
+              db_message_id: dbMessageId,
+              telegram_user_id: telegramUserId,
+              stage: webhookStage,
+              ms: webhookMs,
+              has_file: !!fileId,
+              file_type: fileType,
+              upload_status: fileId ? 'pending' : null,
+              error: webhookError
+            }
+          }).then(() => {
+            console.log('[WEBHOOK] Audit log written');
+          }).catch((err) => {
+            console.error('[WEBHOOK] Audit log failed:', err);
+          });
+          
+          // IMMEDIATE RETURN - don't block on file processing
+          return new Response(JSON.stringify({ ok: true, fast_ack: true }), { 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          });
+          
+          // ========== PHASE 2: DISABLED ==========
+          // File upload moved to async worker (telegram-media-worker)
+          // This entire block is now unreachable - kept for reference only
+          /*
+          if (fileId && botToken && dbMessageId) {
+            // ... file upload code disabled ...
           }
+          */
         }
       }
 
