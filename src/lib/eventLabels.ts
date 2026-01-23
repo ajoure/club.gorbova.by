@@ -139,6 +139,10 @@ export const EVENT_LABELS: Record<string, string> = {
   // ===== Reconciliation =====
   "reconcile.payment_linked": "Платёж привязан к клиенту",
   "reconcile.order_created": "Заказ создан из платежа",
+  
+  // ===== Payment Diagnostics =====
+  "payments.diagnostics.generated": "Сформирован отчёт диагностики платежей",
+  "payments.diagnostics.exported": "Экспортирован отчёт диагностики",
 };
 
 /**

@@ -86,6 +86,7 @@ import AdminCommunication from "./pages/admin/AdminCommunication";
 import AdminEditorial from "./pages/admin/AdminEditorial";
 import AdminIlex from "./pages/admin/AdminIlex";
 import AdminMarketingInsights from "./pages/admin/AdminMarketingInsights";
+import AdminPaymentDiagnostics from "./pages/admin/AdminPaymentDiagnostics";
 
 import Money from "./pages/Money";
 import AI from "./pages/AI";
@@ -206,6 +207,7 @@ const App = () => (
               <Route path="/admin/bepaid-sync" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/refunds-v2" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/payments" element={<ProtectedRoute><AdminPaymentsPage /></ProtectedRoute>} />
+              <Route path="/admin/payments/diagnostics" element={<ProtectedRoute><AdminPaymentDiagnostics /></ProtectedRoute>} />
               <Route path="/admin/bepaid-archive-import" element={<ProtectedRoute><AdminBepaidArchiveImport /></ProtectedRoute>} />
               <Route path="/admin/support" element={<ProtectedRoute><AdminSupport /></ProtectedRoute>} />
               <Route path="/admin/news" element={<ProtectedRoute><AdminNews /></ProtectedRoute>} />

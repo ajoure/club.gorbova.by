@@ -334,6 +334,87 @@ function normalizeWebhookStatus(status: string): string {
   }
 }
 
+// Normalize payment error into category for diagnostics
+function normalizeErrorCategory(message: string | null, declineCode?: string | null): string {
+  if (!message && !declineCode) return 'unknown';
+  
+  const lowerMessage = (message || '').toLowerCase();
+  const code = declineCode || '';
+  
+  // Check decline codes first
+  const declineCodeMap: Record<string, string> = {
+    '51': 'insufficient_funds',
+    '05': 'do_not_honor',
+    '14': 'invalid_card',
+    '33': 'expired_card',
+    '41': 'lost_stolen',
+    '43': 'lost_stolen',
+    '54': 'expired_card',
+    '61': 'issuer_block',
+    'AB': 'issuer_block',
+    'B1': 'issuer_block',
+  };
+  
+  // Extract decline code from message
+  const declineMatch = lowerMessage.match(/decline code[:\s]+(\w+)/i);
+  if (declineMatch && declineCodeMap[declineMatch[1]]) {
+    return declineCodeMap[declineMatch[1]];
+  }
+  if (code && declineCodeMap[code]) {
+    return declineCodeMap[code];
+  }
+  
+  // 3DS related
+  if (
+    lowerMessage.includes('3d secure') ||
+    lowerMessage.includes('3-d secure') ||
+    lowerMessage.includes('authentication') ||
+    lowerMessage.includes('3ds') ||
+    lowerMessage.includes('p.4011') ||
+    lowerMessage.includes('p.4012') ||
+    lowerMessage.includes('p.4013')
+  ) {
+    return 'needs_3ds';
+  }
+  
+  // Insufficient funds
+  if (lowerMessage.includes('insufficient') || lowerMessage.includes('51')) {
+    return 'insufficient_funds';
+  }
+  
+  // Do not honor
+  if (lowerMessage.includes('do not honor') || lowerMessage.includes('05')) {
+    return 'do_not_honor';
+  }
+  
+  // Expired card
+  if (lowerMessage.includes('expired') || lowerMessage.includes('33') || lowerMessage.includes('54')) {
+    return 'expired_card';
+  }
+  
+  // Invalid card
+  if (lowerMessage.includes('invalid')) {
+    return 'invalid_card';
+  }
+  
+  // Lost/stolen
+  if (lowerMessage.includes('lost') || lowerMessage.includes('stolen')) {
+    return 'lost_stolen';
+  }
+  
+  // Timeout
+  if (lowerMessage.includes('timeout') || lowerMessage.includes('unavailable') || lowerMessage.includes('g.9999')) {
+    return 'timeout';
+  }
+  
+  // Issuer block
+  if (lowerMessage.includes('block') || lowerMessage.includes('restrict') || lowerMessage.includes('not permitted')) {
+    return 'issuer_block';
+  }
+  
+  return 'unknown';
+}
+
 // bePaid public key for webhook signature verification (RSA-SHA256)
 // This is the official bePaid public key for production webhooks
 const BEPAID_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
@@ -608,6 +689,9 @@ Deno.serve(async (req) => {
     // Save to queue (upsert by bepaid_uid to avoid duplicates)
     if (webhookTransaction.uid) {
       try {
+        const errorMsg = webhookTxStatus !== 'successful' ? (webhookTransaction.message || `Status: ${webhookTxStatus}`) : null;
+        const errorCategory = errorMsg ? normalizeErrorCategory(errorMsg, webhookTransaction.decline_code) : null;
+        
         await supabase.from('payment_reconcile_queue').upsert({
           bepaid_uid: webhookTransaction.uid,
           tracking_id: rawTrackingIdEarly || null,
@@ -618,6 +702,8 @@ Deno.serve(async (req) => {
           card_holder: webhookTransaction.credit_card?.holder || null,
           card_last4: webhookTransaction.credit_card?.last_4 || null,
           card_brand: webhookTransaction.credit_card?.brand || null,
+          card_bank: webhookTransaction.credit_card?.bank || null,
+          card_bank_country: webhookTransaction.credit_card?.issuer_country || null,
           receipt_url: webhookTransaction.receipt_url || null,
           raw_payload: body,
           source: 'webhook',
@@ -626,7 +712,9 @@ Deno.serve(async (req) => {
           transaction_type: isWebhookRefund ? 'Возврат средств' : 'Оплата',
           paid_at: webhookTransaction.paid_at || webhookTransaction.created_at || new Date().toISOString(),
           reference_transaction_uid: webhookReferenceUid,
-          last_error: webhookTxStatus !== 'successful' ? (webhookTransaction.message || `Status: ${webhookTxStatus}`) : null,
+          last_error: errorMsg,
+          error_category: errorCategory,
+          three_d_secure: webhookTransaction.three_d_secure_verification?.status === 'successful',
         }, { onConflict: 'bepaid_uid', ignoreDuplicates: false });
         
         console.log(`[WEBHOOK-QUEUE] Saved transaction ${webhookTransaction.uid} with status ${webhookNormalizedStatus}`);

@@ -3522,6 +3522,9 @@ export type Database = {
           card_holder: string | null
           card_last4: string | null
           card_valid_until: string | null
+          client_accept_language: string | null
+          client_geo_country: string | null
+          client_user_agent: string | null
           created_at: string | null
           created_at_bepaid: string | null
           currency: string | null
@@ -3535,12 +3538,14 @@ export type Database = {
           customer_surname: string | null
           customer_zip: string | null
           description: string | null
+          error_category: string | null
           fee_amount: number | null
           fee_percent: number | null
           fraud_result: string | null
           has_conflict: boolean | null
           id: string
           ip_address: string | null
+          ip_hash: string | null
           is_external: boolean | null
           is_fee: boolean | null
           last_attempt_at: string | null
@@ -3597,6 +3602,9 @@ export type Database = {
           card_holder?: string | null
           card_last4?: string | null
           card_valid_until?: string | null
+          client_accept_language?: string | null
+          client_geo_country?: string | null
+          client_user_agent?: string | null
           created_at?: string | null
           created_at_bepaid?: string | null
           currency?: string | null
@@ -3610,12 +3618,14 @@ export type Database = {
           customer_surname?: string | null
           customer_zip?: string | null
           description?: string | null
+          error_category?: string | null
           fee_amount?: number | null
           fee_percent?: number | null
           fraud_result?: string | null
           has_conflict?: boolean | null
           id?: string
           ip_address?: string | null
+          ip_hash?: string | null
           is_external?: boolean | null
           is_fee?: boolean | null
           last_attempt_at?: string | null
@@ -3672,6 +3682,9 @@ export type Database = {
           card_holder?: string | null
           card_last4?: string | null
           card_valid_until?: string | null
+          client_accept_language?: string | null
+          client_geo_country?: string | null
+          client_user_agent?: string | null
           created_at?: string | null
           created_at_bepaid?: string | null
           currency?: string | null
@@ -3685,12 +3698,14 @@ export type Database = {
           customer_surname?: string | null
           customer_zip?: string | null
           description?: string | null
+          error_category?: string | null
           fee_amount?: number | null
           fee_percent?: number | null
           fraud_result?: string | null
           has_conflict?: boolean | null
           id?: string
           ip_address?: string | null
+          ip_hash?: string | null
           is_external?: boolean | null
           is_fee?: boolean | null
           last_attempt_at?: string | null
