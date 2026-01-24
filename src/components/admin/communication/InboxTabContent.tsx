@@ -739,7 +739,7 @@ export function InboxTabContent() {
                         className={cn(
                           "group relative flex items-start gap-3 p-3 pr-3 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
                           selectedUserId === dialog.user_id 
-                            ? "bg-primary/10 outline outline-2 outline-primary/30 -outline-offset-2" 
+                            ? "bg-primary/15 ring-2 ring-primary/40 ring-inset" 
                             : "hover:bg-card/80"
                         )}
                       >
@@ -794,7 +794,7 @@ export function InboxTabContent() {
                         {!selectionMode && (
                           <div className="flex items-center shrink-0 ml-1 self-center">
                             {/* Desktop: 3 buttons */}
-                            <div className="hidden md:flex items-center gap-0.5 opacity-70 group-hover:opacity-100 transition-opacity duration-200 bg-card/95 backdrop-blur-sm rounded-lg p-0.5 shadow-sm border border-border/30">
+                            <div className="hidden md:flex items-center gap-0.5 opacity-80 group-hover:opacity-100 transition-opacity duration-200 bg-background shadow-md rounded-lg p-0.5 border border-border/50">
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
