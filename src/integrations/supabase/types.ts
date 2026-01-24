@@ -7381,6 +7381,18 @@ export type Database = {
           profile_id: string
         }[]
       }
+      get_inbox_dialogs_v1: {
+        Args: { p_limit?: number; p_offset?: number; p_search?: string }
+        Returns: {
+          has_pending_media: boolean
+          last_message_at: string
+          last_message_id: string
+          last_message_text: string
+          last_message_type: string
+          unread_count: number
+          user_id: string
+        }[]
+      }
       get_next_document_number: {
         Args: { p_document_type: string; p_prefix?: string }
         Returns: string
