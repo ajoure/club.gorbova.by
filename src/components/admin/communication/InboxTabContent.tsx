@@ -490,66 +490,93 @@ export function InboxTabContent() {
   return (
     <TooltipProvider>
       <div className="h-full min-h-0 flex flex-col overflow-hidden p-4">
-        {/* Channel Tabs */}
+        {/* Glass Channel Tabs */}
         <div className="mb-4 shrink-0">
-          <Tabs value={channel} onValueChange={(v) => setChannel(v as "telegram" | "email")}>
-            <TabsList className="grid w-full max-w-md grid-cols-2">
-              <TabsTrigger value="telegram" className="gap-2">
-                <MessageSquare className="h-4 w-4" />
-                Telegram
-                {totalUnread > 0 && (
-                  <Badge variant="destructive" className="h-5 px-1.5 text-xs">{totalUnread}</Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="email" className="gap-2">
-                <Mail className="h-4 w-4" />
-                Email
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <div className="inline-flex p-1 rounded-full bg-card/60 backdrop-blur-xl border border-border/30 shadow-lg">
+            <button
+              onClick={() => setChannel("telegram")}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300",
+                channel === "telegram"
+                  ? "bg-card text-foreground shadow-md"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <MessageSquare className="h-4 w-4" />
+              Telegram
+              {totalUnread > 0 && (
+                <Badge className="h-5 min-w-5 px-1.5 text-xs rounded-full bg-primary text-primary-foreground">
+                  {totalUnread}
+                </Badge>
+              )}
+            </button>
+            <button
+              onClick={() => setChannel("email")}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300",
+                channel === "email"
+                  ? "bg-card text-foreground shadow-md"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Mail className="h-4 w-4" />
+              Email
+            </button>
+          </div>
         </div>
 
         {channel === "email" ? (
-          <div className="flex-1 bg-background/60 backdrop-blur-xl border border-border/50 rounded-2xl shadow-xl overflow-hidden">
+          <div className="flex-1 bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl overflow-hidden">
             <EmailInboxView 
               onContactClick={(userId) => navigate(`/admin/contacts?contact=${userId}`)}
             />
           </div>
         ) : (
           <div className="flex flex-1 gap-3 min-h-0 overflow-hidden">
-            {/* Dialog List */}
+            {/* Dialog List - Glass Panel */}
             <div className={cn(
               "flex flex-col w-full md:w-[380px] md:min-w-[320px] md:max-w-[400px] shrink-0 overflow-hidden",
-              "bg-background/60 backdrop-blur-xl border border-border/50 rounded-2xl shadow-xl",
+              "bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl",
               selectedUserId ? "hidden md:flex" : "flex"
             )}>
               {/* Header */}
-              <div className="p-3 space-y-2 border-b border-border/30">
+              <div className="p-3 space-y-3 border-b border-border/20">
                 {selectionMode ? (
-                  <div className="flex items-center justify-between">
+                  /* Selection Mode Header */
+                  <div className="flex items-center justify-between bg-primary/5 rounded-xl p-2">
                     <div className="flex items-center gap-2">
-                      <Button variant="ghost" size="sm" className="h-8" onClick={() => { setSelectionMode(false); setSelectedChats(new Set()); }}>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="h-8 rounded-full hover:bg-card" 
+                        onClick={() => { setSelectionMode(false); setSelectedChats(new Set()); }}
+                      >
                         <X className="h-4 w-4 mr-1" />
                         Отмена
                       </Button>
-                      <span className="text-sm text-muted-foreground">
-                        Выбрано: {selectedChats.size}
+                      <span className="text-sm font-medium">
+                        {selectedChats.size} выбрано
                       </span>
                     </div>
                     <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="sm" className="h-8" onClick={selectAllChats}>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="h-8 rounded-full" 
+                        onClick={selectAllChats}
+                      >
                         Все
                       </Button>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8"
+                            size="sm" 
+                            className="h-8 rounded-full"
                             disabled={selectedChats.size === 0}
                             onClick={() => bulkMarkAsRead.mutate(Array.from(selectedChats))}
                           >
-                            <CheckCheck className="h-4 w-4" />
+                            <CheckCheck className="h-4 w-4 mr-1" />
+                            Прочитать
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>Отметить прочитанными</TooltipContent>
@@ -557,14 +584,15 @@ export function InboxTabContent() {
                     </div>
                   </div>
                 ) : (
+                  /* Normal Header */
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="p-1.5 rounded-lg bg-primary/10">
+                      <div className="p-2 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5">
                         <MessageSquare className="h-4 w-4 text-primary" />
                       </div>
                       <h2 className="font-semibold">Чаты</h2>
                       {totalUnread > 0 && (
-                        <Badge className="bg-destructive/90 text-destructive-foreground text-xs h-5 px-1.5">
+                        <Badge className="bg-primary text-primary-foreground text-xs h-5 min-w-5 px-1.5 rounded-full">
                           {totalUnread}
                         </Badge>
                       )}
@@ -572,7 +600,12 @@ export function InboxTabContent() {
                     <div className="flex items-center gap-0.5">
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={() => setSelectionMode(true)}>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 rounded-full hover:bg-card" 
+                            onClick={() => setSelectionMode(true)}
+                          >
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </TooltipTrigger>
@@ -580,7 +613,12 @@ export function InboxTabContent() {
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={() => refetch()}>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 rounded-full hover:bg-card" 
+                            onClick={() => refetch()}
+                          >
                             <RefreshCw className="h-4 w-4" />
                           </Button>
                         </TooltipTrigger>
@@ -592,31 +630,41 @@ export function InboxTabContent() {
                 
                 {/* Search */}
                 <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Поиск..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-8 h-9 bg-muted/50 border-transparent focus:border-primary/50"
+                    className="pl-9 h-10 bg-card/80 border-border/30 rounded-xl focus:border-primary/50 focus:ring-primary/20"
                   />
                 </div>
 
-                {/* Filter Tabs */}
-                <div className="flex gap-1 overflow-x-auto pb-1">
+                {/* Filter Pills */}
+                <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
                   {[
                     { value: "all", label: "Все" },
-                    { value: "unread", label: "Непрочитанные" },
+                    { value: "unread", label: "Новые", count: dialogs.filter(d => d.unread_count > 0).length },
                     { value: "favorites", label: "Избранные" },
                     { value: "pinned", label: "Закреплённые" },
                   ].map((tab) => (
                     <Button
                       key={tab.value}
-                      variant={filter === tab.value ? "secondary" : "ghost"}
+                      variant="ghost"
                       size="sm"
-                      className="h-7 px-2.5 text-xs whitespace-nowrap"
+                      className={cn(
+                        "h-8 px-3 text-xs whitespace-nowrap rounded-full transition-all",
+                        filter === tab.value
+                          ? "bg-primary text-primary-foreground shadow-md"
+                          : "bg-card/60 hover:bg-card text-muted-foreground hover:text-foreground"
+                      )}
                       onClick={() => setFilter(tab.value as any)}
                     >
                       {tab.label}
+                      {tab.count && tab.count > 0 && (
+                        <span className="ml-1.5 text-[10px] opacity-80">
+                          {tab.count}
+                        </span>
+                      )}
                     </Button>
                   ))}
                 </div>
@@ -626,21 +674,27 @@ export function InboxTabContent() {
               <ScrollArea className="flex-1">
                 {isLoading ? (
                   <div className="p-8 text-center text-muted-foreground">
-                    <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />
-                    Загрузка...
+                    <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
+                    <span className="text-sm">Загрузка...</span>
                   </div>
                 ) : filteredDialogs.length === 0 ? (
-                  <div className="p-8 text-center text-muted-foreground">
-                    {searchQuery || hasActiveFilters ? "Ничего не найдено" : "Нет сообщений"}
+                  <div className="p-8 text-center">
+                    <MessageSquare className="h-10 w-10 mx-auto mb-3 text-muted-foreground/40" />
+                    <p className="text-muted-foreground">
+                      {searchQuery || hasActiveFilters ? "Ничего не найдено" : "Нет сообщений"}
+                    </p>
                   </div>
                 ) : (
-                  <div className="divide-y divide-border/30">
+                  <div className="p-1.5">
                     {filteredDialogs.map((dialog) => (
                       <div
                         key={dialog.user_id}
                         className={cn(
-                          "flex items-start gap-3 p-3 cursor-pointer hover:bg-muted/50 transition-colors",
-                          selectedUserId === dialog.user_id && "bg-primary/5 border-l-2 border-primary"
+                          "flex items-start gap-3 p-3 cursor-pointer rounded-xl transition-all duration-200 mb-0.5",
+                          "hover:bg-card/80",
+                          selectedUserId === dialog.user_id 
+                            ? "bg-primary/10 border border-primary/20" 
+                            : "border border-transparent"
                         )}
                         onClick={() => handleSelectDialog(dialog.user_id)}
                       >
@@ -649,44 +703,100 @@ export function InboxTabContent() {
                             checked={selectedChats.has(dialog.user_id)}
                             onCheckedChange={() => toggleChatSelection(dialog.user_id, { stopPropagation: () => {} } as any)}
                             onClick={(e) => e.stopPropagation()}
-                            className="mt-1"
+                            className="mt-1.5"
                           />
                         )}
-                        <Avatar className="h-10 w-10 shrink-0">
-                          <AvatarImage src={dialog.profile?.avatar_url || undefined} />
-                          <AvatarFallback className="bg-primary/10 text-primary font-medium">
-                            {dialog.profile?.full_name?.[0] || dialog.profile?.email?.[0] || "?"}
-                          </AvatarFallback>
-                        </Avatar>
+                        <div className="relative">
+                          <Avatar className="h-12 w-12 shrink-0 ring-2 ring-border/20">
+                            <AvatarImage src={dialog.profile?.avatar_url || undefined} />
+                            <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 text-foreground font-semibold">
+                              {dialog.profile?.full_name?.[0] || dialog.profile?.email?.[0] || "?"}
+                            </AvatarFallback>
+                          </Avatar>
+                          {dialog.unread_count > 0 && (
+                            <div className="absolute -top-0.5 -right-0.5 h-5 min-w-5 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-bold shadow-lg">
+                              {dialog.unread_count > 99 ? "99+" : dialog.unread_count}
+                            </div>
+                          )}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-1.5 min-w-0">
-                              {dialog.is_pinned && <Pin className="h-3 w-3 text-primary shrink-0" />}
-                              {dialog.is_favorite && <Star className="h-3 w-3 text-yellow-500 fill-yellow-500 shrink-0" />}
-                              <span className="font-medium truncate">
+                              {dialog.is_pinned && (
+                                <Pin className="h-3 w-3 text-primary shrink-0" />
+                              )}
+                              <span className="font-semibold truncate">
                                 {dialog.profile?.full_name || dialog.profile?.email || "Неизвестный"}
                               </span>
+                              {dialog.is_favorite && (
+                                <Star className="h-3.5 w-3.5 text-yellow-500 fill-yellow-500 shrink-0" />
+                              )}
                             </div>
-                            <span className="text-xs text-muted-foreground shrink-0">
-                              {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: true, locale: ru })}
+                            <span className="text-[11px] text-muted-foreground shrink-0">
+                              {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: false, locale: ru })}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between gap-2 mt-0.5">
-                            <p className="text-sm text-muted-foreground truncate">
+                          <div className="flex items-center gap-2 mt-1">
+                            <p className={cn(
+                              "text-sm truncate flex-1",
+                              dialog.unread_count > 0 
+                                ? "text-foreground font-medium" 
+                                : "text-muted-foreground"
+                            )}>
                               {dialog.last_message}
                             </p>
-                            {dialog.unread_count > 0 && (
-                              <Badge variant="destructive" className="h-5 px-1.5 text-xs shrink-0">
-                                {dialog.unread_count}
-                              </Badge>
-                            )}
                           </div>
                           {dialog.profile?.telegram_username && (
-                            <p className="text-xs text-muted-foreground mt-0.5">
+                            <p className="text-[11px] text-muted-foreground/70 mt-0.5">
                               @{dialog.profile.telegram_username}
                             </p>
                           )}
                         </div>
+                        {/* Quick Actions on Hover */}
+                        {!selectionMode && (
+                          <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 rounded-full"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    togglePrefMutation.mutate({
+                                      contactUserId: dialog.user_id,
+                                      field: "is_favorite",
+                                      value: !dialog.is_favorite
+                                    });
+                                  }}
+                                >
+                                  <Star className={cn(
+                                    "h-3.5 w-3.5",
+                                    dialog.is_favorite ? "fill-yellow-500 text-yellow-500" : "text-muted-foreground"
+                                  )} />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {dialog.is_favorite ? "Убрать из избранного" : "В избранное"}
+                              </TooltipContent>
+                            </Tooltip>
+                            {dialog.unread_count > 0 && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 rounded-full"
+                                    onClick={(e) => markChatAsRead(dialog.user_id, e)}
+                                  >
+                                    <Check className="h-3.5 w-3.5 text-muted-foreground" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Прочитать</TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -694,18 +804,19 @@ export function InboxTabContent() {
               </ScrollArea>
             </div>
 
-            {/* Chat View */}
+            {/* Chat View - Glass Panel */}
             <div className={cn(
-              "flex-1 min-w-0 bg-background/60 backdrop-blur-xl border border-border/50 rounded-2xl shadow-xl overflow-hidden",
+              "flex-1 min-w-0 bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl overflow-hidden",
               !selectedUserId && "hidden md:flex items-center justify-center"
             )}>
               {selectedUserId ? (
                 <div className="h-full min-h-0 flex flex-col overflow-hidden">
                   {/* Mobile back button */}
-                  <div className="md:hidden p-2 border-b border-border/30">
+                  <div className="md:hidden p-3 border-b border-border/20 bg-card/80 backdrop-blur">
                     <Button
                       variant="ghost"
                       size="sm"
+                      className="rounded-full"
                       onClick={() => setSelectedUserId(null)}
                     >
                       <ArrowLeft className="h-4 w-4 mr-2" />
@@ -726,8 +837,11 @@ export function InboxTabContent() {
                 </div>
               ) : (
                 <div className="text-center text-muted-foreground p-8">
-                  <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Выберите чат для просмотра</p>
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/10 to-accent/10 flex items-center justify-center mx-auto mb-4">
+                    <MessageSquare className="h-8 w-8 text-primary/50" />
+                  </div>
+                  <p className="font-medium">Выберите чат</p>
+                  <p className="text-sm text-muted-foreground/70 mt-1">для просмотра сообщений</p>
                 </div>
               )}
             </div>
