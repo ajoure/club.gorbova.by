@@ -547,7 +547,7 @@ export function InboxTabContent() {
           <div className="flex flex-1 gap-3 min-h-0 w-full min-w-0 overflow-hidden">
             {/* Dialog List - Glass Panel */}
             <div className={cn(
-              "flex flex-col w-full md:w-[380px] shrink-0 min-w-0 overflow-hidden",
+              "flex flex-col w-full md:w-[380px] shrink-0 min-w-0",
               "bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl",
               selectedUserId ? "hidden md:flex" : "flex"
             )}>
@@ -714,7 +714,7 @@ export function InboxTabContent() {
               </div>
 
               {/* Dialog List */}
-              <ScrollArea className="flex-1 overflow-x-hidden">
+              <ScrollArea className="flex-1">
                 {isLoading ? (
                   <div className="p-8 text-center text-muted-foreground">
                     <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
@@ -739,7 +739,7 @@ export function InboxTabContent() {
                         className={cn(
                           "group relative flex items-start gap-3 p-3 pr-24 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
                           selectedUserId === dialog.user_id 
-                            ? "bg-primary/20 ring-2 ring-primary/50" 
+                            ? "bg-primary/20 ring-2 ring-primary/50 ring-inset" 
                             : "hover:bg-card/80"
                         )}
                       >
