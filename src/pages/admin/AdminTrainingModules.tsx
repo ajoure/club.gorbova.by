@@ -267,6 +267,18 @@ function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormC
         />
         <Label htmlFor="is_active">Активен</Label>
       </div>
+
+      {/* Раздел меню */}
+      <MenuSectionSelector
+        value={formData.menu_section_key || "products"}
+        onChange={(value) => setFormData(prev => ({ ...prev, menu_section_key: value }))}
+      />
+
+      {/* Стиль отображения */}
+      <DisplayLayoutSelector
+        value={formData.display_layout || "grid"}
+        onChange={(value) => setFormData(prev => ({ ...prev, display_layout: value }))}
+      />
     </div>
   );
 }
@@ -330,6 +342,8 @@ export default function AdminTrainingModules() {
     color_gradient: "from-pink-500 to-fuchsia-600",
     is_active: true,
     tariff_ids: [],
+    menu_section_key: "products",
+    display_layout: "grid",
   });
 
   // Fetch products with tariffs for access selector
@@ -377,6 +391,8 @@ export default function AdminTrainingModules() {
       color_gradient: "from-pink-500 to-fuchsia-600",
       is_active: true,
       tariff_ids: [],
+      menu_section_key: "products",
+      display_layout: "grid",
     });
   }, []);
 
@@ -395,6 +411,8 @@ export default function AdminTrainingModules() {
       color_gradient: module.color_gradient || "from-pink-500 to-fuchsia-600",
       is_active: module.is_active,
       tariff_ids: [],
+      menu_section_key: module.menu_section_key || "products",
+      display_layout: module.display_layout || "grid",
     });
   }, []);
 
