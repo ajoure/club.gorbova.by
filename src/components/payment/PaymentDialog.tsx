@@ -20,6 +20,13 @@ import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
 
+interface SubscriptionMessage {
+  title?: string;           // "Ежемесячная подписка" / "Подписка на Клуб"
+  description?: string;     // Что пользователь получает
+  startDate?: string;       // Дата старта (если есть)
+  nextChargeInfo?: string;  // Инфо о следующем списании
+}
+
 interface PaymentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -32,6 +39,7 @@ interface PaymentDialogProps {
   trialDays?: number;
   isClubProduct?: boolean;
   isSubscription?: boolean; // True for recurring payments (auto-renewal)
+  subscriptionMessage?: SubscriptionMessage;
 }
 
 const emailSchema = z.string().email("Введите корректный email");
@@ -116,6 +124,7 @@ export function PaymentDialog({
   trialDays,
   isClubProduct,
   isSubscription,
+  subscriptionMessage,
 }: PaymentDialogProps) {
   const { user, session } = useAuth();
   const { isSuperAdmin, isAdmin } = usePermissions();
@@ -1007,14 +1016,57 @@ export function PaymentDialog({
               </div>
             )}
             
-            {/* Subscription info - always visible for subscriptions */}
+            {/* Subscription info - dynamic based on product type */}
             {(isSubscription || isTrial) && (
               <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-sm space-y-1.5">
-                <p className="font-medium text-foreground">Ежемесячная подписка</p>
-                <p className="text-muted-foreground">Сегодня вы оплачиваете первый месяц обучения ({price}).</p>
-                <p className="text-muted-foreground">Это даёт вам мгновенный доступ к материалам после старта 5 февраля.</p>
-                <p className="text-muted-foreground">Следующее автоматическое списание произойдёт через месяц (в начале марта).</p>
-                <p className="text-muted-foreground">Управление подпиской доступно в вашем профиле 24/7.</p>
+                <p className="font-medium text-foreground">
+                  {subscriptionMessage?.title || (isClubProduct ? "Подписка на Клуб" : "Ежемесячная подписка")}
+                </p>
+                
+                {isClubProduct ? (
+                  // Для Club продуктов
+                  <>
+                    <p className="text-muted-foreground">
+                      Сегодня вы оплачиваете месяц доступа к Клубу ({price}).
+                    </p>
+                    <p className="text-muted-foreground">
+                      Вы получаете мгновенный доступ ко всем материалам клуба.
+                    </p>
+                    <p className="text-muted-foreground">
+                      Следующее автоматическое списание произойдёт через месяц.
+                    </p>
+                  </>
+                ) : subscriptionMessage?.startDate ? (
+                  // Для курсов с отложенным стартом
+                  <>
+                    <p className="text-muted-foreground">
+                      Сегодня вы оплачиваете первый месяц обучения ({price}).
+                    </p>
+                    <p className="text-muted-foreground">
+                      Это даёт вам мгновенный доступ к материалам после старта {subscriptionMessage.startDate}.
+                    </p>
+                    <p className="text-muted-foreground">
+                      {subscriptionMessage.nextChargeInfo || "Следующее автоматическое списание произойдёт через месяц."}
+                    </p>
+                  </>
+                ) : (
+                  // Для обычных подписок
+                  <>
+                    <p className="text-muted-foreground">
+                      Сегодня вы оплачиваете месяц подписки ({price}).
+                    </p>
+                    <p className="text-muted-foreground">
+                      Вы получаете мгновенный доступ к материалам.
+                    </p>
+                    <p className="text-muted-foreground">
+                      Следующее автоматическое списание произойдёт через месяц.
+                    </p>
+                  </>
+                )}
+                
+                <p className="text-muted-foreground">
+                  Управление подпиской доступно в вашем профиле 24/7.
+                </p>
               </div>
             )}
 

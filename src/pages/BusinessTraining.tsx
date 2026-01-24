@@ -479,6 +479,11 @@ export default function BusinessTraining() {
           tariffCode={tariff.code}
           price={`${payNowOffer.amount} BYN`}
           isSubscription={true}
+          subscriptionMessage={{
+            title: "Ежемесячная подписка",
+            startDate: dynamicSettings.startDate,
+            nextChargeInfo: `Следующее автоматическое списание произойдёт через месяц (${dynamicSettings.chargeWindowStart}-${dynamicSettings.chargeWindowEnd} числа).`,
+          }}
         />
       )}
 
