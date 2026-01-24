@@ -737,9 +737,9 @@ export function InboxTabContent() {
                         onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                         onClick={() => handleSelectDialog(dialog.user_id)}
                         className={cn(
-                          "group relative flex items-start gap-3 p-3 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
+                          "group relative flex items-start gap-3 p-3 pr-24 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
                           selectedUserId === dialog.user_id 
-                            ? "bg-primary/15 ring-2 ring-primary/40 ring-inset" 
+                            ? "bg-primary/10 ring-1 ring-primary/30 ring-inset" 
                             : "hover:bg-card/80"
                         )}
                       >
@@ -790,11 +790,11 @@ export function InboxTabContent() {
                             {dialog.last_message}
                           </p>
                         </div>
-                        {/* Quick Actions - FLEX positioned (no absolute) */}
+                        {/* Quick Actions - ABSOLUTE positioned (stable layout) */}
                         {!selectionMode && (
-                          <div className="flex items-center shrink-0 ml-2 self-center min-w-fit">
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2 z-50 pointer-events-auto">
                             {/* Desktop: 3 buttons - always visible */}
-                            <div className="flex items-center gap-0.5 opacity-80 group-hover:opacity-100 transition-opacity duration-200 bg-background shadow-md rounded-lg p-0.5 border border-border/50">
+                            <div className="flex items-center gap-0.5 opacity-70 group-hover:opacity-100 transition-opacity duration-200 bg-background shadow-md rounded-lg p-0.5 border border-border/50">
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
@@ -856,7 +856,12 @@ export function InboxTabContent() {
                                         ? "hover:bg-primary/20" 
                                         : "opacity-30 cursor-not-allowed"
                                     )}
-                                    onClick={(e) => dialog.unread_count > 0 && markChatAsRead(dialog.user_id, e)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (dialog.unread_count > 0) {
+                                        markChatAsRead(dialog.user_id, e);
+                                      }
+                                    }}
                                     disabled={dialog.unread_count === 0}
                                   >
                                     <Check className={cn(
