@@ -737,7 +737,7 @@ export function InboxTabContent() {
                         onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                         onClick={() => handleSelectDialog(dialog.user_id)}
 className={cn(
-                "group relative grid grid-cols-[auto_1fr_40px] items-start gap-3 p-3 cursor-pointer rounded-xl border transition-colors duration-200",
+                "group relative grid grid-cols-[auto_1fr_28px] items-start gap-3 p-3 cursor-pointer rounded-xl border transition-colors duration-200",
                 selectedUserId === dialog.user_id 
                   ? "bg-primary/10 border-primary" 
                   : "border-transparent hover:bg-muted/40"
