@@ -61,7 +61,7 @@ import { ExcelTrainingImportDialog } from "@/components/admin/ExcelTrainingImpor
 import TrainingModuleCard from "@/components/admin/trainings/TrainingModuleCard";
 import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings/TrainingSettingsPanel";
 import { CompactAccessSelector } from "@/components/admin/trainings/CompactAccessSelector";
-import { MenuSectionSelector } from "@/components/admin/trainings/MenuSectionSelector";
+import { ContentSectionSelector } from "@/components/admin/trainings/ContentSectionSelector";
 import { DisplayLayoutSelector, DisplayLayout } from "@/components/admin/trainings/DisplayLayoutSelector";
 import { cn } from "@/lib/utils";
 import { Upload, Image as ImageIcon } from "lucide-react";
@@ -269,8 +269,8 @@ function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormC
       </div>
 
       {/* Раздел меню */}
-      <MenuSectionSelector
-        value={formData.menu_section_key || "products"}
+      <ContentSectionSelector
+        value={formData.menu_section_key || "products-library"}
         onChange={(value) => setFormData(prev => ({ ...prev, menu_section_key: value }))}
       />
 

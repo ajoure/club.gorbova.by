@@ -9,6 +9,8 @@ export interface MenuSection {
   url: string;
   sort_order: number;
   parent_key: string | null;
+  page_key: string | null;
+  kind: string;
   is_active: boolean;
 }
 

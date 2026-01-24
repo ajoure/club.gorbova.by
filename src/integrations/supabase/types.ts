@@ -7200,7 +7200,9 @@ export type Database = {
           id: string
           is_active: boolean | null
           key: string
+          kind: string
           label: string
+          page_key: string | null
           parent_key: string | null
           sort_order: number | null
           updated_at: string
@@ -7212,7 +7214,9 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           key: string
+          kind?: string
           label: string
+          page_key?: string | null
           parent_key?: string | null
           sort_order?: number | null
           updated_at?: string
@@ -7224,7 +7228,9 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           key?: string
+          kind?: string
           label?: string
+          page_key?: string | null
           parent_key?: string | null
           sort_order?: number | null
           updated_at?: string
