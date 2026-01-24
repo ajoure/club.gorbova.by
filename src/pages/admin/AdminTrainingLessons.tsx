@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useState, useCallback, memo } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useTrainingLessons, TrainingLesson, TrainingLessonFormData } from "@/hooks/useTrainingLessons";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -62,6 +62,163 @@ const contentTypeOptions = [
   { value: "mixed", label: "Смешанный", icon: BookOpen },
 ];
 
+// Helper function for slug generation
+const generateSlug = (title: string) => {
+  return title
+    .toLowerCase()
+    .replace(/[а-яё]/gi, (char) => {
+      const ru = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя";
+      const en = ["a","b","v","g","d","e","yo","zh","z","i","j","k","l","m","n","o","p","r","s","t","u","f","h","c","ch","sh","sch","","y","","e","yu","ya"];
+      const idx = ru.indexOf(char.toLowerCase());
+      return idx >= 0 ? en[idx] : char;
+    })
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+};
+
+// Form component - MUST be outside main component to prevent focus loss on re-renders
+interface LessonFormContentProps {
+  formData: TrainingLessonFormData;
+  onFormDataChange: (updater: (prev: TrainingLessonFormData) => TrainingLessonFormData) => void;
+  editingLesson: TrainingLesson | null;
+}
+
+const LessonFormContent = memo(function LessonFormContent({ 
+  formData, 
+  onFormDataChange,
+  editingLesson 
+}: LessonFormContentProps) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="lesson-title">Название *</Label>
+          <Input
+            id="lesson-title"
+            value={formData.title}
+            onChange={(e) => {
+              const newTitle = e.target.value;
+              onFormDataChange(prev => ({
+                ...prev,
+                title: newTitle,
+                slug: editingLesson ? prev.slug : generateSlug(newTitle),
+              }));
+            }}
+            placeholder="Введение в тему"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="lesson-slug">URL-slug *</Label>
+          <Input
+            id="lesson-slug"
+            value={formData.slug}
+            onChange={(e) => onFormDataChange(prev => ({ ...prev, slug: e.target.value }))}
+            placeholder="vvedenie-v-temu"
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="lesson-content_type">Тип контента</Label>
+          <Select
+            value={formData.content_type}
+            onValueChange={(value: any) => onFormDataChange(prev => ({ ...prev, content_type: value }))}
+          >
+            <SelectTrigger id="lesson-content_type">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {contentTypeOptions.map(opt => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  <div className="flex items-center gap-2">
+                    <opt.icon className="h-4 w-4" />
+                    {opt.label}
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="lesson-duration">Длительность (минуты)</Label>
+          <Input
+            id="lesson-duration"
+            type="number"
+            value={formData.duration_minutes || ""}
+            onChange={(e) => onFormDataChange(prev => ({ 
+              ...prev, 
+              duration_minutes: e.target.value ? parseInt(e.target.value) : undefined 
+            }))}
+            placeholder="15"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="lesson-description">Краткое описание</Label>
+        <Textarea
+          id="lesson-description"
+          value={formData.description}
+          onChange={(e) => onFormDataChange(prev => ({ ...prev, description: e.target.value }))}
+          placeholder="О чём этот урок..."
+          rows={2}
+        />
+      </div>
+
+      {(formData.content_type === "video" || formData.content_type === "mixed") && (
+        <div className="space-y-2">
+          <Label htmlFor="lesson-video_url">URL видео</Label>
+          <Input
+            id="lesson-video_url"
+            value={formData.video_url || ""}
+            onChange={(e) => onFormDataChange(prev => ({ ...prev, video_url: e.target.value }))}
+            placeholder="https://youtube.com/watch?v=... или https://vimeo.com/..."
+          />
+          <p className="text-xs text-muted-foreground">
+            Поддерживается YouTube, Vimeo или прямая ссылка на видео
+          </p>
+        </div>
+      )}
+
+      {(formData.content_type === "audio" || formData.content_type === "mixed") && (
+        <div className="space-y-2">
+          <Label htmlFor="lesson-audio_url">URL аудио</Label>
+          <Input
+            id="lesson-audio_url"
+            value={formData.audio_url || ""}
+            onChange={(e) => onFormDataChange(prev => ({ ...prev, audio_url: e.target.value }))}
+            placeholder="https://..."
+          />
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <Label htmlFor="lesson-content">Текстовый контент (HTML)</Label>
+        <Textarea
+          id="lesson-content"
+          value={formData.content}
+          onChange={(e) => onFormDataChange(prev => ({ ...prev, content: e.target.value }))}
+          placeholder="<p>Содержимое урока...</p>"
+          rows={6}
+          className="font-mono text-sm"
+        />
+      </div>
+
+      <div className="flex items-center space-x-2">
+        <Switch
+          id="lesson-is_active"
+          checked={formData.is_active}
+          onCheckedChange={(checked) => onFormDataChange(prev => ({ ...prev, is_active: checked }))}
+        />
+        <Label htmlFor="lesson-is_active">Активен</Label>
+      </div>
+    </div>
+  );
+});
+
 export default function AdminTrainingLessons() {
   const { moduleId } = useParams<{ moduleId: string }>();
   const navigate = useNavigate();
@@ -99,7 +256,7 @@ export default function AdminTrainingLessons() {
 
   const { lessons, loading, createLesson, updateLesson, deleteLesson } = useTrainingLessons(moduleId);
 
-  const resetForm = () => {
+  const resetForm = useCallback(() => {
     setFormData({
       module_id: moduleId || "",
       title: "",
@@ -112,14 +269,14 @@ export default function AdminTrainingLessons() {
       duration_minutes: undefined,
       is_active: true,
     });
-  };
+  }, [moduleId]);
 
-  const openCreateDialog = () => {
+  const openCreateDialog = useCallback(() => {
     resetForm();
     setIsCreateDialogOpen(true);
-  };
+  }, [resetForm]);
 
-  const openEditDialog = (lesson: TrainingLesson) => {
+  const openEditDialog = useCallback((lesson: TrainingLesson) => {
     setEditingLesson(lesson);
     setFormData({
       module_id: lesson.module_id,
@@ -133,9 +290,9 @@ export default function AdminTrainingLessons() {
       duration_minutes: lesson.duration_minutes || undefined,
       is_active: lesson.is_active,
     });
-  };
+  }, []);
 
-  const handleCreate = async () => {
+  const handleCreate = useCallback(async () => {
     if (!formData.title || !formData.slug || !moduleId) return;
     
     const success = await createLesson({
@@ -147,9 +304,9 @@ export default function AdminTrainingLessons() {
       setIsCreateDialogOpen(false);
       resetForm();
     }
-  };
+  }, [formData, moduleId, lessons.length, createLesson, resetForm]);
 
-  const handleUpdate = async () => {
+  const handleUpdate = useCallback(async () => {
     if (!editingLesson || !formData.title || !formData.slug) return;
     
     const success = await updateLesson(editingLesson.id, formData);
@@ -157,158 +314,21 @@ export default function AdminTrainingLessons() {
       setEditingLesson(null);
       resetForm();
     }
-  };
+  }, [editingLesson, formData, updateLesson, resetForm]);
 
-  const handleDelete = async () => {
+  const handleDelete = useCallback(async () => {
     if (!deleteConfirmId) return;
     
     const success = await deleteLesson(deleteConfirmId);
     if (success) {
       setDeleteConfirmId(null);
     }
-  };
+  }, [deleteConfirmId, deleteLesson]);
 
-  const generateSlug = (title: string) => {
-    return title
-      .toLowerCase()
-      .replace(/[а-яё]/gi, (char) => {
-        const ru = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя";
-        const en = ["a","b","v","g","d","e","yo","zh","z","i","j","k","l","m","n","o","p","r","s","t","u","f","h","c","ch","sh","sch","","y","","e","yu","ya"];
-        const idx = ru.indexOf(char.toLowerCase());
-        return idx >= 0 ? en[idx] : char;
-      })
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9-]/g, "")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "");
-  };
-
-  const LessonFormContent = () => (
-    <div className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="title">Название *</Label>
-          <Input
-            id="title"
-            value={formData.title}
-            onChange={(e) => {
-              setFormData(prev => ({
-                ...prev,
-                title: e.target.value,
-                slug: editingLesson ? prev.slug : generateSlug(e.target.value),
-              }));
-            }}
-            placeholder="Введение в тему"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="slug">URL-slug *</Label>
-          <Input
-            id="slug"
-            value={formData.slug}
-            onChange={(e) => setFormData(prev => ({ ...prev, slug: e.target.value }))}
-            placeholder="vvedenie-v-temu"
-          />
-        </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="content_type">Тип контента</Label>
-          <Select
-            value={formData.content_type}
-            onValueChange={(value: any) => setFormData(prev => ({ ...prev, content_type: value }))}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {contentTypeOptions.map(opt => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  <div className="flex items-center gap-2">
-                    <opt.icon className="h-4 w-4" />
-                    {opt.label}
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="duration">Длительность (минуты)</Label>
-          <Input
-            id="duration"
-            type="number"
-            value={formData.duration_minutes || ""}
-            onChange={(e) => setFormData(prev => ({ 
-              ...prev, 
-              duration_minutes: e.target.value ? parseInt(e.target.value) : undefined 
-            }))}
-            placeholder="15"
-          />
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="description">Краткое описание</Label>
-        <Textarea
-          id="description"
-          value={formData.description}
-          onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-          placeholder="О чём этот урок..."
-          rows={2}
-        />
-      </div>
-
-      {(formData.content_type === "video" || formData.content_type === "mixed") && (
-        <div className="space-y-2">
-          <Label htmlFor="video_url">URL видео</Label>
-          <Input
-            id="video_url"
-            value={formData.video_url || ""}
-            onChange={(e) => setFormData(prev => ({ ...prev, video_url: e.target.value }))}
-            placeholder="https://youtube.com/watch?v=... или https://vimeo.com/..."
-          />
-          <p className="text-xs text-muted-foreground">
-            Поддерживается YouTube, Vimeo или прямая ссылка на видео
-          </p>
-        </div>
-      )}
-
-      {(formData.content_type === "audio" || formData.content_type === "mixed") && (
-        <div className="space-y-2">
-          <Label htmlFor="audio_url">URL аудио</Label>
-          <Input
-            id="audio_url"
-            value={formData.audio_url || ""}
-            onChange={(e) => setFormData(prev => ({ ...prev, audio_url: e.target.value }))}
-            placeholder="https://..."
-          />
-        </div>
-      )}
-
-      <div className="space-y-2">
-        <Label htmlFor="content">Текстовый контент (HTML)</Label>
-        <Textarea
-          id="content"
-          value={formData.content}
-          onChange={(e) => setFormData(prev => ({ ...prev, content: e.target.value }))}
-          placeholder="<p>Содержимое урока...</p>"
-          rows={6}
-          className="font-mono text-sm"
-        />
-      </div>
-
-      <div className="flex items-center space-x-2">
-        <Switch
-          id="is_active"
-          checked={formData.is_active}
-          onCheckedChange={(checked) => setFormData(prev => ({ ...prev, is_active: checked }))}
-        />
-        <Label htmlFor="is_active">Активен</Label>
-      </div>
-    </div>
-  );
+  // Stable callback for form data changes
+  const handleFormDataChange = useCallback((updater: (prev: TrainingLessonFormData) => TrainingLessonFormData) => {
+    setFormData(updater);
+  }, []);
 
   if (moduleLoading) {
     return (
@@ -342,7 +362,7 @@ export default function AdminTrainingLessons() {
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-6">
           <Link to="/admin/training-modules" className="hover:text-foreground transition-colors">
-            База знаний
+            Тренинги
           </Link>
           <ChevronRight className="h-4 w-4" />
           <span className="text-foreground">{module.title}</span>
@@ -468,8 +488,12 @@ export default function AdminTrainingLessons() {
                 Создайте новый урок в модуле "{module.title}"
               </DialogDescription>
             </DialogHeader>
-            <LessonFormContent />
-            <DialogFooter>
+            <LessonFormContent 
+              formData={formData}
+              onFormDataChange={handleFormDataChange}
+              editingLesson={null}
+            />
+            <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-[env(safe-area-inset-bottom)]">
               <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                 Отмена
               </Button>
@@ -489,8 +513,12 @@ export default function AdminTrainingLessons() {
                 Измените параметры урока
               </DialogDescription>
             </DialogHeader>
-            <LessonFormContent />
-            <DialogFooter>
+            <LessonFormContent 
+              formData={formData}
+              onFormDataChange={handleFormDataChange}
+              editingLesson={editingLesson}
+            />
+            <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-[env(safe-area-inset-bottom)]">
               <Button variant="outline" onClick={() => setEditingLesson(null)}>
                 Отмена
               </Button>
