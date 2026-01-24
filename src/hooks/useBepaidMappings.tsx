@@ -50,12 +50,15 @@ export function useBepaidMappings() {
       const [productsResult, tariffsResult, offersResult] = await Promise.all([
         productIds.length > 0 ? supabase.from("products_v2").select("id, name").in("id", productIds) : { data: [] },
         tariffIds.length > 0 ? supabase.from("tariffs").select("id, name").in("id", tariffIds) : { data: [] },
-        offerIds.length > 0 ? supabase.from("tariff_offers").select("id, name").in("id", offerIds) : { data: [] },
+        offerIds.length > 0 ? supabase.from("tariff_offers").select("id, button_label, amount, trial_days").in("id", offerIds) : { data: [] },
       ]);
 
       const productsMap = new Map((productsResult.data || []).map(p => [p.id, p.name]));
       const tariffsMap = new Map((tariffsResult.data || []).map(t => [t.id, t.name]));
-      const offersMap = new Map((offersResult.data || []).map(o => [o.id, o.name]));
+      const offersMap = new Map((offersResult.data || []).map((o: any) => [
+        o.id, 
+        o.button_label || (o.amount ? `${o.amount} BYN${o.trial_days ? ` / ${o.trial_days}д` : ''}` : 'Offer')
+      ]));
 
       return (data || []).map((m: any): BepaidMapping => ({
         ...m,
