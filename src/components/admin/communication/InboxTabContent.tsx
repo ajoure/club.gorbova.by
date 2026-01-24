@@ -31,7 +31,15 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Calendar } from "@/components/ui/calendar";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { 
   Search, 
   MessageSquare, 
@@ -51,6 +59,8 @@ import {
   CheckCheck,
   MoreHorizontal,
   Mail,
+  CheckSquare,
+  RotateCcw,
 } from "lucide-react";
 import { format, formatDistanceToNow, isAfter, isBefore, startOfDay, endOfDay } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -147,6 +157,7 @@ export function InboxTabContent() {
   const [channel, setChannel] = useState<"telegram" | "email">("telegram");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [contactSheetUserId, setContactSheetUserId] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "unread" | "read" | "favorites" | "pinned">("all");
   const [advancedFilters, setAdvancedFilters] = useState<Filters>(initialFilters);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -532,10 +543,10 @@ export function InboxTabContent() {
             />
           </div>
         ) : (
-          <div className="flex flex-1 gap-3 min-h-0 overflow-hidden">
+          <div className="flex flex-1 gap-3 min-h-0 w-full min-w-0 overflow-hidden">
             {/* Dialog List - Glass Panel */}
             <div className={cn(
-              "flex flex-col w-full md:w-[380px] md:min-w-[320px] md:max-w-[400px] shrink-0 overflow-hidden",
+              "flex flex-col w-full md:w-[380px] shrink-0 min-w-0 overflow-hidden",
               "bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl",
               selectedUserId ? "hidden md:flex" : "flex"
             )}>
@@ -598,19 +609,48 @@ export function InboxTabContent() {
                       )}
                     </div>
                     <div className="flex items-center gap-0.5">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
                           <Button 
                             variant="ghost" 
                             size="icon" 
-                            className="h-8 w-8 rounded-full hover:bg-card" 
-                            onClick={() => setSelectionMode(true)}
+                            className="h-8 w-8 rounded-full hover:bg-card"
                           >
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Выбрать чаты</TooltipContent>
-                      </Tooltip>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent 
+                          align="end" 
+                          className="w-48 bg-card/95 backdrop-blur-xl border-border/30 rounded-xl shadow-2xl"
+                        >
+                          <DropdownMenuItem 
+                            onClick={() => setSelectionMode(true)} 
+                            className="gap-2 rounded-lg cursor-pointer"
+                          >
+                            <CheckSquare className="h-4 w-4" />
+                            Режим выделения
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            onClick={() => {
+                              const unreadIds = dialogs.filter(d => d.unread_count > 0).map(d => d.user_id);
+                              if (unreadIds.length > 0) bulkMarkAsRead.mutate(unreadIds);
+                            }}
+                            disabled={dialogs.filter(d => d.unread_count > 0).length === 0}
+                            className="gap-2 rounded-lg cursor-pointer"
+                          >
+                            <CheckCheck className="h-4 w-4" />
+                            Прочитать все
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator className="bg-border/30" />
+                          <DropdownMenuItem 
+                            onClick={() => setFilter("all")}
+                            className="gap-2 rounded-lg cursor-pointer"
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                            Сбросить фильтры
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button 
@@ -690,7 +730,7 @@ export function InboxTabContent() {
                       <div
                         key={dialog.user_id}
                         className={cn(
-                          "group flex items-start gap-3 p-3 cursor-pointer rounded-xl transition-all duration-200 mb-0.5",
+                          "group relative flex items-start gap-3 p-3 pr-14 cursor-pointer rounded-xl transition-all duration-200 mb-0.5",
                           "hover:bg-card/80",
                           selectedUserId === dialog.user_id 
                             ? "bg-primary/10 border border-primary/20" 
@@ -706,8 +746,8 @@ export function InboxTabContent() {
                             className="mt-1.5"
                           />
                         )}
-                        <div className="relative">
-                          <Avatar className="h-12 w-12 shrink-0 ring-2 ring-border/20">
+                        <div className="relative shrink-0">
+                          <Avatar className="h-12 w-12 ring-2 ring-border/20">
                             <AvatarImage src={dialog.profile?.avatar_url || undefined} />
                             <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 text-foreground font-semibold">
                               {dialog.profile?.full_name?.[0] || dialog.profile?.email?.[0] || "?"}
@@ -720,12 +760,12 @@ export function InboxTabContent() {
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center justify-between gap-2 min-w-0">
                             <div className="flex items-center gap-1.5 min-w-0">
                               {dialog.is_pinned && (
                                 <Pin className="h-3 w-3 text-primary shrink-0" />
                               )}
-                              <span className="font-semibold truncate">
+                              <span className="font-semibold truncate min-w-0">
                                 {dialog.profile?.full_name || dialog.profile?.email || "Неизвестный"}
                               </span>
                               {dialog.is_favorite && (
@@ -737,7 +777,7 @@ export function InboxTabContent() {
                             </span>
                           </div>
                           <p className={cn(
-                            "text-sm line-clamp-2 break-words mt-1",
+                            "text-sm line-clamp-2 break-words mt-1 min-w-0",
                             dialog.unread_count > 0 
                               ? "text-foreground font-medium" 
                               : "text-muted-foreground"
@@ -745,9 +785,9 @@ export function InboxTabContent() {
                             {dialog.last_message}
                           </p>
                         </div>
-                        {/* Quick Actions on Hover */}
+                        {/* Quick Actions on Hover - ABSOLUTE positioned */}
                         {!selectionMode && (
-                          <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                          <div className="absolute right-2 top-2 z-10 flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
@@ -829,17 +869,45 @@ export function InboxTabContent() {
             )}>
               {selectedUserId ? (
                 <div className="h-full min-h-0 flex flex-col overflow-hidden">
-                  {/* Mobile back button */}
-                  <div className="md:hidden p-3 border-b border-border/20 bg-card/80 backdrop-blur">
+                  {/* Chat Header with clickable contact */}
+                  <div className="p-3 border-b border-border/20 bg-card/80 backdrop-blur flex items-center gap-3">
+                    {/* Mobile back button */}
                     <Button
                       variant="ghost"
-                      size="sm"
-                      className="rounded-full"
+                      size="icon"
+                      className="md:hidden h-8 w-8 rounded-full shrink-0"
                       onClick={() => setSelectedUserId(null)}
                     >
-                      <ArrowLeft className="h-4 w-4 mr-2" />
-                      Назад
+                      <ArrowLeft className="h-4 w-4" />
                     </Button>
+                    
+                    {/* Clickable Avatar */}
+                    <button 
+                      onClick={() => setContactSheetUserId(selectedUserId)}
+                      className="shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+                    >
+                      <Avatar className="h-10 w-10 ring-2 ring-border/20">
+                        <AvatarImage src={selectedDialog?.profile?.avatar_url || undefined} />
+                        <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 font-semibold">
+                          {selectedDialog?.profile?.full_name?.[0] || "?"}
+                        </AvatarFallback>
+                      </Avatar>
+                    </button>
+                    
+                    {/* Clickable Name */}
+                    <button 
+                      onClick={() => setContactSheetUserId(selectedUserId)}
+                      className="flex-1 min-w-0 text-left hover:opacity-80 transition-opacity cursor-pointer"
+                    >
+                      <p className="font-semibold truncate">
+                        {selectedDialog?.profile?.full_name || selectedDialog?.profile?.email || "Контакт"}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {selectedDialog?.profile?.telegram_username 
+                          ? `@${selectedDialog.profile.telegram_username}` 
+                          : selectedDialog?.profile?.email}
+                      </p>
+                    </button>
                   </div>
                   <div className="flex-1 min-h-0 overflow-hidden">
                     <ContactTelegramChat
@@ -866,6 +934,18 @@ export function InboxTabContent() {
           </div>
         )}
       </div>
+      
+      {/* Contact Detail Sheet */}
+      {contactSheetUserId && (
+        <ContactDetailSheet
+          contact={{ id: contactSheetUserId } as any}
+          open={!!contactSheetUserId}
+          onOpenChange={(open) => {
+            if (!open) setContactSheetUserId(null);
+          }}
+          returnTo="/admin/communication?tab=inbox"
+        />
+      )}
     </TooltipProvider>
   );
 }
