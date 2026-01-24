@@ -124,6 +124,24 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
     // Sync all name fields
     const fullName = `${formData.first_name} ${formData.last_name}`.trim();
     
+    // Check if email changed for non-ghost contacts
+    const emailChanged = formData.email && formData.email !== contact.email;
+    
+    // If email changed AND user has auth account → sync auth.users
+    if (emailChanged && contact.user_id) {
+      const { error: authError } = await supabase.functions.invoke("users-admin-actions", {
+        body: {
+          action: "change_email",
+          targetUserId: contact.user_id,
+          newEmail: formData.email,
+        }
+      });
+      
+      if (authError) {
+        throw new Error(`Ошибка смены email для входа: ${authError.message}`);
+      }
+    }
+    
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -159,7 +177,12 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
   const updateMutation = useMutation({
     mutationFn: () => saveContact(false),
     onSuccess: () => {
-      toast.success("Контакт обновлён");
+      const emailChanged = formData.email && formData.email !== contact?.email;
+      if (emailChanged && contact?.user_id) {
+        toast.success("Контакт обновлён. Email для входа также изменён.");
+      } else {
+        toast.success("Контакт обновлён");
+      }
       queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
       queryClient.invalidateQueries({ queryKey: ["duplicate-counts"] });
       onOpenChange(false);
@@ -262,6 +285,11 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                 onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                 placeholder="email@example.com"
               />
+              {!isGhost && formData.email !== contact?.email && formData.email && (
+                <p className="text-xs text-amber-600">
+                  ⚠️ Email для входа также будет изменён
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
