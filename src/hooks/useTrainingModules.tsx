@@ -21,6 +21,9 @@ export interface TrainingModule {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  // New fields for menu placement and display
+  menu_section_key: string | null;
+  display_layout: string | null;
   // Computed fields
   lesson_count?: number;
   completed_count?: number;
@@ -40,6 +43,9 @@ export interface TrainingModuleFormData {
   sort_order?: number;
   is_active?: boolean;
   tariff_ids?: string[];
+  // New fields
+  menu_section_key?: string;
+  display_layout?: string;
 }
 
 export function useTrainingModules() {

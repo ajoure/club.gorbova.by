@@ -7067,9 +7067,11 @@ export type Database = {
           cover_image: string | null
           created_at: string
           description: string | null
+          display_layout: string | null
           icon: string | null
           id: string
           is_active: boolean | null
+          menu_section_key: string | null
           product_id: string | null
           slug: string
           sort_order: number | null
@@ -7081,9 +7083,11 @@ export type Database = {
           cover_image?: string | null
           created_at?: string
           description?: string | null
+          display_layout?: string | null
           icon?: string | null
           id?: string
           is_active?: boolean | null
+          menu_section_key?: string | null
           product_id?: string | null
           slug: string
           sort_order?: number | null
@@ -7095,9 +7099,11 @@ export type Database = {
           cover_image?: string | null
           created_at?: string
           description?: string | null
+          display_layout?: string | null
           icon?: string | null
           id?: string
           is_active?: boolean | null
+          menu_section_key?: string | null
           product_id?: string | null
           slug?: string
           sort_order?: number | null
@@ -7105,6 +7111,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "fk_training_modules_menu_section"
+            columns: ["menu_section_key"]
+            isOneToOne: false
+            referencedRelation: "user_menu_sections"
+            referencedColumns: ["key"]
+          },
           {
             foreignKeyName: "training_modules_product_id_fkey"
             columns: ["product_id"]
@@ -7179,6 +7192,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      user_menu_sections: {
+        Row: {
+          created_at: string
+          icon: string | null
+          id: string
+          is_active: boolean | null
+          key: string
+          label: string
+          parent_key: string | null
+          sort_order: number | null
+          updated_at: string
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          icon?: string | null
+          id?: string
+          is_active?: boolean | null
+          key: string
+          label: string
+          parent_key?: string | null
+          sort_order?: number | null
+          updated_at?: string
+          url: string
+        }
+        Update: {
+          created_at?: string
+          icon?: string | null
+          id?: string
+          is_active?: boolean | null
+          key?: string
+          label?: string
+          parent_key?: string | null
+          sort_order?: number | null
+          updated_at?: string
+          url?: string
+        }
+        Relationships: []
       }
       user_roles: {
         Row: {

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useTrainingModules, TrainingModule, TrainingModuleFormData } from "@/hooks/useTrainingModules";
@@ -60,8 +60,12 @@ import { GetCourseContentImportDialog } from "@/components/admin/GetCourseConten
 import { ExcelTrainingImportDialog } from "@/components/admin/ExcelTrainingImportDialog";
 import TrainingModuleCard from "@/components/admin/trainings/TrainingModuleCard";
 import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings/TrainingSettingsPanel";
-import { ProductTariffAccessSelector } from "@/components/admin/trainings/ProductTariffAccessSelector";
+import { CompactAccessSelector } from "@/components/admin/trainings/CompactAccessSelector";
+import { MenuSectionSelector } from "@/components/admin/trainings/MenuSectionSelector";
+import { DisplayLayoutSelector, DisplayLayout } from "@/components/admin/trainings/DisplayLayoutSelector";
 import { cn } from "@/lib/utils";
+import { Upload, Image as ImageIcon } from "lucide-react";
+import { toast } from "sonner";
 
 const gradientOptions = [
   { value: "from-pink-500 to-fuchsia-600", label: "Розовый → Фуксия" },
@@ -97,6 +101,54 @@ interface ModuleFormContentProps {
 }
 
 function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormContentProps) {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = React.useState(false);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith("image/")) {
+      toast.error("Выберите файл изображения");
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Максимальный размер файла: 5MB");
+      return;
+    }
+
+    try {
+      setUploading(true);
+      const fileExt = file.name.split(".").pop();
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+      const filePath = `training-covers/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("training-assets")
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage
+        .from("training-assets")
+        .getPublicUrl(filePath);
+
+      setFormData((prev) => ({ ...prev, cover_image: urlData.publicUrl }));
+      toast.success("Обложка загружена");
+    } catch (error) {
+      console.error("Upload error:", error);
+      toast.error("Ошибка загрузки файла");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
@@ -117,13 +169,16 @@ function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormC
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="slug">URL-slug *</Label>
+          <Label htmlFor="slug">Адрес страницы *</Label>
           <Input
             id="slug"
             value={formData.slug}
             onChange={(e) => setFormData(prev => ({ ...prev, slug: e.target.value }))}
             placeholder="baza-znanij"
           />
+          <p className="text-xs text-muted-foreground">
+            URL: gorbova.club/training/<strong>{formData.slug || "..."}</strong>
+          </p>
         </div>
       </div>
 
@@ -139,13 +194,47 @@ function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormC
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="cover_image">URL обложки</Label>
-        <Input
-          id="cover_image"
-          value={formData.cover_image || ""}
-          onChange={(e) => setFormData(prev => ({ ...prev, cover_image: e.target.value }))}
-          placeholder="https://..."
-        />
+        <Label>Обложка</Label>
+        <div className="flex gap-2">
+          <Input
+            value={formData.cover_image || ""}
+            onChange={(e) => setFormData(prev => ({ ...prev, cover_image: e.target.value }))}
+            placeholder="https://... или загрузите файл"
+            className="flex-1"
+          />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+          >
+            {uploading ? (
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            ) : (
+              <Upload className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+        {formData.cover_image && (
+          <div className="relative mt-2 h-20 w-32 rounded-lg overflow-hidden border">
+            <img
+              src={formData.cover_image}
+              alt="Обложка"
+              className="h-full w-full object-cover"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = "none";
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -199,7 +288,7 @@ function ModuleAccessForm({ formData, setFormData, productsWithTariffs }: Module
   };
 
   return (
-    <ProductTariffAccessSelector
+    <CompactAccessSelector
       selectedTariffIds={formData.tariff_ids || []}
       onChange={handleChange}
       products={productsWithTariffs}
