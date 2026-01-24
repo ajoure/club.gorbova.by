@@ -8,12 +8,13 @@ import {
   Mail,
   Phone,
   MessageSquare,
+  ArrowLeft,
+  Info,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -23,6 +24,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { TicketCard } from "@/components/support/TicketCard";
 import { TicketChat } from "@/components/support/TicketChat";
 import { useAdminTickets, useTicket, useUpdateTicket } from "@/hooks/useTickets";
@@ -112,10 +118,17 @@ export function SupportTabContent() {
     });
   };
 
+  const handleBack = () => {
+    setSelectedTicketId(null);
+  };
+
   return (
     <div className="h-full flex">
       {/* Left panel - ticket list */}
-      <div className="w-80 lg:w-96 flex flex-col bg-card/40 backdrop-blur-md border-r border-border/20">
+      <div className={cn(
+        "w-full md:w-80 lg:w-96 flex flex-col bg-card/40 backdrop-blur-md md:border-r border-border/20",
+        selectedTicketId ? "hidden md:flex" : "flex"
+      )}>
         <div className="p-3 space-y-3 border-b border-border/10">
           {/* Header */}
           <div className="flex items-center gap-2">
@@ -185,130 +198,160 @@ export function SupportTabContent() {
       </div>
 
       {/* Right panel - ticket details */}
-      <div className="flex-1 flex flex-col">
+      <div className={cn(
+        "flex-1 flex flex-col min-w-0",
+        !selectedTicketId && "hidden md:flex"
+      )}>
         {selectedTicket ? (
           <>
-            {/* Ticket header */}
-            <div className="p-4 border-b">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm text-muted-foreground font-mono">
-                      {selectedTicket.ticket_number}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={handleToggleStar}
-                    >
-                      <Star
-                        className={cn(
-                          "h-4 w-4",
-                          selectedTicket.is_starred &&
-                            "fill-yellow-400 text-yellow-400"
-                        )}
-                      />
-                    </Button>
-                  </div>
-                  <h2 className="text-lg font-semibold">
-                    {selectedTicket.subject}
-                  </h2>
-                  <p className="text-sm text-muted-foreground">
-                    Создано:{" "}
-                    {format(
-                      new Date(selectedTicket.created_at),
-                      "d MMMM yyyy, HH:mm",
-                      { locale: ru }
-                    )}
-                  </p>
-                </div>
-
-                {/* Client info */}
-                {selectedTicket.profiles && (
-                  <Card className="w-64 shrink-0">
-                    <CardHeader className="p-3 pb-2">
-                      <CardTitle className="text-sm">Клиент</CardTitle>
-                    </CardHeader>
-                    <CardContent className="p-3 pt-0">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Avatar className="h-8 w-8">
-                          {selectedTicket.profiles.avatar_url && (
-                            <AvatarImage
-                              src={selectedTicket.profiles.avatar_url}
-                            />
-                          )}
-                          <AvatarFallback>
-                            <User className="h-4 w-4" />
-                          </AvatarFallback>
-                        </Avatar>
-                        <span className="text-sm font-medium truncate">
-                          {selectedTicket.profiles.full_name || "—"}
-                        </span>
-                      </div>
-                      {selectedTicket.profiles.email && (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <Mail className="h-3 w-3" />
-                          <span className="truncate">
-                            {selectedTicket.profiles.email}
-                          </span>
-                        </div>
-                      )}
-                      {selectedTicket.profiles.phone && (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
-                          <Phone className="h-3 w-3" />
-                          <span>{selectedTicket.profiles.phone}</span>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
+            {/* Compact chat-style header */}
+            <div className="p-3 border-b border-border/20 bg-card/80 backdrop-blur flex items-center gap-3">
+              {/* Mobile back button */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="md:hidden h-8 w-8 rounded-full shrink-0"
+                onClick={handleBack}
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+              
+              {/* Avatar */}
+              <Avatar className="h-10 w-10 ring-2 ring-border/20 shrink-0">
+                {selectedTicket.profiles?.avatar_url && (
+                  <AvatarImage src={selectedTicket.profiles.avatar_url} />
                 )}
-              </div>
-
-              {/* Status & Priority controls */}
-              <div className="flex items-center gap-4 mt-4">
+                <AvatarFallback className="bg-gradient-to-br from-orange-500/20 to-accent/20 font-semibold">
+                  {selectedTicket.profiles?.full_name?.[0] || <User className="h-4 w-4" />}
+                </AvatarFallback>
+              </Avatar>
+              
+              {/* Name and ticket info */}
+              <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">
-                    Статус:
-                  </span>
-                  <Select
-                    value={selectedTicket.status}
-                    onValueChange={handleStatusChange}
+                  <p className="font-semibold truncate text-sm">
+                    {selectedTicket.profiles?.full_name || selectedTicket.profiles?.email || "Клиент"}
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0"
+                    onClick={handleToggleStar}
                   >
-                    <SelectTrigger className="w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {statusOptions.map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <Star
+                      className={cn(
+                        "h-3.5 w-3.5",
+                        selectedTicket.is_starred &&
+                          "fill-yellow-400 text-yellow-400"
+                      )}
+                    />
+                  </Button>
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">
-                    Приоритет:
-                  </span>
-                  <Select
-                    value={selectedTicket.priority}
-                    onValueChange={handlePriorityChange}
-                  >
-                    <SelectTrigger className="w-32">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {priorityOptions.map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                <p className="text-xs text-muted-foreground truncate">
+                  {selectedTicket.ticket_number} · {selectedTicket.subject}
+                </p>
               </div>
+              
+              {/* Client info popover (for desktop) */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hidden md:flex">
+                    <Info className="h-4 w-4" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-3" align="end">
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Информация о клиенте</p>
+                    {selectedTicket.profiles?.email && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Mail className="h-3 w-3" />
+                        <span className="truncate">{selectedTicket.profiles.email}</span>
+                      </div>
+                    )}
+                    {selectedTicket.profiles?.phone && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Phone className="h-3 w-3" />
+                        <span>{selectedTicket.profiles.phone}</span>
+                      </div>
+                    )}
+                    <div className="pt-2 border-t border-border/20 space-y-1.5">
+                      <p className="text-xs text-muted-foreground">
+                        Создано: {format(new Date(selectedTicket.created_at), "d MMM yyyy, HH:mm", { locale: ru })}
+                      </p>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+              
+              {/* Status & Priority controls - compact on mobile */}
+              <div className="hidden sm:flex items-center gap-2">
+                <Select
+                  value={selectedTicket.status}
+                  onValueChange={handleStatusChange}
+                >
+                  <SelectTrigger className="w-28 h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statusOptions.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={selectedTicket.priority}
+                  onValueChange={handlePriorityChange}
+                >
+                  <SelectTrigger className="w-24 h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {priorityOptions.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            
+            {/* Mobile-only status/priority controls */}
+            <div className="sm:hidden p-2 border-b border-border/10 flex gap-2">
+              <Select
+                value={selectedTicket.status}
+                onValueChange={handleStatusChange}
+              >
+                <SelectTrigger className="flex-1 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {statusOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={selectedTicket.priority}
+                onValueChange={handlePriorityChange}
+              >
+                <SelectTrigger className="flex-1 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {priorityOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Chat */}
@@ -323,8 +366,11 @@ export function SupportTabContent() {
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center text-muted-foreground">
-              <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>Выберите обращение для просмотра</p>
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-500/10 to-accent/10 flex items-center justify-center mx-auto mb-4">
+                <MessageSquare className="h-8 w-8 text-orange-500/50" />
+              </div>
+              <p className="font-medium">Выберите обращение</p>
+              <p className="text-sm text-muted-foreground/70 mt-1">для просмотра переписки</p>
             </div>
           </div>
         )}
