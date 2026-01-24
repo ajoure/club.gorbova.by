@@ -68,13 +68,18 @@ export function CreateTicketDialog({ open, onOpenChange }: CreateTicketDialogPro
   });
 
   const onSubmit = async (data: TicketFormData) => {
-    await createTicket.mutateAsync({
-      subject: data.subject,
-      description: data.description,
-      category: data.category,
-    });
-    form.reset();
-    onOpenChange(false);
+    try {
+      await createTicket.mutateAsync({
+        subject: data.subject,
+        description: data.description,
+        category: data.category,
+      });
+      form.reset();
+      onOpenChange(false);
+    } catch (error) {
+      // Ошибка уже обработана в onError мутации, диалог остаётся открытым
+      console.error('[CreateTicketDialog] Submit error:', error);
+    }
   };
 
   return (
