@@ -285,7 +285,7 @@ const AdminEditorial = () => {
       if (error) throw error;
       return data as ScrapeLog | null;
     },
-    refetchInterval: 5000, // Poll every 5 seconds for updates
+    refetchInterval: 30000, // Poll every 30 seconds for updates
   });
 
   // Fetch channel settings for style profile

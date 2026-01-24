@@ -73,7 +73,7 @@ export function useTelegramLinkStatus() {
       };
     },
     staleTime: 30000, // 30 seconds
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   });
 }
 

@@ -166,8 +166,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       return data;
     },
     enabled: !!deal?.id && open,
-    staleTime: 0,
-    refetchOnMount: "always",
+    staleTime: 30000,
   });
 
   // Fetch subscription for this deal
@@ -184,8 +183,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       return data;
     },
     enabled: !!deal?.id && open,
-    staleTime: 0,
-    refetchOnMount: "always",
+    staleTime: 30000,
   });
 
   // Fetch audit logs for this deal with actor info

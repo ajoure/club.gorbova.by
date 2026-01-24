@@ -129,3 +129,28 @@ All colors MUST be HSL.
 body:has(.impersonation-active) .impersonation-offset {
   padding-top: 44px;
 }
+
+/* Mobile utilities */
+@layer utilities {
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .safe-x {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+}
+
+/* iOS zoom prevention - only for inputs */
+@layer base {
+  input, textarea, select {
+    font-size: 16px;
+  }
+}

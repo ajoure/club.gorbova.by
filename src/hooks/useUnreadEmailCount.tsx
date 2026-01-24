@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEffect } from "react";
+import { useVisibilityPolling } from "./useVisibilityPolling";
 
 export function useUnreadEmailCount() {
+  const visibilityInterval = useVisibilityPolling(60000);
+  
   const { data: count = 0, refetch } = useQuery({
     queryKey: ["unread-email-count"],
     queryFn: async () => {
@@ -15,7 +18,7 @@ export function useUnreadEmailCount() {
       if (error) return 0;
       return count || 0;
     },
-    refetchInterval: 60000, // Refresh every minute
+    refetchInterval: visibilityInterval, // Pause when tab hidden
   });
 
   // Subscribe to realtime updates

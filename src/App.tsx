@@ -94,7 +94,17 @@ import Knowledge from "./pages/Knowledge";
 import BusinessTraining from "./pages/BusinessTraining";
 import BusinessTrainingContent from "./pages/BusinessTrainingContent";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      retry: 1,
+      retryDelay: 1000,
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

@@ -1,7 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useVisibilityPolling } from "./useVisibilityPolling";
 
 export function useUnmappedProductsCount() {
+  const visibilityInterval = useVisibilityPolling(60000);
+  
   return useQuery({
     queryKey: ["bepaid-unmapped-count"],
     queryFn: async () => {
@@ -37,6 +40,6 @@ export function useUnmappedProductsCount() {
 
       return unmappedTitles.size;
     },
-    refetchInterval: 60000, // Refetch every minute
+    refetchInterval: visibilityInterval, // Pause when tab hidden
   });
 }

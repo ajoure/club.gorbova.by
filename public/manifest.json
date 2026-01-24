@@ -4,8 +4,8 @@
   "description": "Сообщество для бухгалтеров и предпринимателей",
   "start_url": "/dashboard",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#e879f9",
+  "background_color": "#f0f4ff",
+  "theme_color": "#3b82f6",
   "orientation": "portrait-primary",
   "icons": [
     {
