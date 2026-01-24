@@ -401,7 +401,7 @@ export function InboxTabContent() {
 
   const handleSelectDialog = (userId: string) => {
     setSelectedUserId(userId);
-    markAsRead.mutate(userId);
+    // НЕ вызываем markAsRead — чат остаётся "новым" до явного действия или ответа
   };
 
   // Subscribe to realtime updates for new messages
@@ -737,11 +737,10 @@ export function InboxTabContent() {
                         onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                         onClick={() => handleSelectDialog(dialog.user_id)}
                         className={cn(
-                          "group relative flex items-start gap-3 p-3 pr-28 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0 overflow-visible",
-                          "hover:bg-card/80",
+                          "group relative flex items-start gap-3 p-3 pr-24 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
                           selectedUserId === dialog.user_id 
-                            ? "bg-primary/10 ring-2 ring-primary/30 ring-inset" 
-                            : ""
+                            ? "bg-primary/10 outline outline-2 outline-primary/30 -outline-offset-2" 
+                            : "hover:bg-card/80"
                         )}
                       >
                         {selectionMode && (
@@ -793,7 +792,7 @@ export function InboxTabContent() {
                         </div>
                         {/* Quick Actions on Hover - ABSOLUTE positioned with bg */}
                         {!selectionMode && (
-                          <div className="absolute right-2 top-2 z-50 hidden md:flex items-center gap-1 md:opacity-70 hover:opacity-100 transition-opacity duration-200 bg-background/90 backdrop-blur-sm rounded-lg p-1 shadow-md border border-border/30 pointer-events-auto">
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity duration-200 bg-background/95 backdrop-blur-sm rounded-lg p-0.5 shadow-md border border-border/30 pointer-events-auto">
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
@@ -955,6 +954,7 @@ export function InboxTabContent() {
                       avatarUrl={selectedDialog?.profile?.avatar_url}
                       onAvatarUpdated={() => refetch()}
                       hidePhotoButton
+                      onMessageSent={() => markAsRead.mutate(selectedUserId)}
                     />
                   </div>
                 </div>
@@ -977,14 +977,12 @@ export function InboxTabContent() {
         <ContactDetailSheet
           contact={{ 
             id: contactSheetUserId,
-            // Pass known profile data for display
             ...(selectedDialog?.profile || {})
           } as any}
           open={!!contactSheetUserId}
           onOpenChange={(open) => {
             if (!open) setContactSheetUserId(null);
           }}
-          returnTo="/admin/communication?tab=inbox"
         />
       )}
     </TooltipProvider>

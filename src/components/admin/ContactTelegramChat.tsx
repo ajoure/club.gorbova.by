@@ -72,6 +72,7 @@ interface ContactTelegramChatProps {
   avatarUrl?: string | null;
   onAvatarUpdated?: (url: string) => void;
   hidePhotoButton?: boolean;
+  onMessageSent?: () => void;
 }
 
 interface TelegramMessage {
@@ -157,6 +158,7 @@ export function ContactTelegramChat({
   avatarUrl,
   onAvatarUpdated,
   hidePhotoButton = false,
+  onMessageSent,
 }: ContactTelegramChatProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
@@ -543,6 +545,7 @@ export function ContactTelegramChat({
       setSelectedFileType(null);
       setIsUploading(false);
       refetch();
+      onMessageSent?.();
     },
     onError: (error) => {
       setIsUploading(false);
