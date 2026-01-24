@@ -7,6 +7,12 @@ interface SwipeActionsOptions {
   disabled?: boolean;
 }
 
+// Detect if device supports touch (mobile)
+const isTouchDevice = () => {
+  if (typeof window === 'undefined') return false;
+  return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+};
+
 export function useSwipeActions({
   threshold = 80,
   onSwipeLeft,
@@ -18,10 +24,13 @@ export function useSwipeActions({
   const startXRef = useRef(0);
   const startYRef = useRef(0);
   const isHorizontalSwipeRef = useRef<boolean | null>(null);
+  const isMobile = useRef(isTouchDevice());
 
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
-      if (disabled) return;
+      // Only handle on mobile/touch devices
+      if (disabled || !isMobile.current) return;
+      
       startXRef.current = e.touches[0].clientX;
       startYRef.current = e.touches[0].clientY;
       isHorizontalSwipeRef.current = null;
@@ -32,7 +41,8 @@ export function useSwipeActions({
 
   const handleTouchMove = useCallback(
     (e: React.TouchEvent) => {
-      if (disabled || !isSwiping) return;
+      // Only handle on mobile/touch devices
+      if (disabled || !isSwiping || !isMobile.current) return;
 
       const currentX = e.touches[0].clientX;
       const currentY = e.touches[0].clientY;
@@ -42,14 +52,14 @@ export function useSwipeActions({
       // Determine swipe direction on first significant movement
       if (isHorizontalSwipeRef.current === null) {
         if (Math.abs(diffX) > 10 || Math.abs(diffY) > 10) {
-          isHorizontalSwipeRef.current = Math.abs(diffX) > Math.abs(diffY);
+          // Horizontal only if X movement is significantly larger than Y
+          isHorizontalSwipeRef.current = Math.abs(diffX) > Math.abs(diffY) + 6;
         }
       }
 
-      // Only handle horizontal swipes
-      if (isHorizontalSwipeRef.current) {
+      // Only preventDefault and handle horizontal swipes AFTER threshold confirmed
+      if (isHorizontalSwipeRef.current === true && Math.abs(diffX) > 12) {
         e.preventDefault();
-        // Limit swipe distance
         const limitedOffset = Math.max(-150, Math.min(150, diffX));
         setOffsetX(limitedOffset);
       }
@@ -58,18 +68,20 @@ export function useSwipeActions({
   );
 
   const handleTouchEnd = useCallback(() => {
-    if (disabled) return;
+    if (!isSwiping || !isMobile.current) return;
 
-    if (offsetX < -threshold && onSwipeLeft) {
+    const currentOffset = offsetX;
+    setIsSwiping(false);
+    isHorizontalSwipeRef.current = null;
+
+    if (currentOffset < -threshold && onSwipeLeft) {
       onSwipeLeft();
-    } else if (offsetX > threshold && onSwipeRight) {
+    } else if (currentOffset > threshold && onSwipeRight) {
       onSwipeRight();
     }
 
     setOffsetX(0);
-    setIsSwiping(false);
-    isHorizontalSwipeRef.current = null;
-  }, [disabled, offsetX, threshold, onSwipeLeft, onSwipeRight]);
+  }, [isSwiping, offsetX, threshold, onSwipeLeft, onSwipeRight]);
 
   const swipeHandlers = {
     onTouchStart: handleTouchStart,
@@ -77,18 +89,13 @@ export function useSwipeActions({
     onTouchEnd: handleTouchEnd,
   };
 
-  const swipeStyle = {
+  const swipeStyle: React.CSSProperties = {
     transform: `translateX(${offsetX}px)`,
-    transition: isSwiping ? "none" : "transform 0.2s ease-out",
+    transition: isSwiping ? 'none' : 'transform 0.3s ease-out',
+    touchAction: 'pan-y', // Allow vertical scroll by default
   };
 
-  const swipeDirection = offsetX < -threshold ? "left" : offsetX > threshold ? "right" : null;
+  const swipeDirection = offsetX < -10 ? 'left' : offsetX > 10 ? 'right' : null;
 
-  return {
-    swipeHandlers,
-    swipeStyle,
-    offsetX,
-    isSwiping,
-    swipeDirection,
-  };
+  return { swipeHandlers, swipeStyle, offsetX, isSwiping, swipeDirection };
 }
