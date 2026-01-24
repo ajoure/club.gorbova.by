@@ -151,11 +151,15 @@ const initialFilters: Filters = {
   hasActiveSubscription: "all",
 };
 
-export function InboxTabContent() {
+interface InboxTabContentProps {
+  defaultChannel?: "telegram" | "email";
+}
+
+export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContentProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [channel, setChannel] = useState<"telegram" | "email">("telegram");
+  const [channel, setChannel] = useState<"telegram" | "email">(defaultChannel);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [contactSheetUserId, setContactSheetUserId] = useState<string | null>(null);
@@ -181,6 +185,11 @@ export function InboxTabContent() {
       document.removeEventListener('keydown', enableSound);
     };
   }, []);
+
+  // Sync channel with defaultChannel prop
+  useEffect(() => {
+    setChannel(defaultChannel);
+  }, [defaultChannel]);
 
   const hasActiveFilters = useMemo(() => {
     return (
@@ -502,40 +511,6 @@ export function InboxTabContent() {
   return (
     <TooltipProvider>
       <div className="h-full min-h-0 flex flex-col overflow-hidden p-2">
-        {/* Compact Channel Tabs - Bitrix24 style */}
-        <div className="mb-1.5 shrink-0">
-          <div className="inline-flex p-0.5 rounded-full bg-muted/30 backdrop-blur-md border border-border/20">
-            <button
-              onClick={() => setChannel("telegram")}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-200",
-                channel === "telegram"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <MessageSquare className="h-3 w-3" />
-              Telegram
-              {totalUnread > 0 && (
-                <Badge className="h-4 min-w-4 px-1 text-[10px] rounded-full bg-primary text-primary-foreground">
-                  {totalUnread}
-                </Badge>
-              )}
-            </button>
-            <button
-              onClick={() => setChannel("email")}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-200",
-                channel === "email"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              <Mail className="h-3 w-3" />
-              Email
-            </button>
-          </div>
-        </div>
 
         {channel === "email" ? (
           <div className="flex-1 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
