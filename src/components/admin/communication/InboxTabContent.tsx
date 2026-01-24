@@ -608,7 +608,7 @@ export function InboxTabContent() {
                         </Badge>
                       )}
                     </div>
-                    <div className="flex items-center gap-0.5">
+                    <div className="flex items-center gap-1">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button 
@@ -711,7 +711,7 @@ export function InboxTabContent() {
               </div>
 
               {/* Dialog List */}
-              <ScrollArea className="flex-1">
+              <ScrollArea className="flex-1 overflow-x-hidden">
                 {isLoading ? (
                   <div className="p-8 text-center text-muted-foreground">
                     <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
@@ -725,16 +725,16 @@ export function InboxTabContent() {
                     </p>
                   </div>
                 ) : (
-                  <div className="p-1.5">
+                  <div className="p-1.5 min-w-0">
                     {filteredDialogs.map((dialog) => (
                       <div
                         key={dialog.user_id}
                         className={cn(
-                          "group relative flex items-start gap-3 p-3 pr-14 cursor-pointer rounded-xl transition-all duration-200 mb-0.5",
+                          "group relative flex items-start gap-3 p-3 pr-16 cursor-pointer rounded-xl transition-all duration-200 mb-0.5 box-border w-full min-w-0",
                           "hover:bg-card/80",
                           selectedUserId === dialog.user_id 
-                            ? "bg-primary/10 border border-primary/20" 
-                            : "border border-transparent"
+                            ? "bg-primary/10 ring-2 ring-primary/30 ring-inset" 
+                            : ""
                         )}
                         onClick={() => handleSelectDialog(dialog.user_id)}
                       >
@@ -785,15 +785,15 @@ export function InboxTabContent() {
                             {dialog.last_message}
                           </p>
                         </div>
-                        {/* Quick Actions on Hover - ABSOLUTE positioned */}
+                        {/* Quick Actions on Hover - ABSOLUTE positioned with bg */}
                         {!selectionMode && (
-                          <div className="absolute right-2 top-2 z-10 flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                          <div className="absolute right-2 top-2 z-20 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-background/80 backdrop-blur rounded-lg p-1 shadow-sm">
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-7 w-7 rounded-full hover:bg-primary/10"
+                                  className="h-8 w-8 rounded-full hover:bg-primary/20"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     togglePrefMutation.mutate({
@@ -804,7 +804,7 @@ export function InboxTabContent() {
                                   }}
                                 >
                                   <Star className={cn(
-                                    "h-3.5 w-3.5",
+                                    "h-4 w-4",
                                     dialog.is_favorite ? "fill-yellow-500 text-yellow-500" : "text-muted-foreground"
                                   )} />
                                 </Button>
@@ -818,7 +818,7 @@ export function InboxTabContent() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-7 w-7 rounded-full hover:bg-primary/10"
+                                  className="h-8 w-8 rounded-full hover:bg-primary/20"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     togglePrefMutation.mutate({
@@ -829,7 +829,7 @@ export function InboxTabContent() {
                                   }}
                                 >
                                   <Pin className={cn(
-                                    "h-3.5 w-3.5",
+                                    "h-4 w-4",
                                     dialog.is_pinned ? "text-primary" : "text-muted-foreground"
                                   )} />
                                 </Button>
@@ -844,10 +844,10 @@ export function InboxTabContent() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-7 w-7 rounded-full hover:bg-primary/10"
+                                    className="h-8 w-8 rounded-full hover:bg-primary/20"
                                     onClick={(e) => markChatAsRead(dialog.user_id, e)}
                                   >
-                                    <Check className="h-3.5 w-3.5 text-muted-foreground" />
+                                    <Check className="h-4 w-4 text-muted-foreground" />
                                   </Button>
                                 </TooltipTrigger>
                                 <TooltipContent side="left" className="text-xs">Прочитать</TooltipContent>
@@ -883,7 +883,14 @@ export function InboxTabContent() {
                     
                     {/* Clickable Avatar */}
                     <button 
-                      onClick={() => setContactSheetUserId(selectedUserId)}
+                      onClick={() => {
+                        const profileId = selectedDialog?.profile?.id;
+                        if (profileId) {
+                          setContactSheetUserId(profileId);
+                        } else {
+                          toast.error("Контакт не привязан к профилю");
+                        }
+                      }}
                       className="shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
                     >
                       <Avatar className="h-10 w-10 ring-2 ring-border/20">
@@ -896,7 +903,14 @@ export function InboxTabContent() {
                     
                     {/* Clickable Name */}
                     <button 
-                      onClick={() => setContactSheetUserId(selectedUserId)}
+                      onClick={() => {
+                        const profileId = selectedDialog?.profile?.id;
+                        if (profileId) {
+                          setContactSheetUserId(profileId);
+                        } else {
+                          toast.error("Контакт не привязан к профилю");
+                        }
+                      }}
                       className="flex-1 min-w-0 text-left hover:opacity-80 transition-opacity cursor-pointer"
                     >
                       <p className="font-semibold truncate">
