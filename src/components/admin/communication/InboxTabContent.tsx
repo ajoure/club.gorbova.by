@@ -522,7 +522,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
           <div className="flex flex-1 gap-3 min-h-0 w-full min-w-0">
             {/* Dialog List - Light Glass Panel */}
             <div className={cn(
-              "flex flex-col w-full md:w-[280px] shrink-0 min-w-0",
+              "flex flex-col w-full md:w-[260px] shrink-0 min-w-0",
               "bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md",
               selectedUserId ? "hidden md:flex" : "flex"
             )}>
@@ -712,7 +712,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                         onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                         onClick={() => handleSelectDialog(dialog.user_id)}
 className={cn(
-                "group relative grid grid-cols-[auto_1fr_24px] items-start gap-2 p-2 cursor-pointer rounded-lg border transition-colors duration-200",
+                "group relative grid grid-cols-[auto_1fr_24px] items-start gap-1.5 p-1.5 cursor-pointer rounded-lg border transition-colors duration-200",
                 selectedUserId === dialog.user_id 
                   ? "bg-primary/10 border-primary" 
                   : "border-transparent hover:bg-muted/40"
@@ -727,7 +727,7 @@ className={cn(
                           />
                         )}
                         <div className="relative shrink-0">
-                          <Avatar className="h-10 w-10 ring-1 ring-border/20">
+                          <Avatar className="h-8 w-8 ring-1 ring-border/20">
                             <AvatarImage src={dialog.profile?.avatar_url || undefined} />
                             <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 text-foreground font-semibold">
                               {dialog.profile?.full_name?.[0] || dialog.profile?.email?.[0] || "?"}
