@@ -737,7 +737,7 @@ export function InboxTabContent() {
                         onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                         onClick={() => handleSelectDialog(dialog.user_id)}
                         className={cn(
-                          "group relative flex items-start gap-3 p-3 pr-3 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
+                          "group relative flex items-start gap-3 p-3 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
                           selectedUserId === dialog.user_id 
                             ? "bg-primary/15 ring-2 ring-primary/40 ring-inset" 
                             : "hover:bg-card/80"
@@ -764,7 +764,7 @@ export function InboxTabContent() {
                             </div>
                           )}
                         </div>
-                        <div className="flex-1 min-w-0">
+                        <div className="flex-1 min-w-0 overflow-hidden">
                           <div className="flex items-center justify-between gap-2 min-w-0">
                             <div className="flex items-center gap-1.5 min-w-0">
                               {dialog.is_pinned && (
@@ -792,9 +792,9 @@ export function InboxTabContent() {
                         </div>
                         {/* Quick Actions - FLEX positioned (no absolute) */}
                         {!selectionMode && (
-                          <div className="flex items-center shrink-0 ml-1 self-center">
-                            {/* Desktop: 3 buttons */}
-                            <div className="hidden md:flex items-center gap-0.5 opacity-80 group-hover:opacity-100 transition-opacity duration-200 bg-background shadow-md rounded-lg p-0.5 border border-border/50">
+                          <div className="flex items-center shrink-0 ml-2 self-center min-w-fit">
+                            {/* Desktop: 3 buttons - always visible */}
+                            <div className="flex items-center gap-0.5 opacity-80 group-hover:opacity-100 transition-opacity duration-200 bg-background shadow-md rounded-lg p-0.5 border border-border/50">
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
@@ -870,58 +870,7 @@ export function InboxTabContent() {
                                 </TooltipContent>
                               </Tooltip>
                             </div>
-                            {/* Mobile: ⋯ menu */}
-                            <div className="md:hidden">
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 rounded-full opacity-70"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <MoreHorizontal className="h-5 w-5 text-muted-foreground" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                                  <DropdownMenuItem
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      togglePrefMutation.mutate({
-                                        contactUserId: dialog.user_id,
-                                        field: "is_favorite",
-                                        value: !dialog.is_favorite
-                                      });
-                                    }}
-                                  >
-                                    <Star className={cn(
-                                      "h-4 w-4 mr-2",
-                                      dialog.is_favorite ? "fill-yellow-500 text-yellow-500" : ""
-                                    )} />
-                                    {dialog.is_favorite ? "Убрать из избранного" : "В избранное"}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      togglePrefMutation.mutate({
-                                        contactUserId: dialog.user_id,
-                                        field: "is_pinned",
-                                        value: !dialog.is_pinned
-                                      });
-                                    }}
-                                  >
-                                    <Pin className={cn("h-4 w-4 mr-2", dialog.is_pinned ? "text-primary" : "")} />
-                                    {dialog.is_pinned ? "Открепить" : "Закрепить"}
-                                  </DropdownMenuItem>
-                                  {dialog.unread_count > 0 && (
-                                    <DropdownMenuItem onClick={(e) => markChatAsRead(dialog.user_id, e)}>
-                                      <Check className="h-4 w-4 mr-2" />
-                                      Прочитать
-                                    </DropdownMenuItem>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
+                            {/* Mobile menu removed - buttons now always visible */}
                           </div>
                         )}
                       </SwipeableDialogCard>
