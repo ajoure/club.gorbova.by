@@ -687,7 +687,9 @@ export function InboxTabContent() {
                     { value: "unread", label: "Новые", count: dialogs.filter(d => d.unread_count > 0).length },
                     { value: "favorites", label: "Избранные" },
                     { value: "pinned", label: "Закреплённые" },
-                  ].map((tab) => (
+                  ]
+                    .filter(tab => tab.value !== "unread" || (tab.count ?? 0) > 0)
+                    .map((tab) => (
                     <Button
                       key={tab.value}
                       variant="ghost"
@@ -735,7 +737,7 @@ export function InboxTabContent() {
                         onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                         onClick={() => handleSelectDialog(dialog.user_id)}
                         className={cn(
-                          "group relative flex items-start gap-3 p-3 pr-16 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
+                          "group relative flex items-start gap-3 p-3 pr-20 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0 overflow-visible",
                           "hover:bg-card/80",
                           selectedUserId === dialog.user_id 
                             ? "bg-primary/10 ring-2 ring-primary/30 ring-inset" 
@@ -791,7 +793,7 @@ export function InboxTabContent() {
                         </div>
                         {/* Quick Actions on Hover - ABSOLUTE positioned with bg */}
                         {!selectionMode && (
-                          <div className="absolute right-2 top-2 z-20 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-background/80 backdrop-blur rounded-lg p-1 shadow-sm">
+                          <div className="absolute right-2 top-2 z-50 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-background/80 backdrop-blur-sm rounded-lg p-1 shadow-md border border-border/30">
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
@@ -888,11 +890,20 @@ export function InboxTabContent() {
                     {/* Clickable Avatar */}
                     <button 
                       onClick={() => {
-                        const profileId = selectedDialog?.profile?.id;
-                        if (profileId) {
-                          setContactSheetUserId(profileId);
+                        const profile = selectedDialog?.profile;
+                        if (profile?.id) {
+                          // Diagnostic logging for mismatch detection
+                          console.log("[ContactSheet] Opening contact:", {
+                            dialogUserId: selectedDialog?.user_id,
+                            profileId: profile.id,
+                            profileTelegramUserId: profile.telegram_user_id,
+                            profileName: profile.full_name,
+                            profileEmail: profile.email,
+                          });
+                          setContactSheetUserId(profile.id);
                         } else {
                           toast.error("Контакт не привязан к профилю");
+                          console.warn("[ContactSheet] No profile for dialog:", selectedDialog?.user_id);
                         }
                       }}
                       className="shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
@@ -908,11 +919,19 @@ export function InboxTabContent() {
                     {/* Clickable Name */}
                     <button 
                       onClick={() => {
-                        const profileId = selectedDialog?.profile?.id;
-                        if (profileId) {
-                          setContactSheetUserId(profileId);
+                        const profile = selectedDialog?.profile;
+                        if (profile?.id) {
+                          console.log("[ContactSheet] Opening contact:", {
+                            dialogUserId: selectedDialog?.user_id,
+                            profileId: profile.id,
+                            profileTelegramUserId: profile.telegram_user_id,
+                            profileName: profile.full_name,
+                            profileEmail: profile.email,
+                          });
+                          setContactSheetUserId(profile.id);
                         } else {
                           toast.error("Контакт не привязан к профилю");
+                          console.warn("[ContactSheet] No profile for dialog:", selectedDialog?.user_id);
                         }
                       }}
                       className="flex-1 min-w-0 text-left hover:opacity-80 transition-opacity cursor-pointer"
@@ -956,7 +975,11 @@ export function InboxTabContent() {
       {/* Contact Detail Sheet */}
       {contactSheetUserId && (
         <ContactDetailSheet
-          contact={{ id: contactSheetUserId } as any}
+          contact={{ 
+            id: contactSheetUserId,
+            // Pass known profile data for display
+            ...(selectedDialog?.profile || {})
+          } as any}
           open={!!contactSheetUserId}
           onOpenChange={(open) => {
             if (!open) setContactSheetUserId(null);
