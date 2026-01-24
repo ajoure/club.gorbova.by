@@ -522,7 +522,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
           <div className="flex flex-1 gap-3 min-h-0 w-full min-w-0">
             {/* Dialog List - Light Glass Panel */}
             <div className={cn(
-              "flex flex-col w-full md:w-[280px] shrink-0 min-w-0",
+              "flex flex-col w-full md:w-[200px] shrink-0 min-w-0",
               "bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md",
               selectedUserId ? "hidden md:flex" : "flex"
             )}>
