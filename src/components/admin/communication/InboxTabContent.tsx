@@ -792,7 +792,7 @@ export function InboxTabContent() {
                         </div>
                         {/* Quick Actions - ABSOLUTE positioned (stable layout) */}
                         {!selectionMode && (
-                          <div className="flex-none self-center ml-2">
+                          <div className="flex-none self-center ml-2 shrink-0 opacity-70 group-hover:opacity-100 transition-opacity">
                             {/* Desktop: 3 buttons - always visible */}
                             <div className="flex items-center gap-0.5 opacity-100 transition-opacity duration-200 bg-card shadow-md rounded-lg p-1 border border-border/40">
                               <Tooltip>
@@ -800,7 +800,7 @@ export function InboxTabContent() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-7 w-7 rounded-full hover:bg-primary/20"
+                                    className="h-7 w-7 rounded-full hover:bg-primary/15 transition-transform transition-colors duration-150 hover:scale-[1.04] active:scale-[0.98]"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       togglePrefMutation.mutate({
@@ -825,7 +825,7 @@ export function InboxTabContent() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-7 w-7 rounded-full hover:bg-primary/20"
+                                    className="h-7 w-7 rounded-full hover:bg-primary/15 transition-transform transition-colors duration-150 hover:scale-[1.04] active:scale-[0.98]"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       togglePrefMutation.mutate({
@@ -851,10 +851,10 @@ export function InboxTabContent() {
                                     variant="ghost"
                                     size="icon"
                                     className={cn(
-                                      "h-7 w-7 rounded-full",
+                                      "h-7 w-7 rounded-full transition-transform transition-colors duration-150",
                                       dialog.unread_count > 0 
-                                        ? "hover:bg-primary/20" 
-                                        : "opacity-30 cursor-not-allowed"
+                                        ? "hover:bg-primary/15 hover:scale-[1.04] active:scale-[0.98]" 
+                                        : "opacity-40 cursor-not-allowed hover:scale-100 hover:bg-transparent"
                                     )}
                                     onClick={(e) => {
                                       e.stopPropagation();
