@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useTrainingModules, TrainingModule, TrainingModuleFormData } from "@/hooks/useTrainingModules";
@@ -37,6 +37,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Plus,
@@ -47,11 +53,14 @@ import {
   EyeOff,
   Download,
   FileSpreadsheet,
+  MoreVertical,
+  Settings,
 } from "lucide-react";
 import { GetCourseContentImportDialog } from "@/components/admin/GetCourseContentImportDialog";
 import { ExcelTrainingImportDialog } from "@/components/admin/ExcelTrainingImportDialog";
 import TrainingModuleCard from "@/components/admin/trainings/TrainingModuleCard";
 import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings/TrainingSettingsPanel";
+import { ProductTariffAccessSelector } from "@/components/admin/trainings/ProductTariffAccessSelector";
 import { cn } from "@/lib/utils";
 
 const gradientOptions = [
@@ -85,11 +94,9 @@ interface ModuleFormContentProps {
   formData: TrainingModuleFormData;
   setFormData: React.Dispatch<React.SetStateAction<TrainingModuleFormData>>;
   editingModule: TrainingModule | null;
-  tariffs: any[] | undefined;
-  handleTariffToggle: (tariffId: string) => void;
 }
 
-function ModuleFormContent({ formData, setFormData, editingModule, tariffs, handleTariffToggle }: ModuleFormContentProps) {
+function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormContentProps) {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
@@ -163,33 +170,6 @@ function ModuleFormContent({ formData, setFormData, editingModule, tariffs, hand
         </Select>
       </div>
 
-      <div className="space-y-2">
-        <Label>Доступ по тарифам</Label>
-        <p className="text-sm text-muted-foreground mb-2">
-          Если не выбран ни один тариф, модуль будет доступен всем
-        </p>
-        <div className="grid gap-2 md:grid-cols-2">
-          {tariffs?.map(tariff => (
-            <div key={tariff.id} className="flex items-center space-x-2">
-              <Checkbox
-                id={`tariff-${tariff.id}`}
-                checked={formData.tariff_ids?.includes(tariff.id)}
-                onCheckedChange={() => handleTariffToggle(tariff.id)}
-              />
-              <label
-                htmlFor={`tariff-${tariff.id}`}
-                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-              >
-                {tariff.name}
-                <span className="text-muted-foreground ml-1">
-                  ({(tariff.products_v2 as any)?.name})
-                </span>
-              </label>
-            </div>
-          ))}
-        </div>
-      </div>
-
       <div className="flex items-center space-x-2">
         <Switch
           id="is_active"
@@ -199,6 +179,31 @@ function ModuleFormContent({ formData, setFormData, editingModule, tariffs, hand
         <Label htmlFor="is_active">Активен</Label>
       </div>
     </div>
+  );
+}
+
+// Product-Tariff access selector wrapper for form
+interface ModuleAccessFormProps {
+  formData: TrainingModuleFormData;
+  setFormData: React.Dispatch<React.SetStateAction<TrainingModuleFormData>>;
+  productsWithTariffs: Array<{
+    id: string;
+    name: string;
+    tariffs: Array<{ id: string; name: string }>;
+  }>;
+}
+
+function ModuleAccessForm({ formData, setFormData, productsWithTariffs }: ModuleAccessFormProps) {
+  const handleChange = (tariffIds: string[]) => {
+    setFormData(prev => ({ ...prev, tariff_ids: tariffIds }));
+  };
+
+  return (
+    <ProductTariffAccessSelector
+      selectedTariffIds={formData.tariff_ids || []}
+      onChange={handleChange}
+      products={productsWithTariffs}
+    />
   );
 }
 
@@ -238,17 +243,25 @@ export default function AdminTrainingModules() {
     tariff_ids: [],
   });
 
-  // Fetch tariffs for access control
-  const { data: tariffs } = useQuery({
-    queryKey: ["tariffs-for-modules"],
+  // Fetch products with tariffs for access selector
+  const { data: productsWithTariffs } = useQuery({
+    queryKey: ["products-with-tariffs"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("tariffs")
-        .select("id, name, product_id, products_v2(name)")
+        .from("products_v2")
+        .select("id, name, tariffs(id, name, is_active)")
         .eq("is_active", true)
         .order("name");
       if (error) throw error;
-      return data;
+      // Filter only active tariffs and format for selector
+      return data?.map(p => ({
+        id: p.id,
+        name: p.name,
+        tariffs: (p.tariffs as any[])?.filter(t => t.is_active).map(t => ({
+          id: t.id,
+          name: t.name,
+        })) || [],
+      })) || [];
     },
   });
 
@@ -330,111 +343,167 @@ export default function AdminTrainingModules() {
     }
   };
 
-  const handleTariffToggle = useCallback((tariffId: string) => {
-    setFormData(prev => ({
-      ...prev,
-      tariff_ids: prev.tariff_ids?.includes(tariffId)
-        ? prev.tariff_ids.filter(id => id !== tariffId)
-        : [...(prev.tariff_ids || []), tariffId],
-    }));
-  }, []);
+  // Active tab state
+  const [activeTab, setActiveTab] = useState<"modules" | "settings">("modules");
 
   return (
     <AdminLayout>
-      <div className="container mx-auto px-4 py-6 max-w-6xl">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold">База знаний</h1>
-            <p className="text-muted-foreground">Управление модулями и уроками</p>
+      <div className="h-full min-h-0 flex flex-col overflow-hidden">
+        {/* Glassy Tabs Bar */}
+        <div className="px-3 md:px-4 pt-2 pb-2 shrink-0 flex items-center justify-between gap-2">
+          {/* Tabs - horizontal scroll, no wrap */}
+          <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none whitespace-nowrap">
+            <button
+              onClick={() => setActiveTab("modules")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200",
+                activeTab === "modules"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <BookOpen className="h-3.5 w-3.5" />
+              <span>Модули</span>
+            </button>
+            <button
+              onClick={() => setActiveTab("settings")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200",
+                activeTab === "settings"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Settings className="h-3.5 w-3.5" />
+              <span>Настройки</span>
+            </button>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => setIsExcelImportOpen(true)}>
-              <FileSpreadsheet className="mr-2 h-4 w-4" />
-              Импорт из Excel
+
+          {/* Desktop actions */}
+          <div className="hidden md:flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setIsExcelImportOpen(true)}>
+              <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+              Excel
             </Button>
-            <Button variant="outline" onClick={() => setIsImportDialogOpen(true)}>
-              <Download className="mr-2 h-4 w-4" />
-              Импорт из GetCourse
+            <Button variant="outline" size="sm" onClick={() => setIsImportDialogOpen(true)}>
+              <Download className="mr-1.5 h-4 w-4" />
+              GetCourse
             </Button>
-            <Button onClick={openCreateDialog}>
-              <Plus className="mr-2 h-4 w-4" />
-              Добавить модуль
+            <Button size="sm" onClick={openCreateDialog}>
+              <Plus className="mr-1.5 h-4 w-4" />
+              Добавить
             </Button>
+          </div>
+
+          {/* Mobile actions dropdown */}
+          <div className="md:hidden">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="icon" variant="ghost" className="h-9 w-9">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-background/95 backdrop-blur-xl border-border/50">
+                <DropdownMenuItem onClick={openCreateDialog}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Добавить модуль
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setIsImportDialogOpen(true)}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Импорт GetCourse
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setIsExcelImportOpen(true)}>
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Импорт Excel
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
-        
-        {/* Settings Panel - E1/E2/E3 */}
-        <TrainingSettingsPanel
-          density={density}
-          onDensityChange={handleDensityChange}
-          showAdvanced={showAdvanced}
-          onShowAdvancedChange={handleShowAdvancedChange}
-        />
 
-        {/* Modules List - iOS Glass Style */}
-        {loading ? (
-          <div className={cn(
-            "grid gap-4 mt-6",
-            density === 'compact' ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2"
-          )}>
-            {[1, 2, 3].map(i => (
-              <div key={i} className="rounded-2xl backdrop-blur-xl bg-card/60 border border-border/50 p-5">
-                <Skeleton className="h-5 w-32 mb-3" />
-                <Skeleton className="h-4 w-48 mb-2" />
-                <Skeleton className="h-8 w-24" />
-              </div>
-            ))}
-          </div>
-        ) : modules.length === 0 ? (
-          <div className="mt-6 relative overflow-hidden rounded-2xl backdrop-blur-xl bg-card/60 dark:bg-card/40 border border-border/50 shadow-lg p-12 text-center">
-            <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
-            <div className="relative">
-              <BookOpen className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
-              <h3 className="text-xl font-semibold mb-2">Модули не созданы</h3>
-              <p className="text-muted-foreground mb-4">
-                Создайте первый модуль базы знаний
-              </p>
-              <Button onClick={openCreateDialog}>
-                <Plus className="mr-2 h-4 w-4" />
-                Создать модуль
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className={cn(
-            "grid gap-4 mt-6",
-            density === 'compact' ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2"
-          )}>
-            {modules.map((module) => (
-              <TrainingModuleCard
-                key={module.id}
-                module={module}
-                onEdit={() => openEditDialog(module)}
-                onDelete={() => setDeleteConfirmId(module.id)}
-                onOpenLessons={() => navigate(`/admin/training-modules/${module.id}/lessons`)}
-              />
-            ))}
-          </div>
-        )}
+        {/* Content */}
+        <div className="flex-1 overflow-auto px-3 md:px-4 pb-4">
+          {activeTab === "settings" ? (
+            <TrainingSettingsPanel
+              density={density}
+              onDensityChange={handleDensityChange}
+              showAdvanced={showAdvanced}
+              onShowAdvancedChange={handleShowAdvancedChange}
+            />
+          ) : (
+            <>
+
+              {/* Modules List - iOS Glass Style */}
+              {loading ? (
+                <div className={cn(
+                  "grid gap-4 mt-4",
+                  density === 'compact' ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
+                )}>
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className="rounded-2xl backdrop-blur-xl bg-card/60 border border-border/50 p-5">
+                      <Skeleton className="h-5 w-32 mb-3" />
+                      <Skeleton className="h-4 w-48 mb-2" />
+                      <Skeleton className="h-8 w-24" />
+                    </div>
+                  ))}
+                </div>
+              ) : modules.length === 0 ? (
+                <div className="mt-4 relative overflow-hidden rounded-2xl backdrop-blur-xl bg-card/60 dark:bg-card/40 border border-border/50 shadow-lg p-12 text-center">
+                  <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
+                  <div className="relative">
+                    <BookOpen className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
+                    <h3 className="text-xl font-semibold mb-2">Модули не созданы</h3>
+                    <p className="text-muted-foreground mb-4">
+                      Создайте первый модуль базы знаний
+                    </p>
+                    <Button onClick={openCreateDialog}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Создать модуль
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className={cn(
+                  "grid gap-4 mt-4",
+                  density === 'compact' ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
+                )}>
+                  {modules.map((module) => (
+                    <TrainingModuleCard
+                      key={module.id}
+                      module={module}
+                      onEdit={() => openEditDialog(module)}
+                      onDelete={() => setDeleteConfirmId(module.id)}
+                      onOpenLessons={() => navigate(`/admin/training-modules/${module.id}/lessons`)}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
 
         {/* Create Dialog */}
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
+          <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+            <DialogHeader className="shrink-0">
               <DialogTitle>Новый модуль</DialogTitle>
               <DialogDescription>
                 Создайте новый раздел базы знаний
               </DialogDescription>
             </DialogHeader>
-            <ModuleFormContent 
-              formData={formData}
-              setFormData={setFormData}
-              editingModule={null}
-              tariffs={tariffs}
-              handleTariffToggle={handleTariffToggle}
-            />
-            <DialogFooter>
+            <div className="flex-1 overflow-y-auto space-y-4 py-2">
+              <ModuleFormContent 
+                formData={formData}
+                setFormData={setFormData}
+                editingModule={null}
+              />
+              <ModuleAccessForm
+                formData={formData}
+                setFormData={setFormData}
+                productsWithTariffs={productsWithTariffs || []}
+              />
+            </div>
+            <DialogFooter className="shrink-0 border-t pt-4 pb-[env(safe-area-inset-bottom)]">
               <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                 Отмена
               </Button>
@@ -447,21 +516,26 @@ export default function AdminTrainingModules() {
 
         {/* Edit Dialog */}
         <Dialog open={!!editingModule} onOpenChange={(open) => !open && setEditingModule(null)}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
+          <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+            <DialogHeader className="shrink-0">
               <DialogTitle>Редактирование модуля</DialogTitle>
               <DialogDescription>
                 Измените параметры модуля
               </DialogDescription>
             </DialogHeader>
-            <ModuleFormContent 
-              formData={formData}
-              setFormData={setFormData}
-              editingModule={editingModule}
-              tariffs={tariffs}
-              handleTariffToggle={handleTariffToggle}
-            />
-            <DialogFooter>
+            <div className="flex-1 overflow-y-auto space-y-4 py-2">
+              <ModuleFormContent 
+                formData={formData}
+                setFormData={setFormData}
+                editingModule={editingModule}
+              />
+              <ModuleAccessForm
+                formData={formData}
+                setFormData={setFormData}
+                productsWithTariffs={productsWithTariffs || []}
+              />
+            </div>
+            <DialogFooter className="shrink-0 border-t pt-4 pb-[env(safe-area-inset-bottom)]">
               <Button variant="outline" onClick={() => setEditingModule(null)}>
                 Отмена
               </Button>

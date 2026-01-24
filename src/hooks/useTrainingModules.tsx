@@ -3,6 +3,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
+export interface AccessibleProduct {
+  product_name: string;
+  tariff_count: number;
+}
+
 export interface TrainingModule {
   id: string;
   product_id: string | null;
@@ -21,6 +26,7 @@ export interface TrainingModule {
   completed_count?: number;
   has_access?: boolean;
   accessible_tariffs?: string[];
+  accessible_products?: AccessibleProduct[];
 }
 
 export interface TrainingModuleFormData {
@@ -59,10 +65,10 @@ export function useTrainingModules() {
         .select("module_id")
         .eq("is_active", true);
 
-      // Fetch module access (tariffs)
+      // Fetch module access (tariffs with product info)
       const { data: accessData } = await supabase
         .from("module_access")
-        .select("module_id, tariff_id, tariffs(name)");
+        .select("module_id, tariff_id, tariffs(name, product_id, products_v2(name))");
 
       // Fetch user subscriptions if logged in
       let userTariffIds: string[] = [];
@@ -100,12 +106,24 @@ export function useTrainingModules() {
         const hasAccess = moduleAccess.length === 0 || 
           moduleAccess.some(a => userTariffIds.includes(a.tariff_id));
 
+        // Group by product for compact display
+        const productMap: Record<string, { product_name: string; tariff_count: number }> = {};
+        moduleAccess.forEach(a => {
+          const productName = (a.tariffs as any)?.products_v2?.name || "Без продукта";
+          if (!productMap[productName]) {
+            productMap[productName] = { product_name: productName, tariff_count: 0 };
+          }
+          productMap[productName].tariff_count++;
+        });
+        const accessibleProducts: AccessibleProduct[] = Object.values(productMap);
+
         return {
           ...mod,
           lesson_count: lessonCount,
           completed_count: progressMap[mod.id] || 0,
           has_access: hasAccess,
           accessible_tariffs: accessibleTariffs,
+          accessible_products: accessibleProducts,
         };
       }) || [];
 

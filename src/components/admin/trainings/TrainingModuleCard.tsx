@@ -24,6 +24,10 @@ export default function TrainingModuleCard({
   onDelete,
   onOpenLessons,
 }: TrainingModuleCardProps) {
+  // Group tariffs by product for compact display
+  const productBadges = module.accessible_products || [];
+  const hasAccess = productBadges.length > 0;
+
   return (
     <div
       className={cn(
@@ -39,11 +43,11 @@ export default function TrainingModuleCard({
       {/* Color gradient bar */}
       <div className={cn("h-1.5 bg-gradient-to-r", module.color_gradient)} />
       
-      <div className="relative p-5">
+      <div className="relative p-4">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-lg truncate">{module.title}</h3>
+            <h3 className="font-semibold text-base sm:text-lg line-clamp-2">{module.title}</h3>
             {module.description && (
               <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
                 {module.description}
@@ -64,27 +68,44 @@ export default function TrainingModuleCard({
             ) : (
               <EyeOff className="h-3 w-3" />
             )}
-            {module.is_active ? "Активен" : "Скрыт"}
+            <span className="hidden xs:inline">{module.is_active ? "Активен" : "Скрыт"}</span>
           </Badge>
         </div>
         
         {/* Stats row */}
-        <div className="flex items-center gap-3 mb-4">
-          <Badge variant="outline" className="gap-1 bg-background/50">
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <Badge variant="outline" className="gap-1 bg-background/50 text-xs">
             <BookOpen className="h-3 w-3" />
             {module.lesson_count || 0} уроков
           </Badge>
           
-          <code className="text-xs bg-muted/50 px-2 py-1 rounded text-muted-foreground">
-            /library/{module.slug}
+          <code className="text-[10px] sm:text-xs bg-muted/50 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-muted-foreground truncate max-w-[120px] sm:max-w-none">
+            /{module.slug}
           </code>
         </div>
         
-        {/* Tariffs */}
-        {module.accessible_tariffs && module.accessible_tariffs.length > 0 && (
-          <p className="text-xs text-muted-foreground mb-4">
-            Тарифы: {module.accessible_tariffs.filter(Boolean).join(", ")}
-          </p>
+        {/* Product badges - compact display */}
+        {hasAccess && (
+          <div className="flex flex-wrap gap-1 mb-3 max-h-12 overflow-hidden">
+            {productBadges.slice(0, 4).map((p, idx) => (
+              <Badge 
+                key={idx} 
+                variant="outline" 
+                className="text-[10px] px-1.5 py-0.5 bg-muted/30 border-border/30"
+              >
+                {p.product_name}
+                {p.tariff_count > 1 && ` (${p.tariff_count})`}
+              </Badge>
+            ))}
+            {productBadges.length > 4 && (
+              <Badge 
+                variant="secondary" 
+                className="text-[10px] px-1.5 py-0.5"
+              >
+                +{productBadges.length - 4}
+              </Badge>
+            )}
+          </div>
         )}
         
         {/* Actions */}
@@ -93,10 +114,10 @@ export default function TrainingModuleCard({
             variant="ghost"
             size="sm"
             onClick={onOpenLessons}
-            className="gap-1.5 text-primary hover:text-primary"
+            className="gap-1.5 text-primary hover:text-primary h-10 min-h-[44px] px-3"
           >
             <BookOpen className="h-4 w-4" />
-            Уроки
+            <span className="hidden xs:inline">Уроки</span>
             <ChevronRight className="h-4 w-4" />
           </Button>
           
@@ -105,7 +126,7 @@ export default function TrainingModuleCard({
               variant="ghost"
               size="icon"
               onClick={onEdit}
-              className="h-8 w-8"
+              className="h-10 w-10 min-h-[44px] min-w-[44px]"
             >
               <Pencil className="h-4 w-4" />
             </Button>
@@ -113,7 +134,7 @@ export default function TrainingModuleCard({
               variant="ghost"
               size="icon"
               onClick={onDelete}
-              className="h-8 w-8 text-destructive hover:text-destructive"
+              className="h-10 w-10 min-h-[44px] min-w-[44px] text-destructive hover:text-destructive"
             >
               <Trash2 className="h-4 w-4" />
             </Button>
