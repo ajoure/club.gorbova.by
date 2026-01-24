@@ -214,6 +214,65 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     }
   }, [open, contact?.id]);
 
+  // Realtime subscriptions for orders_v2, subscriptions_v2, payments_v2
+  useEffect(() => {
+    if (!open || !contact?.user_id) return;
+
+    const userId = contact.user_id;
+    const profileId = contact.id;
+    
+    // Build user IDs array for filtering
+    const userIds = [profileId];
+    if (userId !== profileId) {
+      userIds.push(userId);
+    }
+
+    const channel = supabase
+      .channel(`contact-${profileId}-realtime`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders_v2" },
+        (payload) => {
+          // Check if this change is for our contact
+          const record = (payload.new || payload.old) as { user_id?: string; profile_id?: string };
+          if (record?.user_id === userId || record?.profile_id === profileId || userIds.includes(record?.user_id || "")) {
+            console.log("[Realtime] orders_v2 change for contact", profileId);
+            queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.id, contact.user_id] });
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "subscriptions_v2" },
+        (payload) => {
+          const record = (payload.new || payload.old) as { user_id?: string };
+          if (record?.user_id === userId || userIds.includes(record?.user_id || "")) {
+            console.log("[Realtime] subscriptions_v2 change for contact", profileId);
+            queryClient.invalidateQueries({ queryKey: ["contact-subscriptions", contact.id, contact.user_id] });
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "payments_v2" },
+        (payload) => {
+          const record = (payload.new || payload.old) as { user_id?: string };
+          if (record?.user_id === userId || userIds.includes(record?.user_id || "")) {
+            console.log("[Realtime] payments_v2 change for contact", profileId);
+            queryClient.invalidateQueries({ queryKey: ["contact-payments", contact.id] });
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log("[Realtime] Channel subscription status:", status);
+      });
+
+    return () => {
+      console.log("[Realtime] Removing channel for contact", profileId);
+      supabase.removeChannel(channel);
+    };
+  }, [open, contact?.id, contact?.user_id, queryClient]);
+
   // Fetch profile photo from Telegram
   const fetchPhotoFromTelegram = async () => {
     if (!contact?.user_id) return;

@@ -278,3 +278,6 @@ verify_jwt = false
 
 [functions.telegram-media-worker-cron]
 verify_jwt = false
+
+[functions.telegram-process-access-queue]
+verify_jwt = false

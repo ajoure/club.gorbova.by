@@ -6067,6 +6067,60 @@ export type Database = {
           },
         ]
       }
+      telegram_access_queue: {
+        Row: {
+          action: string
+          attempts: number | null
+          club_id: string
+          created_at: string | null
+          id: string
+          last_error: string | null
+          processed_at: string | null
+          status: string
+          subscription_id: string | null
+          user_id: string
+        }
+        Insert: {
+          action: string
+          attempts?: number | null
+          club_id: string
+          created_at?: string | null
+          id?: string
+          last_error?: string | null
+          processed_at?: string | null
+          status?: string
+          subscription_id?: string | null
+          user_id: string
+        }
+        Update: {
+          action?: string
+          attempts?: number | null
+          club_id?: string
+          created_at?: string | null
+          id?: string
+          last_error?: string | null
+          processed_at?: string | null
+          status?: string
+          subscription_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_access_queue_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_clubs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_access_queue_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_bots: {
         Row: {
           bot_id: number | null
