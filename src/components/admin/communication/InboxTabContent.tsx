@@ -690,7 +690,7 @@ export function InboxTabContent() {
                       <div
                         key={dialog.user_id}
                         className={cn(
-                          "flex items-start gap-3 p-3 cursor-pointer rounded-xl transition-all duration-200 mb-0.5",
+                          "group flex items-start gap-3 p-3 cursor-pointer rounded-xl transition-all duration-200 mb-0.5",
                           "hover:bg-card/80",
                           selectedUserId === dialog.user_id 
                             ? "bg-primary/10 border border-primary/20" 
@@ -736,31 +736,24 @@ export function InboxTabContent() {
                               {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: false, locale: ru })}
                             </span>
                           </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <p className={cn(
-                              "text-sm truncate flex-1",
-                              dialog.unread_count > 0 
-                                ? "text-foreground font-medium" 
-                                : "text-muted-foreground"
-                            )}>
-                              {dialog.last_message}
-                            </p>
-                          </div>
-                          {dialog.profile?.telegram_username && (
-                            <p className="text-[11px] text-muted-foreground/70 mt-0.5">
-                              @{dialog.profile.telegram_username}
-                            </p>
-                          )}
+                          <p className={cn(
+                            "text-sm line-clamp-2 break-words mt-1",
+                            dialog.unread_count > 0 
+                              ? "text-foreground font-medium" 
+                              : "text-muted-foreground"
+                          )}>
+                            {dialog.last_message}
+                          </p>
                         </div>
                         {/* Quick Actions on Hover */}
                         {!selectionMode && (
-                          <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-6 w-6 rounded-full"
+                                  className="h-7 w-7 rounded-full hover:bg-primary/10"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     togglePrefMutation.mutate({
@@ -776,8 +769,33 @@ export function InboxTabContent() {
                                   )} />
                                 </Button>
                               </TooltipTrigger>
-                              <TooltipContent>
+                              <TooltipContent side="left" className="text-xs">
                                 {dialog.is_favorite ? "Убрать из избранного" : "В избранное"}
+                              </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 rounded-full hover:bg-primary/10"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    togglePrefMutation.mutate({
+                                      contactUserId: dialog.user_id,
+                                      field: "is_pinned",
+                                      value: !dialog.is_pinned
+                                    });
+                                  }}
+                                >
+                                  <Pin className={cn(
+                                    "h-3.5 w-3.5",
+                                    dialog.is_pinned ? "text-primary" : "text-muted-foreground"
+                                  )} />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="left" className="text-xs">
+                                {dialog.is_pinned ? "Открепить" : "Закрепить"}
                               </TooltipContent>
                             </Tooltip>
                             {dialog.unread_count > 0 && (
@@ -786,13 +804,13 @@ export function InboxTabContent() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-6 w-6 rounded-full"
+                                    className="h-7 w-7 rounded-full hover:bg-primary/10"
                                     onClick={(e) => markChatAsRead(dialog.user_id, e)}
                                   >
                                     <Check className="h-3.5 w-3.5 text-muted-foreground" />
                                   </Button>
                                 </TooltipTrigger>
-                                <TooltipContent>Прочитать</TooltipContent>
+                                <TooltipContent side="left" className="text-xs">Прочитать</TooltipContent>
                               </Tooltip>
                             )}
                           </div>
