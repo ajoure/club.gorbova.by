@@ -736,12 +736,12 @@ export function InboxTabContent() {
                         onSwipeRight={dialog.unread_count > 0 ? () => markChatAsRead(dialog.user_id) : undefined}
                         onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                         onClick={() => handleSelectDialog(dialog.user_id)}
-                        className={cn(
-                          "group relative flex items-start gap-3 p-3 cursor-pointer rounded-xl transition-all duration-200 box-border w-full min-w-0",
-                          selectedUserId === dialog.user_id 
-                            ? "bg-primary/20 ring-2 ring-primary/50 ring-inset" 
-                            : "hover:bg-card/80"
-                        )}
+                      className={cn(
+                        "group flex items-start gap-3 p-3 cursor-pointer rounded-xl border transition-colors duration-200",
+                        selectedUserId === dialog.user_id 
+                          ? "bg-primary/10 border-primary" 
+                          : "border-transparent hover:bg-muted/40"
+                      )}
                       >
                         {selectionMode && (
                           <Checkbox
@@ -790,93 +790,6 @@ export function InboxTabContent() {
                             {dialog.last_message}
                           </p>
                         </div>
-                        {/* Quick Actions - ABSOLUTE positioned (stable layout) */}
-                        {!selectionMode && (
-                          <div className="flex-none self-center ml-2 shrink-0 opacity-70 group-hover:opacity-100 transition-opacity">
-                            {/* Desktop: 3 buttons - always visible */}
-                            <div className="flex items-center gap-0.5 opacity-100 transition-opacity duration-200 bg-card shadow-md rounded-lg p-1 border border-border/40">
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 rounded-full hover:bg-primary/15 transition-transform transition-colors duration-150 hover:scale-[1.04] active:scale-[0.98]"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      togglePrefMutation.mutate({
-                                        contactUserId: dialog.user_id,
-                                        field: "is_favorite",
-                                        value: !dialog.is_favorite
-                                      });
-                                    }}
-                                  >
-                                    <Star className={cn(
-                                      "h-4 w-4",
-                                      dialog.is_favorite ? "fill-yellow-500 text-yellow-500" : "text-muted-foreground"
-                                    )} />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="left" className="text-xs">
-                                  {dialog.is_favorite ? "Убрать из избранного" : "В избранное"}
-                                </TooltipContent>
-                              </Tooltip>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 rounded-full hover:bg-primary/15 transition-transform transition-colors duration-150 hover:scale-[1.04] active:scale-[0.98]"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      togglePrefMutation.mutate({
-                                        contactUserId: dialog.user_id,
-                                        field: "is_pinned",
-                                        value: !dialog.is_pinned
-                                      });
-                                    }}
-                                  >
-                                    <Pin className={cn(
-                                      "h-4 w-4",
-                                      dialog.is_pinned ? "text-primary" : "text-muted-foreground"
-                                    )} />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="left" className="text-xs">
-                                  {dialog.is_pinned ? "Открепить" : "Закрепить"}
-                                </TooltipContent>
-                              </Tooltip>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <button
-                                    type="button"
-                                    disabled={dialog.unread_count === 0}
-                                    className={cn(
-                                      "h-7 w-7 rounded-full flex items-center justify-center transition-transform transition-colors duration-150",
-                                      dialog.unread_count > 0
-                                        ? "hover:bg-primary/15 hover:scale-[1.04] active:scale-[0.98]"
-                                        : "opacity-40 cursor-not-allowed disabled:hover:bg-transparent disabled:hover:scale-100 disabled:active:scale-100"
-                                    )}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (dialog.unread_count > 0) {
-                                        markChatAsRead(dialog.user_id, e);
-                                      }
-                                    }}
-                                  >
-                                    <Check className={cn(
-                                      "h-4 w-4",
-                                      dialog.unread_count > 0 ? "text-muted-foreground" : "text-muted-foreground/50"
-                                    )} />
-                                  </button>
-                                </TooltipTrigger>
-                                <TooltipContent side="left" className="text-xs">
-                                  {dialog.unread_count > 0 ? "Прочитать" : "Уже прочитано"}
-                                </TooltipContent>
-                              </Tooltip>
-                            </div>
-                            {/* Mobile menu removed - buttons now always visible */}
-                          </div>
-                        )}
                       </SwipeableDialogCard>
                     ))}
                   </div>
