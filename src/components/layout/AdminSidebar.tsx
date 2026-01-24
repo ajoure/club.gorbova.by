@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { cn } from "@/lib/utils";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -41,6 +42,7 @@ import {
   ScrollText,
   Wrench,
   ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -58,6 +60,23 @@ export function AdminSidebar() {
   
   const [menuSettingsOpen, setMenuSettingsOpen] = useState(false);
   const { menuSettings, updateSettings, resetSettings, isUpdating } = useAdminMenuSettings();
+  
+  // Collapsible groups state
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => 
+    new Set(menuSettings.map(g => g.id))
+  );
+  
+  const toggleGroup = (groupId: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  };
 
   // Fetch duplicate count
   const { data: duplicateCount } = useQuery({
@@ -175,17 +194,17 @@ export function AdminSidebar() {
           <NavLink
             to={item.path}
             end={!item.path.includes("/")}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent"
+            className="flex items-center gap-2.5 px-3 py-2 rounded-xl transition-all hover:bg-sidebar-accent"
             activeClassName="bg-sidebar-accent text-sidebar-primary"
           >
-            {IconComponent && <IconComponent className="h-5 w-5 shrink-0" />}
+            {IconComponent && <IconComponent className="h-4 w-4 shrink-0" />}
             {!collapsed && (
               <>
-                <span className="flex-1">{item.label}</span>
+                <span className="flex-1 text-xs">{item.label}</span>
                 {badge.show && (
                   <Badge 
                     variant="destructive" 
-                    className="h-5 min-w-5 px-1.5 text-xs"
+                    className="h-4 min-w-4 px-1 text-[10px]"
                   >
                     {badge.count}
                   </Badge>
@@ -208,17 +227,32 @@ export function AdminSidebar() {
       .sort((a, b) => a.order - b.order);
     
     if (visibleItems.length === 0) return null;
+    
+    const isExpanded = expandedGroups.has(group.id);
 
     return (
       <SidebarGroup key={group.id}>
-        <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-wider px-3">
-          {!collapsed && group.label}
-        </SidebarGroupLabel>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {visibleItems.map((item) => renderMenuItem(item, group.id))}
-          </SidebarMenu>
-        </SidebarGroupContent>
+        {!collapsed ? (
+          <button
+            onClick={() => toggleGroup(group.id)}
+            className="w-full flex items-center justify-between px-3 py-1.5 text-sidebar-foreground/50 text-[10px] uppercase tracking-wider hover:text-sidebar-foreground/70 transition-colors"
+          >
+            <span>{group.label}</span>
+            <ChevronDown className={cn(
+              "h-3 w-3 transition-transform duration-200",
+              isExpanded ? "rotate-0" : "-rotate-90"
+            )} />
+          </button>
+        ) : (
+          <SidebarGroupLabel className="text-sidebar-foreground/50 text-[10px] uppercase tracking-wider px-3" />
+        )}
+        {(collapsed || isExpanded) && (
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {visibleItems.map((item) => renderMenuItem(item, group.id))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        )}
       </SidebarGroup>
     );
   };
@@ -239,7 +273,7 @@ export function AdminSidebar() {
             </div>
             {!collapsed && (
             <div className="flex-1">
-              <span className="font-medium text-sm text-sidebar-foreground">
+              <span className="font-medium text-xs text-sidebar-foreground">
                 Панель управления
               </span>
             </div>
@@ -307,16 +341,16 @@ export function AdminSidebar() {
                   {!collapsed && (
                     <div className="flex-1 min-w-0">
                       <div className="leading-tight">
-                        <p className="text-sm font-medium text-sidebar-foreground truncate">
+                        <p className="text-xs font-medium text-sidebar-foreground truncate">
                           {firstName}
                         </p>
                         {lastName && (
-                          <p className="text-sm font-medium text-sidebar-foreground truncate">
+                          <p className="text-xs font-medium text-sidebar-foreground truncate">
                             {lastName}
                           </p>
                         )}
                       </div>
-                      <p className="text-xs text-sidebar-foreground/60 mt-0.5">
+                      <p className="text-[10px] text-sidebar-foreground/60 mt-0.5">
                         Администратор
                       </p>
                     </div>

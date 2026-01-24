@@ -522,7 +522,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
           <div className="flex flex-1 gap-3 min-h-0 w-full min-w-0">
             {/* Dialog List - Light Glass Panel */}
             <div className={cn(
-              "flex flex-col w-full md:w-[320px] shrink-0 min-w-0",
+              "flex flex-col w-full md:w-[280px] shrink-0 min-w-0",
               "bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md",
               selectedUserId ? "hidden md:flex" : "flex"
             )}>
@@ -574,12 +574,12 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                   /* Normal Header */
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="p-2 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5">
-                        <MessageSquare className="h-4 w-4 text-primary" />
+                      <div className="p-1.5 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5">
+                        <MessageSquare className="h-3.5 w-3.5 text-primary" />
                       </div>
-                      <h2 className="font-semibold">Чаты</h2>
+                      <h2 className="text-xs font-semibold">Чаты</h2>
                       {totalUnread > 0 && (
-                        <Badge className="bg-primary text-primary-foreground text-xs h-5 min-w-5 px-1.5 rounded-full">
+                        <Badge className="bg-primary text-primary-foreground text-[10px] h-4 min-w-4 px-1 rounded-full">
                           {totalUnread}
                         </Badge>
                       )}
@@ -670,7 +670,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                       variant="ghost"
                       size="sm"
                       className={cn(
-                        "h-8 px-3 text-xs whitespace-nowrap rounded-full transition-all",
+                        "h-7 px-2.5 text-xs whitespace-nowrap rounded-full transition-all",
                         filter === tab.value
                           ? "bg-primary text-primary-foreground shadow-md"
                           : "bg-card/60 hover:bg-card text-muted-foreground hover:text-foreground"
@@ -679,7 +679,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                     >
                       {tab.label}
                       {tab.count !== undefined && tab.count > 0 && (
-                        <span className="ml-1.5 text-[10px] opacity-80">
+                        <span className="ml-1 text-[10px] opacity-80">
                           {tab.count}
                         </span>
                       )}
@@ -712,7 +712,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                         onSwipeLeft={() => toast.info("Архивирование пока не реализовано")}
                         onClick={() => handleSelectDialog(dialog.user_id)}
 className={cn(
-                "group relative grid grid-cols-[auto_1fr_28px] items-start gap-3 p-3 cursor-pointer rounded-xl border transition-colors duration-200",
+                "group relative grid grid-cols-[auto_1fr_24px] items-start gap-2 p-2 cursor-pointer rounded-lg border transition-colors duration-200",
                 selectedUserId === dialog.user_id 
                   ? "bg-primary/10 border-primary" 
                   : "border-transparent hover:bg-muted/40"
@@ -727,7 +727,7 @@ className={cn(
                           />
                         )}
                         <div className="relative shrink-0">
-                          <Avatar className="h-12 w-12 ring-2 ring-border/20">
+                          <Avatar className="h-10 w-10 ring-1 ring-border/20">
                             <AvatarImage src={dialog.profile?.avatar_url || undefined} />
                             <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/20 text-foreground font-semibold">
                               {dialog.profile?.full_name?.[0] || dialog.profile?.email?.[0] || "?"}
@@ -741,15 +741,15 @@ className={cn(
                         </div>
                         <div className="flex-1 min-w-0 overflow-hidden">
                           <div className="flex items-center justify-between gap-2 min-w-0">
-                  <span className="font-semibold truncate min-w-0">
+                  <span className="text-xs font-semibold truncate min-w-0">
                     {dialog.profile?.full_name || dialog.profile?.email || "Неизвестный"}
                   </span>
-                            <span className="text-[11px] text-muted-foreground shrink-0">
+                            <span className="text-[10px] text-muted-foreground shrink-0">
                               {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: false, locale: ru })}
                             </span>
                           </div>
                           <p className={cn(
-                            "text-sm line-clamp-2 break-words mt-1 min-w-0",
+                            "text-xs line-clamp-2 break-words mt-0.5 min-w-0",
                             dialog.unread_count > 0 
                               ? "text-foreground font-medium" 
                               : "text-muted-foreground"
