@@ -9,12 +9,9 @@ import { SupportTabContent } from "@/components/admin/communication/SupportTabCo
 import { BroadcastsTabContent } from "@/components/admin/communication/BroadcastsTabContent";
 import { InboxTabContent } from "@/components/admin/communication/InboxTabContent";
 import { CommunicationSettingsTabContent } from "@/components/admin/communication/CommunicationSettingsTabContent";
-
 export default function AdminCommunication() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<string>(
-    searchParams.get("tab") || "inbox"
-  );
+  const [activeTab, setActiveTab] = useState<string>(searchParams.get("tab") || "inbox");
 
   // Sync tab with URL
   useEffect(() => {
@@ -23,14 +20,13 @@ export default function AdminCommunication() {
       setActiveTab(tabFromUrl);
     }
   }, [searchParams]);
-
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
-    setSearchParams({ tab });
+    setSearchParams({
+      tab
+    });
   };
-
-  return (
-    <AdminLayout>
+  return <AdminLayout>
       <div className="h-full min-h-0 flex flex-col overflow-hidden">
         {/* Header */}
         <div className="px-4 md:px-6 pt-4 md:pt-6 pb-4 border-b shrink-0">
@@ -51,7 +47,8 @@ export default function AdminCommunication() {
             <TabsList className="grid w-full max-w-2xl grid-cols-4">
               <TabsTrigger value="inbox" className="gap-2">
                 <Inbox className="h-4 w-4" />
-                <span className="hidden sm:inline">Почта</span>
+                <span className="hidden sm:inline">Сообщения
+              </span>
               </TabsTrigger>
               <TabsTrigger value="support" className="gap-2">
                 <LifeBuoy className="h-4 w-4" />
@@ -77,6 +74,5 @@ export default function AdminCommunication() {
           {activeTab === "settings" && <CommunicationSettingsTabContent />}
         </div>
       </div>
-    </AdminLayout>
-  );
+    </AdminLayout>;
 }
