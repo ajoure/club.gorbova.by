@@ -5476,6 +5476,21 @@ export type Database = {
           },
         ]
       }
+      support_ticket_counters: {
+        Row: {
+          seq: number
+          year: string
+        }
+        Insert: {
+          seq?: number
+          year: string
+        }
+        Update: {
+          seq?: number
+          year?: string
+        }
+        Relationships: []
+      }
       support_tickets: {
         Row: {
           assigned_to: string | null
@@ -7588,6 +7603,10 @@ export type Database = {
           grants_count: number
         }[]
       }
+      create_support_ticket: {
+        Args: { p_category?: string; p_description: string; p_subject: string }
+        Returns: Json
+      }
       find_false_revoke_notifications: {
         Args: { since_timestamp: string }
         Returns: {
@@ -7639,6 +7658,7 @@ export type Database = {
       }
       generate_order_number: { Args: never; Returns: string }
       generate_ticket_number: { Args: never; Returns: string }
+      generate_ticket_number_atomic: { Args: never; Returns: string }
       get_club_members_enriched: {
         Args: { p_club_id: string; p_scope?: string }
         Returns: {

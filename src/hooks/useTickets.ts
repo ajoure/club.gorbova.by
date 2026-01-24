@@ -200,75 +200,58 @@ export function useUnreadTicketsCount() {
 
 // Hook to create ticket
 export function useCreateTicket() {
-  const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (data: CreateTicketData) => {
-      // Check if user is authenticated
-      if (!user?.id) {
-        throw new Error("Необходимо авторизоваться для создания обращения");
-      }
-
-      // Get profile_id first
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("user_id", user.id)
-        .single();
-
-      if (profileError) {
-        console.error("Profile fetch error:", profileError);
-        throw new Error("Профиль не найден. Попробуйте перезайти в систему.");
-      }
-
-      if (!profile?.id) {
-        throw new Error("Профиль не найден. Попробуйте перезайти в систему.");
-      }
-
-      // Create ticket with explicit user_id for RLS
-      const { data: ticket, error } = await supabase
-        .from("support_tickets")
-        .insert({
-          profile_id: profile.id,
-          user_id: user.id, // Required for RLS policy
-          subject: data.subject,
-          description: data.description,
-          category: data.category || "general",
-        })
-        .select()
-        .single();
+      // Используем серверную функцию для атомарного создания тикета
+      const { data: result, error } = await supabase.rpc('create_support_ticket', {
+        p_subject: data.subject,
+        p_description: data.description,
+        p_category: data.category || null,
+      });
 
       if (error) {
-        console.error("Ticket creation error:", error);
+        console.error('[useCreateTicket] RPC error:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+        });
         throw error;
       }
 
-      // Create initial message with description
-      const { error: messageError } = await supabase.from("ticket_messages").insert({
-        ticket_id: ticket.id,
-        author_id: user.id,
-        author_type: "user",
-        message: data.description,
-      });
-
-      if (messageError) {
-        console.error("Message creation error:", messageError);
-        // Ticket already created, just log the error
+      // Функция возвращает JSONB с success/error
+      const response = result as { success: boolean; ticket_id?: string; ticket_number?: string; error?: string; error_code?: string };
+      
+      if (!response.success) {
+        console.error('[useCreateTicket] Server error:', response);
+        
+        // Преобразуем серверные ошибки в понятные сообщения
+        let userMessage = 'Не удалось создать обращение';
+        if (response.error?.includes('not_authenticated')) {
+          userMessage = 'Необходимо войти в аккаунт';
+        } else if (response.error?.includes('profile_not_found')) {
+          userMessage = 'Профиль не найден. Попробуйте перезайти в аккаунт.';
+        } else if (response.error) {
+          userMessage = response.error;
+        }
+        
+        throw new Error(userMessage);
       }
 
-      return ticket;
+      return { id: response.ticket_id, ticket_number: response.ticket_number };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["user-tickets"] });
       toast({
         title: "Обращение создано",
-        description: "Мы ответим вам в ближайшее время",
+        description: "Мы ответим в ближайшее время",
       });
     },
     onError: (error: Error) => {
-      console.error("Error creating ticket:", error);
+      console.error('[useCreateTicket] Mutation error:', error);
       toast({
         title: "Ошибка",
         description: error.message || "Не удалось создать обращение",
