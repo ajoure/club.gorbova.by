@@ -12,6 +12,7 @@ import { ErrorCategoryPieChart } from "@/components/admin/diagnostics/ErrorCateg
 import { GeoComparisonChart } from "@/components/admin/diagnostics/GeoComparisonChart";
 import { ApprovalRateTrendChart } from "@/components/admin/diagnostics/ApprovalRateTrendChart";
 import { BankBreakdownTable } from "@/components/admin/diagnostics/BankBreakdownTable";
+import { CardVerificationControl } from "@/components/admin/cards/CardVerificationControl";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { FileText, Loader2, RefreshCw } from "lucide-react";
@@ -145,6 +146,11 @@ export default function AdminPaymentDiagnostics() {
             </Button>
           </div>
         </div>
+
+        {/* Card Verification Control - only for superAdmin */}
+        {isSuperAdmin() && (
+          <CardVerificationControl />
+        )}
 
         {/* Summary Cards */}
         <DiagnosticsSummaryCards stats={stats} isLoading={isLoading} />

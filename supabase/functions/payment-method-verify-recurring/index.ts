@@ -62,33 +62,70 @@ serve(async (req) => {
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-  // === X-Cron-Secret Security Gate ===
+  // === X-Cron-Secret OR Admin JWT Security Gate ===
   const cronSecret = Deno.env.get('CRON_SECRET');
   const providedSecret = req.headers.get('X-Cron-Secret') || req.headers.get('x-cron-secret');
+  const authHeader = req.headers.get('Authorization');
+  
+  let isAuthorized = false;
+  let authMethod = 'none';
+  let adminUserId: string | null = null;
 
-  if (!cronSecret) {
-    console.error('[SECURITY] CRON_SECRET not configured');
-    await supabase.from('audit_logs').insert({
-      actor_type: 'system',
-      actor_user_id: null,
-      actor_label: 'payment-method-verify-recurring',
-      action: 'cron.secret.misconfigured',
-      meta: { error: 'CRON_SECRET env not set', timestamp: new Date().toISOString() },
-    });
-    return new Response(JSON.stringify({ error: 'Server misconfigured' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+  // Method 1: X-Cron-Secret (for pg_cron / GitHub Actions)
+  if (cronSecret && providedSecret === cronSecret) {
+    isAuthorized = true;
+    authMethod = 'cron_secret';
+    console.log('[SECURITY] Authorized via X-Cron-Secret');
+  }
+  
+  // Method 2: Admin JWT (for manual UI trigger)
+  if (!isAuthorized && authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    const { data: { user } } = await supabase.auth.getUser(token);
+    
+    if (user) {
+      // Check if user has admin role
+      const { data: adminCheck } = await supabase
+        .rpc('has_role', { _user_id: user.id, _role: 'admin' });
+      
+      if (adminCheck) {
+        isAuthorized = true;
+        authMethod = 'admin_jwt';
+        adminUserId = user.id;
+        console.log('[SECURITY] Authorized via admin JWT:', user.id);
+      } else {
+        // Also check super_admin
+        const { data: superAdminCheck } = await supabase
+          .rpc('has_role', { _user_id: user.id, _role: 'super_admin' });
+        
+        if (superAdminCheck) {
+          isAuthorized = true;
+          authMethod = 'admin_jwt';
+          adminUserId = user.id;
+          console.log('[SECURITY] Authorized via super_admin JWT:', user.id);
+        }
+      }
+    }
   }
 
-  if (!providedSecret || providedSecret !== cronSecret) {
-    console.warn('[SECURITY] Invalid or missing X-Cron-Secret');
+  // Deny if not authorized
+  if (!isAuthorized) {
+    console.warn('[SECURITY] Authorization failed:', { 
+      hasCronSecret: !!cronSecret, 
+      hasProvidedSecret: !!providedSecret, 
+      hasAuthHeader: !!authHeader 
+    });
     await supabase.from('audit_logs').insert({
       actor_type: 'system',
       actor_user_id: null,
       actor_label: 'payment-method-verify-recurring',
-      action: 'cron.secret.invalid',
-      meta: { provided: !!providedSecret, timestamp: new Date().toISOString() },
+      action: 'cron.auth.failed',
+      meta: { 
+        auth_method: authMethod,
+        has_cron_secret: !!providedSecret,
+        has_jwt: !!authHeader,
+        timestamp: new Date().toISOString() 
+      },
     });
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,

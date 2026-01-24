@@ -174,6 +174,10 @@ export function ContactTelegramChat({
   const bottomRef = useRef<HTMLDivElement>(null);
   const didInitialScrollRef = useRef(false);
   const lastUserIdRef = useRef<string | null>(null);
+  
+  // Anti double-click protection for send button
+  const lastSendTimeRef = useRef<number>(0);
+  const SEND_DEBOUNCE_MS = 500;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -320,11 +324,37 @@ export function ContactTelegramChat({
         (payload) => {
           console.log("New message received:", payload);
           
-          // Single debounced refetch instead of 3 immediate calls
+          // FIX B: Remove temp messages that match the incoming real message
+          const newMsg = payload.new as any;
+          const msgText = (newMsg?.message_text || "").trim();
+          const msgTime = new Date(newMsg?.created_at || Date.now()).getTime();
+          
+          queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) => {
+            if (!old) return old;
+            
+            // Filter out temp messages that match the new real message
+            return old.filter(m => {
+              // Keep all non-temp messages
+              if (!m.id.startsWith('temp-')) return true;
+              
+              // For temp messages: remove if text matches AND within 10s window
+              const tempText = (m.message_text || "").trim();
+              const tempTime = new Date(m.created_at).getTime();
+              const textMatches = tempText === msgText || (tempText.startsWith("📎") && msgText === "");
+              const timeClose = Math.abs(tempTime - msgTime) < 10000; // 10s window
+              
+              if (textMatches && timeClose) {
+                console.log("[DEDUP] Removing temp message:", m.id, "replaced by real:", newMsg.id);
+                return false; // Remove temp
+              }
+              return true;
+            });
+          });
+          
+          // Single debounced refetch
           debouncedRefetch();
           
           // Auto-scroll only if user is at bottom OR it's an outgoing message
-          const newMsg = payload.new as any;
           const isFromAdmin = newMsg?.direction === "outgoing";
           
           setTimeout(() => {
@@ -540,6 +570,11 @@ export function ContactTelegramChat({
       );
     },
     onSuccess: () => {
+      // FIX B: Remove all temp messages BEFORE refetch to prevent duplicates
+      queryClient.setQueryData(["telegram-messages", userId], (old: TelegramMessage[] | undefined) =>
+        (old || []).filter(m => !m.id.startsWith('temp-'))
+      );
+      
       setMessage("");
       setSelectedFile(null);
       setSelectedFileType(null);
