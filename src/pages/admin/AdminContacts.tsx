@@ -931,68 +931,106 @@ export default function AdminContacts() {
     [sortedColumns]
   );
 
+  // Handle tab change for pill-style navigation
+  const handleTabChange = useCallback((tabId: string) => {
+    setActivePreset(tabId);
+    const preset = CONTACT_PRESETS.find(p => p.id === tabId);
+    if (preset) {
+      setActiveFilters(preset.filters);
+    }
+  }, [CONTACT_PRESETS]);
+
   return (
-    <div className="space-y-6 pb-24">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Users className="h-6 w-6" />
-            Контакты
-          </h1>
-          <p className="text-muted-foreground">Управление клиентами и их данными</p>
+    <div className="space-y-4 pb-24">
+      {/* Pill-style Tabs */}
+      <div className="px-1 pt-1 pb-1.5 shrink-0">
+        <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+          {CONTACT_PRESETS.map((preset) => {
+            const isActive = activePreset === preset.id;
+            return (
+              <button
+                key={preset.id}
+                onClick={() => handleTabChange(preset.id)}
+                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+                  isActive
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <span>{preset.label}</span>
+                {preset.count !== undefined && preset.count > 0 && (
+                  <Badge 
+                    className={`h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full ${
+                      preset.id === "duplicates" 
+                        ? "bg-destructive/20 text-destructive" 
+                        : "bg-primary/20 text-primary"
+                    }`}
+                  >
+                    {preset.count > 99 ? "99+" : preset.count}
+                  </Badge>
+                )}
+              </button>
+            );
+          })}
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
+      </div>
+
+      {/* Actions row */}
+      <div className="flex items-center justify-between flex-wrap gap-3 px-1">
+        <div className="flex items-center gap-2 flex-wrap">
           {((duplicateCount ?? 0) > 0 || computedDuplicateIds.size > 0) && (
             <Button 
-              variant="outline" 
+              variant="outline"
+              size="sm"
+              className="h-8"
               onClick={() => navigate("/admin/contacts/duplicates")}
-              className="relative"
             >
-              <Copy className="w-4 h-4 mr-2" />
+              <Copy className="w-3.5 h-3.5 mr-1.5" />
               Дубли
-              <Badge variant="destructive" className="ml-2 h-5 min-w-5 px-1.5 text-xs">
+              <Badge variant="destructive" className="ml-1.5 h-4 min-w-4 px-1 text-[10px]">
                 {duplicateCount && duplicateCount > 0 ? duplicateCount : computedDuplicateIds.size}
               </Badge>
             </Button>
           )}
           {contactsWithoutPhoto > 0 && (
             <Button 
-              variant="outline" 
+              variant="outline"
+              size="sm"
+              className="h-8"
               onClick={handleFetchPhotos}
               disabled={isFetchingPhotos}
             >
               {isFetchingPhotos ? (
-                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
               ) : (
-                <Camera className="w-4 h-4 mr-2" />
+                <Camera className="w-3.5 h-3.5 mr-1.5" />
               )}
-              Фото TG
-              <Badge variant="secondary" className="ml-2 h-5 min-w-5 px-1.5 text-xs">
+              Фото
+              <Badge variant="secondary" className="ml-1.5 h-4 min-w-4 px-1 text-[10px]">
                 {contactsWithoutPhoto}
               </Badge>
             </Button>
           )}
-          <Button variant="outline" onClick={() => setShowAmoCRMImport(true)}>
-            <FileSpreadsheet className="h-4 w-4 mr-2" />
-            Импорт amoCRM
+          <Button variant="outline" size="sm" className="h-8" onClick={() => setShowAmoCRMImport(true)}>
+            <FileSpreadsheet className="h-3.5 w-3.5 sm:mr-1.5" />
+            <span className="hidden sm:inline">amoCRM</span>
           </Button>
           {hasPermission("admins.manage") && (
             <>
-              <Button variant="outline" onClick={() => setShowTelegramCleanup(true)}>
-                <Sparkles className="h-4 w-4 mr-2" />
-                Очистить TG
+              <Button variant="outline" size="sm" className="h-8" onClick={() => setShowTelegramCleanup(true)}>
+                <Sparkles className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="outline" onClick={() => setShowDemoCleanup(true)}>
-                <Trash className="h-4 w-4 mr-2" />
-                Удалить Demo
+              <Button variant="outline" size="sm" className="h-8" onClick={() => setShowDemoCleanup(true)}>
+                <Trash className="h-3.5 w-3.5" />
               </Button>
             </>
           )}
           <Button
             variant="outline"
+            size="sm"
+            className="h-8"
             onClick={async () => {
-              toast.info("Запускаем массовый анализ лояльности...");
+              toast.info("Запускаем анализ лояльности...");
               try {
                 const { data, error } = await supabase.functions.invoke("analyze-all-loyalty", {
                   body: { limit: 50, offset: 0 },
@@ -1005,12 +1043,10 @@ export default function AdminContacts() {
               }
             }}
           >
-            <Sparkles className="h-4 w-4" />
-            <span className="hidden sm:inline ml-2">Лояльность</span>
+            <Sparkles className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="outline" onClick={() => refetch()}>
-            <RefreshCw className="h-4 w-4" />
-            <span className="hidden sm:inline ml-2">Обновить</span>
+          <Button variant="outline" size="sm" className="h-8" onClick={() => refetch()}>
+            <RefreshCw className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>

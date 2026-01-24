@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -7,7 +7,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+// Tabs removed - using pill-style tabs now
 import {
   Table,
   TableBody,
@@ -205,119 +205,149 @@ export default function AdminContent() {
     );
   }
 
+  // Tab counts for badges
+  const tabCounts = useMemo(() => ({
+    all: items.length,
+    article: items.filter(i => i.type === "article").length,
+    video: items.filter(i => i.type === "video").length,
+    course: items.filter(i => i.type === "course").length,
+  }), [items]);
+
+  const contentTabs = [
+    { id: "all", label: "Все", count: tabCounts.all },
+    { id: "article", label: "Статьи", count: tabCounts.article },
+    { id: "video", label: "Видео", count: tabCounts.video },
+    { id: "course", label: "Курсы", count: tabCounts.course },
+  ];
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Управление контентом</h1>
-        <div className="flex items-center gap-4">
-          <div className="relative w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Поиск..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-            />
-          </div>
-          {canEdit && (
-            <Button onClick={() => openEditDialog(null)}>
-              <Plus className="w-4 h-4 mr-2" />
-              Добавить
-            </Button>
-          )}
+    <div className="space-y-4">
+      {/* Pill-style Tabs */}
+      <div className="px-1 pt-1 pb-1.5 shrink-0">
+        <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+          {contentTabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+                  isActive
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <span>{tab.label}</span>
+                {tab.count > 0 && (
+                  <Badge className="h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full bg-primary/20 text-primary">
+                    {tab.count}
+                  </Badge>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="all">Все ({items.length})</TabsTrigger>
-          <TabsTrigger value="article">Статьи ({items.filter(i => i.type === "article").length})</TabsTrigger>
-          <TabsTrigger value="video">Видео ({items.filter(i => i.type === "video").length})</TabsTrigger>
-          <TabsTrigger value="course">Курсы ({items.filter(i => i.type === "course").length})</TabsTrigger>
-        </TabsList>
+      {/* Actions row */}
+      <div className="flex items-center justify-between gap-3 px-1">
+        <div className="relative flex-1 max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Поиск..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 h-9"
+          />
+        </div>
+        {canEdit && (
+          <Button size="sm" className="h-8" onClick={() => openEditDialog(null)}>
+            <Plus className="w-3.5 h-3.5 mr-1.5" />
+            Добавить
+          </Button>
+        )}
+      </div>
 
-        <TabsContent value={activeTab} className="mt-4">
-          <GlassCard>
-            {filteredContent.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                {search ? "Ничего не найдено" : "Контент пока не добавлен"}
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Название</TableHead>
-                    <TableHead>Тип</TableHead>
-                    <TableHead>Статус</TableHead>
-                    <TableHead>Доступ</TableHead>
-                    <TableHead>Обновлен</TableHead>
-                    <TableHead className="w-[150px]">Действия</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredContent.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-medium">{item.title}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          {getTypeIcon(item.type)}
-                          <span>{getTypeName(item.type)}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>{getStatusBadge(item.status)}</TableCell>
-                      <TableCell>{getAccessBadge(item.access_level)}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {format(new Date(item.updated_at), "dd MMM yyyy HH:mm", { locale: ru })}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          {canEdit && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => openEditDialog(item)}
-                            >
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                          )}
-                          {canPublish && item.status !== "published" && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handlePublish(item)}
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
-                          )}
-                          {canPublish && item.status === "published" && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleHide(item)}
-                            >
-                              <EyeOff className="w-4 h-4" />
-                            </Button>
-                          )}
-                          {canEdit && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive hover:text-destructive"
-                              onClick={() => setDeleteDialog({ open: true, item })}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </GlassCard>
-        </TabsContent>
-      </Tabs>
+      {/* Content Table */}
+      <GlassCard>
+        {filteredContent.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            {search ? "Ничего не найдено" : "Контент пока не добавлен"}
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Название</TableHead>
+                <TableHead>Тип</TableHead>
+                <TableHead>Статус</TableHead>
+                <TableHead>Доступ</TableHead>
+                <TableHead>Обновлен</TableHead>
+                <TableHead className="w-[150px]">Действия</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredContent.map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell className="font-medium">{item.title}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      {getTypeIcon(item.type)}
+                      <span>{getTypeName(item.type)}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>{getStatusBadge(item.status)}</TableCell>
+                  <TableCell>{getAccessBadge(item.access_level)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {format(new Date(item.updated_at), "dd MMM yyyy HH:mm", { locale: ru })}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      {canEdit && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openEditDialog(item)}
+                        >
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {canPublish && item.status !== "published" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handlePublish(item)}
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {canPublish && item.status === "published" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleHide(item)}
+                        >
+                          <EyeOff className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {canEdit && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setDeleteDialog({ open: true, item })}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
 
       <Dialog open={editDialog.open} onOpenChange={(open) => setEditDialog({ ...editDialog, open })}>
         <DialogContent className="sm:max-w-[600px]">

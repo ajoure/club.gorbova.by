@@ -174,112 +174,86 @@ export default function AdminSubscriptionsV2() {
     );
   });
 
+  // Tab definitions for pill-style navigation
+  const subscriptionTabs = useMemo(() => [
+    { id: "all", label: "Все", count: stats?.total || 0 },
+    { id: "active", label: "Активные", count: stats?.active || 0 },
+    { id: "trial", label: "Триал", count: stats?.trial || 0 },
+    { id: "past_due", label: "Просрочено", count: stats?.pastDue || 0, isDestructive: true },
+    { id: "active_no_card", label: "Без карты", count: stats?.activeWithoutCard || 0, isDestructive: true },
+  ], [stats]);
+
   return (
     <AdminLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Users className="h-6 w-6" />
-              Подписки v2
-            </h1>
-            <p className="text-muted-foreground">Управление подписками и доступами</p>
+      <div className="space-y-4">
+        {/* Pill-style Tabs */}
+        <div className="px-1 pt-1 pb-1.5 shrink-0">
+          <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+            {subscriptionTabs.map((tab) => {
+              const isActive = statusFilter === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setStatusFilter(tab.id)}
+                  className={cn(
+                    "relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap",
+                    isActive
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  <span className="sm:hidden">{tab.label.slice(0, 3)}</span>
+                  {tab.count > 0 && (
+                    <Badge 
+                      className={cn(
+                        "h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full",
+                        tab.isDestructive 
+                          ? "bg-destructive/20 text-destructive" 
+                          : "bg-primary/20 text-primary"
+                      )}
+                    >
+                      {tab.count > 99 ? "99+" : tab.count}
+                    </Badge>
+                  )}
+                </button>
+              );
+            })}
           </div>
-          <Button variant="outline" onClick={() => refetch()}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Обновить
-          </Button>
         </div>
 
-        {/* Stats */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Всего подписок
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats?.total || 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Активных
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-green-600">{stats?.active || 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Trial
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-blue-600">{stats?.trial || 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Просрочено
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-amber-600">{stats?.pastDue || 0}</div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="relative flex-1">
+        {/* Actions row */}
+        <div className="flex items-center justify-between gap-3 px-1 flex-wrap">
+          <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Поиск по имени, email, продукту..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
+              className="pl-9 h-9"
             />
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[200px]">
-              <Filter className="h-4 w-4 mr-2" />
-              <SelectValue placeholder="Статус" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Все статусы</SelectItem>
-              <SelectItem value="active_no_card" className="text-amber-600">
-                🚨 Активные без карты ({stats?.activeWithoutCard || 0})
-              </SelectItem>
-              <SelectItem value="trial_no_card" className="text-blue-600">
-                ⚠️ Триалы без карты ({stats?.trialsWithoutCard || 0})
-              </SelectItem>
-              {Object.entries(SUBSCRIPTION_STATUS_CONFIG).map(([value, { label }]) => (
-                <SelectItem key={value} value={value}>{label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {(statusFilter === "active_no_card" || statusFilter === "trial_no_card") && (
-            <Button
-              variant="outline"
-              onClick={handleSendRecoveryPush}
-              disabled={sendingRecovery}
-              className="shrink-0"
-            >
-              {sendingRecovery ? (
-                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4 mr-2" />
-              )}
-              Отправить напоминание о цене
+          <div className="flex items-center gap-2">
+            {(statusFilter === "active_no_card" || statusFilter === "trial_no_card") && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={handleSendRecoveryPush}
+                disabled={sendingRecovery}
+              >
+                {sendingRecovery ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin sm:mr-1.5" />
+                ) : (
+                  <Send className="h-3.5 w-3.5 sm:mr-1.5" />
+                )}
+                <span className="hidden sm:inline">Напоминание</span>
+              </Button>
+            )}
+            <Button variant="outline" size="sm" className="h-8" onClick={() => refetch()}>
+              <RefreshCw className="h-3.5 w-3.5" />
             </Button>
-          )}
+          </div>
         </div>
 
         {/* Subscriptions table */}

@@ -252,47 +252,45 @@ export default function AdminPayments() {
 
   return (
     <AdminLayout>
-      <div className="container mx-auto p-4 space-y-6">
-        {/* Header */}
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold">Платежи</h1>
-            <p className="text-muted-foreground">
-              Все транзакции bePaid в единой таблице
-            </p>
+      <div className="container mx-auto p-4 space-y-4">
+        {/* Pill-style Tabs for status */}
+        <div className="px-1 pt-1 pb-1.5 shrink-0">
+          <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+            {[
+              { id: "successful_and_refunds", label: "Успешные" },
+              { id: "all", label: "Все" },
+              { id: "failed", label: "Ошибки" },
+            ].map((tab) => {
+              const isActive = filters.status === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setFilters(prev => ({ ...prev, status: tab.id }))}
+                  className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+                    isActive
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
         
-        {/* Toolbar - responsive: 2 rows on mobile */}
-        <div className="flex flex-col gap-3 p-3 rounded-xl bg-background/30 backdrop-blur-sm border border-border/20">
-          {/* Row 1: Period selector */}
-          <div className="flex flex-wrap items-center gap-3">
-            <DatePeriodSelector value={dateFilter} onChange={setDateFilter} />
-            <div className="flex-1 min-w-0" />
-            {/* Desktop: show buttons inline */}
-            <div className="hidden sm:flex items-center gap-2">
-              <Button variant="outline" onClick={handleBepaidSync} className="gap-2 h-9 bg-background/60">
-                <RefreshCw className="h-4 w-4" />
-                Синхронизировать
-              </Button>
-              <Button onClick={() => setImportDialogOpen(true)} className="gap-2 h-9">
-                <Upload className="h-4 w-4" />
-                Импорт
-              </Button>
-            </div>
-          </div>
-          {/* Row 2: Mobile buttons - full width */}
-          <div className="flex sm:hidden items-center gap-2">
-            <Button variant="outline" onClick={handleBepaidSync} className="flex-1 gap-2 h-9 bg-background/60">
-              <RefreshCw className="h-4 w-4" />
-              Sync
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-background/30 backdrop-blur-sm border border-border/20">
+          <DatePeriodSelector value={dateFilter} onChange={setDateFilter} />
+          <div className="flex-1 min-w-0" />
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-8" onClick={handleBepaidSync}>
+              <RefreshCw className="h-3.5 w-3.5 sm:mr-1.5" />
+              <span className="hidden sm:inline">Sync</span>
             </Button>
-            <Button onClick={() => setImportDialogOpen(true)} className="flex-1 gap-2 h-9">
-              <Upload className="h-4 w-4" />
-              Импорт
+            <Button size="sm" className="h-8" onClick={() => setImportDialogOpen(true)}>
+              <Upload className="h-3.5 w-3.5 sm:mr-1.5" />
+              <span className="hidden sm:inline">Импорт</span>
             </Button>
           </div>
         </div>

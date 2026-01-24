@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -144,84 +144,70 @@ export default function AdminProductsV2() {
   const withDomain = products?.filter(p => (p as any).primary_domain).length || 0;
   const withClub = products?.filter(p => p.telegram_club_id).length || 0;
 
+  // Tabs for filtering products
+  const [activeTab, setActiveTab] = useState("all");
+  
+  const productTabs = [
+    { id: "all", label: "Все", count: products?.length || 0 },
+    { id: "active", label: "Активные", count: activeProducts },
+    { id: "with_club", label: "С клубом", count: withClub },
+    { id: "with_domain", label: "С доменом", count: withDomain },
+  ];
+  
+  const filteredProducts = useMemo(() => {
+    if (!products) return [];
+    switch (activeTab) {
+      case "active": return products.filter(p => p.is_active);
+      case "with_club": return products.filter(p => p.telegram_club_id);
+      case "with_domain": return products.filter(p => p.primary_domain);
+      default: return products;
+    }
+  }, [products, activeTab]);
+
   return (
     <AdminLayout>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold">Продукты</h1>
-            <p className="text-muted-foreground">
-              Управление продуктами, доменами и тарифами
-            </p>
+      <div className="space-y-4">
+        {/* Pill-style Tabs */}
+        <div className="px-1 pt-1 pb-1.5 shrink-0">
+          <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+            {productTabs.map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+                    isActive
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  {tab.count > 0 && (
+                    <Badge className="h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full bg-primary/20 text-primary">
+                      {tab.count}
+                    </Badge>
+                  )}
+                </button>
+              );
+            })}
           </div>
-          <Button onClick={() => handleOpenDialog()}>
-            <Plus className="h-4 w-4 mr-2" />
+        </div>
+
+        {/* Actions row */}
+        <div className="flex items-center justify-end gap-3 px-1">
+          <Button size="sm" className="h-8" onClick={() => handleOpenDialog()}>
+            <Plus className="h-3.5 w-3.5 mr-1.5" />
             Добавить продукт
           </Button>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="p-2 bg-primary/10 rounded-lg">
-                  <Package className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{products?.length || 0}</p>
-                  <p className="text-sm text-muted-foreground">Всего продуктов</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="p-2 bg-green-500/10 rounded-lg">
-                  <Package className="h-6 w-6 text-green-500" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{activeProducts}</p>
-                  <p className="text-sm text-muted-foreground">Активных</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="p-2 bg-blue-500/10 rounded-lg">
-                  <Globe className="h-6 w-6 text-blue-500" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{withDomain}</p>
-                  <p className="text-sm text-muted-foreground">С доменом</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-4">
-                <div className="p-2 bg-purple-500/10 rounded-lg">
-                  <Users className="h-6 w-6 text-purple-500" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{withClub}</p>
-                  <p className="text-sm text-muted-foreground">С Telegram клубом</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
         {/* Products Table */}
         <Card>
-          <CardHeader>
-            <CardTitle>Список продуктов</CardTitle>
-            <CardDescription>
-              Нажмите на продукт для настройки тарифов, кнопок оплаты и превью
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Список продуктов</CardTitle>
+            <CardDescription className="text-xs">
+              Нажмите на продукт для настройки тарифов
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -244,7 +230,7 @@ export default function AdminProductsV2() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {products.map((product: any) => (
+                  {filteredProducts.map((product: any) => (
                     <TableRow 
                       key={product.id}
                       className="cursor-pointer hover:bg-muted/50"

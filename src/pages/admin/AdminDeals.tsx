@@ -544,41 +544,70 @@ export default function AdminDeals() {
     setShowDeleteDialog(false);
   };
 
+  // Pill-style tabs for status filtering
+  const handleTabChange = useCallback((tabId: string) => {
+    setActivePreset(tabId);
+    const preset = DEAL_PRESETS.find(p => p.id === tabId);
+    if (preset) {
+      setActiveFilters(preset.filters);
+    }
+  }, [DEAL_PRESETS]);
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Handshake className="h-6 w-6" />
-            Сделки
-          </h1>
-          <p className="text-muted-foreground">Все заказы, подписки, триалы и ручные выдачи</p>
+    <div className="space-y-4">
+      {/* Pill-style Tabs */}
+      <div className="px-1 pt-1 pb-1.5 shrink-0">
+        <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+          {DEAL_PRESETS.map((preset) => {
+            const isActive = activePreset === preset.id;
+            return (
+              <button
+                key={preset.id}
+                onClick={() => handleTabChange(preset.id)}
+                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+                  isActive
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <span>{preset.label}</span>
+                {preset.count !== undefined && preset.count > 0 && (
+                  <Badge className="h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full bg-primary/20 text-primary">
+                    {preset.count > 99 ? "99+" : preset.count}
+                  </Badge>
+                )}
+              </button>
+            );
+          })}
         </div>
+      </div>
+
+      {/* Actions row */}
+      <div className="flex items-center justify-between flex-wrap gap-3 px-1">
         <div className="flex items-center gap-2 flex-wrap">
           <PeriodSelector value={dateFilter} onChange={setDateFilter} />
           {isSuperAdmin() && presetCounts.imported > 0 && (
             <Button 
               variant="outline" 
+              size="sm"
               onClick={() => setShowArchiveCleanupDialog(true)}
-              className="text-destructive hover:text-destructive gap-2"
+              className="text-destructive hover:text-destructive gap-1.5 h-8"
             >
-              <Trash2 className="h-4 w-4" />
+              <Trash2 className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Удалить архив</span>
             </Button>
           )}
-          <Button variant="outline" onClick={() => setShowImportWizard(true)}>
-            <Sparkles className="h-4 w-4 sm:mr-2" />
-            <span className="hidden sm:inline">Умный импорт</span>
+          <Button variant="outline" size="sm" className="h-8" onClick={() => setShowImportWizard(true)}>
+            <Sparkles className="h-3.5 w-3.5 sm:mr-1.5" />
+            <span className="hidden sm:inline">Импорт</span>
           </Button>
-          <Button variant="outline" onClick={() => {
+          <Button variant="outline" size="sm" className="h-8" onClick={() => {
             queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
             queryClient.invalidateQueries({ queryKey: ["profiles-map"] });
             queryClient.invalidateQueries({ queryKey: ["products-filter"] });
             toast.success("Данные обновлены");
           }}>
-            <RefreshCw className="h-4 w-4 sm:mr-2" />
-            <span className="hidden sm:inline">Обновить</span>
+            <RefreshCw className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>
@@ -592,35 +621,24 @@ export default function AdminDeals() {
         isLoading={isLoading}
       />
 
-      {/* Filters */}
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Поиск по номеру, email, телефону, продукту..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              data-form-type="other"
-              data-lpignore="true"
-              data-1p-ignore
-            />
-          </div>
+      {/* Search */}
+      <div className="flex flex-col sm:flex-row gap-3 px-1">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Поиск по номеру, email, телефону, продукту..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 h-9"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            data-form-type="other"
+            data-lpignore="true"
+            data-1p-ignore
+          />
         </div>
-        
-        <QuickFilters
-          presets={DEAL_PRESETS}
-          fields={DEAL_FILTER_FIELDS}
-          activeFilters={activeFilters}
-          onFiltersChange={setActiveFilters}
-          activePreset={activePreset}
-          onPresetChange={setActivePreset}
-        />
       </div>
 
       {/* Stats line */}

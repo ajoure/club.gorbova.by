@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+// Tabs removed - using pill-style tabs
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -153,111 +153,107 @@ export default function AdminInstallments() {
     }).length,
   };
 
+  // Tab definitions for pill-style navigation
+  const installmentTabs = [
+    { id: "pending", label: "Ожидают", icon: Clock, count: stats.pending },
+    { id: "overdue", label: "Просрочены", icon: AlertTriangle, count: stats.overdue, isDestructive: true },
+    { id: "succeeded", label: "Оплачены", icon: Check, count: 0 },
+    { id: "cancelled", label: "Не оплачено", icon: XCircle, count: 0 },
+    { id: "forgiven", label: "Прощено", icon: Gift, count: 0 },
+    { id: "all", label: "Все", count: 0 },
+  ];
+
   return (
     <AdminLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <CreditCard className="h-6 w-6" />
-              Рассрочки
-            </h1>
-            <p className="text-muted-foreground">Управление графиками платежей</p>
+      <div className="space-y-4">
+        {/* Pill-style Tabs */}
+        <div className="px-1 pt-1 pb-1.5 shrink-0">
+          <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+            {installmentTabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    "relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap",
+                    isActive
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {Icon && <Icon className="h-3.5 w-3.5" />}
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  {tab.count > 0 && (
+                    <Badge 
+                      className={cn(
+                        "h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full",
+                        tab.isDestructive 
+                          ? "bg-destructive/20 text-destructive" 
+                          : "bg-primary/20 text-primary"
+                      )}
+                    >
+                      {tab.count > 99 ? "99+" : tab.count}
+                    </Badge>
+                  )}
+                </button>
+              );
+            })}
           </div>
-          <div className="flex gap-2">
+        </div>
+
+        {/* Actions row */}
+        <div className="flex items-center justify-between gap-3 px-1 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant="outline"
               size="sm"
+              className="h-8"
               onClick={() => refetch()}
-              className="gap-1.5"
             >
-              <RefreshCw className="h-4 w-4" />
-              Обновить
+              <RefreshCw className="h-3.5 w-3.5 sm:mr-1.5" />
+              <span className="hidden sm:inline">Обновить</span>
             </Button>
             <Button
               size="sm"
+              className="h-8"
               onClick={() => runCronMutation.mutate()}
               disabled={runCronMutation.isPending}
-              className="gap-1.5"
             >
               {runCronMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin sm:mr-1.5" />
               ) : (
-                <Zap className="h-4 w-4" />
+                <Zap className="h-3.5 w-3.5 sm:mr-1.5" />
               )}
-              Списать все просроченные
+              <span className="hidden sm:inline">Списать просроченные</span>
             </Button>
+          </div>
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Поиск по имени, email..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 h-9"
+            />
           </div>
         </div>
 
         {/* Stats */}
         {installments && <InstallmentStats installments={installments} />}
 
-        {/* Main content */}
+        {/* Content */}
         <Card>
-          <CardHeader className="pb-3">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="h-5 w-5" />
-                График платежей
-              </CardTitle>
-              <div className="relative w-full sm:w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Поиск по имени, email..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9"
-                />
+          <CardContent className="pt-4">
+            {isLoading ? (
+              <div className="space-y-2">
+                {[...Array(5)].map((_, i) => (
+                  <Skeleton key={i} className="h-16 w-full" />
+                ))}
               </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="mb-4">
-                <TabsTrigger value="pending" className="gap-1.5">
-                  <Clock className="h-3.5 w-3.5" />
-                  Ожидают
-                  {stats.pending > 0 && (
-                    <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
-                      {stats.pending}
-                    </Badge>
-                  )}
-                </TabsTrigger>
-                <TabsTrigger value="overdue" className="gap-1.5">
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  Просрочены
-                  {stats.overdue > 0 && (
-                    <Badge variant="destructive" className="ml-1 h-5 px-1.5 text-xs">
-                      {stats.overdue}
-                    </Badge>
-                  )}
-                </TabsTrigger>
-                <TabsTrigger value="succeeded" className="gap-1.5">
-                  <Check className="h-3.5 w-3.5" />
-                  Оплачены
-                </TabsTrigger>
-                <TabsTrigger value="cancelled" className="gap-1.5">
-                  <XCircle className="h-3.5 w-3.5" />
-                  Не оплачено
-                </TabsTrigger>
-                <TabsTrigger value="forgiven" className="gap-1.5">
-                  <Gift className="h-3.5 w-3.5" />
-                  Прощено
-                </TabsTrigger>
-                <TabsTrigger value="all">Все</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value={activeTab} className="mt-0">
-                {isLoading ? (
-                  <div className="space-y-2">
-                    {[...Array(5)].map((_, i) => (
-                      <Skeleton key={i} className="h-16 w-full" />
-                    ))}
-                  </div>
-                ) : filteredInstallments && filteredInstallments.length > 0 ? (
-                  <div className="rounded-lg border overflow-hidden">
+            ) : filteredInstallments && filteredInstallments.length > 0 ? (
+              <div className="rounded-lg border overflow-hidden">
                     <Table>
                       <TableHeader>
                         <TableRow className="bg-muted/50">
@@ -424,8 +420,6 @@ export default function AdminInstallments() {
                     <p className="text-sm">Платежи появятся здесь при оформлении рассрочек</p>
                   </div>
                 )}
-              </TabsContent>
-            </Tabs>
           </CardContent>
         </Card>
       </div>
