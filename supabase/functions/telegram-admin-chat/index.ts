@@ -12,7 +12,7 @@ interface FileData {
 }
 
 interface ChatAction {
-  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs";
+  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls";
   user_id?: string;
   message?: string;
   file?: FileData;
@@ -20,6 +20,7 @@ interface ChatAction {
   limit?: number;
   message_id?: number;
   db_message_id?: string;
+  message_ids?: string[]; // For get_media_urls action
 }
 
 async function fetchAndSaveTelegramPhoto(
@@ -566,55 +567,83 @@ Deno.serve(async (req) => {
                  mime.includes("text/");
         };
 
-        // Helper to generate signed URL for a message
-        const enrichMessageWithSignedUrl = async (msg: any) => {
-          const meta = msg.meta || {};
-          
-          // If we have storage_path, create signed URL
-          if (meta.storage_bucket && meta.storage_path) {
-            try {
-              // PDF: inline preview (download: false)
-              // Other documents (DOCX/XLSX/CSV): forced download for mobile compatibility
-              // Media (photo/video): no forced download
-              const signedOptions = isPdfLike(meta) 
-                ? { download: false }
-                : isDocLike(meta) 
-                  ? { download: meta.file_name || "file" }
-                  : undefined;
-              
-              const { data: signedData, error: signedError } = await supabase.storage
-                .from(meta.storage_bucket)
-                .createSignedUrl(meta.storage_path, 3600, signedOptions as any); // 1 hour
-              
-              if (signedData && !signedError) {
-                meta.file_url = signedData.signedUrl;
-                
-                // AUDIT LOG: signed URL issued (BLOCKER B)
-                try {
-                  await supabase.from('audit_logs').insert({
-                    actor_type: 'system',
-                    actor_user_id: null,
-                    actor_label: 'telegram-signed-url',
-                    action: 'telegram_media_signed_url_issued',
-                    meta: {
-                      message_id: msg.id ?? null,
-                      storage_bucket: meta.storage_bucket ?? null,
-                      storage_path: meta.storage_path ?? null,
-                      ttl_seconds: 3600,
-                      file_type: meta.file_type ?? null
-                    }
-                  });
-                } catch (auditErr) {
-                  console.error('[telegram-admin-chat] audit_logs signed url insert failed', auditErr);
-                }
-              }
-            } catch (e) {
-              console.error("Error creating signed URL:", e);
+        // === OPTIMIZED BATCH SIGNED URL GENERATION ===
+        // P2: Parallel processing with concurrency limit, single batch audit log
+        const CONCURRENCY_LIMIT = 10;
+        const BUDGET_MS = 2000; // 2 second timeout budget
+
+        const enrichMessagesWithSignedUrls = async (messages: any[]) => {
+          const startMs = Date.now();
+          let urlCount = 0;
+          let errorCount = 0;
+
+          // Filter messages that need URL generation
+          const needsUrl = messages.filter(m => {
+            const meta = m.meta || {};
+            return meta.storage_bucket && meta.storage_path && !meta.file_url;
+          });
+
+          // Process in batches with concurrency limit
+          for (let i = 0; i < needsUrl.length; i += CONCURRENCY_LIMIT) {
+            // Check timeout budget
+            if (Date.now() - startMs > BUDGET_MS) {
+              console.log(`[ENRICH] Timeout budget exceeded after ${i} messages`);
+              break;
             }
+
+            const batch = needsUrl.slice(i, i + CONCURRENCY_LIMIT);
+            await Promise.all(
+              batch.map(async (msg) => {
+                const meta = msg.meta || {};
+                try {
+                  const signedOptions = isPdfLike(meta) 
+                    ? { download: false }
+                    : isDocLike(meta) 
+                      ? { download: meta.file_name || "file" }
+                      : undefined;
+
+                  const { data: signedData, error: signedError } = await supabase.storage
+                    .from(meta.storage_bucket)
+                    .createSignedUrl(meta.storage_path, 3600, signedOptions as any);
+
+                  if (signedData && !signedError) {
+                    meta.file_url = signedData.signedUrl;
+                    urlCount++;
+                  } else if (signedError) {
+                    errorCount++;
+                  }
+                } catch (e) {
+                  console.error("Error creating signed URL:", e);
+                  errorCount++;
+                }
+              })
+            );
           }
-          
-          console.log(`[ENRICH] msg=${msg.id} type=${meta.file_type} bucket=${meta.storage_bucket} path=${meta.storage_path} url_set=${!!meta.file_url}`);
-          return { ...msg, meta };
+
+          // Single batch audit log instead of per-URL logs (P2 optimization)
+          if (urlCount > 0 || errorCount > 0) {
+            const elapsedMs = Date.now() - startMs;
+            try {
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'telegram-admin-chat',
+                action: 'signed_urls_batch',
+                meta: {
+                  count: urlCount,
+                  errors: errorCount,
+                  ms: elapsedMs,
+                  user_id: user_id
+                }
+              });
+            } catch (auditErr) {
+              console.error('[telegram-admin-chat] batch audit log failed', auditErr);
+            }
+            
+            console.log(`[ENRICH] Batch complete: ${urlCount} URLs generated, ${errorCount} errors, ${elapsedMs}ms`);
+          }
+
+          return messages;
         };
 
         if (messagesError) {
@@ -657,14 +686,13 @@ Deno.serve(async (req) => {
           
           const rawFallback = fallbackMessages || [];
           // Reverse to ASC for UI (oldest at top, newest at bottom), then enrich
-          const messagesAsc = [...rawFallback].reverse();
-          const enrichedMessages = await Promise.all(messagesAsc.map(async (m: any) => {
-            const withAdmin = {
-              ...m,
-              admin_profile: m.sent_by_admin ? adminProfiles[m.sent_by_admin] || { full_name: null, avatar_url: null } : null,
-            };
-            return enrichMessageWithSignedUrl(withAdmin);
+          const messagesAsc = [...rawFallback].reverse().map((m: any) => ({
+            ...m,
+            admin_profile: m.sent_by_admin ? adminProfiles[m.sent_by_admin] || { full_name: null, avatar_url: null } : null,
           }));
+          
+          // Use optimized batch enrichment
+          const enrichedMessages = await enrichMessagesWithSignedUrls(messagesAsc);
           
           // Debug for fallback branch
           const orderDebug = buildOrderDebug(rawFallback, enrichedMessages);
@@ -685,9 +713,9 @@ Deno.serve(async (req) => {
         }
 
         const rawMessages = messages || [];
-        // Reverse to ASC for UI (oldest at top, newest at bottom), then enrich
+        // Reverse to ASC for UI (oldest at top, newest at bottom), then enrich using optimized batch
         const messagesAsc = [...rawMessages].reverse();
-        const enrichedMessages = await Promise.all(messagesAsc.map(enrichMessageWithSignedUrl));
+        const enrichedMessages = await enrichMessagesWithSignedUrls(messagesAsc);
 
         // Debug: raw vs UI ordering proof + last5 url enrichment
         const orderDebug = buildOrderDebug(rawMessages, enrichedMessages);
@@ -1121,6 +1149,99 @@ Deno.serve(async (req) => {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
+      }
+
+      // P3: Lazy loading - get signed URLs for specific message IDs on demand
+      case "get_media_urls": {
+        const { message_ids } = payload;
+        
+        if (!Array.isArray(message_ids) || message_ids.length === 0) {
+          return new Response(JSON.stringify({ error: "message_ids array required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // STOP-guard: max 20 URLs per request
+        const safeIds = message_ids.slice(0, 20);
+        const startMs = Date.now();
+        const BUDGET_MS = 3000; // 3 second timeout
+        const CONCURRENCY = 5;
+
+        const { data: messages } = await supabase
+          .from("telegram_messages")
+          .select("id, meta")
+          .in("id", safeIds);
+
+        const results: Record<string, string | null> = {};
+        let urlCount = 0;
+        let errorCount = 0;
+
+        const isPdfLike = (meta: any) => {
+          const name = String(meta?.file_name || "").toLowerCase();
+          const mime = String(meta?.mime_type || "").toLowerCase();
+          return name.endsWith(".pdf") || mime === "application/pdf";
+        };
+
+        const isDocLike = (meta: any) => {
+          const ft = String(meta?.file_type || "").toLowerCase();
+          const mime = String(meta?.mime_type || "").toLowerCase();
+          return ft === "document" || 
+                 (mime.includes("application/") && !mime.includes("application/pdf")) || 
+                 mime.includes("text/");
+        };
+
+        // Process with concurrency limit
+        for (let i = 0; i < (messages || []).length; i += CONCURRENCY) {
+          if (Date.now() - startMs > BUDGET_MS) break;
+
+          const batch = (messages || []).slice(i, i + CONCURRENCY);
+          const batchResults = await Promise.all(
+            batch.map(async (msg: any) => {
+              const meta = msg.meta || {};
+              if (!meta.storage_bucket || !meta.storage_path) {
+                return { id: msg.id, url: null };
+              }
+              try {
+                const signedOptions = isPdfLike(meta) 
+                  ? { download: false }
+                  : isDocLike(meta) 
+                    ? { download: meta.file_name || "file" }
+                    : undefined;
+
+                const { data } = await supabase.storage
+                  .from(meta.storage_bucket)
+                  .createSignedUrl(meta.storage_path, 3600, signedOptions as any);
+                
+                if (data?.signedUrl) {
+                  urlCount++;
+                  return { id: msg.id, url: data.signedUrl };
+                }
+                return { id: msg.id, url: null };
+              } catch (e) {
+                errorCount++;
+                return { id: msg.id, url: null };
+              }
+            })
+          );
+          batchResults.forEach(r => { results[r.id] = r.url; });
+        }
+
+        // Single batch audit log
+        if (urlCount > 0 || errorCount > 0) {
+          try {
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_label: 'telegram-admin-chat',
+              action: 'lazy_media_urls_batch',
+              meta: { count: urlCount, errors: errorCount, ms: Date.now() - startMs, requested: safeIds.length }
+            });
+          } catch { /* ignore */ }
+        }
+
+        return new Response(JSON.stringify({ urls: results }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
       default:

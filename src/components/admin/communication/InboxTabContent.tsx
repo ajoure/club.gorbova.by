@@ -217,63 +217,53 @@ export function InboxTabContent() {
     },
   });
 
-  // Fetch dialogs with unread counts and related data
+  // === P1 OPTIMIZED: Use get_inbox_dialogs_v1 RPC instead of loading all messages ===
   const { data: dialogs = [], isLoading, refetch } = useQuery({
     queryKey: ["inbox-dialogs"],
     queryFn: async () => {
-      const { data: messages, error } = await supabase
-        .from("telegram_messages")
-        .select(`user_id, message_text, created_at, direction, is_read`)
-        .order("created_at", { ascending: false });
+      // Call optimized RPC that does server-side aggregation
+      const { data: rpcDialogs, error: rpcError } = await supabase
+        .rpc('get_inbox_dialogs_v1', { 
+          p_limit: 100, 
+          p_offset: 0,
+          p_search: null  // Search is done client-side for now
+        });
 
-      if (error) throw error;
+      if (rpcError) {
+        console.error("[Inbox] RPC error:", rpcError);
+        throw rpcError;
+      }
 
-      const dialogMap = new Map<string, {
-        user_id: string;
-        last_message: string;
-        last_message_at: string;
-        unread_count: number;
-      }>();
+      if (!rpcDialogs || rpcDialogs.length === 0) return [];
 
-      messages?.forEach((msg) => {
-        if (!msg.user_id) return;
-        const existing = dialogMap.get(msg.user_id);
-        if (!existing) {
-          dialogMap.set(msg.user_id, {
-            user_id: msg.user_id,
-            last_message: msg.message_text || "",
-            last_message_at: msg.created_at,
-            unread_count: msg.direction === "incoming" && !msg.is_read ? 1 : 0,
-          });
-        } else {
-          if (msg.direction === "incoming" && !msg.is_read) {
-            existing.unread_count++;
-          }
-        }
-      });
+      const userIds = rpcDialogs.map((d: any) => d.user_id);
 
-      const userIds = Array.from(dialogMap.keys());
-      if (userIds.length === 0) return [];
+      // Fetch profiles, orders, subscriptions IN PARALLEL (not sequentially)
+      const [profilesRes, ordersRes, subsRes] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id, user_id, full_name, email, phone, telegram_username, telegram_user_id, avatar_url")
+          .in("user_id", userIds),
+        supabase
+          .from("orders_v2")
+          .select("id, user_id, order_number, status, products_v2(name)")
+          .in("user_id", userIds)
+          .limit(500),
+        supabase
+          .from("subscriptions_v2")
+          .select("id, user_id, status, products_v2(name)")
+          .in("user_id", userIds)
+          .limit(500)
+      ]);
 
-      const { data: profiles } = await supabase
-        .from("profiles")
-        .select("id, user_id, full_name, email, phone, telegram_username, telegram_user_id, avatar_url")
-        .in("user_id", userIds);
+      const profiles = profilesRes.data || [];
+      const orders = ordersRes.data || [];
+      const subscriptions = subsRes.data || [];
 
-      const { data: orders } = await supabase
-        .from("orders_v2")
-        .select("id, user_id, order_number, status, products_v2(name)")
-        .in("user_id", userIds);
-
-      const { data: subscriptions } = await supabase
-        .from("subscriptions_v2")
-        .select("id, user_id, status, products_v2(name)")
-        .in("user_id", userIds);
-
-      const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
+      const profileMap = new Map(profiles.map(p => [p.user_id, p]));
       
       const ordersMap = new Map<string, any[]>();
-      orders?.forEach(o => {
+      orders.forEach(o => {
         const existing = ordersMap.get(o.user_id) || [];
         existing.push({
           id: o.id,
@@ -285,7 +275,7 @@ export function InboxTabContent() {
       });
 
       const subsMap = new Map<string, any[]>();
-      subscriptions?.forEach(s => {
+      subscriptions.forEach(s => {
         const existing = subsMap.get(s.user_id) || [];
         existing.push({
           id: s.id,
@@ -295,20 +285,24 @@ export function InboxTabContent() {
         subsMap.set(s.user_id, existing);
       });
 
-      const result: Dialog[] = Array.from(dialogMap.values()).map(d => ({
-        ...d,
+      // Map RPC result to Dialog interface
+      const result: Dialog[] = rpcDialogs.map((d: any) => ({
+        user_id: d.user_id,
+        last_message: d.last_message_text || (d.last_message_type ? `[${d.last_message_type}]` : ""),
+        last_message_at: d.last_message_at,
+        unread_count: Number(d.unread_count) || 0,
         profile: profileMap.get(d.user_id) || null,
         orders: ordersMap.get(d.user_id) || [],
         subscriptions: subsMap.get(d.user_id) || [],
       }));
 
-      result.sort((a, b) => 
-        new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()
-      );
-
+      // Already sorted by last_message_at DESC from RPC
       return result;
     },
     refetchInterval: 30000,
+    staleTime: 30000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const totalUnread = dialogs.reduce((sum, d) => sum + d.unread_count, 0);
