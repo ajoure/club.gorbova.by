@@ -847,14 +847,14 @@ export function InboxTabContent() {
                               </Tooltip>
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
+                                  <button
+                                    type="button"
+                                    disabled={dialog.unread_count === 0}
                                     className={cn(
-                                      "h-7 w-7 rounded-full transition-transform transition-colors duration-150",
-                                      dialog.unread_count > 0 
-                                        ? "hover:bg-primary/15 hover:scale-[1.04] active:scale-[0.98]" 
-                                        : "opacity-40 cursor-not-allowed hover:scale-100 hover:bg-transparent"
+                                      "h-7 w-7 rounded-full flex items-center justify-center transition-transform transition-colors duration-150",
+                                      dialog.unread_count > 0
+                                        ? "hover:bg-primary/15 hover:scale-[1.04] active:scale-[0.98]"
+                                        : "opacity-40 cursor-not-allowed disabled:hover:bg-transparent disabled:hover:scale-100 disabled:active:scale-100"
                                     )}
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -862,13 +862,12 @@ export function InboxTabContent() {
                                         markChatAsRead(dialog.user_id, e);
                                       }
                                     }}
-                                    disabled={dialog.unread_count === 0}
                                   >
                                     <Check className={cn(
                                       "h-4 w-4",
                                       dialog.unread_count > 0 ? "text-muted-foreground" : "text-muted-foreground/50"
                                     )} />
-                                  </Button>
+                                  </button>
                                 </TooltipTrigger>
                                 <TooltipContent side="left" className="text-xs">
                                   {dialog.unread_count > 0 ? "Прочитать" : "Уже прочитано"}
