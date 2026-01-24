@@ -519,8 +519,9 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
   const virtualizer = useVirtualizer({
     count: filteredDialogs.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 64,
+    estimateSize: () => 82,
     overscan: 5,
+    measureElement: (element) => element.getBoundingClientRect().height,
   });
   const selectAllChats = () => setSelectedChats(new Set(filteredDialogs.map(d => d.user_id)));
 
@@ -736,9 +737,10 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                       return (
                         <div
                           key={dialog.user_id}
+                          data-index={virtualRow.index}
+                          ref={virtualizer.measureElement}
                           className="absolute top-0 left-0 w-full px-1.5"
                           style={{
-                            height: `${virtualRow.size}px`,
                             transform: `translateY(${virtualRow.start}px)`,
                           }}
                         >
