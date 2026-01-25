@@ -24,6 +24,7 @@ import { NotificationStatusIndicators, NotificationLegend, type NotificationLog 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { usePermissions } from "@/hooks/usePermissions";
+import { BackfillSnapshotTool } from "./BackfillSnapshotTool";
 import {
   DndContext,
   closestCenter,
@@ -342,6 +343,9 @@ export function AutoRenewalsTabContent() {
   
   // Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  
+  // Backfill snapshot tool dialog state
+  const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
   
   // Column state with localStorage persistence
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
@@ -1210,6 +1214,13 @@ export function AutoRenewalsTabContent() {
                 <Wrench className="h-4 w-4 mr-2" />
                 Fix club billing dates
               </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => setBackfillDialogOpen(true)}
+                disabled={!hasPermission('subscriptions.edit')}
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Backfill recurring_snapshot
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           
@@ -1439,6 +1450,12 @@ export function AutoRenewalsTabContent() {
             )}
           </DialogContent>
         </Dialog>
+        
+        {/* Backfill recurring_snapshot Tool */}
+        <BackfillSnapshotTool 
+          open={backfillDialogOpen} 
+          onOpenChange={setBackfillDialogOpen} 
+        />
       </div>
     </TooltipProvider>
   );

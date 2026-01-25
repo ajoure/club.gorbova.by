@@ -109,6 +109,9 @@ Deno.serve(async (req) => {
       throw new Error(`Query error: ${queryError.message}`);
     }
 
+    // PATCH: Track how many rows were fetched before JS filtering
+    const fetchedCount = (allCandidates || []).length;
+
     // PATCH: Filter in JS - more reliable than JSON path filters
     // 1) Missing recurring_snapshot
     // 2) isLikelySubscription guard
@@ -133,8 +136,11 @@ Deno.serve(async (req) => {
     const totalCandidates = validCandidates.length;
     const toProcess = validCandidates.slice(0, batch_size);
 
+    // PATCH: Track if anomaly was logged
+    const anomalyLogged = totalCandidates > max_total;
+
     // PATCH: Anomaly detection - log if candidates exceed max_total
-    if (totalCandidates > max_total) {
+    if (anomalyLogged) {
       await supabaseAdmin.from('audit_logs').insert({
         action: 'admin.backfill_recurring_snapshot_anomaly',
         actor_type: 'system',
@@ -142,6 +148,7 @@ Deno.serve(async (req) => {
         actor_label: 'admin-backfill-recurring-snapshot',
         meta: {
           reason: 'candidates_exceeded_max_total',
+          fetched_count: fetchedCount,
           total_candidates: totalCandidates,
           max_total,
           batch_size,
@@ -162,6 +169,7 @@ Deno.serve(async (req) => {
         actor_label: 'admin-backfill-recurring-snapshot',
         meta: {
           dry_run: true,
+          fetched_count: fetchedCount,
           total_candidates: totalCandidates,
           batch_size,
           sample_ids: sampleIds,
@@ -174,12 +182,13 @@ Deno.serve(async (req) => {
         JSON.stringify({
           success: true,
           dry_run: true,
+          fetched_count: fetchedCount,
           total_candidates: totalCandidates,
           batch_size,
           would_process: toProcess.length,
           sample_ids: sampleIds,
           staff_excluded: staffUserIds.length,
-          anomaly_logged: totalCandidates > max_total,
+          anomaly_logged: anomalyLogged,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -231,6 +240,7 @@ Deno.serve(async (req) => {
       actor_label: 'admin-backfill-recurring-snapshot',
       meta: {
         dry_run: false,
+        fetched_count: fetchedCount,
         total_candidates: totalCandidates,
         batch_size,
         updated: results.updated,
@@ -246,6 +256,8 @@ Deno.serve(async (req) => {
       JSON.stringify({
         success: true,
         dry_run: false,
+        fetched_count: fetchedCount,
+        total_candidates: totalCandidates,
         ...results,
         remaining: totalCandidates - toProcess.length,
         staff_excluded: staffUserIds.length,
