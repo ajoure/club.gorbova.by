@@ -175,6 +175,7 @@ Deno.serve(async (req) => {
           sample_ids: sampleIds,
           staff_excluded: staffUserIds.length,
           requested_by_user_id: user.id,
+          remaining: totalCandidates - toProcess.length,
         },
       });
 
@@ -189,6 +190,7 @@ Deno.serve(async (req) => {
           sample_ids: sampleIds,
           staff_excluded: staffUserIds.length,
           anomaly_logged: anomalyLogged,
+          remaining: totalCandidates - toProcess.length,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );

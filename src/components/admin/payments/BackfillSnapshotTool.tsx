@@ -269,7 +269,7 @@ export function BackfillSnapshotTool({ open, onOpenChange }: BackfillSnapshotToo
               </div>
               <div>
                 <span className="text-muted-foreground">would_process:</span>{" "}
-                <span className="font-mono font-bold">{dryRunResult.would_process}</span>
+                <span className="font-mono font-bold">{dryRunResult.would_process ?? 0}</span>
               </div>
               <div>
                 <span className="text-muted-foreground">batch_size:</span>{" "}
@@ -277,7 +277,7 @@ export function BackfillSnapshotTool({ open, onOpenChange }: BackfillSnapshotToo
               </div>
               <div>
                 <span className="text-muted-foreground">remaining:</span>{" "}
-                <span className="font-mono">{dryRunResult.remaining}</span>
+                <span className="font-mono">{dryRunResult.remaining ?? 0}</span>
               </div>
               <div>
                 <span className="text-muted-foreground">staff_excluded:</span>{" "}
@@ -328,7 +328,7 @@ export function BackfillSnapshotTool({ open, onOpenChange }: BackfillSnapshotToo
               </div>
               <div>
                 <span className="text-muted-foreground">updated:</span>{" "}
-                <span className="font-mono font-bold text-green-500">{executeResult.updated}</span>
+                <span className="font-mono font-bold text-green-500">{executeResult.updated ?? 0}</span>
               </div>
               <div>
                 <span className="text-muted-foreground">failed:</span>{" "}
@@ -338,7 +338,7 @@ export function BackfillSnapshotTool({ open, onOpenChange }: BackfillSnapshotToo
               </div>
               <div>
                 <span className="text-muted-foreground">remaining:</span>{" "}
-                <span className="font-mono">{executeResult.remaining}</span>
+                <span className="font-mono">{executeResult.remaining ?? 0}</span>
               </div>
               <div>
                 <span className="text-muted-foreground">staff_excluded:</span>{" "}
@@ -392,7 +392,7 @@ export function BackfillSnapshotTool({ open, onOpenChange }: BackfillSnapshotToo
                         </Badge>
                       </TableCell>
                       <TableCell className="font-mono text-xs">
-                        {log.actor_user_id ?? <span className="text-muted-foreground italic">NULL</span>}
+                        {log.actor_user_id ?? "—"}
                       </TableCell>
                       <TableCell className="text-xs max-w-[150px] truncate">
                         {log.actor_label ?? "—"}
