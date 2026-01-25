@@ -5,12 +5,16 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Types
+// PATCH: Enhanced types with split sent/logged status
 interface ReminderResult {
   user_id: string;
   subscription_id: string;
+  order_id: string | null;
+  tariff_id: string | null;
   days_until_expiry: number;
   telegram_sent: boolean;
+  telegram_logged: boolean;
+  telegram_log_error: string | null;
   email_sent: boolean;
   error?: string;
   reminder_type?: string;
@@ -21,7 +25,7 @@ function formatCurrency(amount: number, currency: string = 'BYN'): string {
   return `${amount.toFixed(2)} ${currency}`;
 }
 
-// Send Telegram notification
+// PATCH: Send Telegram notification with enhanced logging
 async function sendTelegramReminder(
   supabase: any,
   userId: string,
@@ -31,8 +35,16 @@ async function sendTelegramReminder(
   daysLeft: number,
   amount: number,
   currency: string,
-  hasCard: boolean
-): Promise<boolean> {
+  hasCard: boolean,
+  subscriptionId: string,
+  orderId: string | null,
+  tariffId: string | null
+): Promise<{ sent: boolean; logged: boolean; logError: string | null }> {
+  let sent = false;
+  let logged = false;
+  let logError: string | null = null;
+  let message = '';
+
   try {
     const { data: profile } = await supabase
       .from('profiles')
@@ -41,7 +53,7 @@ async function sendTelegramReminder(
       .single();
 
     if (!profile?.telegram_user_id || profile.telegram_link_status !== 'active') {
-      return false;
+      return { sent: false, logged: false, logError: 'No Telegram linked' };
     }
 
     const { data: linkBot } = await supabase
@@ -52,7 +64,7 @@ async function sendTelegramReminder(
       .limit(1)
       .single();
 
-    if (!linkBot?.token) return false;
+    if (!linkBot?.token) return { sent: false, logged: false, logError: 'No link bot configured' };
 
     const userName = profile.full_name?.split(' ')[0] || 'Клиент';
     const formattedDate = expiryDate.toLocaleDateString('ru-RU', { 
@@ -60,7 +72,6 @@ async function sendTelegramReminder(
       month: 'long' 
     });
 
-    let message = '';
     const priceInfo = hasCard ? `\n💳 *Сумма к списанию:* ${formatCurrency(amount, currency)}` : '';
     const ctaUrl = hasCard 
       ? 'https://club.gorbova.by/purchases' 
@@ -135,9 +146,10 @@ ${userName}, это последнее напоминание.
       }
     }
 
-    if (!message) return false;
+    if (!message) return { sent: false, logged: false, logError: 'Invalid daysLeft' };
 
-    await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
+    // Send Telegram message
+    const response = await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -147,29 +159,57 @@ ${userName}, это последнее напоминание.
       }),
     });
 
-    // Log reminder sent
-    await supabase.from('telegram_logs').insert({
+    const result = await response.json();
+    sent = result.ok === true;
+
+    // PATCH: Log reminder with required action field and subscription binding
+    const { error: insertError } = await supabase.from('telegram_logs').insert({
+      action: 'SEND_REMINDER',  // NOT NULL required!
       event_type: `subscription_reminder_${daysLeft}d`,
       user_id: userId,
-      status: 'success',
-      payload: { days_left: daysLeft, product: productName },
+      status: sent ? 'success' : 'failed',
+      message_text: message,
+      meta: {
+        days_left: daysLeft,
+        product: productName,
+        tariff: tariffName,
+        subscription_id: subscriptionId,
+        order_id: orderId,
+        tariff_id: tariffId,
+        has_card: hasCard,
+        telegram_response: sent ? undefined : result,
+      },
     });
 
-    return true;
+    if (insertError) {
+      logError = insertError.message;
+      console.error('Failed to log telegram reminder:', insertError);
+    } else {
+      logged = true;
+    }
+
+    return { sent, logged, logError };
   } catch (err) {
     console.error('Failed to send Telegram reminder:', err);
-    return false;
+    return { sent: false, logged: false, logError: err instanceof Error ? err.message : 'Unknown error' };
   }
 }
 
-// PATCH 5: Send "No Card" warning
+// PATCH: Send "No Card" warning with enhanced logging
 async function sendNoCardWarning(
   supabase: any,
   userId: string,
   productName: string,
   accessEndAt: string,
-  daysLeft: number
-): Promise<boolean> {
+  daysLeft: number,
+  subscriptionId: string,
+  orderId: string | null,
+  tariffId: string | null
+): Promise<{ sent: boolean; logged: boolean; logError: string | null }> {
+  let sent = false;
+  let logged = false;
+  let logError: string | null = null;
+
   try {
     const { data: profile } = await supabase
       .from('profiles')
@@ -178,7 +218,7 @@ async function sendNoCardWarning(
       .single();
 
     if (!profile?.telegram_user_id || profile.telegram_link_status !== 'active') {
-      return false;
+      return { sent: false, logged: false, logError: 'No Telegram linked' };
     }
 
     const { data: linkBot } = await supabase
@@ -189,7 +229,7 @@ async function sendNoCardWarning(
       .limit(1)
       .single();
 
-    if (!linkBot?.token) return false;
+    if (!linkBot?.token) return { sent: false, logged: false, logError: 'No link bot configured' };
 
     const userName = profile.full_name?.split(' ')[0] || 'Клиент';
     const formattedDate = new Date(accessEndAt).toLocaleDateString('ru-RU', { 
@@ -212,7 +252,8 @@ ${userName}, через ${daysLeft} ${getDaysWord(daysLeft)} заканчива�
 Уделите 1 минуту сейчас — привяжите карту:
 🔗 [Привязать карту](https://club.gorbova.by/settings/payment-methods)`;
 
-    await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
+    // Send Telegram message
+    const response = await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -222,18 +263,38 @@ ${userName}, через ${daysLeft} ${getDaysWord(daysLeft)} заканчива�
       }),
     });
 
-    // Log no-card warning sent
-    await supabase.from('telegram_logs').insert({
+    const result = await response.json();
+    sent = result.ok === true;
+
+    // PATCH: Log no-card warning with required action field and subscription binding
+    const { error: insertError } = await supabase.from('telegram_logs').insert({
+      action: 'SEND_NO_CARD_WARNING',  // NOT NULL required!
       event_type: 'subscription_no_card_warning',
       user_id: userId,
-      status: 'success',
-      payload: { days_left: daysLeft, product: productName },
+      status: sent ? 'success' : 'failed',
+      message_text: message,
+      meta: {
+        days_left: daysLeft,
+        product: productName,
+        subscription_id: subscriptionId,
+        order_id: orderId,
+        tariff_id: tariffId,
+        access_end_at: accessEndAt,
+        telegram_response: sent ? undefined : result,
+      },
     });
 
-    return true;
+    if (insertError) {
+      logError = insertError.message;
+      console.error('Failed to log no-card warning:', insertError);
+    } else {
+      logged = true;
+    }
+
+    return { sent, logged, logError };
   } catch (err) {
     console.error('Failed to send no-card warning:', err);
-    return false;
+    return { sent: false, logged: false, logError: err instanceof Error ? err.message : 'Unknown error' };
   }
 }
 
@@ -420,6 +481,7 @@ Deno.serve(async (req) => {
 
     const now = new Date();
     const results: ReminderResult[] = [];
+    const logErrorsSample: { user_id: string; subscription_id: string; error: string }[] = [];
 
     // ============ STANDARD REMINDERS (7, 3, 1 days by access_end_at) ============
     for (const daysLeft of [7, 3, 1]) {
@@ -437,6 +499,7 @@ Deno.serve(async (req) => {
         .select(`
           id,
           user_id,
+          order_id,
           access_end_at,
           payment_token,
           tariff_id,
@@ -523,14 +586,18 @@ Deno.serve(async (req) => {
         const result: ReminderResult = {
           user_id: userId,
           subscription_id: sub.id,
+          order_id: sub.order_id,
+          tariff_id: sub.tariff_id,
           days_until_expiry: daysLeft,
           telegram_sent: false,
+          telegram_logged: false,
+          telegram_log_error: null,
           email_sent: false,
           reminder_type: 'expiry_reminder',
         };
 
-        // Send Telegram reminder
-        result.telegram_sent = await sendTelegramReminder(
+        // PATCH: Send Telegram reminder with enhanced logging
+        const telegramResult = await sendTelegramReminder(
           supabase,
           userId,
           productName,
@@ -539,8 +606,24 @@ Deno.serve(async (req) => {
           daysLeft,
           amount,
           currency,
-          hasCard
+          hasCard,
+          sub.id,
+          sub.order_id,
+          sub.tariff_id
         );
+
+        result.telegram_sent = telegramResult.sent;
+        result.telegram_logged = telegramResult.logged;
+        result.telegram_log_error = telegramResult.logError;
+
+        // Collect log errors for audit
+        if (telegramResult.logError && logErrorsSample.length < 20) {
+          logErrorsSample.push({
+            user_id: userId,
+            subscription_id: sub.id,
+            error: telegramResult.logError,
+          });
+        }
 
         // Send email reminder
         if (userEmail) {
@@ -559,12 +642,11 @@ Deno.serve(async (req) => {
         }
 
         results.push(result);
-        console.log(`Processed reminder for user ${userId}: Telegram=${result.telegram_sent}, Email=${result.email_sent}`);
+        console.log(`Processed reminder for user ${userId}: Telegram sent=${result.telegram_sent}, logged=${result.telegram_logged}, Email=${result.email_sent}`);
       }
     }
 
-    // ============ PATCH 5: NO-CARD WARNING ============
-    // Find subscriptions WITHOUT card, access expiring within 7 days, auto_renew=true
+    // ============ NO-CARD WARNING ============
     console.log('Checking for no-card warnings...');
     
     const sevenDaysFromNow = new Date(now);
@@ -575,6 +657,7 @@ Deno.serve(async (req) => {
       .select(`
         id,
         user_id,
+        order_id,
         access_end_at,
         tariff_id,
         tariffs (
@@ -607,32 +690,63 @@ Deno.serve(async (req) => {
       const accessEndAt = new Date(sub.access_end_at);
       const daysLeft = Math.ceil((accessEndAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-      const sent = await sendNoCardWarning(supabase, userId, productName, sub.access_end_at, daysLeft);
+      // PATCH: Send no-card warning with enhanced logging
+      const telegramResult = await sendNoCardWarning(
+        supabase, 
+        userId, 
+        productName, 
+        sub.access_end_at, 
+        daysLeft,
+        sub.id,
+        sub.order_id,
+        sub.tariff_id
+      );
+
+      // Collect log errors for audit
+      if (telegramResult.logError && logErrorsSample.length < 20) {
+        logErrorsSample.push({
+          user_id: userId,
+          subscription_id: sub.id,
+          error: telegramResult.logError,
+        });
+      }
 
       results.push({
         user_id: userId,
         subscription_id: sub.id,
+        order_id: sub.order_id,
+        tariff_id: sub.tariff_id,
         days_until_expiry: daysLeft,
-        telegram_sent: sent,
+        telegram_sent: telegramResult.sent,
+        telegram_logged: telegramResult.logged,
+        telegram_log_error: telegramResult.logError,
         email_sent: false,
         reminder_type: 'no_card_warning',
       });
 
-      console.log(`No-card warning for user ${userId}: sent=${sent}`);
+      console.log(`No-card warning for user ${userId}: sent=${telegramResult.sent}, logged=${telegramResult.logged}`);
     }
+
+    // PATCH: Collect detailed statistics by day
+    const reminders7d = results.filter(r => r.days_until_expiry === 7 && r.reminder_type === 'expiry_reminder');
+    const reminders3d = results.filter(r => r.days_until_expiry === 3 && r.reminder_type === 'expiry_reminder');
+    const reminders1d = results.filter(r => r.days_until_expiry === 1 && r.reminder_type === 'expiry_reminder');
+    const noCardWarnings = results.filter(r => r.reminder_type === 'no_card_warning');
 
     const summary = {
       source,
       run_at: now.toISOString(),
       total: results.length,
       expiry_reminders: results.filter(r => r.reminder_type === 'expiry_reminder').length,
-      no_card_warnings: results.filter(r => r.reminder_type === 'no_card_warning').length,
+      no_card_warnings: noCardWarnings.length,
       telegram_sent: results.filter(r => r.telegram_sent).length,
+      telegram_logged: results.filter(r => r.telegram_logged).length,
+      telegram_log_failed: results.filter(r => r.telegram_log_error).length,
       email_sent: results.filter(r => r.email_sent).length,
       results,
     };
 
-    // PATCH 7: SYSTEM ACTOR audit log
+    // PATCH: Enhanced SYSTEM ACTOR audit log with detailed 7/3/1 breakdown
     await supabase.from('audit_logs').insert({
       action: 'subscription.reminders_cron_completed',
       actor_type: 'system',
@@ -642,8 +756,41 @@ Deno.serve(async (req) => {
         source,
         run_at: now.toISOString(),
         total_processed: results.length,
+        
+        // PATCH: New detailed counts by day
+        reminders_7d_sent: reminders7d.filter(r => r.telegram_sent).length,
+        reminders_3d_sent: reminders3d.filter(r => r.telegram_sent).length,
+        reminders_1d_sent: reminders1d.filter(r => r.telegram_sent).length,
+        no_card_warnings_sent: noCardWarnings.filter(r => r.telegram_sent).length,
+        
+        // Legacy fields for compatibility
         expiry_reminders_sent: results.filter(r => r.reminder_type === 'expiry_reminder' && r.telegram_sent).length,
-        no_card_warnings_sent: results.filter(r => r.reminder_type === 'no_card_warning' && r.telegram_sent).length,
+        
+        // PATCH: Split sent/logged counts
+        telegram_sent_count: results.filter(r => r.telegram_sent).length,
+        telegram_logged_count: results.filter(r => r.telegram_logged).length,
+        telegram_log_failed_count: results.filter(r => r.telegram_log_error).length,
+        
+        // PATCH: Log errors sample (limit 20)
+        log_errors_sample: logErrorsSample.length > 0 ? logErrorsSample : undefined,
+        
+        // PATCH: Recipients lists (limit 50 each)
+        recipients_7d: reminders7d.filter(r => r.telegram_sent).slice(0, 50).map(r => ({ 
+          user_id: r.user_id, 
+          subscription_id: r.subscription_id 
+        })),
+        recipients_3d: reminders3d.filter(r => r.telegram_sent).slice(0, 50).map(r => ({ 
+          user_id: r.user_id, 
+          subscription_id: r.subscription_id 
+        })),
+        recipients_1d: reminders1d.filter(r => r.telegram_sent).slice(0, 50).map(r => ({ 
+          user_id: r.user_id, 
+          subscription_id: r.subscription_id 
+        })),
+        no_card_recipients: noCardWarnings.filter(r => r.telegram_sent).slice(0, 50).map(r => ({ 
+          user_id: r.user_id, 
+          subscription_id: r.subscription_id 
+        })),
       }
     });
 

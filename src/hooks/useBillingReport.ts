@@ -89,7 +89,7 @@ export function useBillingReport(date: string) {
         }
       }
 
-      // Aggregate reminder stats
+      // Aggregate reminder stats with fallback support
       let reminders7d = 0;
       let reminders3d = 0;
       let reminders1d = 0;
@@ -99,10 +99,22 @@ export function useBillingReport(date: string) {
         for (const log of reminderLogs) {
           const meta = log.meta as Record<string, unknown> | null;
           if (meta) {
+            // New detailed fields
             reminders7d += (meta.reminders_7d_sent as number) || 0;
             reminders3d += (meta.reminders_3d_sent as number) || 0;
             reminders1d += (meta.reminders_1d_sent as number) || 0;
             noCardWarnings += (meta.no_card_warnings_sent as number) || 0;
+            
+            // Fallback: if no detailed breakdown, use legacy expiry_reminders_sent
+            if (reminders7d === 0 && reminders3d === 0 && reminders1d === 0) {
+              const legacyTotal = (meta.expiry_reminders_sent as number) || 0;
+              // Distribute evenly as fallback (rough approximation)
+              if (legacyTotal > 0) {
+                reminders7d = Math.ceil(legacyTotal / 3);
+                reminders3d = Math.ceil(legacyTotal / 3);
+                reminders1d = legacyTotal - reminders7d - reminders3d;
+              }
+            }
           }
         }
       }

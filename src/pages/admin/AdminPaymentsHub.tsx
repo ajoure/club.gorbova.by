@@ -11,7 +11,7 @@ import { DiagnosticsTabContent } from "@/components/admin/payments/DiagnosticsTa
 
 const tabs = [
   { id: "transactions", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
-  { id: "installments", label: "Рассрочки", icon: CalendarClock, path: "/admin/payments/installments" },
+  { id: "installments", label: "Рассрочки и списания", icon: CalendarClock, path: "/admin/payments/installments" },
   { id: "preorders", label: "Предзаписи", icon: ClipboardList, path: "/admin/payments/preorders" },
   { id: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
 ];

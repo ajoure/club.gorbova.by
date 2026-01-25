@@ -440,15 +440,19 @@ interface ChargeResult {
   error?: string;
   payment_id?: string;
   amount_source?: string;
+  skipped?: boolean;
+  skip_reason?: string;
 }
 
-// PATCH 3: Check idempotency (6-hour cooldown)
-function isInCooldown(sub: any): boolean {
+// PATCH: Check if charge was already attempted today (UTC date comparison)
+function wasChargeAttemptedToday(sub: any): boolean {
   const lastAttempt = sub.meta?.last_charge_attempt_at;
   if (!lastAttempt) return false;
   
-  const hoursSinceLastAttempt = (Date.now() - new Date(lastAttempt).getTime()) / (1000 * 60 * 60);
-  return hoursSinceLastAttempt < 6;
+  const todayUtc = new Date().toISOString().split('T')[0]; // 'YYYY-MM-DD'
+  const lastAttemptDate = new Date(lastAttempt).toISOString().split('T')[0];
+  
+  return lastAttemptDate === todayUtc;
 }
 
 // Attempt to charge a subscription using saved payment token
@@ -458,12 +462,6 @@ async function chargeSubscription(
   bepaidConfig: any
 ): Promise<ChargeResult> {
   const { id, user_id, payment_token, payment_method_id, tariffs, next_charge_at, is_trial, order_id, tariff_id, meta: subMeta } = subscription;
-  
-  // PATCH 3: Idempotency check - skip if in cooldown
-  if (isInCooldown(subscription)) {
-    console.log(`Subscription ${id}: Cooldown active (last attempt < 6h ago), skipping`);
-    return { subscription_id: id, success: false, error: 'Cooldown: retry too soon' };
-  }
   
   // === CRITICAL FIX: Only charge if payment_method is linked and active ===
   if (!payment_method_id) {
@@ -479,21 +477,21 @@ async function chargeSubscription(
         }
       });
     } catch (notifyErr) {
-      console.error(`Failed to send card-link notification to user ${user_id}:`, notifyErr);
+      console.error(`Failed to send card-missing notification to user ${user_id}:`, notifyErr);
     }
     
-    return { subscription_id: id, success: false, error: 'No payment method linked - card not visible to user' };
+    return { subscription_id: id, success: false, error: 'No payment method linked', skipped: true, skip_reason: 'no_card' };
   }
   
-  // Verify payment method is active
-  const { data: paymentMethod } = await supabase
+  // Get payment method details
+  const { data: paymentMethod, error: pmError } = await supabase
     .from('payment_methods')
-    .select('id, status, provider_token')
+    .select('id, status, provider_token, last4, brand')
     .eq('id', payment_method_id)
     .single();
-  
-  if (!paymentMethod) {
-    console.log(`Subscription ${id}: payment_method ${payment_method_id} not found`);
+    
+  if (pmError || !paymentMethod) {
+    console.log(`Subscription ${id}: Failed to fetch payment_method ${payment_method_id}:`, pmError);
     return { subscription_id: id, success: false, error: 'Payment method not found' };
   }
   
@@ -543,7 +541,7 @@ async function chargeSubscription(
   let currency = 'BYN';
   let fullPaymentOfferId: string | null = null;
   let fullPaymentGcOfferId: string | null = null;
-  let amountSource: string = 'unknown'; // PATCH 5: Track amount source
+  let amountSource: string = 'unknown';
   
   // For trial subscriptions, get the linked auto_charge_offer_id and its amount
   if (is_trial) {
@@ -632,7 +630,7 @@ async function chargeSubscription(
     return { subscription_id: id, success: false, error: 'Invalid charge amount' };
   }
 
-  // PATCH 5: Log amount calculation
+  // Log amount calculation
   await supabase.from('audit_logs').insert({
     action: 'subscription.charge_amount_calculated',
     actor_type: 'system',
@@ -650,18 +648,6 @@ async function chargeSubscription(
   });
 
   console.log(`Charging subscription ${id}: ${amount} ${currency} (is_trial: ${is_trial}, source: ${amountSource})`);
-
-  // PATCH 3: Record attempt timestamp for idempotency
-  await supabase
-    .from('subscriptions_v2')
-    .update({
-      meta: {
-        ...(subMeta || {}),
-        last_charge_attempt_at: new Date().toISOString(),
-        last_charge_billing_period: next_charge_at,
-      }
-    })
-    .eq('id', id);
 
   const { data: payment, error: paymentError } = await supabase
     .from('payments_v2')
@@ -733,6 +719,8 @@ async function chargeSubscription(
     const chargeResult = await chargeResponse.json();
     console.log('bePaid charge result:', chargeResult);
 
+    const chargeAttemptAt = new Date().toISOString();
+
     if (chargeResult.transaction?.status === 'successful') {
       await supabase
         .from('payments_v2')
@@ -766,6 +754,7 @@ async function chargeSubscription(
       const nextChargeDate = new Date(newEndDate);
       nextChargeDate.setDate(nextChargeDate.getDate() - 3);
 
+      // PATCH: Update meta AFTER successful charge
       await supabase
         .from('subscriptions_v2')
         .update({
@@ -776,8 +765,12 @@ async function chargeSubscription(
           charge_attempts: 0,
           meta: {
             ...(subMeta || {}),
-            last_charge_attempt_at: new Date().toISOString(),
-            last_successful_charge_at: new Date().toISOString(),
+            last_charge_attempt_at: chargeAttemptAt,
+            last_charge_attempt_kind: 'charge',
+            last_charge_attempt_success: true,
+            last_charge_attempt_error: null,
+            last_charged_at: chargeAttemptAt,
+            last_successful_charge_at: chargeAttemptAt,
           }
         })
         .eq('id', id);
@@ -926,7 +919,7 @@ async function chargeSubscription(
         })
         .eq('id', payment.id);
 
-      // PATCH 6: Update subscription status - NO early revoke
+      // PATCH: Update meta AFTER failed charge attempt
       if (attempts >= maxAttempts) {
         // Check if access has also expired before revoking
         const accessEndAt = new Date(subscription.access_end_at);
@@ -941,8 +934,10 @@ async function chargeSubscription(
               charge_attempts: attempts,
               meta: {
                 ...(subMeta || {}),
-                last_charge_attempt_at: new Date().toISOString(),
-                last_charge_error: errorMsg,
+                last_charge_attempt_at: chargeAttemptAt,
+                last_charge_attempt_kind: 'charge',
+                last_charge_attempt_success: false,
+                last_charge_attempt_error: errorMsg,
               }
             })
             .eq('id', id);
@@ -962,8 +957,10 @@ async function chargeSubscription(
               charge_attempts: attempts,
               meta: {
                 ...(subMeta || {}),
-                last_charge_attempt_at: new Date().toISOString(),
-                last_charge_error: errorMsg,
+                last_charge_attempt_at: chargeAttemptAt,
+                last_charge_attempt_kind: 'charge',
+                last_charge_attempt_success: false,
+                last_charge_attempt_error: errorMsg,
                 max_attempts_reached: true,
               }
             })
@@ -978,8 +975,10 @@ async function chargeSubscription(
             charge_attempts: attempts,
             meta: {
               ...(subMeta || {}),
-              last_charge_attempt_at: new Date().toISOString(),
-              last_charge_error: errorMsg,
+              last_charge_attempt_at: chargeAttemptAt,
+              last_charge_attempt_kind: 'charge',
+              last_charge_attempt_success: false,
+              last_charge_attempt_error: errorMsg,
             }
           })
           .eq('id', id);
@@ -1023,6 +1022,20 @@ async function chargeSubscription(
       })
       .eq('id', payment.id);
 
+    // PATCH: Update meta AFTER exception
+    await supabase
+      .from('subscriptions_v2')
+      .update({
+        meta: {
+          ...(subMeta || {}),
+          last_charge_attempt_at: new Date().toISOString(),
+          last_charge_attempt_kind: 'charge',
+          last_charge_attempt_success: false,
+          last_charge_attempt_error: err instanceof Error ? err.message : 'Unknown error',
+        }
+      })
+      .eq('id', id);
+
     return { 
       subscription_id: id, 
       success: false, 
@@ -1048,12 +1061,18 @@ Deno.serve(async (req) => {
 
     const now = new Date();
     const nowIso = now.toISOString();
+    const todayUtc = nowIso.split('T')[0]; // 'YYYY-MM-DD'
+    
+    // PATCH: End of current day UTC (23:59:59.999Z) for due query
+    const endOfDay = new Date();
+    endOfDay.setUTCHours(23, 59, 59, 999);
+    const endOfDayIso = endOfDay.toISOString();
 
-    console.log(`Starting subscription charge job... Mode: ${mode}, Source: ${source}`);
+    console.log(`Starting subscription charge job... Mode: ${mode}, Source: ${source}, Today UTC: ${todayUtc}`);
 
     // PATCH 2: DRY-RUN mode - only diagnostics, no charges
     if (mode === 'dry_run') {
-      // Get due subscriptions with diagnostic info
+      // Get due subscriptions with diagnostic info - use end of day
       const { data: dueSubscriptions } = await supabase
         .from('subscriptions_v2')
         .select(`
@@ -1078,8 +1097,9 @@ Deno.serve(async (req) => {
             full_name
           )
         `)
-        .lte('next_charge_at', nowIso)
+        .lte('next_charge_at', endOfDayIso)
         .in('status', ['active', 'trial', 'past_due'])
+        .eq('auto_renew', true)
         .lt('charge_attempts', 3)
         .limit(100);
 
@@ -1094,7 +1114,7 @@ Deno.serve(async (req) => {
         payment_method_id: sub.payment_method_id,
         payment_method_status: sub.payment_methods?.status || null,
         has_token: !!sub.payment_methods?.provider_token,
-        amount: null, // Would need price lookup
+        amount: null,
         currency: 'BYN',
         user_email: sub.profiles?.email || null,
         user_name: sub.profiles?.full_name || null,
@@ -1124,26 +1144,36 @@ Deno.serve(async (req) => {
       });
     }
 
-    // EXECUTE mode - actually charge subscriptions
-    // Find subscriptions that need to be charged (with payment_method linked)
-    const { data: subscriptions, error: queryError } = await supabase
+    // ========== EXECUTE mode - actually charge subscriptions ==========
+    
+    // PATCH: Select ALL candidates due today (with or without card) for accurate statistics
+    const { data: allCandidates, error: queryError } = await supabase
       .from('subscriptions_v2')
       .select(`
         *,
         tariffs(id, name, access_days)
       `)
-      .lte('next_charge_at', nowIso)
+      .lte('next_charge_at', endOfDayIso)  // Use end of day instead of nowIso
       .in('status', ['active', 'trial', 'past_due'])
-      .not('payment_method_id', 'is', null)
+      .eq('auto_renew', true)
       .lt('charge_attempts', 3)
-      .limit(50); // STOP-condition: max 50 per run
+      .limit(100);
 
     if (queryError) {
       console.error('Query error:', queryError);
       throw queryError;
     }
 
-    console.log(`Found ${subscriptions?.length || 0} subscriptions to charge`);
+    // PATCH: Apply gate - filter out subscriptions already attempted today
+    const subscriptionsToProcess = (allCandidates || []).filter(sub => !wasChargeAttemptedToday(sub));
+    const skippedAlreadyAttempted = (allCandidates?.length || 0) - subscriptionsToProcess.length;
+
+    // PATCH: Separate with_card and no_card for statistics
+    const withCard = subscriptionsToProcess.filter(s => s.payment_method_id);
+    const noCard = subscriptionsToProcess.filter(s => !s.payment_method_id);
+
+    console.log(`Found ${allCandidates?.length || 0} total candidates, ${subscriptionsToProcess.length} after gate (skipped ${skippedAlreadyAttempted} already attempted today)`);
+    console.log(`With card: ${withCard.length}, No card: ${noCard.length}`);
 
     // Get bePaid config
     const { data: bepaidInstance } = await supabase
@@ -1158,7 +1188,21 @@ Deno.serve(async (req) => {
 
     const results: ChargeResult[] = [];
 
-    for (const sub of subscriptions || []) {
+    // PATCH: Add no_card subscriptions to results (don't attempt charge, just record)
+    for (const sub of noCard) {
+      // Don't update last_charge_attempt_at for no_card - they didn't attempt charge
+      results.push({ 
+        subscription_id: sub.id, 
+        success: false, 
+        error: 'No payment method linked',
+        skipped: true,
+        skip_reason: 'no_card',
+      });
+      console.log(`Subscription ${sub.id}: skipped (no card)`);
+    }
+
+    // PATCH: Charge only subscriptions WITH card
+    for (const sub of withCard) {
       const result = await chargeSubscription(supabase, sub, bepaidConfig);
       results.push(result);
       console.log(`Subscription ${sub.id}: ${result.success ? 'charged' : 'failed'} (${result.error || 'ok'})`);
@@ -1178,6 +1222,12 @@ Deno.serve(async (req) => {
       .limit(50);
 
     for (const sub of trialEnding || []) {
+      // Skip if already attempted today
+      if (wasChargeAttemptedToday(sub)) {
+        console.log(`Trial subscription ${sub.id}: skipped (already attempted today)`);
+        continue;
+      }
+      
       const tariff = sub.tariffs as any;
       
       if (tariff?.trial_auto_charge && sub.payment_method_id) {
@@ -1216,6 +1266,8 @@ Deno.serve(async (req) => {
           subscription_id: sub.id, 
           success: false, 
           error: 'Trial ended, no auto-charge or no card',
+          skipped: true,
+          skip_reason: 'trial_no_autocharge',
         });
       }
     }
@@ -1226,12 +1278,12 @@ Deno.serve(async (req) => {
       run_at: nowIso,
       total: results.length,
       success: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length,
-      no_card: results.filter(r => r.error?.includes('No payment')).length,
+      failed: results.filter(r => !r.success && !r.skipped).length,
+      no_card: results.filter(r => r.skip_reason === 'no_card').length,
       results,
     };
 
-    // PATCH 7: SYSTEM ACTOR audit log
+    // PATCH: Enhanced SYSTEM ACTOR audit log with new fields
     await supabase.from('audit_logs').insert({
       action: 'subscription.charge_cron_completed',
       actor_type: 'system',
@@ -1241,10 +1293,18 @@ Deno.serve(async (req) => {
         source,
         mode,
         run_at: nowIso,
-        total_processed: results.length,
+        today_utc: todayUtc,
+        // New detailed fields
+        total_candidates: allCandidates?.length || 0,
+        total_after_gate: subscriptionsToProcess.length,
+        skipped_already_attempted_count: skippedAlreadyAttempted,
+        charged_attempted_count: withCard.length,
+        no_card_count: noCard.length,
+        // Results
         success_count: results.filter(r => r.success).length,
-        failed_count: results.filter(r => !r.success).length,
-        no_card_count: results.filter(r => r.error?.includes('No payment')).length,
+        failed_count: results.filter(r => !r.success && !r.skipped).length,
+        // Legacy fields for compatibility
+        total_processed: results.length,
       }
     });
 
