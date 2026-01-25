@@ -353,13 +353,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           .rpc("admin_get_club_membership", { p_profile_id: contact.id });
         if (error) {
           // Don't throw on permission errors - just return null gracefully
-          console.error("Failed to get club membership:", error.message);
+          console.debug("Club membership not available:", error.message);
           return null;
         }
         // RPC returns array, take first row
         return data?.[0] ?? null;
       } catch (err) {
-        console.error("Club membership RPC error:", err);
+        console.debug("Club membership RPC unavailable:", err);
         return null;
       }
     },
