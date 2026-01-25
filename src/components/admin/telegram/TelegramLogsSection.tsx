@@ -34,6 +34,14 @@ const statusColors: Record<string, string> = {
   error: 'bg-red-500/20 text-red-700 border-red-500/30',
 };
 
+const REASON_LABELS: Record<string, string> = {
+  no_telegram_linked: 'Telegram не привязан',
+  no_link_bot_configured: 'Бот не настроен',
+  email_missing: 'Email отсутствует',
+  send_failed: 'Ошибка отправки',
+  log_insert_failed: 'Ошибка записи лога',
+};
+
 export function TelegramLogsSection() {
   const [searchQuery, setSearchQuery] = useState('');
   const [eventTypeFilter, setEventTypeFilter] = useState('all');
@@ -212,7 +220,7 @@ export function TelegramLogsSection() {
                       <TableCell className="text-xs max-w-[200px] truncate">
                         {reason && (
                           <Badge variant="secondary" className="mr-1 text-[10px]">
-                            {reason}
+                            {REASON_LABELS[reason] || reason}
                           </Badge>
                         )}
                         {log.error_message && (

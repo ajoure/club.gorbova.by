@@ -49,6 +49,14 @@ export const EVENT_LABELS: Record<string, string> = {
   "notifications.outbox_skipped": "Уведомление пропущено (дубль)",
   "notifications.outbox_retry": "Повторная отправка уведомления",
   
+  // ===== Напоминания о подписке =====
+  SEND_REMINDER: "Напоминание о подписке",
+  SEND_NO_CARD_WARNING: "Предупреждение: нет карты",
+  subscription_reminder_7d: "Напоминание (7 дней)",
+  subscription_reminder_3d: "Напоминание (3 дня)",
+  subscription_reminder_1d: "Напоминание (1 день)",
+  subscription_no_card_warning: "Предупреждение: нет карты",
+  
   // ===== Сообщения =====
   ADMIN_CHAT_MESSAGE: "Сообщение от администратора",
   ADMIN_CHAT_FILE: "Файл от администратора",

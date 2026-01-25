@@ -480,7 +480,70 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     enabled: !!contact?.user_id,
   });
 
-  // Fetch duplicate info
+  // Fetch notification events (telegram_logs + email_logs) for this contact
+  const { data: notificationEvents } = useQuery({
+    queryKey: ["contact-notification-events", contact?.user_id],
+    queryFn: async () => {
+      if (!contact?.user_id) return [];
+      
+      // Telegram notification logs
+      const { data: tgLogs } = await supabase
+        .from("telegram_logs")
+        .select("id, created_at, action, event_type, status, error_message, meta")
+        .eq("user_id", contact.user_id)
+        .in("action", ["SEND_REMINDER", "SEND_NO_CARD_WARNING"])
+        .order("created_at", { ascending: false })
+        .limit(30);
+      
+      // Email notification logs
+      const { data: emailLogs } = await supabase
+        .from("email_logs")
+        .select("id, created_at, status, error_message, meta")
+        .eq("user_id", contact.user_id)
+        .eq("direction", "outgoing")
+        .order("created_at", { ascending: false })
+        .limit(30);
+      
+      // Normalize status helper
+      const normalizeStatus = (raw: string | null): 'success' | 'skipped' | 'failed' => {
+        if (!raw) return 'failed';
+        const lower = raw.toLowerCase();
+        if (['success', 'ok', 'sent'].includes(lower)) return 'success';
+        if (['skipped'].includes(lower)) return 'skipped';
+        return 'failed';
+      };
+      
+      // Combine and normalize
+      const combined = [
+        ...(tgLogs || []).map(log => ({
+          id: log.id,
+          created_at: log.created_at,
+          channel: 'telegram' as const,
+          event_type: log.event_type || log.action,
+          status: normalizeStatus(log.status),
+          reason: (log.meta as any)?.reason,
+          error_message: log.error_message,
+          subscription_id: (log.meta as any)?.subscription_id,
+        })),
+        ...(emailLogs || []).map(log => ({
+          id: log.id,
+          created_at: log.created_at,
+          channel: 'email' as const,
+          event_type: (log.meta as any)?.event_type,
+          status: normalizeStatus(log.status),
+          reason: (log.meta as any)?.reason,
+          error_message: log.error_message,
+          subscription_id: (log.meta as any)?.subscription_id,
+        })),
+      ].filter(e => e.event_type?.startsWith('subscription_') || e.event_type === 'SEND_REMINDER' || e.event_type === 'SEND_NO_CARD_WARNING');
+      
+      return combined.sort((a, b) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+    },
+    enabled: !!contact?.user_id,
+  });
+
   const { data: duplicateInfo } = useQuery({
     queryKey: ["contact-duplicates", contact?.id],
     queryFn: async () => {
@@ -2401,53 +2464,115 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </TabsContent>
 
             {/* Communications Tab */}
-            <TabsContent value="communications" className="m-0 space-y-3">
-              {commsLoading ? (
-                <div className="space-y-3">
-                  {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}
-                </div>
-              ) : !communications?.length ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <MessageCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                  <p>Нет событий</p>
-                </div>
-              ) : (
-                communications.map((comm: any) => (
-                  <Card key={comm.id}>
-                    <CardContent className="p-4 space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="font-medium text-sm">{getEventLabel(comm.action)}</span>
+            <TabsContent value="communications" className="m-0 space-y-4">
+              {/* Notification Events Section */}
+              {notificationEvents && notificationEvents.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Send className="w-4 h-4" />
+                      Уведомления
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {notificationEvents.slice(0, 10).map((event: any) => (
+                      <div key={event.id} className={cn(
+                        "flex items-center justify-between p-2 rounded border-l-2",
+                        event.channel === 'telegram' ? 'border-l-blue-500 bg-blue-50/50' : 'border-l-green-500 bg-green-50/50'
+                      )}>
+                        <div className="flex items-center gap-2">
+                          {event.channel === 'telegram' ? (
+                            <Send className="w-3.5 h-3.5 text-blue-500" />
+                          ) : (
+                            <Mail className="w-3.5 h-3.5 text-green-500" />
+                          )}
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium">{getEventLabel(event.event_type)}</span>
+                            <div className="flex items-center gap-1.5">
+                              <Badge 
+                                variant="outline" 
+                                className={cn(
+                                  "text-[10px] px-1.5 py-0",
+                                  event.status === 'success' && 'bg-green-100 text-green-700 border-green-200',
+                                  event.status === 'skipped' && 'bg-amber-100 text-amber-700 border-amber-200',
+                                  event.status === 'failed' && 'bg-red-100 text-red-700 border-red-200',
+                                )}
+                              >
+                                {event.status === 'success' ? 'Отправлено' : event.status === 'skipped' ? 'Пропущено' : 'Ошибка'}
+                              </Badge>
+                              {event.reason && (
+                                <span className="text-xs text-muted-foreground">
+                                  {event.reason === 'no_telegram_linked' ? 'TG не привязан' : 
+                                   event.reason === 'no_link_bot_configured' ? 'Бот не настроен' : event.reason}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                         <span className="text-xs text-muted-foreground whitespace-nowrap">
-                          {format(new Date(comm.created_at), "dd.MM.yy HH:mm")}
+                          {format(new Date(event.created_at), "dd.MM HH:mm")}
                         </span>
                       </div>
-                      {comm.actor_profile && (
-                        <div className="text-xs text-muted-foreground">
-                          <span>Выполнил: </span>
-                          <button
-                            onClick={() => {
-                              window.location.href = `/admin/contacts?user=${comm.actor_user_id}`;
-                            }}
-                            className="text-primary hover:underline inline-flex items-center gap-1"
-                          >
-                            {comm.actor_profile.full_name || comm.actor_profile.email || "Сотрудник"}
-                            <ExternalLink className="w-3 h-3" />
-                          </button>
-                        </div>
-                      )}
-                      {comm.meta && Object.keys(comm.meta).length > 0 && (
-                        <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2 mt-1">
-                          {Object.entries(comm.meta).slice(0, 3).map(([key, value]) => (
-                            <div key={key} className="truncate">
-                              <span className="font-medium">{key}:</span> {String(value)}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))
+                    ))}
+                  </CardContent>
+                </Card>
               )}
+
+              {/* Audit Events Section */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <History className="w-4 h-4" />
+                    События
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {commsLoading ? (
+                    <div className="space-y-3">
+                      {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}
+                    </div>
+                  ) : !communications?.length ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <MessageCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                      <p>Нет событий</p>
+                    </div>
+                  ) : (
+                    communications.map((comm: any) => (
+                      <div key={comm.id} className="p-3 border rounded-lg space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-medium text-sm">{getEventLabel(comm.action)}</span>
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">
+                            {format(new Date(comm.created_at), "dd.MM.yy HH:mm")}
+                          </span>
+                        </div>
+                        {comm.actor_profile && (
+                          <div className="text-xs text-muted-foreground">
+                            <span>Выполнил: </span>
+                            <button
+                              onClick={() => {
+                                window.location.href = `/admin/contacts?user=${comm.actor_user_id}`;
+                              }}
+                              className="text-primary hover:underline inline-flex items-center gap-1"
+                            >
+                              {comm.actor_profile.full_name || comm.actor_profile.email || "Сотрудник"}
+                              <ExternalLink className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                        {comm.meta && Object.keys(comm.meta).length > 0 && (
+                          <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2 mt-1">
+                            {Object.entries(comm.meta).slice(0, 3).map(([key, value]) => (
+                              <div key={key} className="truncate">
+                                <span className="font-medium">{key}:</span> {String(value)}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
             </TabsContent>
 
             {/* Consent Tab */}

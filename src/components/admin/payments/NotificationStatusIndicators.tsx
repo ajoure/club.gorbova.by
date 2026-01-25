@@ -58,15 +58,22 @@ export function NotificationStatusIndicators({
 }: NotificationStatusIndicatorsProps) {
   const days = [7, 3, 1] as const;
   
+  // Build a map of latest logs for this subscription (key: event_type, value: latest log)
+  const latestLogsMap = new Map<string, NotificationLog>();
+  for (const log of logs) {
+    if (log.subscription_id !== subscriptionId) continue;
+    const existing = latestLogsMap.get(log.event_type);
+    if (!existing || new Date(log.created_at) > new Date(existing.created_at)) {
+      latestLogsMap.set(log.event_type, log);
+    }
+  }
+  
   return (
     <div className="flex gap-0.5 justify-center">
       {days.map(day => {
         const eventType = `subscription_reminder_${day}d`;
-        // Find the most recent log for this subscription and event type
-        const log = logs.find(l => 
-          l.subscription_id === subscriptionId && 
-          l.event_type === eventType
-        );
+        // Get the most recent log for this event type from the pre-built map
+        const log = latestLogsMap.get(eventType);
         
         const status = log ? normalizeStatus(log.status) : 'pending';
         const reason = log?.reason;
