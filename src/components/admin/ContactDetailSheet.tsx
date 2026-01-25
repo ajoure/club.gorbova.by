@@ -343,6 +343,22 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
+  // Club membership status for badge display
+  const { data: clubMembership } = useQuery({
+    queryKey: ["contact-club-membership", contact?.id],
+    queryFn: async () => {
+      if (!contact?.id) return null;
+      const { data, error } = await supabase
+        .from("telegram_club_members")
+        .select("access_status, in_chat, in_channel")
+        .eq("profile_id", contact.id)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!contact?.id && !!contact?.telegram_user_id,
+  });
+
   // Fetch deals for this contact - check both profile_id and user_id (for ghost contacts)
   const { data: deals, isLoading: dealsLoading } = useQuery({
     queryKey: ["contact-deals", contact?.id, contact?.user_id],
@@ -1819,6 +1835,28 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                             <Badge variant={profileData.telegram_link_status === "active" ? "default" : "secondary"}>
                               {profileData.telegram_link_status === "active" ? "Активен" : profileData.telegram_link_status}
                             </Badge>
+                          </div>
+                        )}
+                        {/* Club membership status */}
+                        {clubMembership && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="text-muted-foreground">Клуб:</span>
+                            {clubMembership.access_status === 'ok' && !clubMembership.in_chat ? (
+                              <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">
+                                <Clock className="w-3 h-3 mr-1" />
+                                Ожидает входа
+                              </Badge>
+                            ) : clubMembership.in_chat ? (
+                              <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
+                                <CheckCircle className="w-3 h-3 mr-1" />
+                                В клубе
+                              </Badge>
+                            ) : ['removed', 'kicked', 'expired'].includes(clubMembership.access_status || '') ? (
+                              <Badge className="bg-red-500/10 text-red-600 border-red-500/20">
+                                <XCircle className="w-3 h-3 mr-1" />
+                                Удалён
+                              </Badge>
+                            ) : null}
                           </div>
                         )}
                         {telegramUserInfo && (

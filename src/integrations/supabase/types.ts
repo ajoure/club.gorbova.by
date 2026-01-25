@@ -7671,6 +7671,20 @@ export type Database = {
         Args: { p_category?: string; p_description: string; p_subject: string }
         Returns: Json
       }
+      find_bought_not_joined_users: {
+        Args: never
+        Returns: {
+          access_end_at: string
+          access_source: string
+          created_at: string
+          email: string
+          full_name: string
+          invite_sent_at: string
+          profile_id: string
+          telegram_user_id: number
+          user_id: string
+        }[]
+      }
       find_false_revoke_notifications: {
         Args: { since_timestamp: string }
         Returns: {
