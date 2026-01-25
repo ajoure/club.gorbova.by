@@ -7513,6 +7513,15 @@ export type Database = {
       }
     }
     Functions: {
+      admin_get_club_membership: {
+        Args: { p_profile_id: string }
+        Returns: {
+          access_status: string
+          club_id: string
+          in_channel: boolean
+          in_chat: boolean
+        }[]
+      }
       admin_repair_card_links: {
         Args: {
           _brand: string

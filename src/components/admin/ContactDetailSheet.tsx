@@ -343,18 +343,25 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
-  // Club membership status for badge display
+  // Club membership status for badge display (via secure RPC)
   const { data: clubMembership } = useQuery({
     queryKey: ["contact-club-membership", contact?.id],
     queryFn: async () => {
       if (!contact?.id) return null;
-      const { data, error } = await supabase
-        .from("telegram_club_members")
-        .select("access_status, in_chat, in_channel")
-        .eq("profile_id", contact.id)
-        .maybeSingle();
-      if (error) throw error;
-      return data;
+      try {
+        const { data, error } = await supabase
+          .rpc("admin_get_club_membership", { p_profile_id: contact.id });
+        if (error) {
+          // Don't throw on permission errors - just return null gracefully
+          console.error("Failed to get club membership:", error.message);
+          return null;
+        }
+        // RPC returns array, take first row
+        return data?.[0] ?? null;
+      } catch (err) {
+        console.error("Club membership RPC error:", err);
+        return null;
+      }
     },
     enabled: !!contact?.id && !!contact?.telegram_user_id,
   });
