@@ -574,14 +574,36 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch the most recent order for this subscription (to avoid multiple rows issue)
-    const { data: orderData } = await supabase
-      .from('orders_v2')
-      .select('order_number, customer_email, final_price, meta, user_id')
-      .eq('subscription_id', subscription_id)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    // Fetch order data - use subscription.order_id (direct FK) or fallback to user_id + product_id
+    let orderData = null;
+    
+    if (subscription.order_id) {
+      // Primary: use the direct FK link
+      const { data } = await supabase
+        .from('orders_v2')
+        .select('order_number, customer_email, final_price, meta, user_id')
+        .eq('id', subscription.order_id)
+        .maybeSingle();
+      orderData = data;
+    }
+    
+    // Fallback: if no order_id, search by user_id + product_id
+    if (!orderData && subscription.user_id && subscription.product_id) {
+      const { data: ordersData, count } = await supabase
+        .from('orders_v2')
+        .select('order_number, customer_email, final_price, meta, user_id', { count: 'exact' })
+        .eq('user_id', subscription.user_id)
+        .eq('product_id', subscription.product_id)
+        .eq('status', 'paid')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      
+      orderData = ordersData?.[0] || null;
+      
+      if (count && count > 1) {
+        console.warn(`[subscription-admin-actions] Multiple orders (${count}) found for subscription ${subscription_id}, using latest`);
+      }
+    }
 
     // Attach order data to subscription object for backward compatibility
     (subscription as any).orders_v2 = orderData;
