@@ -110,6 +110,30 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // PATCH 11B: Check if user has active entitlement (club product)
+      const { data: activeEntitlement } = await supabase
+        .from('entitlements')
+        .select('id, product_code, expires_at')
+        .eq('user_id', access.user_id)
+        .eq('status', 'active')
+        .or(`expires_at.is.null,expires_at.gt.${now}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (activeEntitlement) {
+        console.log(`User ${access.user_id} has active entitlement ${activeEntitlement.product_code}, skipping revoke`);
+        // Update access record to match entitlement expiry
+        await supabase
+          .from('telegram_access')
+          .update({ 
+            active_until: activeEntitlement.expires_at || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+            last_sync_at: now,
+          })
+          .eq('id', access.id);
+        results.skipped++;
+        continue;
+      }
+
       // Check if user has active telegram_access_grants (renewed subscription)
       const { data: activeGrant } = await supabase
         .from('telegram_access_grants')
@@ -131,6 +155,29 @@ Deno.serve(async (req) => {
           })
           .eq('id', access.id);
         
+        results.skipped++;
+        continue;
+      }
+
+      // PATCH 11B: Check if user has active subscription
+      const { data: activeSub } = await supabase
+        .from('subscriptions_v2')
+        .select('id, access_end_at')
+        .eq('user_id', access.user_id)
+        .in('status', ['active', 'trial', 'past_due'])
+        .gt('access_end_at', now)
+        .limit(1)
+        .maybeSingle();
+
+      if (activeSub) {
+        console.log(`User ${access.user_id} has active subscription, updating access`);
+        await supabase
+          .from('telegram_access')
+          .update({ 
+            active_until: activeSub.access_end_at,
+            last_sync_at: now,
+          })
+          .eq('id', access.id);
         results.skipped++;
         continue;
       }

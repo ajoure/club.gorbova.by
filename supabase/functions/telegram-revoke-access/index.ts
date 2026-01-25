@@ -161,21 +161,50 @@ Deno.serve(async (req) => {
     }
 
     // =================================================================
-    // PATCH 11A: Guard — запрет revoke если access_end_at в будущем
+    // PATCH 11A Enhanced: Guard — запрет revoke если есть активный access
+    // Проверяем subscriptions_v2 ИЛИ entitlements (FIXED: добавлена проверка entitlements)
     // Исключение: force_revoke=true или is_manual=true (явное действие админа)
     // =================================================================
     if (user_id && !forceRevoke && !is_manual) {
+      const now = new Date().toISOString();
+      
+      // 1. Check active subscription
       const { data: activeSub } = await supabase
         .from('subscriptions_v2')
         .select('id, status, access_end_at')
         .eq('user_id', user_id)
         .in('status', ['active', 'trial', 'past_due'])
-        .gt('access_end_at', new Date().toISOString())
+        .gt('access_end_at', now)
         .limit(1)
         .maybeSingle();
 
-      if (activeSub) {
-        console.log(`[BLOCKED REVOKE] User ${user_id} has access until ${activeSub.access_end_at}`);
+      // 2. Check active entitlement (club products with valid expiry)
+      const { data: activeEntitlement } = await supabase
+        .from('entitlements')
+        .select('id, product_code, expires_at')
+        .eq('user_id', user_id)
+        .eq('status', 'active')
+        .or(`expires_at.is.null,expires_at.gt.${now}`)
+        .limit(1)
+        .maybeSingle();
+
+      // 3. Check manual access
+      const { data: manualAccess } = await supabase
+        .from('telegram_manual_access')
+        .select('id, valid_until')
+        .eq('user_id', user_id)
+        .eq('is_active', true)
+        .or(`valid_until.is.null,valid_until.gt.${now}`)
+        .limit(1)
+        .maybeSingle();
+
+      const hasValidAccess = activeSub || activeEntitlement || manualAccess;
+      
+      if (hasValidAccess) {
+        const accessSource = activeSub ? 'subscription' : (activeEntitlement ? 'entitlement' : 'manual_access');
+        const accessEndAt = activeSub?.access_end_at || activeEntitlement?.expires_at || manualAccess?.valid_until;
+        
+        console.log(`[BLOCKED REVOKE] User ${user_id} has valid ${accessSource} until ${accessEndAt}`);
         
         // Log blocked revoke with SYSTEM ACTOR
         await supabase.from('audit_logs').insert({
@@ -186,9 +215,11 @@ Deno.serve(async (req) => {
           target_user_id: user_id,
           meta: {
             reason: 'access_still_valid',
-            subscription_id: activeSub.id,
-            subscription_status: activeSub.status,
-            access_end_at: activeSub.access_end_at,
+            access_source: accessSource,
+            subscription_id: activeSub?.id || null,
+            entitlement_id: activeEntitlement?.id || null,
+            manual_access_id: manualAccess?.id || null,
+            access_end_at: accessEndAt,
             original_revoke_reason: reason,
           }
         });
@@ -197,8 +228,9 @@ Deno.serve(async (req) => {
           success: false,
           blocked: true,
           reason: 'access_still_valid',
-          access_end_at: activeSub.access_end_at,
-          message: `Revoke blocked: user has active access until ${activeSub.access_end_at}`,
+          access_source: accessSource,
+          access_end_at: accessEndAt,
+          message: `Revoke blocked: user has active ${accessSource} until ${accessEndAt}`,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });

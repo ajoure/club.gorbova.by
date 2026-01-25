@@ -19,6 +19,55 @@ serve(async (req) => {
     console.log('Starting subscription reconciliation...');
     const now = new Date();
 
+    // Helper function to check if user has any valid access (subscription, entitlement, or manual)
+    async function hasValidAccess(userId: string): Promise<{ valid: boolean; source?: string; endAt?: string }> {
+      const nowStr = now.toISOString();
+      
+      // 1. Check active subscription
+      const { data: activeSub } = await supabase
+        .from('subscriptions_v2')
+        .select('id, access_end_at')
+        .eq('user_id', userId)
+        .in('status', ['active', 'trial', 'past_due'])
+        .gt('access_end_at', nowStr)
+        .limit(1)
+        .maybeSingle();
+      
+      if (activeSub) {
+        return { valid: true, source: 'subscription', endAt: activeSub.access_end_at };
+      }
+      
+      // 2. Check active entitlement
+      const { data: activeEntitlement } = await supabase
+        .from('entitlements')
+        .select('id, expires_at')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .or(`expires_at.is.null,expires_at.gt.${nowStr}`)
+        .limit(1)
+        .maybeSingle();
+      
+      if (activeEntitlement) {
+        return { valid: true, source: 'entitlement', endAt: activeEntitlement.expires_at };
+      }
+      
+      // 3. Check manual access
+      const { data: manualAccess } = await supabase
+        .from('telegram_manual_access')
+        .select('id, valid_until')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .or(`valid_until.is.null,valid_until.gt.${nowStr}`)
+        .limit(1)
+        .maybeSingle();
+      
+      if (manualAccess) {
+        return { valid: true, source: 'manual_access', endAt: manualAccess.valid_until };
+      }
+      
+      return { valid: false };
+    }
+
     // Helper function to get club_id for a subscription
     async function getClubIdForSubscription(userId: string, productId: string): Promise<string | null> {
       // First try to get from product
@@ -65,19 +114,25 @@ serve(async (req) => {
           })
           .eq('id', sub.id);
 
-        // Revoke Telegram access with club_id
-        try {
-          const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
-          await supabase.functions.invoke('telegram-revoke-access', {
-            body: { 
-              user_id: sub.user_id, 
-              club_id: clubId,
-              reason: 'subscription_expired' 
-            },
-          });
-          console.log(`Revoked Telegram access for user ${sub.user_id}, club ${clubId}`);
-        } catch (e) {
-          console.error(`Failed to revoke Telegram access for user ${sub.user_id}:`, e);
+        // PATCH 11B: Check if user has other valid access before revoking
+        const access = await hasValidAccess(sub.user_id);
+        if (access.valid) {
+          console.log(`Skip revoke for ${sub.user_id}: has ${access.source} until ${access.endAt}`);
+        } else {
+          // Revoke Telegram access with club_id
+          try {
+            const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
+            await supabase.functions.invoke('telegram-revoke-access', {
+              body: { 
+                user_id: sub.user_id, 
+                club_id: clubId,
+                reason: 'subscription_expired' 
+              },
+            });
+            console.log(`Revoked Telegram access for user ${sub.user_id}, club ${clubId}`);
+          } catch (e) {
+            console.error(`Failed to revoke Telegram access for user ${sub.user_id}:`, e);
+          }
         }
 
         // Log the action
@@ -116,18 +171,24 @@ serve(async (req) => {
             })
             .eq('id', sub.id);
 
-          // Revoke Telegram access with club_id
-          try {
-            const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
-            await supabase.functions.invoke('telegram-revoke-access', {
-              body: { 
-                user_id: sub.user_id, 
-                club_id: clubId,
-                reason: 'trial_canceled' 
-              },
-            });
-          } catch (e) {
-            console.error(`Failed to revoke Telegram for user ${sub.user_id}:`, e);
+          // PATCH 11B: Check if user has other valid access before revoking
+          const access = await hasValidAccess(sub.user_id);
+          if (access.valid) {
+            console.log(`Skip revoke for ${sub.user_id}: has ${access.source} until ${access.endAt}`);
+          } else {
+            // Revoke Telegram access with club_id
+            try {
+              const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
+              await supabase.functions.invoke('telegram-revoke-access', {
+                body: { 
+                  user_id: sub.user_id, 
+                  club_id: clubId,
+                  reason: 'trial_canceled' 
+                },
+              });
+            } catch (e) {
+              console.error(`Failed to revoke Telegram for user ${sub.user_id}:`, e);
+            }
           }
 
           console.log(`Trial subscription ${sub.id} canceled after trial end`);
@@ -157,18 +218,24 @@ serve(async (req) => {
           })
           .eq('id', sub.id);
 
-        // Revoke Telegram access with club_id
-        try {
-          const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
-          await supabase.functions.invoke('telegram-revoke-access', {
-            body: { 
-              user_id: sub.user_id, 
-              club_id: clubId,
-              reason: 'access_expired' 
-            },
-          });
-        } catch (e) {
-          console.error(`Failed to revoke Telegram for user ${sub.user_id}:`, e);
+        // PATCH 11B: Check if user has other valid access before revoking
+        const accessCheck = await hasValidAccess(sub.user_id);
+        if (accessCheck.valid) {
+          console.log(`Skip revoke for ${sub.user_id}: has ${accessCheck.source} until ${accessCheck.endAt}`);
+        } else {
+          // Revoke Telegram access with club_id
+          try {
+            const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
+            await supabase.functions.invoke('telegram-revoke-access', {
+              body: { 
+                user_id: sub.user_id, 
+                club_id: clubId,
+                reason: 'access_expired' 
+              },
+            });
+          } catch (e) {
+            console.error(`Failed to revoke Telegram for user ${sub.user_id}:`, e);
+          }
         }
 
         console.log(`Subscription ${sub.id} access expired`);
@@ -185,26 +252,19 @@ serve(async (req) => {
       console.error('Error fetching telegram access:', tgError);
     } else if (telegramAccess && telegramAccess.length > 0) {
       for (const access of telegramAccess) {
-        // Check if user has valid subscription
-        const { data: validSub } = await supabase
-          .from('subscriptions_v2')
-          .select('id')
-          .eq('user_id', access.user_id)
-          .in('status', ['active', 'trial'])
-          .gte('access_end_at', now.toISOString())
-          .limit(1)
-          .single();
+        // PATCH 11B: Use comprehensive access check instead of just subscriptions
+        const accessCheck = await hasValidAccess(access.user_id);
 
-        if (!validSub) {
-          // No valid subscription, check if active_until is also expired
+        if (!accessCheck.valid) {
+          // No valid access, check if active_until is also expired
           if (access.active_until && new Date(access.active_until) < now) {
-            console.log(`User ${access.user_id} has no valid subscription, revoking Telegram access`);
+            console.log(`User ${access.user_id} has no valid access, revoking Telegram access`);
             try {
               await supabase.functions.invoke('telegram-revoke-access', {
                 body: { 
                   user_id: access.user_id, 
                   club_id: access.club_id,
-                  reason: 'no_valid_subscription' 
+                  reason: 'no_valid_access' 
                 },
               });
             } catch (e) {
