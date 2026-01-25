@@ -115,6 +115,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "templates", label: "Шаблоны документов", path: "/admin/document-templates", icon: "FileStack", order: 8, permission: "roles.view" },
       { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram/clubs/fa547c41-3a84-4c4f-904a-427332a0506e/members", icon: "MessageCircle", order: 9 },
       { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 10, permission: "news.view" },
+      { id: "telegram-diagnostics", label: "Telegram диагностика", path: "/admin/telegram-diagnostics", icon: "BarChart3", order: 11 },
     ],
   },
 ];
