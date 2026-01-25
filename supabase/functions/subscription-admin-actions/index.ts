@@ -568,6 +568,17 @@ Deno.serve(async (req) => {
 
     if (subError || !subscription) {
       console.log('Subscription lookup error:', subError?.message || 'not found', 'subscription_id:', subscription_id);
+
+      // Idempotency: deleting an already-deleted subscription should not break UI flows
+      if (action === 'delete') {
+        return new Response(
+          JSON.stringify({ success: true, already_deleted: true, subscription_id }),
+          {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
       return new Response(JSON.stringify({ success: false, error: 'Subscription not found' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
