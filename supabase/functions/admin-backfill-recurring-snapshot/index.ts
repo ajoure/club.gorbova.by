@@ -32,10 +32,10 @@ Deno.serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // RBAC check
+    // RBAC check - use anon key client with user's auth header
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(
@@ -44,8 +44,17 @@ Deno.serve(async (req) => {
       );
     }
 
+    // PATCH: Dual-client RBAC
+    // supabaseUser - for auth validation and role checks (uses anon key + bearer)
+    const supabaseUser = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    
+    // supabaseAdmin - for data operations (service role)
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
     const token = authHeader.replace("Bearer ", "");
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    const { data: { user }, error: authError } = await supabaseUser.auth.getUser(token);
     
     if (authError || !user) {
       return new Response(
@@ -54,8 +63,8 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check admin permission
-    const { data: hasPermission } = await supabase.rpc('has_role', {
+    // Check admin permission via user client
+    const { data: hasPermission } = await supabaseUser.rpc('has_role', {
       _user_id: user.id,
       _role: 'admin',
     });
@@ -75,8 +84,8 @@ Deno.serve(async (req) => {
 
     const now = new Date();
 
-    // Get staff user IDs to exclude
-    const { data: staffProfiles } = await supabase
+    // Get staff user IDs to exclude (via admin client)
+    const { data: staffProfiles } = await supabaseAdmin
       .from('profiles')
       .select('user_id, email')
       .in('email', STAFF_EMAILS.map(e => e.toLowerCase()));
@@ -85,28 +94,33 @@ Deno.serve(async (req) => {
       .filter(p => p.user_id)
       .map(p => p.user_id);
 
-    // Find candidates: auto_renew=true, no recurring_snapshot, likely subscription
-    // isLikelySubscription: tariff_id not null OR payment_method_id not null OR product_id is club
+    // PATCH: Removed unstable JSON filter `.is('meta->recurring_snapshot', null)`
+    // Select broader set and filter in JS for reliability
     const CLUB_PRODUCT_ID = '11c9f1b8-0355-4753-bd74-40b42aa53616';
     
-    const { data: candidates, error: queryError } = await supabase
+    const { data: allCandidates, error: queryError } = await supabaseAdmin
       .from('subscriptions_v2')
       .select('id, user_id, tariff_id, payment_method_id, product_id, meta')
       .eq('auto_renew', true)
-      .is('meta->recurring_snapshot', null)
       .order('created_at', { ascending: true })
-      .limit(max_total);
+      .limit(max_total * 2);  // Extra buffer for JS filtering
 
     if (queryError) {
       throw new Error(`Query error: ${queryError.message}`);
     }
 
-    // Filter: isLikelySubscription guard + exclude staff
-    const validCandidates = (candidates || []).filter(sub => {
+    // PATCH: Filter in JS - more reliable than JSON path filters
+    // 1) Missing recurring_snapshot
+    // 2) isLikelySubscription guard
+    // 3) Exclude staff
+    const validCandidates = (allCandidates || []).filter(sub => {
+      // Check if snapshot already exists
+      const hasSnapshot = (sub.meta as Record<string, unknown>)?.recurring_snapshot != null;
+      if (hasSnapshot) return false;  // Already has snapshot, skip
+      
       // Exclude staff
-      if (staffUserIds.includes(sub.user_id)) {
-        return false;
-      }
+      if (staffUserIds.includes(sub.user_id)) return false;
+      
       // isLikelySubscription guard
       const isLikelySubscription = 
         sub.tariff_id != null ||
@@ -119,14 +133,32 @@ Deno.serve(async (req) => {
     const totalCandidates = validCandidates.length;
     const toProcess = validCandidates.slice(0, batch_size);
 
+    // PATCH: Anomaly detection - log if candidates exceed max_total
+    if (totalCandidates > max_total) {
+      await supabaseAdmin.from('audit_logs').insert({
+        action: 'admin.backfill_recurring_snapshot_anomaly',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'admin-backfill-recurring-snapshot',
+        meta: {
+          reason: 'candidates_exceeded_max_total',
+          total_candidates: totalCandidates,
+          max_total,
+          batch_size,
+          requested_by_user_id: user.id,
+        },
+      });
+    }
+
     if (dry_run) {
       // DRY RUN: return stats and sample
       const sampleIds = toProcess.slice(0, 10).map(s => s.id);
       
-      await supabase.from('audit_logs').insert({
+      // PATCH: SYSTEM ACTOR Proof - actor_type='system', actor_user_id=null
+      await supabaseAdmin.from('audit_logs').insert({
         action: 'admin.backfill_recurring_snapshot',
-        actor_type: 'admin',
-        actor_user_id: user.id,
+        actor_type: 'system',
+        actor_user_id: null,
         actor_label: 'admin-backfill-recurring-snapshot',
         meta: {
           dry_run: true,
@@ -134,6 +166,7 @@ Deno.serve(async (req) => {
           batch_size,
           sample_ids: sampleIds,
           staff_excluded: staffUserIds.length,
+          requested_by_user_id: user.id,
         },
       });
 
@@ -146,6 +179,7 @@ Deno.serve(async (req) => {
           would_process: toProcess.length,
           sample_ids: sampleIds,
           staff_excluded: staffUserIds.length,
+          anomaly_logged: totalCandidates > max_total,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -161,9 +195,9 @@ Deno.serve(async (req) => {
 
     for (const sub of toProcess) {
       try {
-        const existingMeta = (sub.meta || {}) as Record<string, any>;
+        const existingMeta = (sub.meta || {}) as Record<string, unknown>;
         
-        const { error: updateError } = await supabase
+        const { error: updateError } = await supabaseAdmin
           .from('subscriptions_v2')
           .update({
             meta: {
@@ -189,11 +223,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Log execution result
-    await supabase.from('audit_logs').insert({
+    // PATCH: SYSTEM ACTOR Proof - actor_type='system', actor_user_id=null
+    await supabaseAdmin.from('audit_logs').insert({
       action: 'admin.backfill_recurring_snapshot',
-      actor_type: 'admin',
-      actor_user_id: user.id,
+      actor_type: 'system',
+      actor_user_id: null,
       actor_label: 'admin-backfill-recurring-snapshot',
       meta: {
         dry_run: false,
@@ -204,6 +238,7 @@ Deno.serve(async (req) => {
         updated_ids_sample: results.updated_ids.slice(0, 10),
         remaining: totalCandidates - toProcess.length,
         staff_excluded: staffUserIds.length,
+        requested_by_user_id: user.id,
       },
     });
 
