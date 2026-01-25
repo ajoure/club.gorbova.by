@@ -267,6 +267,21 @@ Deno.serve(async (req) => {
     } else {
       // CREATE new subscription (no active subscription for this user+product)
       // PATCH 14: Save recurring_amount for consistent auto-renewals
+      // PATCH: Save recurring_snapshot from offer for grace period config
+      let recurringSnapshot = null;
+      if (order.offer_id) {
+        const { data: offerData } = await supabase
+          .from('tariff_offers')
+          .select('meta')
+          .eq('id', order.offer_id)
+          .maybeSingle();
+        
+        if (offerData?.meta?.recurring) {
+          recurringSnapshot = offerData.meta.recurring;
+          console.log(`Saved recurring_snapshot from offer ${order.offer_id}`);
+        }
+      }
+
       const { data: newSub, error: createSubError } = await supabase
         .from("subscriptions_v2")
         .insert({
@@ -287,6 +302,7 @@ Deno.serve(async (req) => {
             initial_order_id: orderId,
             recurring_amount: order.final_price,
             recurring_currency: order.currency || 'BYN',
+            recurring_snapshot: recurringSnapshot,
           },
         })
         .select("id")
@@ -297,6 +313,37 @@ Deno.serve(async (req) => {
       } else {
         console.log(`Created new subscription ${newSub?.id} for user ${userId}, product ${productId}`);
         results.subscription = { action: "created", id: newSub?.id, auto_renew: true };
+      }
+    }
+
+    // PATCH: Disable auto_renew on OLD subscriptions for same product (manual payment cleans up grace)
+    const newSubId = results.subscription?.id;
+    if (newSubId) {
+      const { data: oldSubs } = await supabase
+        .from('subscriptions_v2')
+        .select('id, grace_period_status')
+        .eq('user_id', userId)
+        .eq('product_id', productId)
+        .eq('auto_renew', true)
+        .neq('id', newSubId);
+
+      if (oldSubs?.length) {
+        for (const oldSub of oldSubs) {
+          await supabase.from('subscriptions_v2').update({
+            auto_renew: false,
+            grace_period_started_at: null,
+            grace_period_ends_at: null,
+            grace_period_status: null,
+            updated_at: now.toISOString(),
+            meta: {
+              replaced_by_order: orderId,
+              auto_renew_disabled_at: now.toISOString(),
+              auto_renew_disabled_reason: 'manual_payment_new_order',
+            },
+          }).eq('id', oldSub.id);
+        }
+        console.log(`Disabled auto_renew for ${oldSubs.length} old subscriptions after manual payment`);
+        results.old_subscriptions_disabled = oldSubs.length;
       }
     }
 

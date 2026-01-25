@@ -200,7 +200,7 @@ serve(async (req) => {
     // 3. Close access for subscriptions with expired access_end_at
     const { data: expiredAccess, error: accessError } = await supabase
       .from('subscriptions_v2')
-      .select('id, user_id, product_id, access_end_at, status')
+      .select('id, user_id, product_id, access_end_at, status, grace_period_status')
       .lt('access_end_at', now.toISOString())
       .in('status', ['active', 'past_due']);
 
@@ -224,13 +224,17 @@ serve(async (req) => {
           console.log(`Skip revoke for ${sub.user_id}: has ${accessCheck.source} until ${accessCheck.endAt}`);
         } else {
           // Revoke Telegram access with club_id
+          // PATCH: Pass preserve_pricing flag if subscription is in grace
+          const preservePricing = sub.grace_period_status === 'in_grace';
+          
           try {
             const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
             await supabase.functions.invoke('telegram-revoke-access', {
               body: { 
                 user_id: sub.user_id, 
                 club_id: clubId,
-                reason: 'access_expired' 
+                reason: 'access_expired',
+                preserve_pricing: preservePricing, // PATCH: Don't mark was_club_member if grace active
               },
             });
           } catch (e) {
@@ -238,7 +242,9 @@ serve(async (req) => {
           }
         }
 
-        console.log(`Subscription ${sub.id} access expired`);
+        // PATCH: DON'T mark was_club_member here!
+        // This is now done by subscription-charge/subscription-grace-reminders after grace expires
+        console.log(`Subscription ${sub.id} access expired (grace_status=${sub.grace_period_status || 'null'})`);
       }
     }
 

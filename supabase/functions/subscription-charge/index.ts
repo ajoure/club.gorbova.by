@@ -455,6 +455,75 @@ function wasChargeAttemptedToday(sub: any): boolean {
   return lastAttemptDate === todayUtc;
 }
 
+// ========== GRACE PERIOD HELPERS (PATCH) ==========
+
+// Check if subscription is in expired_reentry state — BLOCK all charges
+function isExpiredReentry(sub: any): boolean {
+  return sub.grace_period_status === 'expired_reentry';
+}
+
+// Check if grace period has expired and needs to be marked
+function hasGraceExpired(sub: any, now: Date): boolean {
+  if (sub.grace_period_status !== 'in_grace') return false;
+  if (!sub.grace_period_ends_at) return false;
+  return new Date(sub.grace_period_ends_at) <= now;
+}
+
+// Check if subscription needs grace period started
+function needsGraceStart(sub: any, now: Date): boolean {
+  if (sub.grace_period_started_at) return false; // Already started
+  if (!sub.access_end_at) return false;
+  return new Date(sub.access_end_at) <= now;
+}
+
+// Mark subscription as expired_reentry (after grace period ends)
+async function markAsExpiredReentry(
+  supabase: any,
+  userId: string,
+  subId: string,
+  subMeta: Record<string, any>
+): Promise<void> {
+  const now = new Date().toISOString();
+
+  // 1. Update subscription
+  await supabase.from('subscriptions_v2').update({
+    grace_period_status: 'expired_reentry',
+    auto_renew: false,
+    updated_at: now,
+    meta: {
+      ...subMeta,
+      grace_expired_at: now,
+    },
+  }).eq('id', subId);
+
+  // 2. Update profile — NOW mark as former member
+  await supabase.from('profiles').update({
+    was_club_member: true,
+    club_exit_at: now,
+    club_exit_reason: 'grace_period_expired',
+    reentry_pricing_applies_from: now,
+  }).eq('user_id', userId);
+
+  // 3. Record notification event (idempotency)
+  await supabase.from('grace_notification_events').insert({
+    subscription_id: subId,
+    event_type: 'grace_expired',
+    channel: 'system',
+    meta: { marked_by: 'subscription-charge' },
+  }).onConflict('subscription_id,event_type').doNothing();
+
+  // 4. Audit log
+  await supabase.from('audit_logs').insert({
+    action: 'subscription.grace_expired',
+    actor_type: 'system',
+    actor_label: 'subscription-charge',
+    target_user_id: userId,
+    meta: { subscription_id: subId },
+  });
+
+  console.log(`Subscription ${subId}: marked as expired_reentry, was_club_member=true`);
+}
+
 // Attempt to charge a subscription using saved payment token
 async function chargeSubscription(
   supabase: any,
@@ -462,6 +531,65 @@ async function chargeSubscription(
   bepaidConfig: any
 ): Promise<ChargeResult> {
   const { id, user_id, payment_token, payment_method_id, tariffs, next_charge_at, is_trial, order_id, tariff_id, meta: subMeta } = subscription;
+  const now = new Date();
+
+  // ========== GRACE PERIOD CHECKS (MUST BE FIRST) ==========
+  
+  // 1. BLOCK if expired_reentry — no automatic charges allowed after grace expires
+  if (isExpiredReentry(subscription)) {
+    console.log(`Subscription ${id}: grace_period_status=expired_reentry, BLOCKING charge (manual only)`);
+    return { 
+      subscription_id: id, 
+      success: false, 
+      skipped: true, 
+      skip_reason: 'grace_expired_manual_only',
+      error: 'Grace period expired. Manual payment required at new price.',
+    };
+  }
+
+  // 2. Check if grace period just expired — mark and block
+  if (hasGraceExpired(subscription, now)) {
+    console.log(`Subscription ${id}: grace period just expired, marking as expired_reentry`);
+    await markAsExpiredReentry(supabase, user_id, id, subMeta || {});
+    return { 
+      subscription_id: id, 
+      success: false, 
+      skipped: true, 
+      skip_reason: 'grace_just_expired',
+      error: 'Grace period just expired. Marked as expired_reentry.',
+    };
+  }
+
+  // 3. Start grace period if access_end_at passed and grace not started yet
+  // DETERMINISTIC: grace_period_started_at = access_end_at (NOT current time)
+  if (needsGraceStart(subscription, now)) {
+    const accessEndAt = new Date(subscription.access_end_at);
+    const recurringSnapshot = subMeta?.recurring_snapshot || {};
+    const graceHours = recurringSnapshot.grace_hours || 72;
+    const graceEndsAt = new Date(accessEndAt.getTime() + graceHours * 60 * 60 * 1000);
+
+    console.log(`Subscription ${id}: starting grace period, access_end_at=${subscription.access_end_at}, grace_ends_at=${graceEndsAt.toISOString()}`);
+
+    await supabase.from('subscriptions_v2').update({
+      grace_period_started_at: accessEndAt.toISOString(),
+      grace_period_ends_at: graceEndsAt.toISOString(),
+      grace_period_status: 'in_grace',
+      updated_at: now.toISOString(),
+    }).eq('id', id);
+
+    // Record grace_started event (idempotency)
+    await supabase.from('grace_notification_events').insert({
+      subscription_id: id,
+      event_type: 'grace_started',
+      channel: 'system',
+      meta: { started_by: 'subscription-charge', access_end_at: subscription.access_end_at },
+    }).onConflict('subscription_id,event_type').doNothing();
+
+    // Note: grace_started notification will be sent by subscription-grace-reminders cron
+    // Continue with charge attempt (grace allows charges)
+  }
+
+  // ========== END GRACE PERIOD CHECKS ==========
   
   // === CRITICAL FIX: Only charge if payment_method is linked and active ===
   if (!payment_method_id) {
