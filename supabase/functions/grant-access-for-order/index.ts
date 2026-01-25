@@ -229,6 +229,37 @@ Deno.serve(async (req) => {
       const existingMeta = (fullExistingSub?.meta || {}) as Record<string, any>;
       const extendedByOrders = existingMeta.extended_by_orders || [];
       
+      // PATCH: Ensure recurring_snapshot exists on extend (fallback if missing)
+      const DEFAULT_RECURRING_SNAPSHOT_EXTEND = {
+        is_recurring: true,
+        timezone: 'Europe/Minsk',
+        billing_period_mode: 'month',
+        grace_hours: 72,
+        charge_attempts_per_day: 2,
+        charge_times_local: ['09:00', '21:00'],
+        pre_due_reminders_days: [7, 3, 1],
+        notify_before_each_charge: true,
+        notify_grace_events: true,
+      };
+      
+      let extendRecurringSnapshot = existingMeta.recurring_snapshot;
+      if (!extendRecurringSnapshot) {
+        // Try to get from offer if available
+        if (order.offer_id) {
+          const { data: offerData } = await supabase
+            .from('tariff_offers')
+            .select('meta')
+            .eq('id', order.offer_id)
+            .maybeSingle();
+          extendRecurringSnapshot = offerData?.meta?.recurring || null;
+        }
+        // Fallback to default
+        if (!extendRecurringSnapshot) {
+          extendRecurringSnapshot = DEFAULT_RECURRING_SNAPSHOT_EXTEND;
+          console.log(`[grant-access-for-order] Added fallback recurring_snapshot on extend for sub ${existingProductSub.id}`);
+        }
+      }
+      
       const updateData: Record<string, any> = {
         status: "active",
         access_end_at: accessEndAt.toISOString(),
@@ -242,6 +273,8 @@ Deno.serve(async (req) => {
           // PATCH 14: Preserve recurring_amount from order
           recurring_amount: existingMeta.recurring_amount || order.final_price,
           recurring_currency: existingMeta.recurring_currency || order.currency || 'BYN',
+          // PATCH: Ensure recurring_snapshot exists
+          recurring_snapshot: extendRecurringSnapshot,
         },
       };
 
@@ -273,10 +306,26 @@ Deno.serve(async (req) => {
         };
       }
     } else {
-      // CREATE new subscription (no active subscription for this user+product)
+    // CREATE new subscription (no active subscription for this user+product)
       // PATCH 14: Save recurring_amount for consistent auto-renewals
       // PATCH: Save recurring_snapshot from offer for grace period config
+      // PATCH: Fallback to default snapshot if no offer found, but only for likely subscriptions
+      
+      const DEFAULT_RECURRING_SNAPSHOT = {
+        is_recurring: true,
+        timezone: 'Europe/Minsk',
+        billing_period_mode: 'month',
+        grace_hours: 72,
+        charge_attempts_per_day: 2,
+        charge_times_local: ['09:00', '21:00'],
+        pre_due_reminders_days: [7, 3, 1],
+        notify_before_each_charge: true,
+        notify_grace_events: true,
+      };
+      
       let recurringSnapshot = null;
+      
+      // 1) Try to get from offer
       if (order.offer_id) {
         const { data: offerData } = await supabase
           .from('tariff_offers')
@@ -286,8 +335,50 @@ Deno.serve(async (req) => {
         
         if (offerData?.meta?.recurring) {
           recurringSnapshot = offerData.meta.recurring;
-          console.log(`Saved recurring_snapshot from offer ${order.offer_id}`);
+          console.log(`[grant-access-for-order] Saved recurring_snapshot from offer ${order.offer_id}`);
         }
+      }
+      
+      // 2) Fallback with isLikelySubscription guard
+      // Guard: at least one of these indicates this should be a subscription
+      const isLikelySubscription = 
+        order.offer_id != null ||
+        tariffId != null ||
+        hasPaymentMethod ||
+        isClubProduct; // Club product is always subscription
+      
+      if (!recurringSnapshot && isLikelySubscription) {
+        recurringSnapshot = DEFAULT_RECURRING_SNAPSHOT;
+        console.log(`[grant-access-for-order] Using fallback recurring_snapshot for order ${orderId}`);
+        
+        // SYSTEM ACTOR Proof: log fallback usage
+        await supabase.from('audit_logs').insert({
+          action: 'subscription.recurring_snapshot_fallback_used',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'grant-access-for-order',
+          target_user_id: userId,
+          meta: { 
+            order_id: orderId, 
+            reason: 'missing_offer_or_recurring',
+            guards: { offer_id: !!order.offer_id, tariff_id: !!tariffId, has_payment_method: hasPaymentMethod, is_club: isClubProduct }
+          },
+        });
+      } else if (!recurringSnapshot && !isLikelySubscription) {
+        console.log(`[grant-access-for-order] No recurring_snapshot and not likely subscription for order ${orderId}`);
+        // Log missing snapshot for non-subscription orders (for diagnostics)
+        await supabase.from('audit_logs').insert({
+          action: 'subscription.recurring_snapshot_missing',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'grant-access-for-order',
+          target_user_id: userId,
+          meta: { 
+            order_id: orderId, 
+            reason: 'not_likely_subscription',
+            guards: { offer_id: !!order.offer_id, tariff_id: !!tariffId, has_payment_method: hasPaymentMethod, is_club: isClubProduct }
+          },
+        });
       }
 
       const { data: newSub, error: createSubError } = await supabase

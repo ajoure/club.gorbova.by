@@ -411,16 +411,9 @@ export default function AdminProductDetailV2() {
       installment_interval_days: isInstallment ? offerForm.installment_interval_days : null,
       first_payment_delay_days: isInstallment ? offerForm.first_payment_delay_days : null,
       // Meta field for welcome message + preregistration settings
-      meta: Object.keys(metaToSave).length > 0 ? metaToSave : null,
+      // PATCH: Never set meta to null for subscription offers - ensures recurring config is preserved
+      meta: Object.keys(metaToSave).length > 0 ? metaToSave : (offerForm.requires_card_tokenization ? metaToSave : null),
     };
-    // DIAG: Log what we're sending to the mutation
-    console.log('[handleSaveOffer] Prepared data:', {
-      requires_card_tokenization: data.requires_card_tokenization,
-      has_meta: !!data.meta,
-      meta_keys: Object.keys(data.meta || {}),
-      has_recurring: !!(data.meta as any)?.recurring,
-      recurring_config: (data.meta as any)?.recurring,
-    });
     
     if (offerDialog.editing) {
       await updateOffer.mutateAsync({ id: offerDialog.editing.id, ...data });
