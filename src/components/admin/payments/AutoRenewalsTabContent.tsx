@@ -10,7 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger, DialogClose } from "@/components/ui/dialog";
-import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical, ArrowUp, ArrowDown, ArrowUpDown, Power } from "lucide-react";
+import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical, ArrowUp, ArrowDown, ArrowUpDown, Power, MoreHorizontal, Wrench, Loader2 } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { format, isToday, isPast, isBefore, addDays, subDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
 import { ru } from "date-fns/locale";
@@ -700,6 +701,12 @@ export function AutoRenewalsTabContent() {
   // FIX-4: Store remaining count from server response (not local calculation)
   const [batchRemaining, setBatchRemaining] = useState<number>(0);
   
+  // PATCH-5: Fix club billing dates modal state
+  const [fixBillingDialogOpen, setFixBillingDialogOpen] = useState(false);
+  const [fixDryRunResult, setFixDryRunResult] = useState<any>(null);
+  const [fixLoading, setFixLoading] = useState(false);
+  const [fixExecuteLoading, setFixExecuteLoading] = useState(false);
+
   const handleBatchDisable = async (dryRun: boolean) => {
     if (selectedIds.size === 0) return;
     
@@ -731,6 +738,66 @@ export function AutoRenewalsTabContent() {
       toast.error(err.message || 'Ошибка batch операции');
     } finally {
       setBatchLoading(false);
+    }
+  };
+
+  // PATCH-5: Fix club billing dates handlers
+  const handleFixDryRun = async () => {
+    setFixLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Не авторизован');
+      
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-fix-club-billing-dates`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ dry_run: true, limit: 200 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Dry run failed');
+      setFixDryRunResult(data);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setFixLoading(false);
+    }
+  };
+
+  const handleFixExecute = async () => {
+    if (!fixDryRunResult?.preview_hash) {
+      toast.error('Сначала выполните dry-run');
+      return;
+    }
+    setFixExecuteLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Не авторизован');
+      
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin-fix-club-billing-dates`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ 
+          dry_run: false, 
+          limit: 200, 
+          preview_hash: fixDryRunResult.preview_hash 
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Execute failed');
+      toast.success(`Исправлено ${data.results?.updated || 0} подписок`);
+      setFixBillingDialogOpen(false);
+      setFixDryRunResult(null);
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setFixExecuteLoading(false);
     }
   };
   
@@ -1021,6 +1088,26 @@ export function AutoRenewalsTabContent() {
             <RefreshCw className="h-4 w-4 mr-1" />
             Обновить
           </Button>
+
+          {/* PATCH-5: Tools dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-9">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="bg-background">
+              <DropdownMenuLabel className="text-xs">Инструменты</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem 
+                onClick={() => setFixBillingDialogOpen(true)}
+                disabled={!hasPermission('subscriptions.edit')}
+              >
+                <Wrench className="h-4 w-4 mr-2" />
+                Fix club billing dates
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           
           <ColumnSettings 
             columns={columns} 
@@ -1125,6 +1212,129 @@ export function AutoRenewalsTabContent() {
             }
           }}
         />
+
+        {/* PATCH-5: Fix Club Billing Dates Modal */}
+        <Dialog open={fixBillingDialogOpen} onOpenChange={(open) => {
+          setFixBillingDialogOpen(open);
+          if (!open) setFixDryRunResult(null);
+        }}>
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-auto">
+            <DialogHeader>
+              <DialogTitle>Fix Club Billing Dates</DialogTitle>
+            </DialogHeader>
+            
+            {!fixDryRunResult ? (
+              // Step 1: Dry Run
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Найти и исправить проблемные подписки клуба:
+                </p>
+                <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1">
+                  <li>NULL next_charge_at (при auto_renew=true)</li>
+                  <li>Год 2027+ в датах (баг +365 дней)</li>
+                  <li>Период больше 40 дней (должен быть ~30)</li>
+                  <li>Рассинхрон next_charge_at и access_end_at</li>
+                </ul>
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  ⚠️ Сотрудники исключены: a.bruylo@ajoure.by, nrokhmistrov@gmail.com, ceo@ajoure.by, irenessa@yandex.ru
+                </p>
+                <div className="flex gap-2 pt-2">
+                  <Button onClick={handleFixDryRun} disabled={fixLoading}>
+                    {fixLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Анализ...
+                      </>
+                    ) : (
+                      'Запустить анализ (dry-run)'
+                    )}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              // Step 2: Preview + Execute
+              <div className="space-y-4">
+                <div className="grid grid-cols-5 gap-2 text-sm">
+                  <div className="p-2 bg-muted rounded text-center">
+                    <div className="font-bold text-lg">{fixDryRunResult.stats.total}</div>
+                    <div className="text-[10px] text-muted-foreground">Всего</div>
+                  </div>
+                  <div className="p-2 bg-muted rounded text-center">
+                    <div className="font-bold text-lg">{fixDryRunResult.stats.null_next_charge}</div>
+                    <div className="text-[10px] text-muted-foreground">NULL charge</div>
+                  </div>
+                  <div className="p-2 bg-muted rounded text-center">
+                    <div className="font-bold text-lg">{fixDryRunResult.stats.year_2027}</div>
+                    <div className="text-[10px] text-muted-foreground">2027+</div>
+                  </div>
+                  <div className="p-2 bg-muted rounded text-center">
+                    <div className="font-bold text-lg">{fixDryRunResult.stats.period_too_long}</div>
+                    <div className="text-[10px] text-muted-foreground">Period&gt;40d</div>
+                  </div>
+                  <div className="p-2 bg-muted rounded text-center">
+                    <div className="font-bold text-lg">{fixDryRunResult.stats.misaligned}</div>
+                    <div className="text-[10px] text-muted-foreground">Misaligned</div>
+                  </div>
+                </div>
+                
+                {fixDryRunResult.subscriptions?.length > 0 && (
+                  <div className="max-h-60 overflow-auto border rounded">
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/50 sticky top-0">
+                        <tr>
+                          <th className="text-left p-2">Email</th>
+                          <th className="text-left p-2">Проблема</th>
+                          <th className="text-left p-2">Было</th>
+                          <th className="text-left p-2">Станет</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fixDryRunResult.subscriptions.map((sub: any) => (
+                          <tr key={sub.id} className="border-t">
+                            <td className="p-2 truncate max-w-[120px]" title={sub.email}>{sub.email}</td>
+                            <td className="p-2">
+                              <div className="flex flex-wrap gap-1">
+                                {sub.problem_type.map((p: string) => (
+                                  <Badge key={p} variant="outline" className="text-[9px]">{p}</Badge>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="p-2 font-mono text-muted-foreground">
+                              {sub.current.next_charge_at?.slice(0, 10) || 'NULL'}
+                            </td>
+                            <td className="p-2 font-mono text-green-600 dark:text-green-400">
+                              {sub.fix_preview.next_charge_at?.slice(0, 10)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                
+                <DialogFooter className="gap-2 sm:gap-0">
+                  <Button variant="outline" onClick={() => setFixDryRunResult(null)}>
+                    Сбросить
+                  </Button>
+                  <Button 
+                    variant="destructive" 
+                    onClick={handleFixExecute}
+                    disabled={fixExecuteLoading || fixDryRunResult.stats.total === 0}
+                  >
+                    {fixExecuteLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Выполнение...
+                      </>
+                    ) : (
+                      `Применить (${fixDryRunResult.stats.total} записей)`
+                    )}
+                  </Button>
+                </DialogFooter>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </TooltipProvider>
   );

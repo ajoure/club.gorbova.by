@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { encode as base64Encode, decode as base64Decode } from 'https://deno.land/std@0.208.0/encoding/base64.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -15,6 +16,8 @@ const corsHeaders = {
  * - Misaligned: abs(next_charge_at - access_end_at) > 1 hour
  * 
  * Business rule: Club = calendar month (+1 month), next_charge_at = access_end_at
+ * 
+ * SECURITY: Uses HMAC-based preview_hash with TTL to prevent accidental execute
  */
 
 // Staff emails to NEVER modify (exclude from any updates)
@@ -26,11 +29,12 @@ const EXCLUDED_STAFF_EMAILS = [
 ];
 
 const CLUB_PRODUCT_ID = '11c9f1b8-0355-4753-bd74-40b42aa53616';
+const PREVIEW_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 interface RequestBody {
   dry_run: boolean;
   limit?: number;
-  preview_hash?: string;  // Required for execute to prevent accidental runs
+  preview_hash?: string;  // Required for execute - HMAC-validated
 }
 
 interface ProblematicSubscription {
@@ -46,6 +50,59 @@ interface ProblematicSubscription {
   next_charge_at: string | null;
   created_at: string;
   problem_type: string[];
+}
+
+// HMAC helper functions
+async function createHmac(payload: object, secret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(JSON.stringify(payload)));
+  return base64Encode(new Uint8Array(signature));
+}
+
+async function verifyHmac(previewHash: string, secret: string): Promise<{ valid: boolean; payload?: any; error?: string }> {
+  try {
+    const [payloadB64, signatureB64] = previewHash.split('.');
+    if (!payloadB64 || !signatureB64) {
+      return { valid: false, error: 'Invalid hash format' };
+    }
+    
+    const payloadStr = new TextDecoder().decode(base64Decode(payloadB64));
+    const payload = JSON.parse(payloadStr);
+    
+    // Check TTL
+    if (payload.exp < Date.now()) {
+      return { valid: false, error: 'Preview expired. Run dry_run again.' };
+    }
+    
+    // Verify signature
+    const expectedSignature = await createHmac(payload, secret);
+    if (expectedSignature !== signatureB64) {
+      return { valid: false, error: 'Invalid signature' };
+    }
+    
+    return { valid: true, payload };
+  } catch (e) {
+    return { valid: false, error: `Hash verification failed: ${e}` };
+  }
+}
+
+async function generatePreviewHash(subscriptionIds: string[], userId: string, secret: string): Promise<string> {
+  const payload = {
+    ids: subscriptionIds.slice(0, 20),  // First 20 IDs for verification
+    count: subscriptionIds.length,
+    user: userId,
+    exp: Date.now() + PREVIEW_TTL_MS,
+  };
+  const signature = await createHmac(payload, secret);
+  const payloadB64 = base64Encode(new TextEncoder().encode(JSON.stringify(payload)));
+  return `${payloadB64}.${signature}`;
 }
 
 Deno.serve(async (req) => {
@@ -206,12 +263,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Generate preview hash for execute validation
-    const previewHashGenerated = btoa(JSON.stringify({
-      count: problematic.length,
-      ids: problematic.slice(0, 10).map(p => p.id),
-      timestamp: Math.floor(Date.now() / 60000), // Valid for 1 minute
-    }));
+    // Generate HMAC-secured preview hash for execute validation
+    const previewSecret = Deno.env.get('PREVIEW_HASH_SECRET') || 'fallback-secret-change-in-prod';
+    const previewHashGenerated = await generatePreviewHash(
+      problematic.map(p => p.id),
+      user.id,
+      previewSecret
+    );
 
     // =================================================================
     // DRY RUN - just return the report
@@ -270,12 +328,34 @@ Deno.serve(async (req) => {
     // EXECUTE - apply fixes
     // =================================================================
     
-    // STOP: Require preview_hash to prevent accidental execute
+    // STOP: Require and VALIDATE preview_hash (HMAC + TTL)
     if (!preview_hash) {
       return new Response(JSON.stringify({
         error: 'Execute requires preview_hash from dry_run. Run dry_run first.',
       }), {
         status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const verifyResult = await verifyHmac(preview_hash, previewSecret);
+    
+    if (!verifyResult.valid) {
+      return new Response(JSON.stringify({
+        error: verifyResult.error || 'Invalid preview_hash',
+        hint: 'Run dry_run again to get a fresh preview_hash',
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Verify the preview was created by the same user
+    if (verifyResult.payload?.user !== user.id) {
+      return new Response(JSON.stringify({
+        error: 'Preview hash was created by a different user',
+      }), {
+        status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
