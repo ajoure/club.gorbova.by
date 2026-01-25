@@ -590,6 +590,62 @@ async function chargeSubscription(
   }
 
   // ========== END GRACE PERIOD CHECKS ==========
+
+  // ========== CHARGE WINDOW CHECK ==========
+  // PATCH: Only allow charge if current time is within configured charge windows (±15 min)
+  const recurringSnapshotForWindow = subMeta?.recurring_snapshot || {};
+  const timezone = recurringSnapshotForWindow.timezone || 'Europe/Minsk';
+  const chargeTimesLocal = recurringSnapshotForWindow.charge_times_local || ['09:00', '21:00'];
+  const chargeAttemptsPerDay = recurringSnapshotForWindow.charge_attempts_per_day || 2;
+  
+  // Get current time in the configured timezone
+  const nowInTz = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
+  const currentHour = nowInTz.getHours();
+  const currentMinute = nowInTz.getMinutes();
+  const currentTotalMinutes = currentHour * 60 + currentMinute;
+  
+  // Check if we're within ±15 minutes of any configured charge time
+  const WINDOW_TOLERANCE_MINUTES = 15;
+  let isInChargeWindow = false;
+  
+  for (const timeStr of chargeTimesLocal.slice(0, chargeAttemptsPerDay)) {
+    const [h, m] = timeStr.split(':').map(Number);
+    const targetMinutes = h * 60 + m;
+    const diff = Math.abs(currentTotalMinutes - targetMinutes);
+    if (diff <= WINDOW_TOLERANCE_MINUTES || diff >= (24 * 60 - WINDOW_TOLERANCE_MINUTES)) {
+      isInChargeWindow = true;
+      break;
+    }
+  }
+  
+  if (!isInChargeWindow) {
+    console.log(`Subscription ${id}: outside charge window (current=${currentHour}:${currentMinute} TZ=${timezone}, windows=${chargeTimesLocal.join(',')})`);
+    return {
+      subscription_id: id,
+      success: false,
+      skipped: true,
+      skip_reason: 'outside_charge_window',
+      error: `Current time not in charge window. Configured: ${chargeTimesLocal.join(', ')} (${timezone})`,
+    };
+  }
+  
+  // Check attempts per day limit
+  const todayLocalStr = nowInTz.toISOString().split('T')[0];
+  const lastAttemptDay = subMeta?.last_charge_attempt_day;
+  const attemptsToday = lastAttemptDay === todayLocalStr ? (subMeta?.charge_attempts_today || 0) : 0;
+  
+  if (attemptsToday >= chargeAttemptsPerDay) {
+    console.log(`Subscription ${id}: max attempts (${chargeAttemptsPerDay}) reached for today (${todayLocalStr})`);
+    return {
+      subscription_id: id,
+      success: false,
+      skipped: true,
+      skip_reason: 'max_attempts_today',
+      error: `Already attempted ${attemptsToday} times today (max: ${chargeAttemptsPerDay})`,
+    };
+  }
+  
+  // ========== END CHARGE WINDOW CHECK ==========
   
   // === CRITICAL FIX: Only charge if payment_method is linked and active ===
   if (!payment_method_id) {

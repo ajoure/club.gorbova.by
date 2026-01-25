@@ -27,7 +27,8 @@ export interface RecurringConfig {
   billing_period_days?: number;                   // If mode='days', number of days (default 30)
   grace_hours?: number;                           // Grace period in hours (default 72)
   charge_attempts_per_day?: number;               // Attempts per day during grace (default 2)
-  charge_windows_utc?: string[];                  // Concrete hours in UTC, e.g. ['06:00', '18:00']
+  charge_windows_utc?: string[];                  // Deprecated: use charge_times_local
+  charge_times_local?: string[];                  // Times in local timezone, e.g. ['09:00', '21:00']
   timezone?: string;                              // Timezone for charge windows (default 'Europe/Minsk')
   pre_due_reminders_days?: number[];              // Days before due to send reminders [7, 3, 1]
   post_due_reminders_policy?: 'daily' | 'none';   // Reminder policy during grace

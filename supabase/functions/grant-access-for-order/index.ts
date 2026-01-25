@@ -5,6 +5,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// PATCH: Staff emails - NEVER modify subscriptions for these users
+const STAFF_EMAILS = [
+  'a.bruylo@ajoure.by',
+  'nrokhmistrov@gmail.com',
+  'ceo@ajoure.by',
+  'irenessa@yandex.ru',
+];
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -317,33 +325,49 @@ Deno.serve(async (req) => {
     }
 
     // PATCH: Disable auto_renew on OLD subscriptions for same product (manual payment cleans up grace)
+    // BLOCKER FIX: Skip this cleanup for staff accounts to protect internal access
     const newSubId = results.subscription?.id;
     if (newSubId) {
-      const { data: oldSubs } = await supabase
-        .from('subscriptions_v2')
-        .select('id, grace_period_status')
+      // First check if this user is staff
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('email')
         .eq('user_id', userId)
-        .eq('product_id', productId)
-        .eq('auto_renew', true)
-        .neq('id', newSubId);
+        .maybeSingle();
+      
+      const userEmail = userProfile?.email?.toLowerCase() || '';
+      const isStaff = STAFF_EMAILS.some(se => se.toLowerCase() === userEmail);
+      
+      if (isStaff) {
+        console.log(`SKIP cleanup for staff user ${userId} (${userEmail})`);
+        results.staff_exclusion = true;
+      } else {
+        const { data: oldSubs } = await supabase
+          .from('subscriptions_v2')
+          .select('id, grace_period_status')
+          .eq('user_id', userId)
+          .eq('product_id', productId)
+          .eq('auto_renew', true)
+          .neq('id', newSubId);
 
-      if (oldSubs?.length) {
-        for (const oldSub of oldSubs) {
-          await supabase.from('subscriptions_v2').update({
-            auto_renew: false,
-            grace_period_started_at: null,
-            grace_period_ends_at: null,
-            grace_period_status: null,
-            updated_at: now.toISOString(),
-            meta: {
-              replaced_by_order: orderId,
-              auto_renew_disabled_at: now.toISOString(),
-              auto_renew_disabled_reason: 'manual_payment_new_order',
-            },
-          }).eq('id', oldSub.id);
+        if (oldSubs?.length) {
+          for (const oldSub of oldSubs) {
+            await supabase.from('subscriptions_v2').update({
+              auto_renew: false,
+              grace_period_started_at: null,
+              grace_period_ends_at: null,
+              grace_period_status: null,
+              updated_at: now.toISOString(),
+              meta: {
+                replaced_by_order: orderId,
+                auto_renew_disabled_at: now.toISOString(),
+                auto_renew_disabled_reason: 'manual_payment_new_order',
+              },
+            }).eq('id', oldSub.id);
+          }
+          console.log(`Disabled auto_renew for ${oldSubs.length} old subscriptions after manual payment`);
+          results.old_subscriptions_disabled = oldSubs.length;
         }
-        console.log(`Disabled auto_renew for ${oldSubs.length} old subscriptions after manual payment`);
-        results.old_subscriptions_disabled = oldSubs.length;
       }
     }
 

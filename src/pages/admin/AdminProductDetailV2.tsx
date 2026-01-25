@@ -347,11 +347,42 @@ export default function AdminProductDetailV2() {
     }
     
     // Preserve/clear recurring settings based on subscription toggle
-    // PATCH: recurring config is edited directly in meta.recurring via UI, keep as-is
-    // If subscription is disabled, remove recurring config
+    // PATCH: Normalize recurring config with defaults when saving subscription
     const isSubscription = offerForm.offer_type === "trial" || isPreregistration || 
       (isInstallment || offerForm.requires_card_tokenization);
-    if (!isSubscription) {
+    
+    if (isSubscription) {
+      // PATCH: Normalize recurring config with all required defaults
+      const existingRecurring = metaToSave.recurring || {};
+      const chargeAttemptsPerDay = Math.min(4, Math.max(1, existingRecurring.charge_attempts_per_day || 2));
+      
+      // Ensure charge_times_local array matches charge_attempts_per_day
+      let chargeTimesLocal = existingRecurring.charge_times_local || ['09:00', '21:00'];
+      if (chargeTimesLocal.length < chargeAttemptsPerDay) {
+        // Fill with defaults
+        const defaults = ['09:00', '15:00', '21:00', '03:00'];
+        while (chargeTimesLocal.length < chargeAttemptsPerDay) {
+          chargeTimesLocal.push(defaults[chargeTimesLocal.length] || '12:00');
+        }
+      } else if (chargeTimesLocal.length > chargeAttemptsPerDay) {
+        chargeTimesLocal = chargeTimesLocal.slice(0, chargeAttemptsPerDay);
+      }
+      
+      metaToSave.recurring = {
+        is_recurring: true,
+        timezone: existingRecurring.timezone || 'Europe/Minsk',
+        billing_period_mode: existingRecurring.billing_period_mode || 'month',
+        billing_period_days: existingRecurring.billing_period_mode === 'days' 
+          ? (existingRecurring.billing_period_days || 30) : undefined,
+        grace_hours: Math.min(168, Math.max(1, existingRecurring.grace_hours || 72)),
+        charge_attempts_per_day: chargeAttemptsPerDay,
+        charge_times_local: chargeTimesLocal,
+        pre_due_reminders_days: existingRecurring.pre_due_reminders_days || [7, 3, 1],
+        post_due_reminders_policy: existingRecurring.post_due_reminders_policy || 'daily',
+        notify_before_each_charge: existingRecurring.notify_before_each_charge ?? true,
+        notify_grace_events: existingRecurring.notify_grace_events ?? true,
+      };
+    } else {
       delete metaToSave.recurring;
     }
     
@@ -1184,6 +1215,66 @@ export default function AdminProductDetailV2() {
                                 </SelectContent>
                               </Select>
                             </div>
+                          </div>
+
+                          {/* Timezone */}
+                          <div className="space-y-2">
+                            <Label className="text-sm">Часовой пояс</Label>
+                            <Select
+                              value={offerForm.meta?.recurring?.timezone || 'Europe/Minsk'}
+                              onValueChange={(v) => setOfferForm({
+                                ...offerForm,
+                                meta: {
+                                  ...offerForm.meta,
+                                  recurring: {
+                                    ...offerForm.meta?.recurring,
+                                    timezone: v,
+                                  }
+                                }
+                              })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Europe/Minsk">Europe/Minsk (UTC+3)</SelectItem>
+                                <SelectItem value="Europe/Moscow">Europe/Moscow (UTC+3)</SelectItem>
+                                <SelectItem value="Europe/Warsaw">Europe/Warsaw (UTC+1/+2)</SelectItem>
+                                <SelectItem value="UTC">UTC</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          {/* Charge times */}
+                          <div className="space-y-2">
+                            <Label className="text-sm">Время попыток списания</Label>
+                            <div className="flex gap-2 flex-wrap">
+                              {Array.from({ length: offerForm.meta?.recurring?.charge_attempts_per_day || 2 }).map((_, idx) => (
+                                <Input
+                                  key={idx}
+                                  type="time"
+                                  value={(offerForm.meta?.recurring?.charge_times_local || ['09:00', '21:00'])[idx] || '12:00'}
+                                  onChange={(e) => {
+                                    const currentTimes = [...(offerForm.meta?.recurring?.charge_times_local || ['09:00', '21:00'])];
+                                    currentTimes[idx] = e.target.value;
+                                    setOfferForm({
+                                      ...offerForm,
+                                      meta: {
+                                        ...offerForm.meta,
+                                        recurring: {
+                                          ...offerForm.meta?.recurring,
+                                          charge_times_local: currentTimes,
+                                        }
+                                      }
+                                    });
+                                  }}
+                                  className="w-24"
+                                />
+                              ))}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Время в выбранном часовом поясе (±15 мин допуск)
+                            </p>
                           </div>
                           
                           {/* Pre-due reminders */}

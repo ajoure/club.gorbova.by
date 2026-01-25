@@ -264,11 +264,13 @@ Deno.serve(async (req) => {
       grace_24h_left: 0,
       grace_48h_left: 0,
       grace_expired: 0,
+      total_processed: 0,
       errors: [] as string[],
     };
 
-    // STOP guard - max 500 records per run
-    const MAX_RECORDS = 500;
+    // STOP guards - limits per step and total
+    const MAX_PER_STEP = 50;
+    const MAX_TOTAL = 500;
 
     // ========== STEP 1: Start grace for newly expired subscriptions ==========
     // Grace starts DETERMINISTICALLY from access_end_at, not from "first charge attempt"
@@ -279,19 +281,32 @@ Deno.serve(async (req) => {
       .is('grace_period_started_at', null)
       .in('status', ['active', 'past_due'])
       .eq('auto_renew', true)
-      .limit(50);
+      .limit(MAX_PER_STEP);
 
-    if ((newlyExpired?.length || 0) > MAX_RECORDS) {
-      console.error(`ANOMALY: Too many newly expired subscriptions (${newlyExpired?.length})`);
-      await supabase.from('audit_logs').insert({
-        action: 'subscription.grace_reminders_anomaly',
-        actor_type: 'system',
-        meta: { reason: 'too_many_newly_expired', count: newlyExpired?.length },
-      });
-      return new Response(JSON.stringify({ error: 'Anomaly detected', count: newlyExpired?.length }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    // STOP guard: check for anomaly
+    if ((newlyExpired?.length || 0) >= MAX_PER_STEP) {
+      // Check total count for anomaly detection
+      const { count: totalNewlyExpired } = await supabase
+        .from('subscriptions_v2')
+        .select('id', { count: 'exact', head: true })
+        .lt('access_end_at', nowIso)
+        .is('grace_period_started_at', null)
+        .in('status', ['active', 'past_due'])
+        .eq('auto_renew', true);
+      
+      if ((totalNewlyExpired || 0) > MAX_TOTAL) {
+        console.error(`ANOMALY: Too many newly expired subscriptions (${totalNewlyExpired})`);
+        await supabase.from('audit_logs').insert({
+          action: 'subscription.grace_reminders_anomaly',
+          actor_type: 'system',
+          actor_label: 'subscription-grace-reminders',
+          meta: { reason: 'too_many_newly_expired', count: totalNewlyExpired, threshold: MAX_TOTAL },
+        });
+        return new Response(JSON.stringify({ error: 'Anomaly detected', count: totalNewlyExpired }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     for (const sub of newlyExpired || []) {
@@ -343,67 +358,97 @@ Deno.serve(async (req) => {
         // Send grace_started notification
         const sent = await sendGraceNotification(supabase, sub.user_id, sub.id, 'grace_started', graceEndsAt, amount, currency);
         if (sent.telegram || sent.email) results.grace_started++;
+        results.total_processed++;
       } catch (err) {
         console.error(`Error starting grace for ${sub.id}:`, err);
         results.errors.push(`start:${sub.id}:${err}`);
       }
     }
 
+    // STOP guard: check total processed
+    if (results.total_processed >= MAX_TOTAL) {
+      console.log(`STOP: Reached MAX_TOTAL (${MAX_TOTAL}) after step 1`);
+      await logAndReturn();
+    }
+
+    // Helper to log and return early
+    async function logAndReturn() {
+      await supabase.from('audit_logs').insert({
+        action: 'subscription.grace_reminders_cron_completed',
+        actor_type: 'system',
+        actor_label: 'subscription-grace-reminders',
+        meta: { run_at: nowIso, early_exit: true, ...results },
+      });
+    }
+
     // ========== STEP 2: Send 24h reminder (48h remaining) ==========
-    const hour24ago = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const { data: day2Subs } = await supabase
-      .from('subscriptions_v2')
-      .select('id, user_id, grace_period_ends_at, meta')
-      .eq('grace_period_status', 'in_grace')
-      .lt('grace_period_started_at', hour24ago.toISOString())
-      .gt('grace_period_ends_at', nowIso)
-      .limit(50);
+    if (results.total_processed < MAX_TOTAL) {
+      const hour24ago = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const { data: day2Subs } = await supabase
+        .from('subscriptions_v2')
+        .select('id, user_id, grace_period_ends_at, meta')
+        .eq('grace_period_status', 'in_grace')
+        .lt('grace_period_started_at', hour24ago.toISOString())
+        .gt('grace_period_ends_at', nowIso)
+        .limit(MAX_PER_STEP);
 
-    for (const sub of day2Subs || []) {
-      if (await wasEventSent(supabase, sub.id, 'grace_24h_left')) continue;
+      for (const sub of day2Subs || []) {
+        if (results.total_processed >= MAX_TOTAL) break;
+        if (await wasEventSent(supabase, sub.id, 'grace_24h_left')) continue;
 
-      try {
-        const graceEndsAt = new Date(sub.grace_period_ends_at);
-        const sent = await sendGraceNotification(supabase, sub.user_id, sub.id, 'grace_24h_left', graceEndsAt, 0, 'BYN');
-        if (sent.telegram || sent.email) results.grace_24h_left++;
-      } catch (err) {
-        console.error(`Error sending 24h reminder for ${sub.id}:`, err);
-        results.errors.push(`24h:${sub.id}:${err}`);
+        try {
+          const graceEndsAt = new Date(sub.grace_period_ends_at);
+          const sent = await sendGraceNotification(supabase, sub.user_id, sub.id, 'grace_24h_left', graceEndsAt, 0, 'BYN');
+          if (sent.telegram || sent.email) results.grace_24h_left++;
+          results.total_processed++;
+        } catch (err) {
+          console.error(`Error sending 24h reminder for ${sub.id}:`, err);
+          results.errors.push(`24h:${sub.id}:${err}`);
+        }
       }
     }
 
     // ========== STEP 3: Send 48h reminder (24h remaining) ==========
-    const hour48ago = new Date(now.getTime() - 48 * 60 * 60 * 1000);
-    const { data: day3Subs } = await supabase
-      .from('subscriptions_v2')
-      .select('id, user_id, grace_period_ends_at, meta')
-      .eq('grace_period_status', 'in_grace')
-      .lt('grace_period_started_at', hour48ago.toISOString())
-      .gt('grace_period_ends_at', nowIso)
-      .limit(50);
+    if (results.total_processed < MAX_TOTAL) {
+      const hour48ago = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+      const { data: day3Subs } = await supabase
+        .from('subscriptions_v2')
+        .select('id, user_id, grace_period_ends_at, meta')
+        .eq('grace_period_status', 'in_grace')
+        .lt('grace_period_started_at', hour48ago.toISOString())
+        .gt('grace_period_ends_at', nowIso)
+        .limit(MAX_PER_STEP);
 
-    for (const sub of day3Subs || []) {
-      if (await wasEventSent(supabase, sub.id, 'grace_48h_left')) continue;
+      for (const sub of day3Subs || []) {
+        if (results.total_processed >= MAX_TOTAL) break;
+        if (await wasEventSent(supabase, sub.id, 'grace_48h_left')) continue;
 
-      try {
-        const graceEndsAt = new Date(sub.grace_period_ends_at);
-        const sent = await sendGraceNotification(supabase, sub.user_id, sub.id, 'grace_48h_left', graceEndsAt, 0, 'BYN');
-        if (sent.telegram || sent.email) results.grace_48h_left++;
-      } catch (err) {
-        console.error(`Error sending 48h reminder for ${sub.id}:`, err);
-        results.errors.push(`48h:${sub.id}:${err}`);
+        try {
+          const graceEndsAt = new Date(sub.grace_period_ends_at);
+          const sent = await sendGraceNotification(supabase, sub.user_id, sub.id, 'grace_48h_left', graceEndsAt, 0, 'BYN');
+          if (sent.telegram || sent.email) results.grace_48h_left++;
+          results.total_processed++;
+        } catch (err) {
+          console.error(`Error sending 48h reminder for ${sub.id}:`, err);
+          results.errors.push(`48h:${sub.id}:${err}`);
+        }
       }
     }
 
     // ========== STEP 4: Mark expired grace as expired_reentry ==========
-    const { data: expiredGrace } = await supabase
-      .from('subscriptions_v2')
-      .select('id, user_id, meta')
-      .eq('grace_period_status', 'in_grace')
-      .lte('grace_period_ends_at', nowIso)
-      .limit(50);
+    let expiredGrace: any[] = [];
+    if (results.total_processed < MAX_TOTAL) {
+      const { data } = await supabase
+        .from('subscriptions_v2')
+        .select('id, user_id, meta')
+        .eq('grace_period_status', 'in_grace')
+        .lte('grace_period_ends_at', nowIso)
+        .limit(MAX_PER_STEP);
+      expiredGrace = data || [];
+    }
 
-    for (const sub of expiredGrace || []) {
+    for (const sub of expiredGrace) {
+      if (results.total_processed >= MAX_TOTAL) break;
       try {
         const subMeta = (sub.meta || {}) as Record<string, any>;
         await markAsExpiredReentry(supabase, sub.user_id, sub.id, subMeta);
@@ -413,6 +458,7 @@ Deno.serve(async (req) => {
           const sent = await sendGraceNotification(supabase, sub.user_id, sub.id, 'grace_expired', null, 0, 'BYN');
           if (sent.telegram || sent.email) results.grace_expired++;
         }
+        results.total_processed++;
       } catch (err) {
         console.error(`Error expiring grace for ${sub.id}:`, err);
         results.errors.push(`expire:${sub.id}:${err}`);
