@@ -84,6 +84,17 @@ export const EVENT_LABELS: Record<string, string> = {
   "admin.subscription.create": "Создание подписки админом",
   "admin.subscription.delete": "Удаление подписки админом",
   
+  // ===== Grace Period (72ч ценовой период) =====
+  grace_started: "Grace-период начат (72ч)",
+  grace_24h_left: "Grace-период: осталось 48ч",
+  grace_48h_left: "Grace-период: осталось 24ч",
+  grace_expired: "Grace-период истёк",
+  charge_will_run: "Предстоящее списание",
+  "subscription.grace_started": "Запуск grace-периода",
+  "subscription.grace_expired": "Grace-период истёк (возврат только по новой цене)",
+  "subscription.grace_reminders_cron_completed": "Cron grace-напоминаний выполнен",
+  grace_notification: "Уведомление grace-периода",
+  
   // ===== Платежи =====
   PAYMENT_SUCCESS: "Платёж успешен",
   PAYMENT_FAILED: "Платёж не прошёл",
