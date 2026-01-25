@@ -1039,11 +1039,97 @@ async function chargeSubscription(
             last_charge_attempt_error: null,
             last_charged_at: chargeAttemptAt,
             last_successful_charge_at: chargeAttemptAt,
-            // Clear reconcile flag if it was set
+            // Set reconcile flag on error, clear on success
             needs_reconcile: updatePaymentError ? true : false,
           }
         })
         .eq('id', id);
+
+      // PATCH 1: Sync orders_v2 with payments (idempotent, with guards)
+      if (order_id) {
+        // Query ALL succeeded payments for this order (amount > 0 only)
+        const { data: succeededPayments, error: paymentsQueryError } = await supabase
+          .from('payments_v2')
+          .select('amount')
+          .eq('order_id', order_id)
+          .eq('status', 'succeeded')
+          .gt('amount', 0);
+
+        if (paymentsQueryError) {
+          // Log query failure (silent failure is dangerous)
+          console.error('Failed to query succeeded payments for order sync:', paymentsQueryError);
+          await supabase.from('audit_logs').insert({
+            action: 'subscription.order_sync_payments_query_failed',
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'subscription-charge',
+            target_user_id: user_id,
+            meta: {
+              subscription_id: id,
+              order_id,
+              payment_id: payment.id,
+              error: paymentsQueryError.message,
+              error_code: paymentsQueryError.code,
+            }
+          });
+        } else if (succeededPayments) {
+          // Calculate expected paid amount (idempotent: SUM, not += amount)
+          const expectedPaidAmount = succeededPayments.reduce(
+            (sum: number, p: { amount: number | null }) => sum + Number(p.amount || 0),
+            0
+          );
+
+          // Get current order state
+          const { data: currentOrder } = await supabase
+            .from('orders_v2')
+            .select('meta, status, paid_amount')
+            .eq('id', order_id)
+            .single();
+
+          // Guard: do NOT update refunded/canceled orders
+          const protectedStatuses = ['refunded', 'canceled', 'cancelled'];
+          const isProtected = currentOrder?.status && protectedStatuses.includes(currentOrder.status);
+
+          if (!isProtected) {
+            const { error: orderUpdateError } = await supabase
+              .from('orders_v2')
+              .update({
+                status: expectedPaidAmount > 0 ? 'paid' : (currentOrder?.status || 'pending'),
+                paid_amount: expectedPaidAmount,
+                meta: {
+                  ...(currentOrder?.meta || {}),
+                  last_renewal_at: chargeAttemptAt,
+                  last_renewal_payment_id: payment.id,
+                  last_renewal_amount: amount,
+                  last_renewal_bepaid_uid: chargeResult.transaction.uid ?? null,
+                }
+              })
+              .eq('id', order_id);
+
+            if (orderUpdateError) {
+              console.error('Failed to sync order status:', orderUpdateError);
+              await supabase.from('audit_logs').insert({
+                action: 'subscription.order_sync_failed',
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'subscription-charge',
+                target_user_id: user_id,
+                meta: {
+                  subscription_id: id,
+                  order_id,
+                  payment_id: payment.id,
+                  expected_paid_amount: expectedPaidAmount,
+                  previous_status: currentOrder?.status,
+                  previous_paid_amount: currentOrder?.paid_amount,
+                  error: orderUpdateError.message,
+                }
+              });
+            }
+          } else {
+            console.log(`Skipping order sync: order ${order_id} has protected status ${currentOrder?.status}`);
+          }
+        }
+      }
 
       // PATCH B: Log successful charge (SYSTEM ACTOR proof)
       await supabase.from('audit_logs').insert({
