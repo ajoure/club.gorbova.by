@@ -950,18 +950,58 @@ async function chargeSubscription(
     const chargeAttemptAt = new Date().toISOString();
 
     if (chargeResult.transaction?.status === 'successful') {
-      await supabase
+      // PATCH A: Fix status 'completed' → 'succeeded' + mandatory error handling
+      const { data: updatedPayment, error: updatePaymentError } = await supabase
         .from('payments_v2')
         .update({
-          status: 'completed',
+          status: 'succeeded',  // FIXED: was 'completed' which doesn't exist in enum
           paid_at: new Date().toISOString(),
           provider_payment_id: chargeResult.transaction.uid,
           provider_response: chargeResult,
-          card_last4: chargeResult.transaction.credit_card?.last_4,
-          card_brand: chargeResult.transaction.credit_card?.brand,
-          receipt_url: chargeResult.transaction.receipt_url || null,
+          card_last4: chargeResult.transaction.credit_card?.last_4 ?? null,
+          card_brand: chargeResult.transaction.credit_card?.brand ?? null,
+          receipt_url: chargeResult.transaction.receipt_url ?? null,
         })
-        .eq('id', payment.id);
+        .eq('id', payment.id)
+        .select('id, status, paid_at, provider_payment_id')
+        .single();
+
+      // PATCH A: Log finalize failure if update failed
+      if (updatePaymentError) {
+        console.error('CRITICAL: Payment finalize failed after successful bePaid charge:', updatePaymentError);
+        
+        await supabase.from('audit_logs').insert({
+          action: 'subscription.charge_finalize_failed',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'subscription-charge',
+          target_user_id: user_id,
+          meta: {
+            subscription_id: id,
+            payment_id: payment.id,
+            bepaid_uid: chargeResult.transaction.uid,
+            amount,
+            currency,
+            error: updatePaymentError.message,
+            error_code: updatePaymentError.code,
+            charge_result_status: chargeResult.transaction.status,
+          }
+        });
+        
+        // Mark subscription for reconciliation (money was charged, must not lose track)
+        await supabase
+          .from('subscriptions_v2')
+          .update({
+            meta: {
+              ...(subMeta || {}),
+              needs_reconcile: true,
+              reconcile_reason: 'payment_finalize_failed',
+              failed_payment_id: payment.id,
+              failed_bepaid_uid: chargeResult.transaction.uid,
+            }
+          })
+          .eq('id', id);
+      }
 
       fetch(
         `${Deno.env.get('SUPABASE_URL')}/functions/v1/bepaid-fetch-receipt`,
@@ -982,7 +1022,7 @@ async function chargeSubscription(
       const nextChargeDate = new Date(newEndDate);
       nextChargeDate.setDate(nextChargeDate.getDate() - 3);
 
-      // PATCH: Update meta AFTER successful charge
+      // Update subscription with new dates
       await supabase
         .from('subscriptions_v2')
         .update({
@@ -999,9 +1039,33 @@ async function chargeSubscription(
             last_charge_attempt_error: null,
             last_charged_at: chargeAttemptAt,
             last_successful_charge_at: chargeAttemptAt,
+            // Clear reconcile flag if it was set
+            needs_reconcile: updatePaymentError ? true : false,
           }
         })
         .eq('id', id);
+
+      // PATCH B: Log successful charge (SYSTEM ACTOR proof)
+      await supabase.from('audit_logs').insert({
+        action: 'subscription.charged',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'subscription-charge',
+        target_user_id: user_id,
+        meta: {
+          subscription_id: id,
+          payment_id: payment.id,
+          bepaid_uid: chargeResult.transaction.uid,
+          amount,
+          currency,
+          new_access_end_at: newEndDate.toISOString(),
+          new_next_charge_at: nextChargeDate.toISOString(),
+          is_trial_conversion: is_trial,
+          payment_finalize_success: !updatePaymentError,
+          tariff_id: tariff.id,
+          order_id: order_id,
+        }
+      });
 
       // Send to GetCourse if this was a trial conversion
       if (is_trial && fullPaymentGcOfferId && orderData.customer_email) {
