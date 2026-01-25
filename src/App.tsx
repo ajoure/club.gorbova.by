@@ -88,6 +88,7 @@ import AdminEditorial from "./pages/admin/AdminEditorial";
 import AdminIlex from "./pages/admin/AdminIlex";
 import AdminMarketingInsights from "./pages/admin/AdminMarketingInsights";
 import AdminPaymentDiagnostics from "./pages/admin/AdminPaymentDiagnostics";
+import AdminTelegramDiagnostics from "./pages/admin/AdminTelegramDiagnostics";
 
 import Money from "./pages/Money";
 import AI from "./pages/AI";
@@ -197,6 +198,7 @@ const App = () => (
               <Route path="/admin/integrations/telegram/invites" element={<ProtectedRoute><TelegramInvites /></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><ProductClubMappings /></ProtectedRoute>} />
               <Route path="/admin/integrations/telegram/analytics" element={<ProtectedRoute><AdminLayout><TelegramChatAnalytics /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/telegram-diagnostics" element={<ProtectedRoute><AdminLayout><AdminTelegramDiagnostics /></AdminLayout></ProtectedRoute>} />
               <Route path="/admin/fields" element={<ProtectedRoute><AdminFieldRegistry /></ProtectedRoute>} />
               <Route path="/admin/system/audit" element={<ProtectedRoute><AdminSystemAudit /></ProtectedRoute>} />
               
@@ -220,6 +222,7 @@ const App = () => (
               <Route path="/admin/payments/installments" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
               <Route path="/admin/payments/preorders" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
               <Route path="/admin/payments/diagnostics" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
+              <Route path="/admin/payments/auto-renewals" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
               {/* Legacy redirects */}
               <Route path="/admin/installments" element={<Navigate to="/admin/payments/installments" replace />} />
               <Route path="/admin/preregistrations" element={<Navigate to="/admin/payments/preorders" replace />} />
