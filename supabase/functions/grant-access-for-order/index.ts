@@ -88,9 +88,10 @@ Deno.serve(async (req) => {
     let existingProductSub = null;
     
     if (extendFromCurrent) {
+      // PATCH: Added auto_renew to select for fallback guard in extend branch
       const { data: activeSub } = await supabase
         .from("subscriptions_v2")
-        .select("id, access_end_at, status, tariff_id")
+        .select("id, access_end_at, status, tariff_id, auto_renew")
         .eq("user_id", userId)
         .eq("product_id", productId)
         .eq("status", "active")
@@ -243,7 +244,11 @@ Deno.serve(async (req) => {
       };
       
       let extendRecurringSnapshot = existingMeta.recurring_snapshot;
-      if (!extendRecurringSnapshot) {
+      
+      // PATCH: Fallback only if auto_renew=true (guard for extend branch)
+      const shouldAddFallbackSnapshot = !extendRecurringSnapshot && existingProductSub?.auto_renew === true;
+      
+      if (shouldAddFallbackSnapshot) {
         // Try to get from offer if available
         if (order.offer_id) {
           const { data: offerData } = await supabase
@@ -257,6 +262,22 @@ Deno.serve(async (req) => {
         if (!extendRecurringSnapshot) {
           extendRecurringSnapshot = DEFAULT_RECURRING_SNAPSHOT_EXTEND;
           console.log(`[grant-access-for-order] Added fallback recurring_snapshot on extend for sub ${existingProductSub.id}`);
+          
+          // PATCH: SYSTEM ACTOR Proof for fallback in extend branch
+          await supabase.from('audit_logs').insert({
+            action: 'subscription.recurring_snapshot_fallback_used',
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'grant-access-for-order',
+            target_user_id: userId,
+            meta: { 
+              subscription_id: existingProductSub.id,
+              order_id: orderId, 
+              reason: 'extend_missing_snapshot',
+              context: 'extend_branch',
+              auto_renew: existingProductSub.auto_renew,
+            },
+          });
         }
       }
       
