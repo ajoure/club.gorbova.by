@@ -1,19 +1,22 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter } from "lucide-react";
-import { format, isToday, isPast, isBefore, addDays } from "date-fns";
+import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail } from "lucide-react";
+import { format, isToday, isPast, isBefore, addDays, subDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { NotificationStatusIndicators, NotificationLegend, type NotificationLog } from "./NotificationStatusIndicators";
+import { TooltipProvider } from "@/components/ui/tooltip";
+
 type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts';
 
 const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
@@ -25,6 +28,14 @@ const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'no_token', label: 'Без токена' },
   { value: 'pm_inactive', label: 'PM неактивен' },
   { value: 'max_attempts', label: 'Макс. попыток' },
+];
+
+// Relevant event types for notification indicators
+const RELEVANT_TG_EVENT_TYPES = [
+  'subscription_reminder_7d',
+  'subscription_reminder_3d',
+  'subscription_reminder_1d',
+  'subscription_no_card_warning',
 ];
 
 interface AutoRenewal {
@@ -53,6 +64,8 @@ export function AutoRenewalsTabContent() {
   const [filter, setFilter] = useState<FilterType>('all');
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<any>(null);
+
+  // Main query for subscriptions
   const { data: renewals, isLoading, refetch } = useQuery({
     queryKey: ['auto-renewals'],
     queryFn: async () => {
@@ -122,6 +135,86 @@ export function AutoRenewalsTabContent() {
     refetchInterval: 60000,
   });
 
+  // Extract subscription IDs for batch notification query
+  const subscriptionIds = useMemo(() => 
+    (renewals || []).map(r => r.id), 
+    [renewals]
+  );
+
+  // Batch query for Telegram notification logs (last 30 days)
+  const { data: tgLogs } = useQuery({
+    queryKey: ['auto-renewals-tg-logs', subscriptionIds],
+    queryFn: async () => {
+      if (subscriptionIds.length === 0) return [];
+      
+      const thirtyDaysAgo = subDays(new Date(), 30).toISOString();
+      
+      // Query telegram_logs with relevant event_types only
+      const { data, error } = await supabase
+        .from('telegram_logs')
+        .select('user_id, meta, event_type, status, error_message, created_at')
+        .in('action', ['SEND_REMINDER', 'SEND_NO_CARD_WARNING'])
+        .in('event_type', RELEVANT_TG_EVENT_TYPES)
+        .gte('created_at', thirtyDaysAgo)
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error('Failed to fetch TG logs:', error);
+        return [];
+      }
+
+      // Transform to include subscription_id from meta and normalize
+      return (data || []).map(log => ({
+        subscription_id: (log.meta as any)?.subscription_id || '',
+        event_type: log.event_type || '',
+        status: log.status || '',
+        reason: (log.meta as any)?.reason || null,
+        error_message: log.error_message || null,
+        created_at: log.created_at,
+      })).filter(l => subscriptionIds.includes(l.subscription_id));
+    },
+    enabled: subscriptionIds.length > 0,
+    staleTime: 30000,
+  });
+
+  // Batch query for Email notification logs (last 30 days)
+  const { data: emailLogs } = useQuery({
+    queryKey: ['auto-renewals-email-logs', subscriptionIds],
+    queryFn: async () => {
+      if (subscriptionIds.length === 0) return [];
+      
+      const thirtyDaysAgo = subDays(new Date(), 30).toISOString();
+      
+      // Query email_logs for outgoing emails with subscription context
+      const { data, error } = await supabase
+        .from('email_logs')
+        .select('user_id, meta, status, error_message, created_at')
+        .eq('direction', 'outgoing')
+        .gte('created_at', thirtyDaysAgo)
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error('Failed to fetch email logs:', error);
+        return [];
+      }
+
+      // Transform and filter by subscription_ids
+      return (data || []).map(log => ({
+        subscription_id: (log.meta as any)?.subscription_id || '',
+        event_type: (log.meta as any)?.event_type || '',
+        status: log.status || '',
+        reason: (log.meta as any)?.reason || null,
+        error_message: log.error_message || null,
+        created_at: log.created_at,
+      })).filter(l => 
+        subscriptionIds.includes(l.subscription_id) && 
+        l.event_type?.startsWith('subscription_reminder_')
+      );
+    },
+    enabled: subscriptionIds.length > 0,
+    staleTime: 30000,
+  });
+
   const filteredRenewals = useMemo(() => {
     if (!renewals) return [];
     
@@ -170,7 +263,6 @@ export function AutoRenewalsTabContent() {
 
   const stats = useMemo(() => {
     if (!renewals) return null;
-    const now = new Date();
     return {
       total: renewals.length,
       dueToday: renewals.filter(r => r.next_charge_at && isToday(new Date(r.next_charge_at))).length,
@@ -216,202 +308,235 @@ export function AutoRenewalsTabContent() {
   };
 
   return (
-    <div className="space-y-4">
-      {/* Stats */}
-      {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Card className="p-3">
-            <div className="text-2xl font-bold">{stats.total}</div>
-            <div className="text-xs text-muted-foreground">Всего подписок</div>
-          </Card>
-          <Card className="p-3">
-            <div className="text-2xl font-bold text-blue-600">{stats.dueToday}</div>
-            <div className="text-xs text-muted-foreground">К списанию сегодня</div>
-          </Card>
-          <Card className="p-3">
-            <div className="text-2xl font-bold text-red-600">{stats.overdue}</div>
-            <div className="text-xs text-muted-foreground">Просрочено</div>
-          </Card>
-          <Card className="p-3">
-            <div className="text-2xl font-bold text-amber-600">{stats.noCard}</div>
-            <div className="text-xs text-muted-foreground">Без карты</div>
-          </Card>
-        </div>
-      )}
+    <TooltipProvider>
+      <div className="space-y-4">
+        {/* Stats */}
+        {stats && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Card className="p-3">
+              <div className="text-2xl font-bold">{stats.total}</div>
+              <div className="text-xs text-muted-foreground">Всего подписок</div>
+            </Card>
+            <Card className="p-3">
+              <div className="text-2xl font-bold text-blue-600">{stats.dueToday}</div>
+              <div className="text-xs text-muted-foreground">К списанию сегодня</div>
+            </Card>
+            <Card className="p-3">
+              <div className="text-2xl font-bold text-red-600">{stats.overdue}</div>
+              <div className="text-xs text-muted-foreground">Просрочено</div>
+            </Card>
+            <Card className="p-3">
+              <div className="text-2xl font-bold text-amber-600">{stats.noCard}</div>
+              <div className="text-xs text-muted-foreground">Без карты</div>
+            </Card>
+          </div>
+        )}
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-2">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Поиск по имени, email, продукту..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9 h-9"
-          />
-        </div>
-        
-        <Select value={filter} onValueChange={(v) => setFilter(v as FilterType)}>
-          <SelectTrigger className="w-[180px] h-9">
-            <Filter className="h-3.5 w-3.5 mr-2" />
-            <SelectValue placeholder="Фильтр" />
-          </SelectTrigger>
-          <SelectContent>
-            {FILTER_OPTIONS.map(opt => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Button variant="outline" size="sm" onClick={() => refetch()} className="h-9">
-          <RefreshCw className="h-4 w-4 mr-1" />
-          Обновить
-        </Button>
-      </div>
-
-      {/* Table */}
-      <Card>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="p-4 space-y-3">
-              {[1, 2, 3, 4, 5].map(i => (
-                <Skeleton key={i} className="h-12 w-full" />
+        {/* Filters */}
+        <div className="flex flex-wrap gap-2 items-center">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Поиск по имени, email, продукту..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 h-9"
+            />
+          </div>
+          
+          <Select value={filter} onValueChange={(v) => setFilter(v as FilterType)}>
+            <SelectTrigger className="w-[180px] h-9">
+              <Filter className="h-3.5 w-3.5 mr-2" />
+              <SelectValue placeholder="Фильтр" />
+            </SelectTrigger>
+            <SelectContent>
+              {FILTER_OPTIONS.map(opt => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
               ))}
-            </div>
-          ) : filteredRenewals.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              Нет подписок с автопродлением
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Контакт</TableHead>
-                  <TableHead>Продукт</TableHead>
-                  <TableHead>К списанию</TableHead>
-                  <TableHead>Доступ до</TableHead>
-                  <TableHead className="text-center">Попытки</TableHead>
-                  <TableHead className="text-center">Карта</TableHead>
-                  <TableHead>PM</TableHead>
-                  <TableHead>Last Attempt</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredRenewals.slice(0, 100).map((renewal) => {
-                  const chargeStatus = getChargeStatus(renewal);
-                  const lastAttempt = getLastAttempt(renewal.meta);
-                  
-                  return (
-                    <TableRow 
-                      key={renewal.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
-                    >
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-medium text-sm truncate max-w-[150px]">
-                            {renewal.contact_name || 'Без имени'}
-                          </span>
-                          <span className="text-xs text-muted-foreground truncate max-w-[150px]">
-                            {renewal.contact_email}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="text-sm truncate max-w-[120px]">
-                            {renewal.product_name || '—'}
-                          </span>
-                          {renewal.tariff_name && (
-                            <span className="text-xs text-muted-foreground truncate max-w-[120px]">
-                              {renewal.tariff_name}
+            </SelectContent>
+          </Select>
+
+          <Button variant="outline" size="sm" onClick={() => refetch()} className="h-9">
+            <RefreshCw className="h-4 w-4 mr-1" />
+            Обновить
+          </Button>
+        </div>
+
+        {/* Legend for notification indicators */}
+        <NotificationLegend />
+
+        {/* Table */}
+        <Card>
+          <CardContent className="p-0">
+            {isLoading ? (
+              <div className="p-4 space-y-3">
+                {[1, 2, 3, 4, 5].map(i => (
+                  <Skeleton key={i} className="h-12 w-full" />
+                ))}
+              </div>
+            ) : filteredRenewals.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                Нет подписок с автопродлением
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Контакт</TableHead>
+                    <TableHead>Продукт</TableHead>
+                    <TableHead>К списанию</TableHead>
+                    <TableHead>Доступ до</TableHead>
+                    <TableHead className="text-center">Попытки</TableHead>
+                    <TableHead className="text-center">Карта</TableHead>
+                    <TableHead>PM</TableHead>
+                    <TableHead>Last Attempt</TableHead>
+                    <TableHead className="text-center">
+                      <div className="flex flex-col items-center">
+                        <Send className="h-3.5 w-3.5 mb-0.5" />
+                        <span className="text-[9px]">TG 7/3/1</span>
+                      </div>
+                    </TableHead>
+                    <TableHead className="text-center">
+                      <div className="flex flex-col items-center">
+                        <Mail className="h-3.5 w-3.5 mb-0.5" />
+                        <span className="text-[9px]">Email 7/3/1</span>
+                      </div>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredRenewals.slice(0, 100).map((renewal) => {
+                    const chargeStatus = getChargeStatus(renewal);
+                    const lastAttempt = getLastAttempt(renewal.meta);
+                    
+                    return (
+                      <TableRow 
+                        key={renewal.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
+                      >
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium text-sm truncate max-w-[150px]">
+                              {renewal.contact_name || 'Без имени'}
                             </span>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge 
-                          variant={chargeStatus.variant} 
-                          className={cn('text-xs', chargeStatus.className)}
-                        >
-                          {chargeStatus.label}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {format(new Date(renewal.access_end_at), 'dd.MM.yy', { locale: ru })}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Badge 
-                          variant={renewal.charge_attempts >= 3 ? 'destructive' : 'secondary'}
-                          className="text-xs"
-                        >
-                          {renewal.charge_attempts}/3
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        {renewal.payment_method_id ? (
-                          <CheckCircle className="h-4 w-4 text-green-600 mx-auto" />
-                        ) : (
-                          <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {renewal.pm_status ? (
-                          <Badge 
-                            variant={renewal.pm_status === 'active' ? 'default' : 'secondary'}
-                            className={cn(
-                              'text-[10px]',
-                              renewal.pm_status === 'active' && 'bg-green-600'
-                            )}
-                          >
-                            {renewal.pm_last4 && `•${renewal.pm_last4} `}
-                            {renewal.pm_status}
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {lastAttempt ? (
-                          <div className="flex items-center gap-1">
-                            {lastAttempt.success ? (
-                              <CheckCircle className="h-3 w-3 text-green-600" />
-                            ) : (
-                              <AlertTriangle className="h-3 w-3 text-red-600" />
-                            )}
-                            <span className={cn(
-                              'text-[10px] truncate max-w-[80px]',
-                              lastAttempt.success ? 'text-green-600' : 'text-red-600'
-                            )}>
-                              {lastAttempt.success ? 'OK' : lastAttempt.error?.slice(0, 20)}
+                            <span className="text-xs text-muted-foreground truncate max-w-[150px]">
+                              {renewal.contact_email}
                             </span>
                           </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="text-sm truncate max-w-[120px]">
+                              {renewal.product_name || '—'}
+                            </span>
+                            {renewal.tariff_name && (
+                              <span className="text-xs text-muted-foreground truncate max-w-[120px]">
+                                {renewal.tariff_name}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge 
+                            variant={chargeStatus.variant} 
+                            className={cn('text-xs', chargeStatus.className)}
+                          >
+                            {chargeStatus.label}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {format(new Date(renewal.access_end_at), 'dd.MM.yy', { locale: ru })}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge 
+                            variant={renewal.charge_attempts >= 3 ? 'destructive' : 'secondary'}
+                            className="text-xs"
+                          >
+                            {renewal.charge_attempts}/3
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {renewal.payment_method_id ? (
+                            <CheckCircle className="h-4 w-4 text-green-600 mx-auto" />
+                          ) : (
+                            <XCircle className="h-4 w-4 text-muted-foreground mx-auto" />
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {renewal.pm_status ? (
+                            <Badge 
+                              variant={renewal.pm_status === 'active' ? 'default' : 'secondary'}
+                              className={cn(
+                                'text-[10px]',
+                                renewal.pm_status === 'active' && 'bg-green-600'
+                              )}
+                            >
+                              {renewal.pm_last4 && `•${renewal.pm_last4} `}
+                              {renewal.pm_status}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {lastAttempt ? (
+                            <div className="flex items-center gap-1">
+                              {lastAttempt.success ? (
+                                <CheckCircle className="h-3 w-3 text-green-600" />
+                              ) : (
+                                <AlertTriangle className="h-3 w-3 text-red-600" />
+                              )}
+                              <span className={cn(
+                                'text-[10px] truncate max-w-[80px]',
+                                lastAttempt.success ? 'text-green-600' : 'text-red-600'
+                              )}>
+                                {lastAttempt.success ? 'OK' : lastAttempt.error?.slice(0, 20)}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <NotificationStatusIndicators
+                            subscriptionId={renewal.id}
+                            channel="telegram"
+                            logs={tgLogs || []}
+                            onOpenContact={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <NotificationStatusIndicators
+                            subscriptionId={renewal.id}
+                            channel="email"
+                            logs={emailLogs || []}
+                            onOpenContact={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
 
-      {/* Contact Detail Sheet */}
-      <ContactDetailSheet
-        contact={selectedContact}
-        open={contactSheetOpen}
-        onOpenChange={(open) => {
-          setContactSheetOpen(open);
-          if (!open) {
-            refetch();
-          }
-        }}
-      />
-    </div>
+        {/* Contact Detail Sheet */}
+        <ContactDetailSheet
+          contact={selectedContact}
+          open={contactSheetOpen}
+          onOpenChange={(open) => {
+            setContactSheetOpen(open);
+            if (!open) {
+              refetch();
+            }
+          }}
+        />
+      </div>
+    </TooltipProvider>
   );
 }
