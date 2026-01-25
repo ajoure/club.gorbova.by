@@ -670,28 +670,40 @@ async function sendEmailReminder(
 
     if (!subject) return false;
 
-    // Determine event type based on daysLeft
+    // Determine event type based on daysLeft - strict dictionary
+    // FIX-5: Use consistent event_type values: subscription_reminder_7d/3d/1d/subscription_no_card_warning
     const eventType = `subscription_reminder_${daysLeft}d`;
+    
+    // FIX-1: Log the payload BEFORE sending to verify context is correct
+    const emailPayload = {
+      to: email,
+      subject,
+      html: bodyHtml,
+      context: {
+        user_id: userId,
+        profile_id: profileId,
+        subscription_id: subscriptionId,
+        event_type: eventType,
+        meta: {
+          days_left: daysLeft,
+          has_card: hasCard,
+          source: 'subscription-renewal-reminders',
+          order_id: orderId,
+          tariff_id: tariffId,
+        }
+      }
+    };
+    
+    console.log('[reminders] send-email payload:', JSON.stringify({
+      to: email,
+      'context.user_id': userId,
+      'context.profile_id': profileId,
+      'context.subscription_id': subscriptionId,
+      'context.event_type': eventType,
+    }));
 
     const { error } = await supabase.functions.invoke('send-email', {
-      body: {
-        to: email,
-        subject,
-        html: bodyHtml,
-        context: {
-          user_id: userId,
-          profile_id: profileId,
-          subscription_id: subscriptionId,
-          event_type: eventType,
-          meta: {
-            days_left: daysLeft,
-            has_card: hasCard,
-            source: 'subscription-renewal-reminders',
-            order_id: orderId,
-            tariff_id: tariffId,
-          }
-        }
-      },
+      body: emailPayload,
     });
 
     if (error) {

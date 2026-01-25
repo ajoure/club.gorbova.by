@@ -486,12 +486,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     queryFn: async () => {
       if (!contact?.user_id) return [];
       
-      // Telegram notification logs
+      // Telegram notification logs - FIX-3: Include ADMIN_DISABLED_AUTO_RENEW for batch disable visibility
       const { data: tgLogs } = await supabase
         .from("telegram_logs")
         .select("id, created_at, action, event_type, status, error_message, meta")
         .eq("user_id", contact.user_id)
-        .in("action", ["SEND_REMINDER", "SEND_NO_CARD_WARNING"])
+        .in("action", ["SEND_REMINDER", "SEND_NO_CARD_WARNING", "ADMIN_DISABLED_AUTO_RENEW"])
         .order("created_at", { ascending: false })
         .limit(30);
       

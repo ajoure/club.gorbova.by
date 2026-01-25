@@ -393,7 +393,16 @@ const handler = async (req: Request): Promise<Response> => {
 
     const { to, subject, html, text, account_id, product_id, context }: EmailRequest = await req.json();
 
-    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}, product_id=${product_id || "none"}, context=${context ? 'yes' : 'no'}`);
+    // FIX-1: Log the received context for debugging - single source of truth
+    const ctx = context ?? null;
+    console.log('[send-email] received context:', JSON.stringify(ctx ? {
+      user_id: ctx.user_id,
+      profile_id: ctx.profile_id,
+      subscription_id: ctx.subscription_id,
+      event_type: ctx.event_type,
+    } : null));
+
+    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}, product_id=${product_id || "none"}, context=${ctx ? 'yes' : 'no'}`);
 
     // Get email account from database (with product mapping support)
     const account = await getEmailAccount(supabase, account_id, product_id);
@@ -406,11 +415,11 @@ const handler = async (req: Request): Promise<Response> => {
 
     const sendResult = await sendEmailViaSMTP({ to, subject, html, text, account });
 
-    // Log to email_logs after successful send
+    // FIX-1: Log to email_logs using ctx (single source of truth for context)
     try {
       await supabase.from('email_logs').insert({
-        user_id: context?.user_id || null,
-        profile_id: context?.profile_id || null,
+        user_id: ctx?.user_id || null,
+        profile_id: ctx?.profile_id || null,
         direction: 'outgoing',
         from_email: account.from_email || account.email,
         to_email: to,
@@ -421,9 +430,9 @@ const handler = async (req: Request): Promise<Response> => {
         provider_message_id: sendResult.queueId || null,
         status: 'sent',
         meta: {
-          ...(context?.meta || {}),
-          event_type: context?.event_type || null,
-          subscription_id: context?.subscription_id || null,
+          ...(ctx?.meta || {}),
+          event_type: ctx?.event_type || null,
+          subscription_id: ctx?.subscription_id || null,
           smtp_host: sendResult.smtpHost,
           smtp_port: sendResult.smtpPort,
           account_id: account.id,

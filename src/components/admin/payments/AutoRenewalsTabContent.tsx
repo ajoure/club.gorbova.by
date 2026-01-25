@@ -404,11 +404,16 @@ export function AutoRenewalsTabContent() {
         const profile = profileMap.get(sub.user_id);
         const order = sub.orders_v2 as any;
         
-        // PATCH-2: Determine if this is a subscription (not one-time)
+        // FIX-2: Normalize tariff_offers to array (Supabase may return object instead of array)
+        const rawOffers = tariff?.tariff_offers;
+        const tariffOffers = Array.isArray(rawOffers) 
+          ? rawOffers 
+          : (rawOffers ? [rawOffers] : []);
+        
+        // Determine if this is a subscription (not one-time)
         // Check tariff_offers for requires_card_tokenization
-        const tariffOffers = tariff?.tariff_offers as any[];
         const isSubscription = 
-          tariffOffers?.some((o: any) => o.requires_card_tokenization === true) ||
+          tariffOffers.some((o: any) => o?.requires_card_tokenization === true) ||
           product?.category === 'subscription';
 
         return {
@@ -692,6 +697,8 @@ export function AutoRenewalsTabContent() {
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchPreview, setBatchPreview] = useState<any[]>([]);
   const [batchDialogOpen, setBatchDialogOpen] = useState(false);
+  // FIX-4: Store remaining count from server response (not local calculation)
+  const [batchRemaining, setBatchRemaining] = useState<number>(0);
   
   const handleBatchDisable = async (dryRun: boolean) => {
     if (selectedIds.size === 0) return;
@@ -711,6 +718,8 @@ export function AutoRenewalsTabContent() {
       
       if (dryRun) {
         setBatchPreview(response.data.subscriptions || []);
+        // FIX-4: Use remaining from server response instead of local calc
+        setBatchRemaining(response.data.remaining ?? 0);
         setBatchDialogOpen(true);
       } else {
         toast.success(response.data.message || `Отключено: ${response.data.count}`);
@@ -959,8 +968,9 @@ export function AutoRenewalsTabContent() {
                         <span className="text-muted-foreground truncate ml-2">{sub.product}</span>
                       </li>
                     ))}
-                    {selectedIds.size > 10 && (
-                      <li className="text-muted-foreground">...и ещё {selectedIds.size - 10}</li>
+                    {/* FIX-4: Use batchRemaining from server response */}
+                    {batchRemaining > 0 && (
+                      <li className="text-muted-foreground">...и ещё {batchRemaining}</li>
                     )}
                   </ul>
                 </div>
