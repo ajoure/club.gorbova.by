@@ -550,6 +550,7 @@ ${userName}, через ${daysLeft} ${getDaysWord(daysLeft)} заканчива�
 async function sendEmailReminder(
   supabase: any,
   userId: string,
+  profileId: string | null,
   email: string,
   productName: string,
   tariffName: string,
@@ -557,7 +558,10 @@ async function sendEmailReminder(
   daysLeft: number,
   amount: number,
   currency: string,
-  hasCard: boolean
+  hasCard: boolean,
+  subscriptionId: string,
+  orderId: string | null,
+  tariffId: string | null
 ): Promise<boolean> {
   try {
     const formattedDate = expiryDate.toLocaleDateString('ru-RU', { 
@@ -666,11 +670,27 @@ async function sendEmailReminder(
 
     if (!subject) return false;
 
+    // Determine event type based on daysLeft
+    const eventType = `subscription_reminder_${daysLeft}d`;
+
     const { error } = await supabase.functions.invoke('send-email', {
       body: {
         to: email,
         subject,
         html: bodyHtml,
+        context: {
+          user_id: userId,
+          profile_id: profileId,
+          subscription_id: subscriptionId,
+          event_type: eventType,
+          meta: {
+            days_left: daysLeft,
+            has_card: hasCard,
+            source: 'subscription-renewal-reminders',
+            order_id: orderId,
+            tariff_id: tariffId,
+          }
+        }
       },
     });
 
@@ -901,9 +921,17 @@ Deno.serve(async (req) => {
 
         // Send email reminder
         if (userEmail) {
+          // Get profile_id for email context
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('user_id', userId)
+            .single();
+          
           result.email_sent = await sendEmailReminder(
             supabase,
             userId,
+            profile?.id || null,
             userEmail,
             productName,
             tariffName,
@@ -911,7 +939,10 @@ Deno.serve(async (req) => {
             daysLeft,
             amount,
             currency,
-            hasCard
+            hasCard,
+            sub.id,
+            sub.order_id,
+            sub.tariff_id
           );
         }
 

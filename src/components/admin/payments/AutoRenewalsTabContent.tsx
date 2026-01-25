@@ -9,7 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger, DialogClose } from "@/components/ui/dialog";
+import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical, ArrowUp, ArrowDown, ArrowUpDown, Power } from "lucide-react";
 import { format, isToday, isPast, isBefore, addDays, subDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
 import { ru } from "date-fns/locale";
@@ -21,6 +22,7 @@ import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { NotificationStatusIndicators, NotificationLegend, type NotificationLog } from "./NotificationStatusIndicators";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   DndContext,
   closestCenter,
@@ -223,11 +225,17 @@ interface AutoRenewal {
   pm_brand: string | null;
   order_final_price: number | null;
   order_currency: string | null;
+  // PATCH-2: Filter flag
+  is_subscription: boolean;
+  // PATCH-3: Trial detection
+  is_trial: boolean;
+  tariff_original_price: number | null;
+  tariff_trial_price: number | null;
 }
 
-// Helper to get charge amount with priority
+// Helper to get charge amount with priority (PATCH-3: Trial handling)
 function getChargeAmount(renewal: AutoRenewal): { amount: number; currency: string } {
-  // 1. Meta override (highest priority)
+  // 1. Meta override (highest priority - manually set)
   const metaAmount = renewal.meta?.recurring_amount;
   if (metaAmount && Number(metaAmount) > 0) {
     return { 
@@ -235,14 +243,29 @@ function getChargeAmount(renewal: AutoRenewal): { amount: number; currency: stri
       currency: renewal.meta?.recurring_currency || 'BYN' 
     };
   }
-  // 2. Order price
+  
+  // 2. PATCH-3: Trial subscription → use tariff.original_price (NOT order.final_price = 1 BYN)
+  if (renewal.is_trial || renewal.status === 'trial') {
+    const originalPrice = renewal.tariff_original_price;
+    if (originalPrice && Number(originalPrice) > 0) {
+      return { amount: Number(originalPrice), currency: 'BYN' };
+    }
+  }
+  
+  // 3. Regular order price
   if (renewal.order_final_price && Number(renewal.order_final_price) > 0) {
     return { 
       amount: Number(renewal.order_final_price), 
       currency: renewal.order_currency || 'BYN' 
     };
   }
-  // 3. No data
+  
+  // 4. Fallback to tariff.original_price
+  const originalPrice = renewal.tariff_original_price;
+  if (originalPrice && Number(originalPrice) > 0) {
+    return { amount: Number(originalPrice), currency: 'BYN' };
+  }
+  
   return { amount: 0, currency: 'BYN' };
 }
 
@@ -346,9 +369,14 @@ export function AutoRenewalsTabContent() {
           payment_method_id,
           payment_token,
           meta,
+          is_trial,
+          tariff_id,
           tariffs (
             name,
-            products_v2 (name)
+            original_price,
+            trial_price,
+            products_v2 (name, category),
+            tariff_offers (requires_card_tokenization)
           ),
           payment_methods (status, last4, brand),
           orders_v2 (final_price, currency)
@@ -375,6 +403,13 @@ export function AutoRenewalsTabContent() {
         const pm = sub.payment_methods as any;
         const profile = profileMap.get(sub.user_id);
         const order = sub.orders_v2 as any;
+        
+        // PATCH-2: Determine if this is a subscription (not one-time)
+        // Check tariff_offers for requires_card_tokenization
+        const tariffOffers = tariff?.tariff_offers as any[];
+        const isSubscription = 
+          tariffOffers?.some((o: any) => o.requires_card_tokenization === true) ||
+          product?.category === 'subscription';
 
         return {
           id: sub.id,
@@ -397,8 +432,15 @@ export function AutoRenewalsTabContent() {
           pm_brand: pm?.brand || null,
           order_final_price: order?.final_price || null,
           order_currency: order?.currency || null,
+          // PATCH-2: subscription filter
+          is_subscription: isSubscription,
+          // PATCH-3: Trial detection
+          is_trial: sub.is_trial || sub.status === 'trial',
+          tariff_original_price: tariff?.original_price || null,
+          tariff_trial_price: tariff?.trial_price || null,
         };
-      });
+      // PATCH-2: Filter out non-subscription (one-time) products
+      }).filter(sub => sub.is_subscription);
     },
     refetchInterval: 60000,
   });
@@ -645,6 +687,44 @@ export function AutoRenewalsTabContent() {
     });
   };
   
+  // PATCH-4: Batch disable auto-renew handler
+  const { hasPermission } = usePermissions();
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchPreview, setBatchPreview] = useState<any[]>([]);
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false);
+  
+  const handleBatchDisable = async (dryRun: boolean) => {
+    if (selectedIds.size === 0) return;
+    
+    setBatchLoading(true);
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      const response = await supabase.functions.invoke('admin-batch-disable-auto-renew', {
+        body: { 
+          subscription_ids: Array.from(selectedIds), 
+          dry_run: dryRun,
+          reason: 'admin_manual_disable'
+        }
+      });
+      
+      if (response.error) throw new Error(response.error.message);
+      
+      if (dryRun) {
+        setBatchPreview(response.data.subscriptions || []);
+        setBatchDialogOpen(true);
+      } else {
+        toast.success(response.data.message || `Отключено: ${response.data.count}`);
+        setSelectedIds(new Set());
+        setBatchDialogOpen(false);
+        refetch();
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Ошибка batch операции');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+  
   // Render cell content based on column key
   const renderCell = (columnKey: string, renewal: AutoRenewal) => {
     const chargeStatus = getChargeStatus(renewal);
@@ -779,13 +859,13 @@ export function AutoRenewalsTabContent() {
   return (
     <TooltipProvider>
       <div className="space-y-4">
-        {/* Stats with amounts */}
+        {/* Stats with amounts - PATCH-5: Fixed borders and removed "на сумму" */}
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Card 
               className={cn(
-                "p-3 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all",
-                filter === 'all' && "ring-2 ring-primary"
+                "p-3 cursor-pointer border-2 border-transparent transition-all hover:border-primary/50",
+                filter === 'all' && "border-primary bg-primary/5"
               )}
               onClick={() => handleStatClick('all')}
               role="button"
@@ -793,14 +873,14 @@ export function AutoRenewalsTabContent() {
             >
               <div className="text-2xl font-bold">{stats.total.count}</div>
               <div className="text-xs text-muted-foreground">Всего подписок</div>
-              <div className="text-sm text-muted-foreground mt-1">
-                на сумму <span className="font-medium">{stats.total.sum.toFixed(2)} BYN</span>
+              <div className="text-sm font-medium mt-1">
+                {stats.total.sum.toFixed(2)} BYN
               </div>
             </Card>
             <Card 
               className={cn(
-                "p-3 cursor-pointer hover:ring-2 hover:ring-blue-500/50 transition-all",
-                filter === 'due_today' && "ring-2 ring-blue-500"
+                "p-3 cursor-pointer border-2 border-transparent transition-all hover:border-blue-500/50",
+                filter === 'due_today' && "border-blue-500 bg-blue-500/5"
               )}
               onClick={() => handleStatClick('due_today')}
               role="button"
@@ -808,14 +888,14 @@ export function AutoRenewalsTabContent() {
             >
               <div className="text-2xl font-bold text-blue-600">{stats.dueToday.count}</div>
               <div className="text-xs text-muted-foreground">К списанию сегодня</div>
-              <div className="text-sm text-muted-foreground mt-1">
-                на сумму <span className="font-medium text-blue-600">{stats.dueToday.sum.toFixed(2)} BYN</span>
+              <div className="text-sm font-medium text-blue-600 mt-1">
+                {stats.dueToday.sum.toFixed(2)} BYN
               </div>
             </Card>
             <Card 
               className={cn(
-                "p-3 cursor-pointer hover:ring-2 hover:ring-red-500/50 transition-all",
-                filter === 'overdue' && "ring-2 ring-red-500"
+                "p-3 cursor-pointer border-2 border-transparent transition-all hover:border-red-500/50",
+                filter === 'overdue' && "border-red-500 bg-red-500/5"
               )}
               onClick={() => handleStatClick('overdue')}
               role="button"
@@ -823,14 +903,14 @@ export function AutoRenewalsTabContent() {
             >
               <div className="text-2xl font-bold text-red-600">{stats.overdue.count}</div>
               <div className="text-xs text-muted-foreground">Просрочено</div>
-              <div className="text-sm text-muted-foreground mt-1">
-                на сумму <span className="font-medium text-red-600">{stats.overdue.sum.toFixed(2)} BYN</span>
+              <div className="text-sm font-medium text-red-600 mt-1">
+                {stats.overdue.sum.toFixed(2)} BYN
               </div>
             </Card>
             <Card 
               className={cn(
-                "p-3 cursor-pointer hover:ring-2 hover:ring-amber-500/50 transition-all",
-                filter === 'no_card' && "ring-2 ring-amber-500"
+                "p-3 cursor-pointer border-2 border-transparent transition-all hover:border-amber-500/50",
+                filter === 'no_card' && "border-amber-500 bg-amber-500/5"
               )}
               onClick={() => handleStatClick('no_card')}
               role="button"
@@ -838,10 +918,66 @@ export function AutoRenewalsTabContent() {
             >
               <div className="text-2xl font-bold text-amber-600">{stats.noCard.count}</div>
               <div className="text-xs text-muted-foreground">Без карты</div>
-              <div className="text-sm text-muted-foreground mt-1">
-                на сумму <span className="font-medium text-amber-600">{stats.noCard.sum.toFixed(2)} BYN</span>
+              <div className="text-sm font-medium text-amber-600 mt-1">
+                {stats.noCard.sum.toFixed(2)} BYN
               </div>
             </Card>
+          </div>
+        )}
+
+        {/* PATCH-4: Batch actions panel */}
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg border">
+            <span className="text-sm font-medium">
+              Выбрано: {selectedIds.size} из {sortedData.length}
+            </span>
+            
+            <Dialog open={batchDialogOpen} onOpenChange={setBatchDialogOpen}>
+              <DialogTrigger asChild>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  disabled={batchLoading || !hasPermission('subscriptions.edit')}
+                  onClick={() => handleBatchDisable(true)}
+                >
+                  <Power className="h-4 w-4 mr-1" />
+                  Отключить автопродление
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Отключить автопродление</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3 py-4">
+                  <p className="text-sm text-muted-foreground">
+                    Будет отключено автопродление для {selectedIds.size} подписок:
+                  </p>
+                  <ul className="text-sm max-h-40 overflow-auto space-y-1">
+                    {batchPreview.map((sub: any) => (
+                      <li key={sub.id} className="flex justify-between">
+                        <span className="truncate">{sub.contact}</span>
+                        <span className="text-muted-foreground truncate ml-2">{sub.product}</span>
+                      </li>
+                    ))}
+                    {selectedIds.size > 10 && (
+                      <li className="text-muted-foreground">...и ещё {selectedIds.size - 10}</li>
+                    )}
+                  </ul>
+                </div>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button variant="outline">Отмена</Button>
+                  </DialogClose>
+                  <Button 
+                    variant="destructive" 
+                    onClick={() => handleBatchDisable(false)}
+                    disabled={batchLoading}
+                  >
+                    {batchLoading ? 'Обработка...' : 'Подтвердить'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         )}
 

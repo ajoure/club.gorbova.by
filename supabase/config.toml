@@ -281,3 +281,6 @@ verify_jwt = false
 
 [functions.telegram-process-access-queue]
 verify_jwt = false
+
+[functions.admin-batch-disable-auto-renew]
+verify_jwt = false
