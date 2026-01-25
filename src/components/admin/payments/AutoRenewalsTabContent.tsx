@@ -1,7 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +12,8 @@ import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clo
 import { format, isToday, isPast, isBefore, addDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
-
+import { toast } from "sonner";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts';
 
 const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
@@ -49,10 +49,10 @@ interface AutoRenewal {
 }
 
 export function AutoRenewalsTabContent() {
-  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
-
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
+  const [selectedContact, setSelectedContact] = useState<any>(null);
   const { data: renewals, isLoading, refetch } = useQuery({
     queryKey: ['auto-renewals'],
     queryFn: async () => {
@@ -188,6 +188,24 @@ export function AutoRenewalsTabContent() {
     return { label: format(date, 'dd.MM.yy', { locale: ru }), variant: 'outline' as const };
   };
 
+  const openContactSheet = async (profileId: string) => {
+    try {
+      const { data: contact, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", profileId)
+        .single();
+      
+      if (error) throw error;
+      
+      setSelectedContact(contact);
+      setContactSheetOpen(true);
+    } catch (e) {
+      console.error("Failed to load contact:", e);
+      toast.error("Не удалось загрузить контакт");
+    }
+  };
+
   const getLastAttempt = (meta: any) => {
     if (!meta?.last_charge_attempt_at) return null;
     return {
@@ -289,7 +307,7 @@ export function AutoRenewalsTabContent() {
                     <TableRow 
                       key={renewal.id}
                       className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => renewal.profile_id && navigate(`/admin/contacts?contact=${renewal.profile_id}`)}
+                      onClick={() => renewal.profile_id && openContactSheet(renewal.profile_id)}
                     >
                       <TableCell>
                         <div className="flex flex-col">
@@ -382,6 +400,18 @@ export function AutoRenewalsTabContent() {
           )}
         </CardContent>
       </Card>
+
+      {/* Contact Detail Sheet */}
+      <ContactDetailSheet
+        contact={selectedContact}
+        open={contactSheetOpen}
+        onOpenChange={(open) => {
+          setContactSheetOpen(open);
+          if (!open) {
+            refetch();
+          }
+        }}
+      />
     </div>
   );
 }
