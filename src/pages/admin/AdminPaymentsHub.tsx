@@ -1,6 +1,6 @@
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useLocation, useNavigate } from "react-router-dom";
-import { CreditCard, CalendarClock, ClipboardList, BarChart3 } from "lucide-react";
+import { CreditCard, CalendarClock, ClipboardList, BarChart3, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Tab content components
@@ -8,10 +8,12 @@ import { PaymentsTabContent } from "@/components/admin/payments/PaymentsTabConte
 import { InstallmentsTabContent } from "@/components/admin/payments/InstallmentsTabContent";
 import { PreregistrationsTabContent } from "@/components/admin/payments/PreregistrationsTabContent";
 import { DiagnosticsTabContent } from "@/components/admin/payments/DiagnosticsTabContent";
+import { AutoRenewalsTabContent } from "@/components/admin/payments/AutoRenewalsTabContent";
 
 const tabs = [
   { id: "transactions", label: "Платежи", icon: CreditCard, path: "/admin/payments" },
   { id: "installments", label: "Рассрочки и списания", icon: CalendarClock, path: "/admin/payments/installments" },
+  { id: "auto-renewals", label: "Автопродления", icon: RefreshCw, path: "/admin/payments/auto-renewals" },
   { id: "preorders", label: "Предзаписи", icon: ClipboardList, path: "/admin/payments/preorders" },
   { id: "diagnostics", label: "Диагностика", icon: BarChart3, path: "/admin/payments/diagnostics" },
 ];
@@ -66,6 +68,7 @@ export default function AdminPaymentsHub() {
         <div className="flex-1 min-h-0 overflow-auto px-3 md:px-4 pb-4">
           {activeTab === "transactions" && <PaymentsTabContent />}
           {activeTab === "installments" && <InstallmentsTabContent />}
+          {activeTab === "auto-renewals" && <AutoRenewalsTabContent />}
           {activeTab === "preorders" && <PreregistrationsTabContent />}
           {activeTab === "diagnostics" && <DiagnosticsTabContent />}
         </div>

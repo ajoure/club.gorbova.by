@@ -6483,6 +6483,7 @@ export type Database = {
           club_id: string | null
           created_at: string
           error_message: string | null
+          event_day: string | null
           event_type: string | null
           id: string
           message_text: string | null
@@ -6496,6 +6497,7 @@ export type Database = {
           club_id?: string | null
           created_at?: string
           error_message?: string | null
+          event_day?: string | null
           event_type?: string | null
           id?: string
           message_text?: string | null
@@ -6509,6 +6511,7 @@ export type Database = {
           club_id?: string | null
           created_at?: string
           error_message?: string | null
+          event_day?: string | null
           event_type?: string | null
           id?: string
           message_text?: string | null
