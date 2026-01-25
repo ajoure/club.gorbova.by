@@ -284,3 +284,6 @@ verify_jwt = false
 
 [functions.admin-batch-disable-auto-renew]
 verify_jwt = false
+
+[functions.admin-backfill-recurring-snapshot]
+verify_jwt = false
