@@ -61,7 +61,7 @@ import ProfileSettings from "./pages/settings/Profile";
 import PaymentMethodsSettings from "./pages/settings/PaymentMethods";
 import ConsentsSettings from "./pages/settings/Consents";
 import LegalDetailsSettings from "./pages/settings/LegalDetails";
-import AdminInstallments from "./pages/admin/AdminInstallments";
+// AdminInstallments removed - functionality merged into Payments Hub
 import AdminConsents from "./pages/admin/AdminConsents";
 import AdminPreregistrations from "./pages/admin/AdminPreregistrations";
 import AdminInbox from "./pages/admin/AdminInbox";
@@ -219,12 +219,12 @@ const App = () => (
               <Route path="/admin/refunds-v2" element={<Navigate to="/admin/payments" replace />} />
               {/* Payments Hub routes */}
               <Route path="/admin/payments" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
-              <Route path="/admin/payments/installments" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
+              {/* Route removed: /admin/payments/installments - tab deleted */}
               <Route path="/admin/payments/preorders" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
               <Route path="/admin/payments/diagnostics" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
               <Route path="/admin/payments/auto-renewals" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
               {/* Legacy redirects */}
-              <Route path="/admin/installments" element={<Navigate to="/admin/payments/installments" replace />} />
+              <Route path="/admin/installments" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/preregistrations" element={<Navigate to="/admin/payments/preorders" replace />} />
               <Route path="/admin/bepaid-archive-import" element={<ProtectedRoute><AdminBepaidArchiveImport /></ProtectedRoute>} />
               <Route path="/admin/support" element={<ProtectedRoute><AdminSupport /></ProtectedRoute>} />

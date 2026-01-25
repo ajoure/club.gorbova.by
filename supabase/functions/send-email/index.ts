@@ -14,6 +14,14 @@ interface EmailRequest {
   text?: string;
   account_id?: string; // Optional: specify which email account to use
   product_id?: string; // Optional: use email account mapped to this product
+  // Context for logging
+  context?: {
+    user_id?: string;
+    profile_id?: string;
+    subscription_id?: string;
+    event_type?: string;
+    meta?: Record<string, unknown>;
+  };
 }
 
 interface EmailAccount {
@@ -383,9 +391,9 @@ const handler = async (req: Request): Promise<Response> => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { to, subject, html, text, account_id, product_id }: EmailRequest = await req.json();
+    const { to, subject, html, text, account_id, product_id, context }: EmailRequest = await req.json();
 
-    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}, product_id=${product_id || "none"}`);
+    console.log(`Email request: to=${to}, subject=${subject}, account_id=${account_id || "default"}, product_id=${product_id || "none"}, context=${context ? 'yes' : 'no'}`);
 
     // Get email account from database (with product mapping support)
     const account = await getEmailAccount(supabase, account_id, product_id);
@@ -397,6 +405,34 @@ const handler = async (req: Request): Promise<Response> => {
     console.log(`Using email account: ${account.email} (${account.from_name || "no name"})`);
 
     const sendResult = await sendEmailViaSMTP({ to, subject, html, text, account });
+
+    // Log to email_logs after successful send
+    try {
+      await supabase.from('email_logs').insert({
+        user_id: context?.user_id || null,
+        profile_id: context?.profile_id || null,
+        direction: 'outgoing',
+        from_email: account.from_email || account.email,
+        to_email: to,
+        subject,
+        body_html: html,
+        body_text: text || null,
+        provider: 'yandex_smtp',
+        provider_message_id: sendResult.queueId || null,
+        status: 'sent',
+        meta: {
+          ...(context?.meta || {}),
+          event_type: context?.event_type || null,
+          subscription_id: context?.subscription_id || null,
+          smtp_host: sendResult.smtpHost,
+          smtp_port: sendResult.smtpPort,
+          account_id: account.id,
+        },
+      });
+    } catch (logErr) {
+      console.error('Failed to log email to email_logs:', logErr);
+      // Don't fail the request if logging fails
+    }
 
     return new Response(JSON.stringify({
       success: true,
@@ -413,6 +449,37 @@ const handler = async (req: Request): Promise<Response> => {
     });
   } catch (error: any) {
     console.error("Error sending email:", error);
+    
+    // Log failed email attempt
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabaseForLog = createClient(supabaseUrl, supabaseKey);
+      
+      // Try to extract context from request body (best effort)
+      const bodyText = await req.text().catch(() => '{}');
+      let parsedBody: any = {};
+      try { parsedBody = JSON.parse(bodyText); } catch {}
+      
+      await supabaseForLog.from('email_logs').insert({
+        user_id: parsedBody?.context?.user_id || null,
+        profile_id: parsedBody?.context?.profile_id || null,
+        direction: 'outgoing',
+        from_email: 'unknown',
+        to_email: parsedBody?.to || 'unknown',
+        subject: parsedBody?.subject || null,
+        status: 'failed',
+        error_message: error?.message || 'Unknown error',
+        meta: {
+          event_type: parsedBody?.context?.event_type || null,
+          subscription_id: parsedBody?.context?.subscription_id || null,
+          error_details: error?.message,
+        },
+      });
+    } catch (logErr) {
+      console.error('Failed to log email error:', logErr);
+    }
+    
     return new Response(JSON.stringify({ error: error?.message || "Unknown error" }), {
       status: 500,
       headers: { "Content-Type": "application/json", ...corsHeaders },
