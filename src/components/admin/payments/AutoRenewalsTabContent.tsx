@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,11 +9,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical } from "lucide-react";
+import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { format, isToday, isPast, isBefore, addDays, subDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
+import { useTableSort } from "@/hooks/useTableSort";
+import { SortDirection } from "@/components/ui/sortable-table-head";
 import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { NotificationStatusIndicators, NotificationLegend, type NotificationLog } from "./NotificationStatusIndicators";
@@ -79,15 +81,31 @@ const DEFAULT_COLUMNS: ColumnConfig[] = [
 
 const STORAGE_KEY = 'admin_auto_renewals_columns_v1';
 
-// Sortable resizable header component
+// Columns that should NOT be sortable
+const NON_SORTABLE_COLUMNS = new Set(['checkbox', 'card', 'tg_status', 'email_status']);
+
+// Sortable resizable header component with sorting support
 interface SortableResizableHeaderProps {
   column: ColumnConfig;
   onResize: (key: string, width: number) => void;
+  onSort?: (key: string) => void;
+  sortKey?: string | null;
+  sortDirection?: SortDirection;
   children: React.ReactNode;
 }
 
-function SortableResizableHeader({ column, onResize, children }: SortableResizableHeaderProps) {
+function SortableResizableHeader({ 
+  column, 
+  onResize, 
+  onSort,
+  sortKey,
+  sortDirection,
+  children 
+}: SortableResizableHeaderProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: column.key });
+  
+  const isSortable = onSort && !NON_SORTABLE_COLUMNS.has(column.key);
+  const isActive = sortKey === column.key;
   
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -115,6 +133,13 @@ function SortableResizableHeader({ column, onResize, children }: SortableResizab
     document.addEventListener('mouseup', handleMouseUp);
   };
   
+  const handleLabelClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isSortable && onSort) {
+      onSort(column.key);
+    }
+  };
+  
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -124,7 +149,7 @@ function SortableResizableHeader({ column, onResize, children }: SortableResizab
     opacity: isDragging ? 0.5 : 1,
   };
   
-  // Non-draggable columns
+  // Non-draggable columns (checkbox)
   if (column.key === 'checkbox') {
     return (
       <TableHead style={{ width: column.width, minWidth: 40 }}>
@@ -136,6 +161,7 @@ function SortableResizableHeader({ column, onResize, children }: SortableResizab
   return (
     <TableHead ref={setNodeRef} style={style}>
       <div className="flex items-center gap-1">
+        {/* Drag handle - only drag via grip */}
         <div 
           {...attributes} 
           {...listeners}
@@ -144,8 +170,30 @@ function SortableResizableHeader({ column, onResize, children }: SortableResizab
         >
           <GripVertical className="w-3 h-3" />
         </div>
-        <div className="flex-1 truncate">{children}</div>
+        {/* Clickable label area for sorting */}
+        <div 
+          className={cn(
+            "flex-1 truncate flex items-center gap-1",
+            isSortable && "cursor-pointer hover:text-foreground"
+          )}
+          onClick={handleLabelClick}
+        >
+          <span className="truncate">{children}</span>
+          {/* Sort indicator */}
+          {isSortable && (
+            isActive && sortDirection ? (
+              sortDirection === 'asc' ? (
+                <ArrowUp className="h-3 w-3 shrink-0" />
+              ) : (
+                <ArrowDown className="h-3 w-3 shrink-0" />
+              )
+            ) : (
+              <ArrowUpDown className="h-3 w-3 shrink-0 opacity-30" />
+            )
+          )}
+        </div>
       </div>
+      {/* Resize handle */}
       <div
         className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/50 active:bg-primary transition-colors"
         onMouseDown={handleMouseDown}
@@ -485,6 +533,35 @@ export function AutoRenewalsTabContent() {
     return result;
   }, [renewals, filter, searchQuery]);
 
+  // Sorting logic using useTableSort hook
+  const getFieldValue = useCallback((r: AutoRenewal, key: string) => {
+    switch (key) {
+      case 'contact':
+        return (r.contact_name || r.contact_email || '').toLowerCase();
+      case 'product':
+        return (r.product_name || r.tariff_name || '').toLowerCase();
+      case 'amount':
+        return getChargeAmount(r).amount || 0;
+      case 'next_charge':
+        return r.next_charge_at ? new Date(r.next_charge_at).getTime() : null;
+      case 'access_end':
+        return r.access_end_at ? new Date(r.access_end_at).getTime() : null;
+      case 'attempts':
+        return r.charge_attempts ?? 0;
+      case 'pm':
+        return `${r.pm_status || 'zzz'}-${r.pm_last4 || ''}`;
+      case 'last_attempt':
+        return r.meta?.last_charge_attempt_at ? new Date(r.meta.last_charge_attempt_at).getTime() : null;
+      default:
+        return null;
+    }
+  }, []);
+
+  const { sortedData, sortKey, sortDirection, handleSort } = useTableSort({
+    data: filteredRenewals,
+    getFieldValue,
+  });
+
   // Stats with amounts
   const stats = useMemo(() => {
     if (!renewals) return null;
@@ -503,6 +580,16 @@ export function AutoRenewalsTabContent() {
       noCard: { count: noCardList.length, sum: sumAmount(noCardList) },
     };
   }, [renewals]);
+
+  // Clickable stat card handler
+  const handleStatClick = (value: FilterType) => {
+    setFilter(value);
+    setSelectedIds(new Set());
+    // Scroll to table
+    requestAnimationFrame(() => {
+      document.querySelector('[data-auto-renewals-table]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
 
   const getChargeStatus = (renewal: AutoRenewal) => {
     if (!renewal.next_charge_at) return { label: 'Нет даты', variant: 'secondary' as const };
@@ -542,10 +629,10 @@ export function AutoRenewalsTabContent() {
   
   // Selection handlers
   const toggleSelectAll = () => {
-    if (selectedIds.size === filteredRenewals.length && filteredRenewals.length > 0) {
+    if (selectedIds.size === sortedData.length && sortedData.length > 0) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredRenewals.map(r => r.id)));
+      setSelectedIds(new Set(sortedData.map(r => r.id)));
     }
   };
 
@@ -695,28 +782,60 @@ export function AutoRenewalsTabContent() {
         {/* Stats with amounts */}
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Card className="p-3">
+            <Card 
+              className={cn(
+                "p-3 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all",
+                filter === 'all' && "ring-2 ring-primary"
+              )}
+              onClick={() => handleStatClick('all')}
+              role="button"
+              aria-pressed={filter === 'all'}
+            >
               <div className="text-2xl font-bold">{stats.total.count}</div>
               <div className="text-xs text-muted-foreground">Всего подписок</div>
               <div className="text-sm text-muted-foreground mt-1">
                 на сумму <span className="font-medium">{stats.total.sum.toFixed(2)} BYN</span>
               </div>
             </Card>
-            <Card className="p-3">
+            <Card 
+              className={cn(
+                "p-3 cursor-pointer hover:ring-2 hover:ring-blue-500/50 transition-all",
+                filter === 'due_today' && "ring-2 ring-blue-500"
+              )}
+              onClick={() => handleStatClick('due_today')}
+              role="button"
+              aria-pressed={filter === 'due_today'}
+            >
               <div className="text-2xl font-bold text-blue-600">{stats.dueToday.count}</div>
               <div className="text-xs text-muted-foreground">К списанию сегодня</div>
               <div className="text-sm text-muted-foreground mt-1">
                 на сумму <span className="font-medium text-blue-600">{stats.dueToday.sum.toFixed(2)} BYN</span>
               </div>
             </Card>
-            <Card className="p-3">
+            <Card 
+              className={cn(
+                "p-3 cursor-pointer hover:ring-2 hover:ring-red-500/50 transition-all",
+                filter === 'overdue' && "ring-2 ring-red-500"
+              )}
+              onClick={() => handleStatClick('overdue')}
+              role="button"
+              aria-pressed={filter === 'overdue'}
+            >
               <div className="text-2xl font-bold text-red-600">{stats.overdue.count}</div>
               <div className="text-xs text-muted-foreground">Просрочено</div>
               <div className="text-sm text-muted-foreground mt-1">
                 на сумму <span className="font-medium text-red-600">{stats.overdue.sum.toFixed(2)} BYN</span>
               </div>
             </Card>
-            <Card className="p-3">
+            <Card 
+              className={cn(
+                "p-3 cursor-pointer hover:ring-2 hover:ring-amber-500/50 transition-all",
+                filter === 'no_card' && "ring-2 ring-amber-500"
+              )}
+              onClick={() => handleStatClick('no_card')}
+              role="button"
+              aria-pressed={filter === 'no_card'}
+            >
               <div className="text-2xl font-bold text-amber-600">{stats.noCard.count}</div>
               <div className="text-xs text-muted-foreground">Без карты</div>
               <div className="text-sm text-muted-foreground mt-1">
@@ -771,7 +890,7 @@ export function AutoRenewalsTabContent() {
         <NotificationLegend />
 
         {/* Table with DnD */}
-        <Card>
+        <Card data-auto-renewals-table>
           <CardContent className="p-0">
             {isLoading ? (
               <div className="p-4 space-y-3">
@@ -779,7 +898,7 @@ export function AutoRenewalsTabContent() {
                   <Skeleton key={i} className="h-12 w-full" />
                 ))}
               </div>
-            ) : filteredRenewals.length === 0 ? (
+            ) : sortedData.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 Нет подписок с автопродлением
               </div>
@@ -790,10 +909,17 @@ export function AutoRenewalsTabContent() {
                     <TableHeader>
                       <TableRow>
                         {sortedColumns.map(col => (
-                          <SortableResizableHeader key={col.key} column={col} onResize={handleResize}>
+                          <SortableResizableHeader 
+                            key={col.key} 
+                            column={col} 
+                            onResize={handleResize}
+                            onSort={handleSort}
+                            sortKey={sortKey}
+                            sortDirection={sortDirection}
+                          >
                             {col.key === 'checkbox' ? (
                               <Checkbox 
-                                checked={selectedIds.size === filteredRenewals.length && filteredRenewals.length > 0}
+                                checked={selectedIds.size === sortedData.length && sortedData.length > 0}
                                 onCheckedChange={toggleSelectAll}
                               />
                             ) : col.key === 'tg_status' ? (
@@ -812,7 +938,7 @@ export function AutoRenewalsTabContent() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredRenewals.slice(0, 100).map((renewal) => (
+                      {sortedData.slice(0, 100).map((renewal) => (
                         <TableRow 
                           key={renewal.id}
                           className="cursor-pointer hover:bg-muted/50"
