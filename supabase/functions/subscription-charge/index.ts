@@ -1105,7 +1105,7 @@ async function chargeSubscription(
             const isProtected = currentOrder?.status && protectedStatuses.includes(currentOrder.status);
 
             // FINAL FIX: Only update if NOT protected AND expectedPaidAmount > 0
-            // This prevents overwriting GIFT orders or orders without successful payments
+            // This prevents setting paid status for orders without succeeded payments
             if (!isProtected && expectedPaidAmount > 0) {
               const { error: orderUpdateError } = await supabase
                 .from('orders_v2')
