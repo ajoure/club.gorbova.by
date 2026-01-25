@@ -607,23 +607,67 @@ async function chargeSubscription(
       }
     }
   } else {
-    // Regular subscription
-    const { data: priceData } = await supabase
-      .from('tariff_prices')
-      .select('price, final_price, currency')
-      .eq('tariff_id', tariff.id)
-      .eq('is_active', true)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (!priceData) {
-      return { subscription_id: id, success: false, error: 'No active price for tariff' };
+    // Regular subscription - priority hierarchy:
+    // 1. subscription.meta.recurring_amount (explicitly set)
+    // 2. orders_v2.final_price (original order amount)
+    // 3. tariff_offers with linked offer_id
+    // 4. tariff_prices (fallback for legacy)
+    
+    // 1. Check subscription meta for recurring_amount
+    if (subMeta?.recurring_amount && Number(subMeta.recurring_amount) > 0) {
+      amount = Number(subMeta.recurring_amount);
+      currency = subMeta.recurring_currency || 'BYN';
+      amountSource = 'subscription_meta_recurring';
+      console.log(`Subscription ${id}: using meta.recurring_amount = ${amount}`);
     }
+    // 2. Fallback to original order price
+    else if (orderData?.final_price && Number(orderData.final_price) > 0) {
+      amount = Number(orderData.final_price);
+      currency = orderData.currency || 'BYN';
+      amountSource = 'order_final_price';
+      console.log(`Subscription ${id}: using order.final_price = ${amount}`);
+    }
+    // 3. Check for linked offer in subscription meta
+    else if (subMeta?.offer_id) {
+      const { data: linkedOffer } = await supabase
+        .from('tariff_offers')
+        .select('amount, getcourse_offer_id')
+        .eq('id', subMeta.offer_id)
+        .maybeSingle();
+      
+      if (linkedOffer?.amount && Number(linkedOffer.amount) > 0) {
+        amount = Number(linkedOffer.amount);
+        fullPaymentOfferId = subMeta.offer_id;
+        fullPaymentGcOfferId = linkedOffer.getcourse_offer_id;
+        amountSource = 'subscription_linked_offer';
+        console.log(`Subscription ${id}: using linked offer amount = ${amount}`);
+      }
+    }
+    
+    // 4. Final fallback: current tariff price (legacy behavior)
+    if (!amount || amount <= 0) {
+      const { data: priceData } = await supabase
+        .from('tariff_prices')
+        .select('price, final_price, currency')
+        .eq('tariff_id', tariff.id)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-    amount = priceData.final_price || priceData.price;
-    currency = priceData.currency || 'BYN';
-    amountSource = 'tariff_price';
+      if (priceData) {
+        amount = priceData.final_price || priceData.price;
+        currency = priceData.currency || 'BYN';
+        amountSource = 'tariff_price_fallback';
+        console.log(`Subscription ${id}: using tariff_price fallback = ${amount}`);
+      } else {
+        // Absolutely final fallback - use tariff original_price
+        amount = tariff.original_price || 0;
+        currency = 'BYN';
+        amountSource = 'tariff_original_price_fallback';
+        console.log(`Subscription ${id}: using tariff.original_price fallback = ${amount}`);
+      }
+    }
   }
 
   if (!amount || amount <= 0) {

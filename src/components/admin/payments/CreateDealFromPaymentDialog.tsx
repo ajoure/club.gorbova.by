@@ -331,6 +331,7 @@ export function CreateDealFromPaymentDialog({
 
         // Create subscription with auto_renew = true by default (PATCH 13.4)
         // PATCH 13.6: Auto-link payment_method_id if card exists
+        // PATCH 14: Save recurring_amount for consistent auto-renewals
         const { data: newSub, error: subError } = await supabase.from("subscriptions_v2").insert({
           user_id: selectedContact.user_id,
           order_id: newOrder.id,
@@ -343,6 +344,11 @@ export function CreateDealFromPaymentDialog({
           next_charge_at: accessEnd.toISOString(), // PATCH 13.1: Списание = дата окончания доступа
           auto_renew: true, // PATCH 13.4: Автопродление включено по умолчанию
           payment_method_id: activeCard?.id || null, // PATCH 13.6: Auto-link card
+          meta: {
+            recurring_amount: finalAmount,
+            recurring_currency: finalCurrency,
+            created_from: "admin_from_payment",
+          },
         }).select().single();
 
         if (subError) throw subError;

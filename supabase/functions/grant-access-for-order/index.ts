@@ -205,6 +205,9 @@ Deno.serve(async (req) => {
           extended_by_orders: [...extendedByOrders, orderId],
           last_extension_at: now.toISOString(),
           last_extension_days: durationDays,
+          // PATCH 14: Preserve recurring_amount from order
+          recurring_amount: existingMeta.recurring_amount || order.final_price,
+          recurring_currency: existingMeta.recurring_currency || order.currency || 'BYN',
         },
       };
 
@@ -237,6 +240,7 @@ Deno.serve(async (req) => {
       }
     } else {
       // CREATE new subscription (no active subscription for this user+product)
+      // PATCH 14: Save recurring_amount for consistent auto-renewals
       const { data: newSub, error: createSubError } = await supabase
         .from("subscriptions_v2")
         .insert({
@@ -255,6 +259,8 @@ Deno.serve(async (req) => {
             granted_by: "grant-access-for-order",
             granted_at: now.toISOString(),
             initial_order_id: orderId,
+            recurring_amount: order.final_price,
+            recurring_currency: order.currency || 'BYN',
           },
         })
         .select("id")
