@@ -12,10 +12,14 @@ import { GeoComparisonChart } from "@/components/admin/diagnostics/GeoComparison
 import { ApprovalRateTrendChart } from "@/components/admin/diagnostics/ApprovalRateTrendChart";
 import { BankBreakdownTable } from "@/components/admin/diagnostics/BankBreakdownTable";
 import { CardVerificationControl } from "@/components/admin/cards/CardVerificationControl";
+import { SubscriptionBillingReport } from "@/components/admin/diagnostics/SubscriptionBillingReport";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { FileText, Loader2, RefreshCw } from "lucide-react";
 import { format, subDays } from "date-fns";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CreditCard, BarChart3 } from "lucide-react";
 
 export function DiagnosticsTabContent() {
   const { hasPermission, isSuperAdmin } = usePermissions();
@@ -142,26 +146,48 @@ export function DiagnosticsTabContent() {
         <CardVerificationControl />
       )}
 
-      {/* Summary Cards */}
-      <DiagnosticsSummaryCards stats={stats} isLoading={isLoading} />
+      {/* Tabs for different views */}
+      <Tabs defaultValue="billing" className="space-y-4">
+        <TabsList className="bg-muted/50 backdrop-blur-sm border">
+          <TabsTrigger value="billing" className="gap-2">
+            <CreditCard className="h-4 w-4" />
+            Списания и уведомления
+          </TabsTrigger>
+          <TabsTrigger value="analytics" className="gap-2">
+            <BarChart3 className="h-4 w-4" />
+            Аналитика отказов
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Filters */}
-      <FiltersComponent
-        filters={filters}
-        onFiltersChange={setFilters}
-        filterOptions={filterOptions}
-      />
+        {/* Billing Report Tab */}
+        <TabsContent value="billing" className="space-y-4">
+          <SubscriptionBillingReport />
+        </TabsContent>
 
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <BankDeclineChart data={bankBreakdown} isLoading={isLoading} />
-        <ErrorCategoryPieChart data={errorBreakdown} isLoading={isLoading} />
-        <GeoComparisonChart stats={stats} rawData={rawData} isLoading={isLoading} />
-        <ApprovalRateTrendChart data={dailyTrend} isLoading={isLoading} />
-      </div>
+        {/* Analytics Tab - existing content */}
+        <TabsContent value="analytics" className="space-y-6">
+          {/* Summary Cards */}
+          <DiagnosticsSummaryCards stats={stats} isLoading={isLoading} />
 
-      {/* Bank Breakdown Table */}
-      <BankBreakdownTable data={bankBreakdown} isLoading={isLoading} />
+          {/* Filters */}
+          <FiltersComponent
+            filters={filters}
+            onFiltersChange={setFilters}
+            filterOptions={filterOptions}
+          />
+
+          {/* Charts Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <BankDeclineChart data={bankBreakdown} isLoading={isLoading} />
+            <ErrorCategoryPieChart data={errorBreakdown} isLoading={isLoading} />
+            <GeoComparisonChart stats={stats} rawData={rawData} isLoading={isLoading} />
+            <ApprovalRateTrendChart data={dailyTrend} isLoading={isLoading} />
+          </div>
+
+          {/* Bank Breakdown Table */}
+          <BankBreakdownTable data={bankBreakdown} isLoading={isLoading} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
