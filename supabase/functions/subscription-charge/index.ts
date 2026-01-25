@@ -1055,7 +1055,7 @@ async function chargeSubscription(
           // Log RPC failure (SYSTEM ACTOR)
           console.error('Failed to get expected paid amount via RPC:', rpcError);
           await supabase.from('audit_logs').insert({
-            action: 'subscription.order_sync_payments_query_failed',
+            action: 'subscription.order_sync_payments_calc_failed',
             actor_type: 'system',
             actor_user_id: null,
             actor_label: 'subscription-charge',
@@ -1104,11 +1104,13 @@ async function chargeSubscription(
             const protectedStatuses = ['refunded', 'canceled', 'cancelled'];
             const isProtected = currentOrder?.status && protectedStatuses.includes(currentOrder.status);
 
-            if (!isProtected) {
+            // FINAL FIX: Only update if NOT protected AND expectedPaidAmount > 0
+            // This prevents overwriting GIFT orders or orders without successful payments
+            if (!isProtected && expectedPaidAmount > 0) {
               const { error: orderUpdateError } = await supabase
                 .from('orders_v2')
                 .update({
-                  status: expectedPaidAmount > 0 ? 'paid' : (currentOrder?.status || 'pending'),
+                  status: 'paid',
                   paid_amount: expectedPaidAmount,
                   meta: {
                     ...(currentOrder?.meta || {}),
