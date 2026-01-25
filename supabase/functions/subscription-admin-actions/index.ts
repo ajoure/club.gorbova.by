@@ -558,12 +558,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get subscription with related product, tariff and order data (including meta for gc_order_id)
+    // Get subscription with related product and tariff
+    // Note: orders_v2 can have multiple orders per subscription, so we fetch it separately
     const { data: subscription, error: subError } = await supabase
       .from('subscriptions_v2')
-      .select('*, products_v2(telegram_club_id, name), tariffs(getcourse_offer_id, getcourse_offer_code, name), orders_v2(order_number, customer_email, final_price, meta, user_id)')
+      .select('*, products_v2(telegram_club_id, name), tariffs(getcourse_offer_id, getcourse_offer_code, name)')
       .eq('id', subscription_id)
-      .single();
+      .maybeSingle();
 
     if (subError || !subscription) {
       console.log('Subscription lookup error:', subError?.message || 'not found', 'subscription_id:', subscription_id);
@@ -573,6 +574,18 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Fetch the most recent order for this subscription (to avoid multiple rows issue)
+    const { data: orderData } = await supabase
+      .from('orders_v2')
+      .select('order_number, customer_email, final_price, meta, user_id')
+      .eq('subscription_id', subscription_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    // Attach order data to subscription object for backward compatibility
+    (subscription as any).orders_v2 = orderData;
+
     // Get email from profiles - search by both profile.id and user_id since user_id might be profile.id
     const { data: profileData } = await supabase
       .from('profiles')
@@ -580,8 +593,7 @@ Deno.serve(async (req) => {
       .or(`id.eq.${subscription.user_id},user_id.eq.${subscription.user_id}`)
       .maybeSingle();
 
-    // Get email from profiles or order
-    const orderData = subscription.orders_v2 as any;
+    // Get email from profiles or order (orderData already attached above)
     const customerEmail = orderData?.customer_email || profileData?.email;
 
     let result: Record<string, any> = { success: true };
