@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { 
   Download, Upload, Search, Filter, X, RefreshCw
 } from "lucide-react";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth } from "date-fns";
@@ -19,6 +18,8 @@ import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
 import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
 import SyncRunDialog from "@/components/admin/payments/SyncRunDialog";
+import { TimezoneSelector, usePersistedTimezone } from "./TimezoneSelector";
+import AdminToolsMenu from "./AdminToolsMenu";
 
 export type PaymentFilters = {
   search: string;
@@ -74,8 +75,15 @@ export function PaymentsTabContent() {
   // Sync dialog
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
   
-  // Timezone display mode
-  const [displayTimezone, setDisplayTimezone] = useState<'user' | 'utc' | 'provider'>('user');
+  // Timezone - IANA timezone with persistence
+  const { getInitialValue, setTimezone: persistTimezone } = usePersistedTimezone();
+  const [selectedTimezone, setSelectedTimezone] = useState(getInitialValue);
+  
+  // Persist timezone changes
+  const handleTimezoneChange = (tz: string) => {
+    setSelectedTimezone(tz);
+    persistTimezone(tz);
+  };
   
   // Fetch unified payment data - always include imports
   const effectiveDateFilter = useMemo(() => ({
@@ -295,12 +303,13 @@ export function PaymentsTabContent() {
             <Upload className="h-3.5 w-3.5 sm:mr-1.5" />
             <span className="hidden sm:inline">Импорт</span>
           </Button>
+          <AdminToolsMenu onRefetch={refetch} />
         </div>
       </div>
 
-      {/* Stats Panel */}
+      {/* Stats Panel - pass ALL payments for period, not filtered */}
       <PaymentsStatsPanel 
-        payments={filteredPayments} 
+        payments={payments} 
         isLoading={isLoading}
         dateRange={dateFilter}
       />
@@ -354,17 +363,11 @@ export function PaymentsTabContent() {
                   CSV
                 </Button>
                 
-                {/* Timezone toggle */}
-                <ToggleGroup 
-                  type="single" 
-                  value={displayTimezone} 
-                  onValueChange={(v) => v && setDisplayTimezone(v as 'user' | 'utc' | 'provider')}
-                  className="border rounded-md"
-                >
-                  <ToggleGroupItem value="user" size="sm" className="text-xs px-2">My TZ</ToggleGroupItem>
-                  <ToggleGroupItem value="utc" size="sm" className="text-xs px-2">UTC</ToggleGroupItem>
-                  <ToggleGroupItem value="provider" size="sm" className="text-xs px-2">Provider</ToggleGroupItem>
-                </ToggleGroup>
+                {/* Timezone selector - IANA timezones */}
+                <TimezoneSelector 
+                  value={selectedTimezone} 
+                  onValueChange={handleTimezoneChange} 
+                />
               </div>
             </div>
           </div>
@@ -397,7 +400,8 @@ export function PaymentsTabContent() {
               onToggleSelectAll={toggleSelectAll}
               onToggleItem={toggleItem}
               onRefetch={refetch}
-              displayTimezone={displayTimezone}
+              displayTimezone="user"
+              selectedTimezoneIANA={selectedTimezone}
             />
           </div>
         </CardContent>

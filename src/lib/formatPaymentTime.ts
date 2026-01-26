@@ -45,6 +45,38 @@ export function formatPaymentTime(
 }
 
 /**
+ * Format a payment timestamp using IANA timezone directly
+ * This is the preferred method when using TimezoneSelector
+ * 
+ * @param utcDate - ISO timestamp (stored in UTC in database)
+ * @param timezone - IANA timezone string (e.g. 'Europe/Minsk', 'UTC')
+ * @param formatStr - date-fns format string (default: dd.MM.yy HH:mm)
+ * @returns Formatted date string
+ */
+export function formatPaymentTimeIANA(
+  utcDate: string | null | undefined,
+  timezone: string = 'Europe/Minsk',
+  formatStr: string = 'dd.MM.yy HH:mm'
+): string {
+  if (!utcDate) return '—';
+  
+  try {
+    const date = new Date(utcDate);
+    
+    // Validate date
+    if (isNaN(date.getTime())) {
+      console.warn('[formatPaymentTimeIANA] Invalid date:', utcDate);
+      return '—';
+    }
+    
+    return formatInTimeZone(date, timezone, formatStr);
+  } catch (e) {
+    console.error('[formatPaymentTimeIANA] Error formatting date:', e, utcDate);
+    return '—';
+  }
+}
+
+/**
  * Get timezone label for display
  */
 export function getTimezoneLabel(mode: TimezoneMode, userTimezone: string = 'Europe/Minsk'): string {

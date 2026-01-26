@@ -9,7 +9,7 @@ import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertica
 import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { formatPaymentTime, TimezoneMode } from "@/lib/formatPaymentTime";
+import { formatPaymentTime, formatPaymentTimeIANA, TimezoneMode } from "@/lib/formatPaymentTime";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { LinkContactDialog } from "./LinkContactDialog";
 import { UnlinkContactDialog } from "./UnlinkContactDialog";
@@ -46,6 +46,7 @@ interface PaymentsTableProps {
   onToggleItem: (id: string) => void;
   onRefetch: () => void;
   displayTimezone?: TimezoneMode;
+  selectedTimezoneIANA?: string;
 }
 
 // Column configuration
@@ -141,7 +142,7 @@ function SortableResizableHeader({ column, onResize, children }: SortableResizab
   );
 }
 
-export default function PaymentsTable({ payments, isLoading, selectedItems, onToggleSelectAll, onToggleItem, onRefetch, displayTimezone = 'user' }: PaymentsTableProps) {
+export default function PaymentsTable({ payments, isLoading, selectedItems, onToggleSelectAll, onToggleItem, onRefetch, displayTimezone = 'user', selectedTimezoneIANA = 'Europe/Minsk' }: PaymentsTableProps) {
   // Dialog states
   const [linkContactOpen, setLinkContactOpen] = useState(false);
   const [unlinkContactOpen, setUnlinkContactOpen] = useState(false);
@@ -354,7 +355,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
       case 'date':
         return (
           <span className="whitespace-nowrap text-xs">
-            {formatPaymentTime(payment.paid_at, displayTimezone)}
+            {formatPaymentTimeIANA(payment.paid_at, selectedTimezoneIANA)}
           </span>
         );
         
