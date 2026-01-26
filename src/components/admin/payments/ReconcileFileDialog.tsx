@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/contexts/AuthContext";
 import * as XLSX from "xlsx";
 
 interface ReconcileFileDialogProps {
@@ -158,7 +158,7 @@ function parseExcelFile(file: File): Promise<FileTransaction[]> {
 
 export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: ReconcileFileDialogProps) {
   const { toast } = useToast();
-  const { user, profile } = useAuth();
+  const { user, role } = useAuth();
   
   const [file, setFile] = useState<File | null>(null);
   const [transactions, setTransactions] = useState<FileTransaction[]>([]);
@@ -170,10 +170,10 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   
   const whoami = useMemo(() => ({
-    email: user?.email || profile?.email || 'unknown',
+    email: user?.email || 'unknown',
     uid: user?.id || 'unknown',
-    roles: profile?.role || 'user',
-  }), [user, profile]);
+    roles: role || 'user',
+  }), [user, role]);
   
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];

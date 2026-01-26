@@ -50,12 +50,12 @@ function StatCard({ title, amount, count, icon, colorClass, glowColor, currency 
             </div>
           </div>
           
-          {/* Amount - larger, with wrapping for currency */}
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className={`text-3xl font-bold tracking-tight tabular-nums ${colorClass}`}>
+          {/* Amount - responsive sizing with wrapping for currency */}
+          <div className="flex items-baseline gap-1.5 flex-wrap min-w-0">
+            <span className={`text-2xl md:text-3xl font-bold tracking-tight tabular-nums min-w-0 ${colorClass}`}>
               {amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
-            <span className="text-sm font-semibold text-muted-foreground/60">
+            <span className="text-xs md:text-sm font-semibold text-muted-foreground/60 shrink-0">
               {currency}
             </span>
           </div>
