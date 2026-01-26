@@ -14,6 +14,17 @@ interface BackfillRequest {
 interface BackfillResult {
   success: boolean;
   dry_run: boolean;
+  // Flat fields for UI compatibility
+  total_candidates: number;
+  processed: number;
+  created: number;
+  skipped: number;
+  failed: number;
+  needs_mapping: number;
+  sample_ids: string[];
+  created_orders: string[];
+  errors: string[];
+  // Original nested structure (kept for backward compatibility)
   stats: {
     scanned: number;
     created: number;
@@ -90,9 +101,24 @@ serve(async (req) => {
     const dryRun = body.dry_run !== false; // default true
     const limit = Math.min(Math.max(body.limit || 20, 1), 100);
 
+    // Accumulators for flat response fields
+    const createdOrderIds: string[] = [];
+    const errorMessages: string[] = [];
+
     const result: BackfillResult = {
       success: true,
       dry_run: dryRun,
+      // Flat fields (will be populated at the end)
+      total_candidates: 0,
+      processed: 0,
+      created: 0,
+      skipped: 0,
+      failed: 0,
+      needs_mapping: 0,
+      sample_ids: [],
+      created_orders: [],
+      errors: [],
+      // Nested stats (backward compatibility)
       stats: {
         scanned: 0,
         created: 0,
@@ -250,6 +276,7 @@ serve(async (req) => {
 
         sampleEntry.order_id = newOrder.id;
         sampleEntry.result = needsMapping ? 'needs_mapping' : 'created';
+        createdOrderIds.push(newOrder.id);
         
         if (needsMapping) result.stats.needs_mapping++;
         else result.stats.created++;
@@ -260,9 +287,23 @@ serve(async (req) => {
         sampleEntry.result = 'error';
         sampleEntry.error = err.message;
         result.stats.errors++;
+        if (errorMessages.length < 50) {
+          errorMessages.push(`Payment ${payment.id}: ${err.message}`);
+        }
         if (result.samples.length < 10) result.samples.push(sampleEntry);
       }
     }
+
+    // Populate flat fields from stats and samples
+    result.total_candidates = result.stats.scanned;
+    result.processed = result.stats.scanned;
+    result.created = result.stats.created;
+    result.skipped = result.stats.skipped;
+    result.failed = result.stats.errors;
+    result.needs_mapping = result.stats.needs_mapping;
+    result.sample_ids = result.samples.slice(0, 10).map(s => s.payment_id);
+    result.created_orders = createdOrderIds.slice(0, 50);
+    result.errors = errorMessages;
 
     // Write audit log
     await supabase.from('audit_logs').insert({
