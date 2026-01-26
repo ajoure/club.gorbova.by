@@ -219,7 +219,7 @@ export default function SyncWithStatementDialog({
           <div className="flex-1 min-w-0 space-y-1">
             <div className="flex items-center gap-2 flex-wrap">
               <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">
-                {change.uid.slice(0, 8)}...
+                {change.uid ? `${change.uid.slice(0, 8)}...` : '—'}
               </code>
               {change.is_dangerous && (
                 <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
@@ -292,7 +292,7 @@ export default function SyncWithStatementDialog({
                 </div>
                 <div className="text-muted-foreground space-y-0.5">
                   {change.cascade.orders.length > 0 && (
-                    <div>Сделки: {change.cascade.orders.map(o => o.order_number || o.id.slice(0, 8)).join(', ')}</div>
+                    <div>Сделки: {change.cascade.orders.map(o => o.order_number || (o.id ? o.id.slice(0, 8) : '—')).join(', ')}</div>
                   )}
                   {change.cascade.subscriptions.length > 0 && (
                     <div>Подписки: {change.cascade.subscriptions.length} шт.</div>
