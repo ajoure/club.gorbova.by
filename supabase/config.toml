@@ -287,3 +287,9 @@ verify_jwt = false
 
 [functions.admin-backfill-recurring-snapshot]
 verify_jwt = false
+
+[functions.admin-purge-payments-by-uid]
+verify_jwt = false
+
+[functions.admin-backfill-2026-orders]
+verify_jwt = false

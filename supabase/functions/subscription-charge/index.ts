@@ -1051,9 +1051,14 @@ async function chargeSubscription(
       let renewalOrderId: string | null = null;
       const bepaidUid = chargeResult?.transaction?.uid ?? null;
       const pMeta = (payment?.meta || {}) as Record<string, unknown>;
+      
+      // PATCH-4 FIX: Use updatedPayment.status (after DB update), not stale payment.status
+      const paymentSucceeded = updatedPayment?.status === 'succeeded';
+      const paidAt = updatedPayment?.paid_at ? new Date(updatedPayment.paid_at) : new Date();
+      const is2026Plus = paidAt >= new Date('2026-01-01T00:00:00Z');
 
-      // Guard 1: Only for successful charges with positive amount
-      if (amount > 0 && payment?.status === 'succeeded' && bepaidUid) {
+      // Guard 1: Only for successful charges with positive amount AND 2026+ only
+      if (amount > 0 && paymentSucceeded && bepaidUid && is2026Plus) {
         // Guard 2: Idempotency - if already created for this payment, skip
         if (!pMeta.renewal_order_id) {
           // Guard 3: Hard idempotency by bePaid uid (avoid duplicates across retries)

@@ -149,10 +149,47 @@ serve(async (req) => {
     }
 
     // 2. Build stable_uids for batch existence check
-    const itemsWithUids = allQueueItems.map(item => ({
-      item,
-      stableUid: item.bepaid_uid || item.tracking_id || item.id,
-    })).filter(x => x.stableUid);
+    // PATCH-1: ONLY use bepaid_uid as stable identifier. Never use tracking_id as UID!
+    const itemsWithUids: Array<{ item: typeof allQueueItems[0]; stableUid: string }> = [];
+    const itemsNeedingUid: typeof allQueueItems = [];
+    
+    for (const item of allQueueItems) {
+      if (item.bepaid_uid) {
+        itemsWithUids.push({ item, stableUid: item.bepaid_uid });
+      } else {
+        // No bepaid_uid - mark as needs_uid, do NOT materialize
+        itemsNeedingUid.push(item);
+      }
+    }
+    
+    // Update queue items without bepaid_uid to needs_uid status
+    if (itemsNeedingUid.length > 0 && !dryRun) {
+      const needsUidIds = itemsNeedingUid.map(i => i.id);
+      await supabase
+        .from('payment_reconcile_queue')
+        .update({ status: 'needs_uid' })
+        .in('id', needsUidIds);
+      
+      // Log each as audit
+      for (const item of itemsNeedingUid.slice(0, 10)) {
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'admin-materialize-queue-payments',
+          action: 'payment.queue_item_missing_bepaid_uid',
+          meta: {
+            queue_id: item.id,
+            tracking_id: item.tracking_id,
+            amount: item.amount,
+            paid_at: item.paid_at,
+          },
+        });
+      }
+      
+      result.warnings.push(`${itemsNeedingUid.length} queue items skipped: no bepaid_uid (marked as needs_uid)`);
+    } else if (itemsNeedingUid.length > 0 && dryRun) {
+      result.warnings.push(`${itemsNeedingUid.length} queue items would be marked needs_uid (no bepaid_uid)`);
+    }
 
     const stableUids = itemsWithUids.map(x => x.stableUid);
 
