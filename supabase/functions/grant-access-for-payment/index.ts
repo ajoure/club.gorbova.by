@@ -84,36 +84,36 @@ Deno.serve(async (req) => {
     const resolvedOrderId = ensureResult.orderId;
     console.log(`[grant-access-for-payment] Resolved order ${resolvedOrderId} (action: ${ensureResult.action})`);
 
-    // ============= PATCH 4: Check if resolved order is backfill-source =============
+    // ============= PATCH 4: Check if resolved order needs mapping =============
     if (resolvedOrderId) {
       const { data: orderCheck } = await supabase
         .from('orders_v2')
-        .select('meta')
+        .select('status, meta')
         .eq('id', resolvedOrderId)
         .single();
       
       const orderMeta = (orderCheck?.meta || {}) as Record<string, any>;
-      const orderSource = orderMeta.source || '';
+      const isNeedsMapping = orderCheck?.status === 'needs_mapping';
+      const hasMappingApplied = !!orderMeta.mapping_applied_at;
       
-      if (['orphan_payment_fix', 'orphan_backfill'].includes(orderSource)) {
+      if (isNeedsMapping && !hasMappingApplied) {
         await supabase.from('audit_logs').insert({
-          action: 'access.grant_blocked_backfill_order',
+          action: 'access.grant_blocked_needs_mapping',
           actor_type: 'system',
           actor_user_id: null,
           actor_label: 'grant-access-for-payment',
           meta: {
             payment_id: paymentId,
             order_id: resolvedOrderId,
-            order_source: orderSource,
-            reason: 'backfill_order_cannot_grant',
+            reason: 'needs_mapping_without_applied_at',
           },
         });
 
         return new Response(
           JSON.stringify({
             success: false,
-            error: 'backfill_order_blocked',
-            message: 'Backfill orders cannot grant access. Manual review required.',
+            error: 'needs_mapping_blocked',
+            message: 'Order requires manual product mapping before access can be granted.',
             paymentId,
             orderId: resolvedOrderId,
           }),
@@ -122,34 +122,6 @@ Deno.serve(async (req) => {
       }
     }
     // ============= END PATCH 4 =============
-
-    // ============= PATCH 7: Check if this is a "skipped due to needs_manual_mapping" =============
-    // If ensureResult.reason starts with "needs_manual_mapping", do NOT call grant-access
-    if (ensureResult.action === 'skipped' && ensureResult.reason?.startsWith('needs_manual_mapping')) {
-      await supabase.from('audit_logs').insert({
-        action: 'access.grant_skipped_needs_mapping',
-        actor_type: 'system',
-        actor_user_id: null,
-        actor_label: 'grant-access-for-payment',
-        meta: {
-          payment_id: paymentId,
-          reason: ensureResult.reason,
-          was_orphan: ensureResult.wasOrphan,
-        },
-      });
-
-      return new Response(
-        JSON.stringify({
-          success: false,
-          warning: 'needs_manual_mapping',
-          message: 'Payment requires manual product mapping before access can be granted.',
-          paymentId,
-          ensureResult,
-        }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-    // ============= END PATCH 7 =============
 
     // Step 2: Call grant-access-for-order with the resolved orderId
     // Using internal function call to avoid HTTP overhead

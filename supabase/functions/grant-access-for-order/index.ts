@@ -79,40 +79,42 @@ Deno.serve(async (req) => {
       );
     }
 
-    // ============= PATCH 7: BLOCK ACCESS FOR BACKFILL ORDERS =============
+    // ============= PATCH 3: BLOCK ACCESS BY STATUS (not source) =============
     const orderMeta = (order.meta || {}) as Record<string, any>;
-    const orderSource = orderMeta.source || '';
-    const isBackfillOrder = ['orphan_payment_fix', 'orphan_backfill'].includes(orderSource);
-    
-    if (isBackfillOrder) {
-      // SYSTEM ACTOR audit log
+    const isNeedsMapping = order.status === 'needs_mapping';
+    const hasMappingApplied = !!orderMeta.mapping_applied_at;
+
+    // Block if needs_mapping AND no manual mapping applied yet
+    if (isNeedsMapping && !hasMappingApplied) {
       await supabase.from('audit_logs').insert({
-        action: 'access.grant_blocked_backfill_order',
+        action: 'access.grant_blocked_needs_mapping',
         actor_type: 'system',
         actor_user_id: null,
         actor_label: 'grant-access-for-order',
         target_user_id: order.user_id,
         meta: {
           order_id: orderId,
-          order_source: orderSource,
-          product_id: order.product_id,
-          reason: 'backfill_orders_cannot_grant_access',
+          order_status: order.status,
+          reason: 'needs_mapping_without_applied_at',
         },
       });
       
-      console.log(`[grant-access-for-order] BLOCKED: backfill order ${orderId} (source: ${orderSource})`);
-      
       return new Response(
         JSON.stringify({ 
-          error: "Access grant blocked for backfill order",
-          details: "Orders created by backfill (orphan_payment_fix, orphan_backfill) cannot grant access. Manual review required.",
-          order_id: orderId,
-          order_source: orderSource,
+          success: false,
+          error: "needs_mapping_blocked",
+          message: "Order requires manual product mapping before access can be granted.",
+          orderId,
         }),
         { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-    // ============= END PATCH 7 =============
+
+    // ALLOW if mapping was applied (regardless of source)
+    if (isNeedsMapping && hasMappingApplied) {
+      console.log(`[grant-access-for-order] Order ${orderId} was manually mapped, allowing grant`);
+    }
+    // ============= END PATCH 3 =============
 
     // ============= PATCH 8: VALIDATE ORDER FOR ACCESS GRANT =============
     // order.status must be 'paid' AND product_id must be NOT NULL

@@ -12,6 +12,8 @@
  * PATCH 3: Dynamic threshold (order.final_price + epsilon instead of hardcoded 10)
  * PATCH 4: Separate meta for orphan vs renewal
  * PATCH 5: Product/tariff recovery without hardcoded UUIDs
+ * PATCH 7: Card-based user recovery + collision guards
+ * PATCH 8: ALWAYS create order (paid or needs_mapping) + ALWAYS link payment
  */
 
 // Use 'any' for SupabaseClient to avoid version conflicts between esm.sh and npm imports
@@ -24,6 +26,7 @@ export interface EnsureOrderResult {
   reason?: string;
   wasOrphan?: boolean;
   wasTrialMismatch?: boolean;
+  orderStatus?: string; // NEW: 'paid' or 'needs_mapping'
 }
 
 interface PaymentData {
@@ -54,6 +57,23 @@ interface OrderData {
 
 // PATCH 3: Epsilon for float comparison instead of hardcoded threshold
 const EPSILON = 0.01;
+
+// PATCH 7: Card brand normalization (mirrors frontend card-utils.ts)
+const BRAND_ALIASES: Record<string, string> = {
+  'master': 'mastercard',
+  'mc': 'mastercard',
+  'mastercard': 'mastercard',
+  'visa': 'visa',
+  'belkart': 'belkart',
+  'maestro': 'maestro',
+  'mir': 'mir',
+};
+
+function normalizeBrand(brand: string | null | undefined): string {
+  if (!brand) return '';
+  const lower = brand.toLowerCase().trim();
+  return BRAND_ALIASES[lower] || lower;
+}
 
 /**
  * Ensures a succeeded payment has a valid order.
@@ -126,8 +146,9 @@ export async function ensureOrderForPayment(
 }
 
 /**
- * PATCH 5: Recover product_id/tariff_id/offer_id for orphan payments
+ * PATCH 7: Recover product_id/tariff_id/offer_id for orphan payments
  * Priority:
+ * 0. Card-based user recovery (if userId is NULL but card data exists)
  * 1. User's subscriptions (latest)
  * 2. User's last paid order
  * 3. requires_manual_mapping = true
@@ -138,7 +159,9 @@ async function recoverProductTariffForOrphan(
   supabase: SupabaseClient,
   userId: string | null,
   _amount: number,
-  _currency: string
+  _currency: string,
+  cardLast4: string | null,
+  cardBrand: string | null
 ): Promise<{
   productId: string | null;
   tariffId: string | null;
@@ -146,18 +169,46 @@ async function recoverProductTariffForOrphan(
   source: string | null;
   requiresMapping: boolean;
   mappingReason: string | null;
+  recoveredUserId: string | null;
+  cardCollision: boolean;
 }> {
   let productId: string | null = null;
   let tariffId: string | null = null;
   let offerId: string | null = null;
   let source: string | null = null;
+  let recoveredUserId = userId;
+  let cardCollision = false;
+
+  // ============= PRIORITY 0: Card-based user recovery (STRICT GUARDED) =============
+  if (!recoveredUserId && cardLast4 && cardBrand) {
+    const normalizedBrand = normalizeBrand(cardBrand);
+    
+    // JOIN: card_profile_links.profile_id → profiles.id → profiles.user_id
+    const { data: cardLinks, error: cardErr } = await supabase
+      .from('card_profile_links')
+      .select('profile_id, profiles!inner(id, user_id)')
+      .eq('card_last4', cardLast4)
+      .eq('card_brand', normalizedBrand);
+    
+    if (!cardErr && Array.isArray(cardLinks)) {
+      if (cardLinks.length === 1) {
+        // 1 match → recover user_id, continue standard recovery
+        recoveredUserId = cardLinks[0].profiles?.user_id || null;
+        source = 'card_profile_link';
+      } else if (cardLinks.length >= 2) {
+        // 2+ matches → COLLISION, do NOT pick one
+        cardCollision = true;
+      }
+      // 0 matches → keep recoveredUserId null
+    }
+  }
 
   // Priority 1: User's latest subscription
-  if (userId) {
+  if (recoveredUserId) {
     const { data: userSub } = await supabase
       .from('subscriptions_v2')
       .select('product_id, tariff_id, offer_id')
-      .eq('user_id', userId)
+      .eq('user_id', recoveredUserId)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -166,16 +217,16 @@ async function recoverProductTariffForOrphan(
       productId = userSub.product_id;
       tariffId = userSub.tariff_id;
       offerId = userSub.offer_id;
-      source = 'user_subscription';
+      source = source || 'user_subscription';
     }
   }
 
   // Priority 2: User's last paid order
-  if (!productId && userId) {
+  if (!productId && recoveredUserId) {
     const { data: lastOrder } = await supabase
       .from('orders_v2')
       .select('product_id, tariff_id, offer_id')
-      .eq('user_id', userId)
+      .eq('user_id', recoveredUserId)
       .eq('status', 'paid')
       .order('created_at', { ascending: false })
       .limit(1)
@@ -185,25 +236,38 @@ async function recoverProductTariffForOrphan(
       productId = lastOrder.product_id;
       tariffId = lastOrder.tariff_id;
       offerId = lastOrder.offer_id;
-      source = 'last_paid_order';
+      source = source || 'last_paid_order';
     }
   }
 
-  // Priority 3: No hardcoded mapping - mark for manual review
-  // PATCH 5: NO UUID hardcoding, only DB-driven lookups
-  const requiresMapping = !productId;
-  const mappingReason = requiresMapping 
-    ? (userId ? 'no_subscription_or_order_found' : 'no_user_id')
-    : null;
+  // Determine mapping requirement
+  const requiresMapping = !productId || cardCollision;
+  
+  let mappingReason: string | null = null;
+  if (cardCollision) {
+    mappingReason = 'card_collision';
+  } else if (!productId) {
+    mappingReason = recoveredUserId ? 'no_subscription_or_order_found' : 'no_user_id';
+  }
 
-  return { productId, tariffId, offerId, source, requiresMapping, mappingReason };
+  return { 
+    productId, 
+    tariffId, 
+    offerId, 
+    source, 
+    requiresMapping, 
+    mappingReason, 
+    recoveredUserId, 
+    cardCollision 
+  };
 }
 
 /**
  * Creates an order for an orphan payment (payment.order_id IS NULL)
  * PATCH 4: Uses ensured_order_id and ensure_reason='orphan' in meta
- * PATCH 5: Recovers product/tariff without hardcoded UUIDs
- * PATCH 6: NO PRODUCT → NO ORDER (mark for manual mapping instead)
+ * PATCH 7: Card-based recovery + collision guards
+ * PATCH 8: ALWAYS create order (paid or needs_mapping) + ALWAYS link payment to order
+ * This guarantees DoD-1: orphan_succeeded = 0
  */
 async function createOrderForOrphanPayment(
   supabase: SupabaseClient,
@@ -216,14 +280,20 @@ async function createOrderForOrphanPayment(
   if (bepaidUid) {
     const { data: existingOrder } = await supabase
       .from('orders_v2')
-      .select('id')
+      .select('id, status')
       .contains('meta', { bepaid_uid: bepaidUid })
       .maybeSingle();
 
     if (existingOrder?.id) {
       // Order exists, just need to relink payment
       await relinkPaymentToOrder(supabase, payment, existingOrder.id, null, callerLabel, 'orphan');
-      return { action: 'relinked', orderId: existingOrder.id, wasOrphan: true, reason: 'existing_order_found_by_uid' };
+      return { 
+        action: 'relinked', 
+        orderId: existingOrder.id, 
+        wasOrphan: true, 
+        reason: 'existing_order_found_by_uid',
+        orderStatus: existingOrder.status 
+      };
     }
   }
 
@@ -238,74 +308,51 @@ async function createOrderForOrphanPayment(
     profileId = profile?.id ?? null;
   }
 
-  // PATCH 5: Recover product/tariff/offer
+  // PATCH 7: Recover product/tariff/offer with card-based user recovery
   const recovery = await recoverProductTariffForOrphan(
     supabase,
     payment.user_id,
     payment.amount,
-    payment.currency
+    payment.currency || 'BYN',
+    payment.card_last4 ?? null,
+    payment.card_brand ?? null
   );
 
-  // ============= PATCH 6: NO PRODUCT → NO ORDER =============
-  // If no product recovered, do NOT create order - mark payment for manual mapping
-  if (recovery.requiresMapping || !recovery.productId) {
-    const existingMeta = (payment.meta || {}) as Record<string, any>;
-    
-    // Update payment with needs_manual_mapping flag
-    await supabase
-      .from('payments_v2')
-      .update({
-        meta: {
-          ...existingMeta,
-          needs_manual_mapping: true,
-          mapping_reason: recovery.mappingReason || 'no_product_found',
-          mapping_marked_at: new Date().toISOString(),
-          mapping_marked_by: callerLabel,
-        },
-      })
-      .eq('id', payment.id);
-
-    // SYSTEM ACTOR audit log
-    await logAudit(supabase, 'payment.orphan_needs_mapping', payment.user_id, callerLabel, {
+  // PATCH 7: Log card collision as audit event
+  if (recovery.cardCollision) {
+    await logAudit(supabase, 'payment.card_link_collision', null, callerLabel, {
       payment_id: payment.id,
+      card_last4: payment.card_last4,
+      card_brand: payment.card_brand,
       bepaid_uid: bepaidUid,
-      amount: payment.amount,
-      currency: payment.currency,
-      mapping_reason: recovery.mappingReason || 'no_product_found',
-      has_user_id: !!payment.user_id,
+      reason: 'multiple_profiles_for_card',
     });
-
-    console.log(`[${callerLabel}] Payment ${payment.id} needs manual mapping: ${recovery.mappingReason || 'no_product_found'}`);
-    
-    // Return skipped (soft) - no error, no order created
-    return { 
-      action: 'skipped', 
-      orderId: null, 
-      wasOrphan: true, 
-      reason: `needs_manual_mapping:${recovery.mappingReason || 'no_product_found'}` 
-    };
   }
-  // ============= END PATCH 6 =============
+
+  // PATCH 8: Determine order status - paid if product recovered, needs_mapping otherwise
+  const orderStatus = recovery.requiresMapping || !recovery.productId 
+    ? 'needs_mapping' 
+    : 'paid';
 
   // Generate order number
   const { data: ordNum } = await supabase.rpc('generate_order_number');
   const orderNumber = ordNum || `ORPH-${Date.now().toString(36).toUpperCase()}`;
 
-  // Create order with recovered product/tariff
+  // PATCH 8: ALWAYS create order (even for needs_mapping)
+  // product_id may be NULL for needs_mapping orders
   const { data: newOrder, error: createErr } = await supabase
     .from('orders_v2')
     .insert({
       order_number: orderNumber,
-      user_id: payment.user_id,
+      user_id: recovery.recoveredUserId || payment.user_id,
       profile_id: profileId,
-      status: 'paid',
+      status: orderStatus,
       currency: payment.currency || 'BYN',
       base_price: payment.amount,
       final_price: payment.amount,
       paid_amount: payment.amount,
       is_trial: false,
-      // PATCH 5: Recovered fields (guaranteed non-null by PATCH 6 guard)
-      product_id: recovery.productId,
+      product_id: recovery.productId, // May be NULL for needs_mapping
       tariff_id: recovery.tariffId,
       offer_id: recovery.offerId,
       meta: {
@@ -314,11 +361,13 @@ async function createOrderForOrphanPayment(
         bepaid_uid: bepaidUid,
         created_by: callerLabel,
         created_at: new Date().toISOString(),
-        // PATCH 5: Track recovery source
         product_source: recovery.source,
+        requires_manual_mapping: recovery.requiresMapping,
+        mapping_reason: recovery.mappingReason,
+        card_collision: recovery.cardCollision || false,
       },
     })
-    .select('id, order_number')
+    .select('id, order_number, status')
     .single();
 
   if (createErr || !newOrder) {
@@ -332,22 +381,32 @@ async function createOrderForOrphanPayment(
     return { action: 'error', orderId: null, reason: 'create_order_failed', wasOrphan: true };
   }
 
-  // PATCH 4: Relink with orphan-specific meta
+  // PATCH 8: ALWAYS link payment to order (closes DoD-1 invariant)
   await relinkPaymentToOrder(supabase, payment, newOrder.id, null, callerLabel, 'orphan');
 
   // Audit log
-  await logAudit(supabase, 'payment.order_ensured', payment.user_id, callerLabel, {
+  await logAudit(supabase, 'payment.order_ensured', recovery.recoveredUserId || payment.user_id, callerLabel, {
     payment_id: payment.id,
     order_id: newOrder.id,
     order_number: newOrder.order_number,
+    order_status: orderStatus,
     was_orphan: true,
     bepaid_uid: bepaidUid,
-    product_recovered: true,
+    product_recovered: !!recovery.productId,
     product_source: recovery.source,
+    requires_mapping: recovery.requiresMapping,
+    mapping_reason: recovery.mappingReason,
+    card_collision: recovery.cardCollision,
   });
 
-  console.log(`[${callerLabel}] Created order ${newOrder.order_number} for orphan payment ${payment.id} (product: ${recovery.productId}, source: ${recovery.source})`);
-  return { action: 'created', orderId: newOrder.id, wasOrphan: true };
+  console.log(`[${callerLabel}] Created ${orderStatus} order ${newOrder.order_number} for orphan payment ${payment.id} (product: ${recovery.productId || 'NULL'}, source: ${recovery.source || 'none'})`);
+  
+  return { 
+    action: 'created', 
+    orderId: newOrder.id, 
+    wasOrphan: true,
+    orderStatus 
+  };
 }
 
 /**
@@ -366,7 +425,7 @@ async function createRenewalOrderFromTrial(
   if (bepaidUid) {
     const { data: existingOrder } = await supabase
       .from('orders_v2')
-      .select('id')
+      .select('id, status')
       .eq('user_id', payment.user_id)
       .contains('meta', { bepaid_uid: bepaidUid })
       .maybeSingle();
@@ -374,7 +433,13 @@ async function createRenewalOrderFromTrial(
     if (existingOrder?.id && existingOrder.id !== trialOrder.id) {
       // Renewal order exists, just need to relink payment
       await relinkPaymentToOrder(supabase, payment, existingOrder.id, trialOrder.id, callerLabel, 'renewal');
-      return { action: 'relinked', orderId: existingOrder.id, wasTrialMismatch: true, reason: 'existing_renewal_found_by_uid' };
+      return { 
+        action: 'relinked', 
+        orderId: existingOrder.id, 
+        wasTrialMismatch: true, 
+        reason: 'existing_renewal_found_by_uid',
+        orderStatus: existingOrder.status 
+      };
     }
   }
 
@@ -420,7 +485,7 @@ async function createRenewalOrderFromTrial(
         created_at: new Date().toISOString(),
       },
     })
-    .select('id, order_number')
+    .select('id, order_number, status')
     .single();
 
   if (createErr || !newOrder) {
@@ -449,7 +514,7 @@ async function createRenewalOrderFromTrial(
   });
 
   console.log(`[${callerLabel}] Created renewal order ${newOrder.order_number} for trial-mismatch payment ${payment.id}`);
-  return { action: 'created', orderId: newOrder.id, wasTrialMismatch: true };
+  return { action: 'created', orderId: newOrder.id, wasTrialMismatch: true, orderStatus: 'paid' };
 }
 
 /**

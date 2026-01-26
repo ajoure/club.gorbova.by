@@ -1060,10 +1060,53 @@ Deno.serve(async (req) => {
           });
           // Don't fail webhook - payment is already succeeded, but log for manual review
         } else if (ensureResult.action === 'created' || ensureResult.action === 'relinked') {
-          console.log(`[bepaid-webhook] Order ensured for payment ${paymentV2.id}: action=${ensureResult.action}, orderId=${ensureResult.orderId}`);
+          console.log(`[bepaid-webhook] Order ensured for payment ${paymentV2.id}: action=${ensureResult.action}, orderId=${ensureResult.orderId}, status=${ensureResult.orderStatus}`);
           // Update paymentV2.order_id to use the resolved order
           if (ensureResult.orderId) {
             paymentV2.order_id = ensureResult.orderId;
+          }
+        }
+
+        // PATCH 2: Check if resolved order needs mapping (cannot grant access yet)
+        if (ensureResult.orderId) {
+          const { data: orderCheck } = await supabase
+            .from('orders_v2')
+            .select('status, meta, user_id')
+            .eq('id', ensureResult.orderId)
+            .single();
+
+          const orderMeta = (orderCheck?.meta || {}) as Record<string, any>;
+          const isNeedsMapping = orderCheck?.status === 'needs_mapping';
+          const hasMappingApplied = !!orderMeta.mapping_applied_at;
+
+          if (isNeedsMapping && !hasMappingApplied) {
+            await supabase.from('audit_logs').insert({
+              action: 'access.grant_skipped_needs_mapping',
+              actor_type: 'system',
+              actor_user_id: null,
+              actor_label: 'bepaid-webhook',
+              target_user_id: orderCheck?.user_id,
+              meta: {
+                payment_id: paymentV2.id,
+                order_id: ensureResult.orderId,
+                bepaid_uid: transactionUid,
+              },
+            });
+
+            console.log(`[bepaid-webhook] Order ${ensureResult.orderId} needs mapping, skipping grant/subscription logic`);
+            
+            // Continue webhook processing but SKIP grant/subscription side-effects.
+            // payment is linked to order already (DoD-1 satisfied).
+            return new Response(
+              JSON.stringify({ 
+                ok: true, 
+                type: 'payment_needs_mapping',
+                payment_id: paymentV2.id,
+                order_id: ensureResult.orderId,
+                skipped: 'needs_mapping',
+              }),
+              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
           }
         }
 

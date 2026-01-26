@@ -285,6 +285,11 @@ export default function AdminDeals() {
     return deals?.filter(d => d.status === 'needs_mapping').length || 0;
   }, [deals]);
 
+  // Navigate to problematic orders
+  const navigateToProblematic = () => {
+    navigate('/admin/payments/needs-mapping');
+  };
+
   // Calculate stats from filtered deals (after filteredDeals is defined)
   const stats = useMemo(() => {
     const source = activeFilters.length > 0 || search ? filteredDeals : deals;
