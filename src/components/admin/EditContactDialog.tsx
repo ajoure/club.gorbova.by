@@ -137,13 +137,21 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
         }
       });
       
-      // Handle 409 conflict (email already in use) - comes in data, not error
-      if (data?.error === "Email already in use") {
-        throw new Error("Этот email уже используется другим пользователем");
+      if (authError) {
+        // For non-2xx responses, check error context for specific error messages
+        const errorContext = (authError as any).context;
+        const status = errorContext?.status;
+        const responseBody = errorContext?.responseBody;
+        
+        if (status === 409 || responseBody?.error === "Email already in use") {
+          throw new Error("Этот email уже используется другим пользователем");
+        }
+        throw new Error(`Ошибка смены email для входа: ${authError.message}`);
       }
       
-      if (authError) {
-        throw new Error(`Ошибка смены email для входа: ${authError.message}`);
+      // Also check data for error in 2xx responses
+      if (data?.error === "Email already in use") {
+        throw new Error("Этот email уже используется другим пользователем");
       }
     }
     
