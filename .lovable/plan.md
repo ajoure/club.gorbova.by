@@ -1,112 +1,97 @@
+Проблема
 
-# План: Фикс импорта/материализации платежей (PATCH 2026+)
+UI-компонент Backfill2026OrdersTool читает плоские поля результата (total_candidates, processed, created, …), а Edge Function admin-backfill-2026-orders возвращает только вложенный объект stats и массив samples. Из-за этого UI показывает 0 кандидатов, хотя в базе есть orphan-платежи.
 
-## Статус: В ПРОЦЕССЕ
+⸻
 
----
+Цель
 
-## PATCH-1: admin-materialize-queue-payments (BLOCKER) ✅ DONE
+Сделать ответ Edge Function совместимым с UI: добавить плоские поля верхнего уровня, не ломая текущий формат (stats, samples сохраняем).
 
-**Файл:** `supabase/functions/admin-materialize-queue-payments/index.ts`
+⸻
 
-**Изменения:**
-- ❌ Было: `stableUid = item.bepaid_uid || item.tracking_id || item.id`
-- ✅ Стало: `stableUid = item.bepaid_uid || null`
-- Если нет `bepaid_uid`:
-  - НЕ создаём `payments_v2`
-  - Помечаем queue item `status='needs_uid'`
-  - Audit: `payment.queue_item_missing_bepaid_uid` (system actor)
+Изменения
 
----
+1) Обновить контракт ответа admin-backfill-2026-orders
 
-## PATCH-2: Импорт (уже корректно)
+Файл: supabase/functions/admin-backfill-2026-orders/index.ts
 
-- `provider_payment_id` = UID операции (transaction.uid)
-- `meta.tracking_id` = Tracking ID
-- Tracking ID никогда не используется для идемпотентности
+Добавить в JSON ответа верхнего уровня:
+	•	total_candidates: number
+	•	processed: number
+	•	created: number
+	•	skipped: number
+	•	failed: number
+	•	needs_mapping: number
+	•	sample_ids: string[] (первые 10 payment_id кандидатов)
+	•	created_orders: string[] (id созданных orders; в dry-run пустой)
+	•	errors: string[] (тексты ошибок; в dry-run пустой)
 
----
+При этом оставить как есть:
+	•	stats (для обратной совместимости)
+	•	samples (как сейчас)
 
-## PATCH-3: admin-purge-payments-by-uid ✅ DONE
+2) Правила маппинга полей
+	•	total_candidates = result.stats.scanned
+	•	processed = result.stats.scanned (или фактически обработанные, если будет отличаться — но сейчас логика “сканируем и пытаемся обработать”)
+	•	created = result.stats.created
+	•	skipped = result.stats.skipped
+	•	failed = result.stats.errors
+	•	needs_mapping = result.stats.needs_mapping
+	•	sample_ids = samples.map(s => s.payment_id).slice(0, 10)
 
-**Файл:** `supabase/functions/admin-purge-payments-by-uid/index.ts`
+3) created_orders и errors
+	•	В execute режиме собирать created_orders:
+	•	пушить newOrder.id при успешном создании order
+	•	errors:
+	•	пушить текст ошибки при обработке каждой записи (кратко, без stack)
+	•	лимитировать до 50 сообщений, чтобы не раздувать ответ
 
-**Функционал:**
-- Вход: `provider_payment_ids[]` или `import_batch_id` или `purge_tracking_as_uid: true`
-- `dry_run: true` (по умолчанию) — показывает что будет удалено
-- `dry_run: false` — удаляет платежи
-- Требует `super_admin`
-- Audit: `payment.purge_dry_run` / `payment.purge_executed`
+4) Ограничения и безопасность
+	•	Ничего не удаляем из ответа — только add-only поля.
+	•	Не менять критерии выборки orphan-платежей.
+	•	Обязателен audit_logs (SYSTEM ACTOR) как уже реализовано.
 
----
+⸻
 
-## PATCH-4: subscription-charge fix (2026+) ✅ DONE
+Пример ответа (ожидаемый UI)
 
-**Файл:** `supabase/functions/subscription-charge/index.ts`
+{
+  "success": true,
+  "dry_run": true,
+  "total_candidates": 46,
+  "processed": 46,
+  "created": 40,
+  "skipped": 2,
+  "failed": 0,
+  "needs_mapping": 4,
+  "sample_ids": ["uuid1", "uuid2"],
+  "created_orders": [],
+  "errors": [],
+  "stats": { "scanned": 46, "created": 40, "skipped": 2, "needs_mapping": 4, "errors": 0 },
+  "samples": [{ "payment_id": "uuid1", "result": "created" }]
+}
 
-**Изменения:**
-- ✅ Используем `updatedPayment.status` вместо `payment.status`
-- ✅ Добавлен guard `is2026Plus` (paid_at >= 2026-01-01)
-- Renewal order создаётся только для 2026+
 
----
+⸻
 
-## PATCH-5: admin-backfill-2026-orders ✅ DONE
+Шаги реализации
+	1.	Изменить тип BackfillResult в Edge Function (добавить плоские поля).
+	2.	В конце выполнения (перед return) заполнить плоские поля из stats и samples.
+	3.	В execute режиме: накапливать created_orders[] и errors[].
+	4.	Деплой функции.
+	5.	Проверка:
+	•	Dry-run в UI должен показать total_candidates = 46 (или актуальное число).
+	•	Execute должен создать orders и вернуть created_orders (первые 10–20 можно показывать в UI как сейчас).
 
-**Файл:** `supabase/functions/admin-backfill-2026-orders/index.ts`
+⸻
 
-**Функционал:**
-- Scope: `payments_v2` where:
-  - `paid_at >= 2026-01-01`
-  - `status = 'succeeded'`
-  - `amount > 0`
-  - `profile_id IS NOT NULL`
-  - `provider_payment_id IS NOT NULL`
-  - `order_id IS NULL`
-- Создаёт order, линкует payment
-- Если product/tariff не найден → `needs_mapping` в meta
-- Audit: `subscription.renewal_backfill_2026`
+DoD (проверяемо)
+	•	UI показывает не 0, а реальное число кандидатов из функции.
+	•	Execute разблокируется при total_candidates > 0.
+	•	В ответе функции присутствуют одновременно:
+	•	плоские поля (total_candidates, processed, …)
+	•	stats и samples (как раньше)
+	•	Есть запись в audit_logs с actor_type='system' по запуску dry-run/execute.
 
----
-
-## DoD SQL Queries
-
-```sql
--- 1) Нет payment 2026+ где provider_payment_id = meta.tracking_id
-SELECT COUNT(*) FROM payments_v2
-WHERE paid_at >= '2026-01-01' 
-  AND (meta->>'tracking_id') IS NOT NULL
-  AND provider_payment_id = (meta->>'tracking_id');
-
--- 2) Нет orphan payments 2026+ с контактом
-SELECT COUNT(*) FROM payments_v2
-WHERE paid_at >= '2026-01-01' 
-  AND status = 'succeeded' 
-  AND amount > 0
-  AND profile_id IS NOT NULL 
-  AND order_id IS NULL;
-
--- 3) SYSTEM ACTOR proof
-SELECT action, COUNT(*) FROM audit_logs
-WHERE actor_type = 'system' 
-  AND actor_user_id IS NULL
-  AND action IN (
-    'payment.queue_item_missing_bepaid_uid',
-    'payment.purge_executed',
-    'subscription.renewal_order_created',
-    'subscription.renewal_backfill_2026'
-  )
-GROUP BY action;
-```
-
----
-
-## Файлы изменены
-
-| Файл | Изменение |
-|------|-----------|
-| `supabase/functions/admin-materialize-queue-payments/index.ts` | Убран fallback на tracking_id |
-| `supabase/functions/subscription-charge/index.ts` | Исправлен status check + 2026 guard |
-| `supabase/functions/admin-purge-payments-by-uid/index.ts` | **НОВЫЙ** — purge tool |
-| `supabase/functions/admin-backfill-2026-orders/index.ts` | **НОВЫЙ** — backfill 2026+ |
-| `supabase/config.toml` | Добавлены конфиги для новых функций |
+⸻
