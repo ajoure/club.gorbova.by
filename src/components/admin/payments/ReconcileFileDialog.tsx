@@ -483,7 +483,7 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
                         <div className="max-h-48 overflow-auto rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
                           {result.missing.map((m, i) => (
                             <div key={i} className="flex items-center gap-2">
-                              <span className="text-muted-foreground">{m.uid.slice(0, 12)}...</span>
+                              <span className="text-muted-foreground">{(m.uid || '—').slice(0, 12)}...</span>
                               <span className="text-foreground">{m.amount} BYN</span>
                               <span className="text-muted-foreground">{m.status}</span>
                             </div>
@@ -505,7 +505,7 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
                         <div className="max-h-48 overflow-auto rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
                           {result.mismatches.map((m, i) => (
                             <div key={i} className="flex items-center gap-2">
-                              <span className="text-muted-foreground">{m.uid.slice(0, 12)}...</span>
+                              <span className="text-muted-foreground">{(m.uid || '—').slice(0, 12)}...</span>
                               <span className="text-emerald-600">File: {m.file_status}</span>
                               <span className="text-red-600">DB: {m.db_status}</span>
                               <span className="text-muted-foreground">({m.mismatch_type})</span>
@@ -528,7 +528,7 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
                         <div className="max-h-48 overflow-auto rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
                           {result.extra.map((e, i) => (
                             <div key={i} className="flex items-center gap-2">
-                              <span className="text-muted-foreground">{e.uid.slice(0, 12)}...</span>
+                              <span className="text-muted-foreground">{(e.uid || '—').slice(0, 12)}...</span>
                               <span className="text-foreground">{e.amount} BYN</span>
                               <span className="text-muted-foreground">{e.status}</span>
                             </div>
