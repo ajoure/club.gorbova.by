@@ -79,6 +79,8 @@ export interface BepaidStatementStats {
   refunds_amount: number;
   cancellations_count: number;
   cancellations_amount: number;
+  errors_count: number;
+  errors_amount: number;
   commission_total: number;
   payout_total: number;
   total_count: number;
@@ -169,6 +171,8 @@ export function useBepaidStatementStats(dateFilter: DateFilter) {
         refunds_amount: 0,
         cancellations_count: 0,
         cancellations_amount: 0,
+        errors_count: 0,
+        errors_amount: 0,
         commission_total: 0,
         payout_total: 0,
         total_count: rows.length,
@@ -190,6 +194,9 @@ export function useBepaidStatementStats(dateFilter: DateFilter) {
         } else if (txType.includes('отмена') || txType.includes('void') || txType.includes('cancel')) {
           stats.cancellations_count++;
           stats.cancellations_amount += Math.abs(amount);
+        } else if (status.includes('ошибк') || status.includes('failed') || status.includes('declined') || status.includes('error')) {
+          stats.errors_count++;
+          stats.errors_amount += Math.abs(amount);
         } else if (status.includes('успешн') || status.includes('successful') || status.includes('succeeded')) {
           stats.payments_count++;
           stats.payments_amount += amount;
