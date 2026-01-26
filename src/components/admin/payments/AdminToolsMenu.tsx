@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Settings, Wrench, CheckCircle2, Link2, AlertTriangle } from "lucide-react";
+import { Settings, Wrench, CheckCircle2, Link2, AlertTriangle, FileSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import FalsePaymentsFixDialog from "./FalsePaymentsFixDialog";
+import ReconcileFileDialog from "./ReconcileFileDialog";
 
 interface AdminToolsMenuProps {
   onRefetch?: () => void;
@@ -17,6 +18,7 @@ interface AdminToolsMenuProps {
 
 export default function AdminToolsMenu({ onRefetch }: AdminToolsMenuProps) {
   const [fixFalsePaymentsOpen, setFixFalsePaymentsOpen] = useState(false);
+  const [reconcileDialogOpen, setReconcileDialogOpen] = useState(false);
   
   return (
     <>
@@ -33,6 +35,23 @@ export default function AdminToolsMenu({ onRefetch }: AdminToolsMenuProps) {
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           
+          {/* Reconcile with bePaid file */}
+          <DropdownMenuItem 
+            onClick={() => setReconcileDialogOpen(true)}
+            className="flex items-start gap-3 p-3 cursor-pointer"
+          >
+            <div className="p-1.5 rounded-lg bg-primary/10 mt-0.5">
+              <FileSearch className="h-4 w-4 text-primary" />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="font-medium text-sm">Сверка с эталоном bePaid</span>
+              <span className="text-xs text-muted-foreground">
+                Загрузить выписку и найти расхождения
+              </span>
+            </div>
+          </DropdownMenuItem>
+          
+          {/* Fix false payments */}
           <DropdownMenuItem 
             onClick={() => setFixFalsePaymentsOpen(true)}
             className="flex items-start gap-3 p-3 cursor-pointer"
@@ -92,6 +111,12 @@ export default function AdminToolsMenu({ onRefetch }: AdminToolsMenuProps) {
       <FalsePaymentsFixDialog 
         open={fixFalsePaymentsOpen} 
         onOpenChange={setFixFalsePaymentsOpen}
+        onSuccess={onRefetch}
+      />
+      
+      <ReconcileFileDialog
+        open={reconcileDialogOpen}
+        onOpenChange={setReconcileDialogOpen}
         onSuccess={onRefetch}
       />
     </>

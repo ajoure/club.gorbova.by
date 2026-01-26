@@ -24,6 +24,7 @@ interface ReconcileRequest {
   dry_run?: boolean;
   from_date?: string;  // Europe/Minsk timezone (UTC+3)
   to_date?: string;
+  include_queue?: boolean;  // Include payment_reconcile_queue in comparison
 }
 
 interface ReconcileStats {
@@ -127,7 +128,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body: ReconcileRequest = await req.json();
-    const { transactions, dry_run = true, from_date, to_date } = body;
+    const { transactions, dry_run = true, from_date, to_date, include_queue = false } = body;
 
     if (!transactions || !Array.isArray(transactions) || transactions.length === 0) {
       return new Response(
@@ -160,6 +161,22 @@ Deno.serve(async (req) => {
     const { data: dbRecords, error: dbError } = await dbQuery;
     if (dbError) throw dbError;
 
+    // Optionally fetch queue records for unified view
+    let queueRecords: any[] = [];
+    if (include_queue) {
+      let queueQuery = supabase
+        .from('payment_reconcile_queue')
+        .select('id, bepaid_uid, status, amount, paid_at')
+        .not('bepaid_uid', 'is', null);
+      
+      if (dateFrom && dateTo) {
+        queueQuery = queueQuery.gte('paid_at', dateFrom).lte('paid_at', dateTo);
+      }
+      
+      const { data: qData } = await queueQuery;
+      queueRecords = qData || [];
+    }
+
     // Also fetch status overrides
     const { data: overrides } = await supabase
       .from('payment_status_overrides')
@@ -168,6 +185,14 @@ Deno.serve(async (req) => {
 
     const overridesMap = new Map((overrides || []).map(o => [o.uid, o.status_override]));
     const dbMap = new Map((dbRecords || []).map(r => [r.provider_payment_id, r]));
+    
+    // Build queue map (only UIDs not already in payments_v2)
+    const queueMap = new Map<string, any>();
+    for (const q of queueRecords) {
+      if (q.bepaid_uid && !dbMap.has(q.bepaid_uid)) {
+        queueMap.set(q.bepaid_uid, q);
+      }
+    }
 
     // Build file index
     const fileMap = new Map(transactions.map(t => [t.uid, t]));
@@ -235,10 +260,37 @@ Deno.serve(async (req) => {
 
     for (const tx of transactions) {
       const dbRec = dbMap.get(tx.uid);
+      const queueRec = queueMap.get(tx.uid);
       const fileNormStatus = normalizeFileStatus(tx.status, tx.transaction_type);
 
-      if (!dbRec) {
-        // Missing in DB - needs insert
+      if (!dbRec && !queueRec) {
+        // Missing in both DB and queue - needs insert
+        missing.push({ uid: tx.uid, status: tx.status, amount: tx.amount, transaction_type: tx.transaction_type });
+      } else if (!dbRec && queueRec) {
+        // In queue but not materialized - check for status mismatch
+        const queueNormStatus = normalizeDbStatus(queueRec.status, '');
+        if (fileNormStatus !== queueNormStatus) {
+          mismatches.push({
+            uid: tx.uid,
+            file_status: fileNormStatus,
+            db_status: queueNormStatus,
+            mismatch_type: 'status',
+          });
+        } else if (Math.abs(tx.amount) !== Math.abs(queueRec.amount || 0)) {
+          mismatches.push({
+            uid: tx.uid,
+            file_status: fileNormStatus,
+            db_status: queueNormStatus,
+            file_amount: tx.amount,
+            db_amount: queueRec.amount,
+            mismatch_type: 'amount',
+          });
+          amountMismatches++;
+        } else {
+          matched++;
+        }
+      } else if (!dbRec) {
+        // This shouldn't happen given the logic above, but safety fallback
         missing.push({ uid: tx.uid, status: tx.status, amount: tx.amount, transaction_type: tx.transaction_type });
 
         if (!dry_run) {

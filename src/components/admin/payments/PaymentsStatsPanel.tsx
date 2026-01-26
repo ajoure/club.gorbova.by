@@ -22,42 +22,53 @@ interface StatCardProps {
 
 function StatCard({ title, amount, count, icon, colorClass, glowColor, currency = "BYN", subtitle }: StatCardProps) {
   return (
-    <div className="group relative overflow-hidden rounded-2xl transition-all duration-300 hover:scale-[1.02]">
-      {/* Outer glow on hover */}
-      <div className={`absolute -inset-0.5 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-md ${glowColor}`} />
+    <div className="group relative overflow-hidden rounded-3xl transition-all duration-500 hover:scale-[1.03] hover:-translate-y-1">
+      {/* Outer glow on hover - larger and softer */}
+      <div className={`absolute -inset-1 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-500 blur-xl ${glowColor}`} />
       
-      {/* Main card */}
-      <div className="relative overflow-hidden rounded-2xl border border-white/20 dark:border-white/10 bg-white/70 dark:bg-black/40 backdrop-blur-2xl p-5 shadow-lg shadow-black/5 dark:shadow-black/20">
-        {/* Inner shine gradient */}
-        <div className="absolute inset-0 bg-gradient-to-br from-white/40 via-white/10 to-transparent dark:from-white/10 dark:via-transparent pointer-events-none" />
+      {/* Main card - enhanced glass effect */}
+      <div className="relative overflow-hidden rounded-3xl border border-white/30 dark:border-white/10 bg-white/80 dark:bg-white/5 backdrop-blur-3xl p-6 shadow-2xl shadow-black/5 dark:shadow-black/30">
         
-        {/* Subtle top highlight */}
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/50 to-transparent dark:via-white/20" />
+        {/* Inner shine gradient - stronger */}
+        <div className="absolute inset-0 bg-gradient-to-br from-white/60 via-white/20 to-transparent dark:from-white/15 dark:via-white/5 pointer-events-none" />
+        
+        {/* Top edge highlight */}
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/80 to-transparent dark:via-white/30" />
+        
+        {/* Left edge highlight */}
+        <div className="absolute inset-y-0 left-0 w-px bg-gradient-to-b from-white/60 via-transparent to-transparent dark:from-white/20" />
         
         {/* Content */}
-        <div className="relative z-10 flex items-start justify-between">
-          <div className="space-y-2">
-            <p className="text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-widest">{title}</p>
-            <p className={`text-2xl font-bold tracking-tight ${colorClass}`}>
-              {amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              <span className="text-sm font-medium ml-1.5 opacity-70">{currency}</span>
+        <div className="relative z-10 flex flex-col gap-3">
+          {/* Header with icon */}
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-bold text-muted-foreground/70 uppercase tracking-[0.2em]">
+              {title}
             </p>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground font-medium">
-                {count.toLocaleString('ru-RU')} шт
-              </span>
-              {subtitle && (
-                <>
-                  <span className="w-1 h-1 rounded-full bg-muted-foreground/30" />
-                  <span className="text-xs text-muted-foreground">{subtitle}</span>
-                </>
-              )}
+            <div className={`p-2.5 rounded-2xl bg-gradient-to-br ${glowColor.replace('/20', '/10')} backdrop-blur-xl border border-white/30 dark:border-white/10 shadow-lg`}>
+              {icon}
             </div>
           </div>
           
-          {/* Icon with gradient background */}
-          <div className={`p-3 rounded-xl bg-gradient-to-br ${glowColor.replace('/20', '/15').replace('/30', '/15')} backdrop-blur-sm border border-white/20 dark:border-white/10`}>
-            {icon}
+          {/* Amount - larger, with wrapping for currency */}
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className={`text-3xl font-bold tracking-tight tabular-nums ${colorClass}`}>
+              {amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className="text-sm font-semibold text-muted-foreground/60">
+              {currency}
+            </span>
+          </div>
+          
+          {/* Count and subtitle */}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
+            <span className="font-semibold tabular-nums">{count.toLocaleString('ru-RU')} шт</span>
+            {subtitle && (
+              <>
+                <span className="w-1 h-1 rounded-full bg-muted-foreground/30" />
+                <span>{subtitle}</span>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -138,7 +149,7 @@ export default function PaymentsStatsPanel({ payments, isLoading, dateRange }: P
 
   if (isLoading) {
     return (
-      <div className="rounded-2xl border border-white/20 dark:border-white/10 bg-white/70 dark:bg-black/40 backdrop-blur-2xl p-8 shadow-lg">
+      <div className="rounded-3xl border border-white/30 dark:border-white/10 bg-white/80 dark:bg-white/5 backdrop-blur-3xl p-8 shadow-2xl">
         <div className="flex items-center justify-center gap-3 text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" />
           <span className="text-sm font-medium">Загрузка статистики...</span>
