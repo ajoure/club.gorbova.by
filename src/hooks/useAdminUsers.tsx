@@ -364,6 +364,26 @@ export function useAdminUsers() {
           toast.error("Сессия истекла — войдите снова");
           return false;
         }
+
+        // Handle non-2xx function responses (e.g. 409) with a user-friendly message
+        const ctx = (response.error as any)?.context;
+        if (ctx?.status === 409) {
+          let rb = ctx?.responseBody;
+          if (typeof rb === "string") {
+            try {
+              rb = JSON.parse(rb);
+            } catch {
+              // ignore
+            }
+          }
+          if (rb?.error === "Email already in use") {
+            const baseMsg = rb?.message || "Этот email уже используется другим пользователем";
+            const conflictUserId = rb?.conflictUserId;
+            toast.error(conflictUserId ? `${baseMsg} (userId: ${conflictUserId})` : baseMsg);
+            return false;
+          }
+        }
+
         console.error("Change email error:", response.error);
         toast.error("Ошибка смены email");
         return false;

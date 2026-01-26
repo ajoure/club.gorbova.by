@@ -141,10 +141,21 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
         // For non-2xx responses, check error context for specific error messages
         const errorContext = (authError as any).context;
         const status = errorContext?.status;
-        const responseBody = errorContext?.responseBody;
+        let responseBody = errorContext?.responseBody;
+
+        // supabase-js may provide responseBody as string; normalize to object when possible
+        if (typeof responseBody === "string") {
+          try {
+            responseBody = JSON.parse(responseBody);
+          } catch {
+            // ignore
+          }
+        }
         
         if (status === 409 || responseBody?.error === "Email already in use") {
-          throw new Error("Этот email уже используется другим пользователем");
+          const baseMsg = responseBody?.message || "Этот email уже используется другим пользователем";
+          const conflictUserId = responseBody?.conflictUserId;
+          throw new Error(conflictUserId ? `${baseMsg} (userId: ${conflictUserId})` : baseMsg);
         }
         throw new Error(`Ошибка смены email для входа: ${authError.message}`);
       }

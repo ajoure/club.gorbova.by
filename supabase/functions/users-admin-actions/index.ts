@@ -642,6 +642,8 @@ serve(async (req: Request): Promise<Response> => {
 
         const oldEmail = currentUser.user.email;
 
+        const normalizedNewEmail = newEmail.trim().toLowerCase();
+
         // Validate new email format
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(newEmail)) {
@@ -651,37 +653,68 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
-        // Check if new email is already in use by another user
-        const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers({
-          page: 1,
-          perPage: 1,
-        });
-        
-        // More efficient: check via getUserByEmail-like approach
-        const { data: allUsers } = await supabaseAdmin.auth.admin.listUsers();
-        const emailTaken = allUsers?.users?.some(
-          u => u.email?.toLowerCase() === newEmail.toLowerCase() && u.id !== targetUserId
-        );
-        
-        if (emailTaken) {
-          return new Response(JSON.stringify({ 
-            error: "Email already in use",
-            message: "Этот email уже используется другим пользователем"
-          }), {
-            status: 409,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
+        // Find the auth user that currently owns this email (may exist even without a profile)
+        // NOTE: profiles can be deleted while the auth user remains, so we must check auth.
+        const findAuthUserByEmail = async () => {
+          const perPage = 200;
+          const maxPages = 20; // 4k users max scan; admin-only action, acceptable
+
+          for (let page = 1; page <= maxPages; page++) {
+            const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+            if (error) {
+              console.error("listUsers error:", error);
+              return null;
+            }
+
+            const match = data?.users?.find((u) => (u.email ?? "").toLowerCase() === normalizedNewEmail);
+            if (match) return match;
+
+            const len = data?.users?.length ?? 0;
+            if (len === 0 || len < perPage) break;
+          }
+          return null;
+        };
+
+        const emailOwner = await findAuthUserByEmail();
+        if (emailOwner && emailOwner.id !== targetUserId) {
+          return new Response(
+            JSON.stringify({
+              error: "Email already in use",
+              message: "Этот email уже используется другим пользователем",
+              conflictUserId: emailOwner.id,
+            }),
+            {
+              status: 409,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            }
+          );
         }
 
         // Update email in auth.users via Admin API
         // email_confirm: true means no verification email needed (admin verified)
         const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(
           targetUserId,
-          { email: newEmail, email_confirm: true }
+          { email: normalizedNewEmail, email_confirm: true }
         );
 
         if (authError) {
           console.error("Update auth email error:", authError);
+
+          // If uniqueness check missed (pagination), still convert duplicate-email failure into 409
+          const msg = (authError.message || "").toLowerCase();
+          if (msg.includes("duplicate") || msg.includes("already") || msg.includes("email")) {
+            return new Response(
+              JSON.stringify({
+                error: "Email already in use",
+                message: "Этот email уже используется другим пользователем",
+              }),
+              {
+                status: 409,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              }
+            );
+          }
+
           return new Response(JSON.stringify({ error: authError.message || "Failed to update email" }), {
             status: 500,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -691,7 +724,7 @@ serve(async (req: Request): Promise<Response> => {
         // Sync profiles.email
         const { error: profileError } = await supabaseAdmin
           .from("profiles")
-          .update({ email: newEmail })
+          .update({ email: normalizedNewEmail })
           .eq("user_id", targetUserId);
 
         if (profileError) {
@@ -701,13 +734,13 @@ serve(async (req: Request): Promise<Response> => {
 
         await logAction("users.change_email", targetUserId, { 
           old_email: oldEmail, 
-          new_email: newEmail 
+          new_email: normalizedNewEmail 
         });
 
         return new Response(JSON.stringify({ 
           success: true, 
           oldEmail, 
-          newEmail 
+          newEmail: normalizedNewEmail 
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
