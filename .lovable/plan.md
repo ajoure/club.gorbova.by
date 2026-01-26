@@ -1,192 +1,107 @@
-# План: Исправление токенизации карт для recurring-платежей без 3DS
 
-## Проблема
+# План: Удаление ORPH-* сделок без контактов
 
-При ручном списании с привязанной карты bePaid возвращает ошибку P.4011 (требуется 3D-Secure), хотя карта уже была привязана с прохождением 3DS.
+## Диагностика (факт)
 
-**Причина:** При токенизации карты не указывается `contract: ["recurring"]`, поэтому банк не знает, что карта предназначена для автоматических списаний.
+| Метрика | Значение |
+|---------|----------|
+| Всего ORPH-orders | 695 |
+| Без user_id | 687 |
+| Без profile_id | 392 |
+| Полностью без контакта | 392 |
+| Привязанных платежей | 695 |
+| Оригинальный order_id у платежей | NULL (все были orphan) |
 
----
-
-## Решение
-
-### Шаг 1: Исправить токенизацию карты
-
-**Файл:** `supabase/functions/payment-methods-tokenize/index.ts`
-
-Добавить `additional_data.contract: ["recurring"]` в запрос токенизации:
-
-```typescript
-// Строки 104-126 - изменить checkoutData:
-const checkoutData = {
-  checkout: {
-    test: testMode,
-    transaction_type: 'tokenization',
-    order: {
-      amount: tokenizationAmountSafe,
-      currency,
-      description: 'Card tokenization for recurring payments',
-    },
-    settings: {
-      return_url: returnUrl,
-      cancel_url: cancelUrl,
-      notification_url: `${supabaseUrl}/functions/v1/payment-methods-webhook`,
-      language: 'ru',
-    },
-    customer: {
-      email: user.email,
-      first_name: profile?.first_name || '',
-      last_name: profile?.last_name || '',
-      phone: profile?.phone || '',
-    },
-    // ДОБАВИТЬ: указываем что карта будет использоваться для recurring
-    additional_data: {
-      contract: ['recurring'],
-    },
-  },
-};
-```
+**Важно:** Все эти платежи изначально не имели `order_id` (`original_order_id: null`). Backfill создал для них ORPH-orders, но без контактов.
 
 ---
 
-### Шаг 2: Исправить функцию списания
+## Шаги очистки
 
-**Файл:** `supabase/functions/admin-manual-charge/index.ts`
+### Шаг 1: Отвязать платежи от ORPH-orders
 
-Добавить `card_on_file.initiator: "merchant"` в запрос списания (строки 110-124):
+Вернуть `payments_v2.order_id = NULL` для всех платежей, привязанных к ORPH-orders.
 
-```typescript
-const chargePayload = {
-  request: {
-    amount: amountKopecks,
-    currency,
-    description,
-    tracking_id: trackingId,
-    test: testMode,
-    credit_card: {
-      token: paymentToken,
-    },
-    additional_data: {
-      contract: ['recurring', 'unscheduled'],
-      // ДОБАВИТЬ: указываем что это merchant-initiated transaction
-      card_on_file: {
-        initiator: 'merchant',
-        type: 'delayed_charge',
-      },
-    },
-  },
-};
-```
-
----
-
-### Шаг 3: Обработка карт, привязанных ДО исправления
-
-Карты, которые были привязаны без `contract: ["recurring"]`, могут продолжать требовать 3DS. Для таких случаев:
-
-1. **Добавить флаг в payment_methods** - колонка `supports_recurring` (boolean)
-2. **При новой привязке** - устанавливать `supports_recurring = true`
-3. **При списании** - проверять флаг и выводить понятное сообщение для старых карт:
-   - "Эта карта была привязана до обновления системы. Попросите клиента перепривязать карту для автоматических списаний."
-
-**SQL миграция:**
 ```sql
-ALTER TABLE payment_methods 
-ADD COLUMN IF NOT EXISTS supports_recurring BOOLEAN DEFAULT false;
+-- Отвязать платежи от ORPH-orders
+UPDATE payments_v2 p
+SET 
+  order_id = NULL,
+  meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object(
+    'orph_order_removed_at', now()::text,
+    'removed_orph_order_id', p.order_id::text
+  )
+FROM orders_v2 o
+WHERE o.id = p.order_id
+  AND o.order_number LIKE 'ORPH-%'
+  AND o.created_at >= '2026-01-26 00:00:00+00';
+```
 
--- Помечаем все существующие карты как НЕ поддерживающие recurring
-COMMENT ON COLUMN payment_methods.supports_recurring IS 
-  'true if card was tokenized with recurring contract, allowing merchant-initiated charges without 3DS';
+### Шаг 2: Удалить ORPH-orders
+
+```sql
+-- Удалить ORPH-orders созданные сегодня
+DELETE FROM orders_v2
+WHERE order_number LIKE 'ORPH-%'
+  AND created_at >= '2026-01-26 00:00:00+00';
+```
+
+### Шаг 3: Создать audit log (system actor)
+
+```sql
+-- Записать в audit_logs
+INSERT INTO audit_logs (actor_type, actor_user_id, actor_label, action, meta)
+VALUES (
+  'system',
+  NULL,
+  'admin-cleanup-orph-orders',
+  'cleanup.orph_orders_deleted',
+  jsonb_build_object(
+    'deleted_count', 695,
+    'reason', 'orders_without_contacts',
+    'executed_at', now()::text
+  )
+);
 ```
 
 ---
 
-### Шаг 4: Обновить webhook для сохранения флага
+## Что НЕ затрагивается
 
-**Файл:** `supabase/functions/payment-methods-webhook/index.ts`
+- **Telegram-уведомления:** Никаких вызовов к Telegram API
+- **Подписки:** Не изменяются
+- **Другие orders:** Только ORPH-* созданные 26.01.2026
+- **Платежи:** Остаются, только отвязываются от удаляемых orders
 
-При сохранении новой карты устанавливать `supports_recurring = true`:
+---
 
-```typescript
-// Строка 287-305 - добавить supports_recurring: true
-const { error: insertError } = await supabase
-  .from('payment_methods')
-  .insert({
-    user_id: userId,
-    provider: 'bepaid',
-    provider_token: cardToken,
-    brand: cardBrand,
-    last4: cardLast4,
-    exp_month: cardExpMonth,
-    exp_year: cardExpYear,
-    is_default: isFirstCard,
-    status: 'active',
-    card_product: cardProduct,
-    card_category: cardCategory,
-    supports_recurring: true,  // ДОБАВИТЬ
-    meta: {
-      tracking_id: trackingId,
-      transaction_id: transaction.uid,
-    },
-  });
+## Проверка после выполнения
+
+```sql
+-- Должно быть 0
+SELECT COUNT(*) 
+FROM orders_v2 
+WHERE order_number LIKE 'ORPH-%'
+  AND created_at >= '2026-01-26 00:00:00+00';
+
+-- Должно быть 695 (отвязанных)
+SELECT COUNT(*) 
+FROM payments_v2 
+WHERE (meta->>'removed_orph_order_id') IS NOT NULL;
 ```
 
 ---
 
-### Шаг 5: Улучшить UX при списании
+## Технические детали
 
-**Файл:** `supabase/functions/admin-manual-charge/index.ts`
+**Выполняется через:** SQL migration tool (2 UPDATE + 1 DELETE + 1 INSERT)
 
-Перед списанием проверять флаг `supports_recurring`:
+**Безопасность:** 
+- Фильтр по дате `>= 2026-01-26` гарантирует, что не затронутся другие данные
+- Фильтр по `ORPH-%` гарантирует, что затронутся только созданные backfill-ом orders
+- Meta сохраняет информацию об удалённых orders для аудита
 
-```typescript
-// После получения payment method (строка ~217)
-if (!paymentMethod.supports_recurring) {
-  return new Response(JSON.stringify({ 
-    success: false, 
-    error: 'Карта не поддерживает автоматические списания. Клиенту нужно перепривязать карту.',
-    requires_rebind: true,
-  }), {
-    status: 400,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
-}
-```
-
----
-
-## Файлы для изменения
-
-| Файл | Изменение |
-|------|-----------|
-| `supabase/functions/payment-methods-tokenize/index.ts` | Добавить `additional_data.contract: ["recurring"]` |
-| `supabase/functions/admin-manual-charge/index.ts` | Добавить `card_on_file: {initiator: "merchant"}` + проверка `supports_recurring` |
-| `supabase/functions/payment-methods-webhook/index.ts` | Сохранять `supports_recurring: true` |
-| SQL миграция | Добавить колонку `supports_recurring` |
-
----
-
-## Ожидаемый результат
-
-1. **Новые привязки карт:**
-   - Клиент проходит 3DS один раз при привязке
-   - Карта сохраняется с `supports_recurring = true`
-   - Все последующие списания проходят БЕЗ 3DS
-
-2. **Старые карты:**
-   - Система определяет что карта не поддерживает recurring
-   - Админ видит понятное сообщение с предложением перепривязать карту
-   - Нет попыток списания которые гарантированно провалятся
-
-3. **Автосписания по рассрочке:**
-   - Edge Function для автоматических списаний использует тот же подход
-   - Списания проходят автоматически без участия клиента
-
----
-
-## Тестирование
-
-1. Привязать новую карту через личный кабинет
-2. Убедиться что карта сохранена с `supports_recurring = true`
-3. Сделать ручное списание через админку
-4. Убедиться что списание прошло без ошибки P.4011
+**Ожидаемый результат:**
+- UI "Сделки" больше не показывает пустые записи
+- Платежи возвращаются в состояние "orphan" (без order_id)
+- Можно будет потом правильно обработать эти платежи через reconcile
