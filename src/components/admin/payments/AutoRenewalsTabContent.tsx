@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger, DialogClose } from "@/components/ui/dialog";
-import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical, ArrowUp, ArrowDown, ArrowUpDown, Power, MoreHorizontal, Wrench, Loader2 } from "lucide-react";
+import { RefreshCw, Search, CreditCard, AlertTriangle, CheckCircle, XCircle, Clock, Filter, Send, Mail, GripVertical, ArrowUp, ArrowDown, ArrowUpDown, Power, MoreHorizontal, Wrench, Loader2, FileText } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { format, isToday, isPast, isBefore, addDays, subDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime } from "date-fns-tz";
@@ -25,6 +25,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { usePermissions } from "@/hooks/usePermissions";
 import { BackfillSnapshotTool } from "./BackfillSnapshotTool";
+import { Backfill2026OrdersTool } from "./Backfill2026OrdersTool";
 import {
   DndContext,
   closestCenter,
@@ -346,6 +347,9 @@ export function AutoRenewalsTabContent() {
   
   // Backfill snapshot tool dialog state
   const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
+  
+  // Backfill 2026 orders tool dialog state
+  const [backfill2026DialogOpen, setBackfill2026DialogOpen] = useState(false);
   
   // Column state with localStorage persistence
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
@@ -1221,6 +1225,13 @@ export function AutoRenewalsTabContent() {
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Backfill recurring_snapshot
               </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => setBackfill2026DialogOpen(true)}
+                disabled={!hasPermission('subscriptions.edit')}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Backfill Orders 2026+
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           
@@ -1455,6 +1466,12 @@ export function AutoRenewalsTabContent() {
         <BackfillSnapshotTool 
           open={backfillDialogOpen} 
           onOpenChange={setBackfillDialogOpen} 
+        />
+        
+        {/* Backfill 2026 Orders Tool */}
+        <Backfill2026OrdersTool
+          open={backfill2026DialogOpen}
+          onOpenChange={setBackfill2026DialogOpen}
         />
       </div>
     </TooltipProvider>
