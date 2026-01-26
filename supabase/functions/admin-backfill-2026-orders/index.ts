@@ -71,7 +71,16 @@ serve(async (req) => {
     });
 
     if (!isSuperAdmin) {
-      return new Response(JSON.stringify({ error: 'Super admin permission required' }), {
+      // Diagnostic payload: helps detect “silent impersonation” / wrong session in the browser.
+      // Safe enough for this admin-only tool; still does NOT reveal any secrets.
+      return new Response(JSON.stringify({
+        error: 'Super admin permission required',
+        debug: {
+          authenticated_user_id: user.id,
+          authenticated_email: user.email,
+          role_checked: 'superadmin',
+        },
+      }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

@@ -40,6 +40,36 @@ export function Backfill2026OrdersTool({ open, onOpenChange }: Backfill2026Order
   const [dryRunResult, setDryRunResult] = useState<BackfillResult | null>(null);
   const [executeResult, setExecuteResult] = useState<BackfillResult | null>(null);
 
+  const getInvokeErrorMessage = (err: unknown): string => {
+    const e: any = err;
+    const base = e?.message || "Unknown error";
+    const ctx = e?.context;
+    const status = ctx?.status;
+    let rb = ctx?.responseBody;
+
+    if (typeof rb === "string") {
+      try {
+        rb = JSON.parse(rb);
+      } catch {
+        // keep as string
+      }
+    }
+
+    if (status && rb && typeof rb === "object") {
+      const debugEmail = rb?.debug?.authenticated_email;
+      const debugUserId = rb?.debug?.authenticated_user_id;
+      const debugRole = rb?.debug?.role_checked;
+      if (debugEmail || debugUserId) {
+        return `${base} (HTTP ${status}). Вы авторизованы как ${debugEmail || "(email неизвестен)"} / ${debugUserId || "(uid неизвестен)"}${debugRole ? `; требуется роль: ${debugRole}` : ""}`;
+      }
+      if (rb?.error) {
+        return `${rb.error} (HTTP ${status})`;
+      }
+    }
+
+    return base;
+  };
+
   // Dry-run mutation
   const dryRunMutation = useMutation({
     mutationFn: async () => {
@@ -175,7 +205,7 @@ export function Backfill2026OrdersTool({ open, onOpenChange }: Backfill2026Order
             <XCircle className="h-4 w-4" />
             <AlertTitle>Ошибка</AlertTitle>
             <AlertDescription>
-              {(dryRunMutation.error as Error)?.message || (executeMutation.error as Error)?.message}
+              {getInvokeErrorMessage(dryRunMutation.error || executeMutation.error)}
             </AlertDescription>
           </Alert>
         )}
