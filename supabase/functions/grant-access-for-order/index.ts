@@ -1,6 +1,4 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-// PATCH 1: Removed ensureOrderForPayment import - strict contract: only orderId accepted
-// Use grant-access-for-payment facade if you have paymentId
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,43 +23,22 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // PATCH 1: Strict contract - ONLY orderId accepted
-    // paymentId is NO LONGER supported here - use grant-access-for-payment facade
     const { 
-      orderId,
+      orderId, 
       customAccessDays,
       extendFromCurrent = true,
       grantTelegram = true,
       grantGetcourse = true,
     } = await req.json();
 
-    // PATCH 1: Strict guard - orderId is REQUIRED
     if (!orderId) {
-      // Audit log for traceability
-      await supabase.from('audit_logs').insert({
-        action: 'access.grant_blocked_no_order',
-        actor_type: 'system',
-        actor_user_id: null,
-        actor_label: 'grant-access-for-order',
-        meta: { 
-          provided_order_id: orderId,
-          reason: 'order_id_required_strict_contract',
-          hint: 'Use grant-access-for-payment facade if you have paymentId',
-        },
-      });
-      
       return new Response(
-        JSON.stringify({ 
-          error: "orderId is required", 
-          details: "Strict contract: this function only accepts orderId. Use grant-access-for-payment facade if you have paymentId." 
-        }),
+        JSON.stringify({ error: "orderId is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const resolvedOrderId = orderId;
-
-    // Load order with product/tariff info (using resolved order ID)
+    // Load order with product/tariff info
     const { data: order, error: orderError } = await supabase
       .from("orders_v2")
       .select(`
@@ -69,7 +46,7 @@ Deno.serve(async (req) => {
         product:products_v2(id, name, code),
         tariff:tariffs(id, name, access_days)
       `)
-      .eq("id", resolvedOrderId)
+      .eq("id", orderId)
       .single();
 
     if (orderError || !order) {

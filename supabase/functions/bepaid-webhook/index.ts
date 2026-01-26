@@ -1,7 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { Resend } from 'npm:resend@2.0.0';
-// PATCH 6: Import ensureOrderForPayment for payment-order invariant
-import { ensureOrderForPayment } from '../_shared/ensure-order-for-payment.ts';
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -1041,33 +1040,7 @@ Deno.serve(async (req) => {
           })
           .eq('id', paymentV2.id);
 
-        // PATCH 6: Ensure payment has valid order BEFORE any grant/subscription logic
-        // This guarantees the "1 payment = 1 order" invariant
-        const ensureResult = await ensureOrderForPayment(supabase, paymentV2.id, 'bepaid-webhook');
-        
-        if (ensureResult.action === 'error') {
-          console.error(`[bepaid-webhook] Failed to ensure order for payment ${paymentV2.id}: ${ensureResult.reason}`);
-          await supabase.from('audit_logs').insert({
-            action: 'payment.ensure_order_failed',
-            actor_type: 'system',
-            actor_user_id: null,
-            actor_label: 'bepaid-webhook',
-            meta: {
-              payment_id: paymentV2.id,
-              bepaid_uid: transactionUid,
-              reason: ensureResult.reason,
-            },
-          });
-          // Don't fail webhook - payment is already succeeded, but log for manual review
-        } else if (ensureResult.action === 'created' || ensureResult.action === 'relinked') {
-          console.log(`[bepaid-webhook] Order ensured for payment ${paymentV2.id}: action=${ensureResult.action}, orderId=${ensureResult.orderId}`);
-          // Update paymentV2.order_id to use the resolved order
-          if (ensureResult.orderId) {
-            paymentV2.order_id = ensureResult.orderId;
-          }
-        }
-
-        // Update order - now using potentially corrected order_id
+        // Update order
         const { data: orderV2 } = await supabase
           .from('orders_v2')
           .select('*')
