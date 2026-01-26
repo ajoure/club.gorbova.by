@@ -451,7 +451,9 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
                         <td className="text-right px-4 py-2 tabular-nums font-semibold text-amber-600">
                           {result.stats.status_mismatches + result.stats.amount_mismatches}
                         </td>
-                        <td className="text-right px-4 py-2 tabular-nums">—</td>
+                        <td className="text-right px-4 py-2 tabular-nums">
+                          {result.mismatches.reduce((sum, m) => sum + Math.abs((m.file_amount || 0) - (m.db_amount || 0)), 0).toLocaleString('ru-RU', { minimumFractionDigits: 2 })}
+                        </td>
                         <td className="px-4 py-2 text-muted-foreground text-xs">Исправить</td>
                       </tr>
                       <tr className="border-t border-border/30">
@@ -466,6 +468,22 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
                         <td className="px-4 py-2 text-muted-foreground text-xs">Пометить</td>
                       </tr>
                     </tbody>
+                    <tfoot className="bg-muted/50 border-t-2 border-border">
+                      <tr>
+                        <td className="px-4 py-3 font-bold">ИТОГО после исправлений</td>
+                        <td className="text-right px-4 py-3 tabular-nums font-bold">
+                          {(result.stats.matched ?? 0) + (result.stats.missing_in_db ?? 0) + 
+                           (result.stats.status_mismatches ?? 0) + (result.stats.amount_mismatches ?? 0)}
+                        </td>
+                        <td className="text-right px-4 py-3 tabular-nums font-bold text-emerald-600">
+                          {(result.missing.reduce((sum, m) => sum + Math.abs(m.amount || 0), 0) + 
+                            (result.stats.matched ?? 0) * 0 +
+                            result.mismatches.reduce((sum, m) => sum + Math.abs(m.file_amount || 0), 0))
+                            .toLocaleString('ru-RU', { minimumFractionDigits: 2 })} BYN
+                        </td>
+                        <td className="px-4 py-3"></td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
                 
@@ -480,15 +498,17 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
                         <ChevronDown className={`h-4 w-4 transition-transform ${expandedSections['missing'] ? 'rotate-180' : ''}`} />
                       </CollapsibleTrigger>
                       <CollapsibleContent className="mt-2">
-                        <div className="max-h-48 overflow-auto rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
-                          {result.missing.map((m, i) => (
-                            <div key={i} className="flex items-center gap-2">
-                              <span className="text-muted-foreground">{(m.uid || '—').slice(0, 12)}...</span>
-                              <span className="text-foreground">{m.amount} BYN</span>
-                              <span className="text-muted-foreground">{m.status}</span>
-                            </div>
-                          ))}
-                        </div>
+                        <ScrollArea className="h-64">
+                          <div className="rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
+                            {result.missing.map((m, i) => (
+                              <div key={i} className="flex items-center gap-2">
+                                <span className="text-muted-foreground">{(m.uid || '—').slice(0, 12)}...</span>
+                                <span className="text-foreground">{m.amount} BYN</span>
+                                <span className="text-muted-foreground">{m.status}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
                       </CollapsibleContent>
                     </Collapsible>
                   )}
@@ -502,16 +522,18 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
                         <ChevronDown className={`h-4 w-4 transition-transform ${expandedSections['mismatch'] ? 'rotate-180' : ''}`} />
                       </CollapsibleTrigger>
                       <CollapsibleContent className="mt-2">
-                        <div className="max-h-48 overflow-auto rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
-                          {result.mismatches.map((m, i) => (
-                            <div key={i} className="flex items-center gap-2">
-                              <span className="text-muted-foreground">{(m.uid || '—').slice(0, 12)}...</span>
-                              <span className="text-emerald-600">File: {m.file_status}</span>
-                              <span className="text-red-600">DB: {m.db_status}</span>
-                              <span className="text-muted-foreground">({m.mismatch_type})</span>
-                            </div>
-                          ))}
-                        </div>
+                        <ScrollArea className="h-64">
+                          <div className="rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
+                            {result.mismatches.map((m, i) => (
+                              <div key={i} className="flex items-center gap-2">
+                                <span className="text-muted-foreground">{(m.uid || '—').slice(0, 12)}...</span>
+                                <span className="text-emerald-600">File: {m.file_status}</span>
+                                <span className="text-red-600">DB: {m.db_status}</span>
+                                <span className="text-muted-foreground">({m.mismatch_type})</span>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
                       </CollapsibleContent>
                     </Collapsible>
                   )}
@@ -525,15 +547,17 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
                         <ChevronDown className={`h-4 w-4 transition-transform ${expandedSections['extra'] ? 'rotate-180' : ''}`} />
                       </CollapsibleTrigger>
                       <CollapsibleContent className="mt-2">
-                        <div className="max-h-48 overflow-auto rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
-                          {result.extra.map((e, i) => (
-                            <div key={i} className="flex items-center gap-2">
-                              <span className="text-muted-foreground">{(e.uid || '—').slice(0, 12)}...</span>
-                              <span className="text-foreground">{e.amount} BYN</span>
-                              <span className="text-muted-foreground">{e.status}</span>
-                            </div>
-                          ))}
-                        </div>
+                        <ScrollArea className="h-64">
+                          <div className="rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
+                            {result.extra.map((e, i) => (
+                              <div key={i} className="flex items-center gap-2">
+                                <span className="text-muted-foreground">{(e.uid || '—').slice(0, 12)}...</span>
+                                <span className="text-foreground">{e.amount} BYN</span>
+                                <span className="text-muted-foreground">{e.status}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
                       </CollapsibleContent>
                     </Collapsible>
                   )}
