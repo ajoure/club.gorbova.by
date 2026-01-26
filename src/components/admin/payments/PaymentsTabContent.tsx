@@ -7,8 +7,16 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { 
-  Download, Upload, Search, Filter, X, RefreshCw, Bug, Info, Layers
+  Download, Upload, Search, Filter, X, RefreshCw, Bug, Info, Layers, ChevronDown, FileSpreadsheet
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -21,6 +29,7 @@ import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
 import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
 import SyncRunDialog from "@/components/admin/payments/SyncRunDialog";
+import SyncWithStatementDialog from "@/components/admin/payments/SyncWithStatementDialog";
 import { TimezoneSelector, usePersistedTimezone } from "./TimezoneSelector";
 import AdminToolsMenu from "./AdminToolsMenu";
 import DataTraceModal from "./DataTraceModal";
@@ -84,8 +93,9 @@ export function PaymentsTabContent() {
   // Import dialog
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   
-  // Sync dialog
+  // Sync dialogs
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  const [syncStatementDialogOpen, setSyncStatementDialogOpen] = useState(false);
   
   // Trace modal (superadmin only)
   const [traceModalOpen, setTraceModalOpen] = useState(false);
@@ -368,10 +378,43 @@ export function PaymentsTabContent() {
               </Tooltip>
             </TooltipProvider>
           )}
-          <Button variant="outline" size="sm" className="h-8" onClick={handleBepaidSync}>
-            <RefreshCw className="h-3.5 w-3.5 sm:mr-1.5" />
-            <span className="hidden sm:inline">Sync</span>
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-1">
+                <RefreshCw className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Sync</span>
+                <ChevronDown className="h-3 w-3 opacity-50" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                Синхронизация с bePaid
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleBepaidSync} className="gap-3 p-3 cursor-pointer">
+                <div className="p-1.5 rounded-lg bg-primary/10">
+                  <RefreshCw className="h-4 w-4 text-primary" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-medium text-sm">Синхронизировать с API</span>
+                  <span className="text-xs text-muted-foreground">
+                    Получить новые транзакции
+                  </span>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSyncStatementDialogOpen(true)} className="gap-3 p-3 cursor-pointer">
+                <div className="p-1.5 rounded-lg bg-emerald-500/10">
+                  <FileSpreadsheet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-medium text-sm">Синхронизировать с Выпиской</span>
+                  <span className="text-xs text-muted-foreground">
+                    Сверить с загруженной выпиской
+                  </span>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button size="sm" className="h-8" onClick={() => setImportDialogOpen(true)}>
             <Upload className="h-3.5 w-3.5 sm:mr-1.5" />
             <span className="hidden sm:inline">Импорт</span>
@@ -522,11 +565,20 @@ export function PaymentsTabContent() {
         }}
       />
       
-      {/* Sync dialog */}
+      {/* Sync dialog - API */}
       <SyncRunDialog 
         open={syncDialogOpen}
         onOpenChange={setSyncDialogOpen}
         onComplete={refetch}
+      />
+      
+      {/* Sync dialog - Statement */}
+      <SyncWithStatementDialog
+        open={syncStatementDialogOpen}
+        onOpenChange={setSyncStatementDialogOpen}
+        onComplete={refetch}
+        defaultFromDate={dateFilter.from}
+        defaultToDate={dateFilter.to}
       />
       
       {/* Trace modal (superadmin only) */}
