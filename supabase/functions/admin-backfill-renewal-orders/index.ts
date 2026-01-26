@@ -72,9 +72,10 @@ serve(async (req: Request) => {
         .select('role_id, roles!inner(name)')
         .eq('user_id', user.id);
 
-      const isAdmin = userRoles?.some((r: any) =>
-        ['admin', 'superadmin', 'super_admin'].includes(r.roles?.name?.toLowerCase())
-      );
+      const isAdmin = userRoles?.some((r: any) => {
+        const roleName = r.roles?.name?.toLowerCase() || '';
+        return ['admin', 'superadmin', 'super_admin', 'администратор', 'супер-администратор'].includes(roleName);
+      });
 
       if (!isAdmin) {
         return new Response(JSON.stringify({ error: 'Forbidden: admin access required' }), {
