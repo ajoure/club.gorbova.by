@@ -20,34 +20,51 @@ interface StatCardProps {
   subtitle?: string;
 }
 
-// Dark Luxury stat card
+// Premium Glassmorphism stat card with high contrast
 function StatCard({ title, amount, count, icon, colorClass, accentGradient, currency = "BYN", subtitle }: StatCardProps) {
   return (
-    <div className="relative rounded-xl p-3 md:p-4 border border-slate-700/40 bg-slate-900/60 backdrop-blur-xl overflow-hidden transition-all duration-300 hover:border-slate-600/50 hover:bg-slate-900/70">
-      {/* Gradient accent line top */}
-      <div className={`absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r ${accentGradient}`} />
+    <div className="group relative rounded-xl p-3 md:p-4 
+                    bg-gradient-to-br from-slate-800/80 via-slate-800/60 to-slate-900/70
+                    backdrop-blur-2xl 
+                    border border-white/[0.08]
+                    shadow-lg shadow-black/20
+                    overflow-hidden 
+                    transition-all duration-300 
+                    hover:border-white/[0.15] 
+                    hover:shadow-xl hover:shadow-black/30
+                    hover:scale-[1.01]">
       
-      {/* Header: title + icon inline */}
-      <div className="relative z-10 flex items-center gap-2 mb-2">
-        <div className="shrink-0">{icon}</div>
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+      {/* Gradient accent line top with glow */}
+      <div className={`absolute inset-x-0 top-0 h-px bg-gradient-to-r ${accentGradient} opacity-70`} />
+      <div className={`absolute inset-x-4 top-0 h-px bg-gradient-to-r ${accentGradient} blur-sm opacity-50`} />
+      
+      {/* Inner shine overlay */}
+      <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-white/[0.06] via-transparent to-transparent pointer-events-none" />
+      
+      {/* Header: icon + title */}
+      <div className="relative z-10 flex items-center gap-2 mb-2.5">
+        <div className="shrink-0 opacity-90">{icon}</div>
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-200">
           {title}
         </span>
       </div>
       
-      {/* Amount */}
-      <div className={`relative z-10 text-lg md:text-xl font-bold tabular-nums ${colorClass} flex items-baseline gap-1.5 flex-wrap`}>
-        <span>{amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-        <span className="text-xs text-slate-500 font-medium">{currency}</span>
+      {/* Amount - main value */}
+      <div className={`relative z-10 text-lg md:text-xl font-bold tabular-nums ${colorClass} 
+                       flex items-baseline gap-1.5 flex-wrap tracking-tight`}>
+        <span className="drop-shadow-sm">
+          {amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </span>
+        <span className="text-xs text-slate-400 font-medium">{currency}</span>
       </div>
       
       {/* Count and subtitle */}
-      <div className="relative z-10 flex items-center gap-2 text-xs text-slate-500 mt-1.5">
+      <div className="relative z-10 flex items-center gap-2 text-xs text-slate-300/90 mt-2">
         <span className="tabular-nums">{count.toLocaleString('ru-RU')} шт</span>
         {subtitle && (
           <>
-            <span className="w-1 h-1 rounded-full bg-slate-600" />
-            <span className="text-slate-400">{subtitle}</span>
+            <span className="w-1 h-1 rounded-full bg-slate-500" />
+            <span className="text-slate-300">{subtitle}</span>
           </>
         )}
       </div>
@@ -128,10 +145,10 @@ export default function PaymentsStatsPanel({ payments, isLoading, dateRange }: P
 
   if (isLoading) {
     return (
-      <div className="rounded-xl border border-slate-700/40 bg-slate-900/60 backdrop-blur-xl p-6">
-        <div className="flex items-center justify-center gap-3 text-slate-400">
+      <div className="rounded-xl border border-white/[0.08] bg-gradient-to-br from-slate-800/80 via-slate-800/60 to-slate-900/70 backdrop-blur-2xl p-6 shadow-lg shadow-black/20">
+        <div className="flex items-center justify-center gap-3 text-slate-300">
           <Loader2 className="h-4 w-4 animate-spin" />
-          <span className="text-xs font-medium">Загрузка...</span>
+          <span className="text-xs font-medium">Загрузка статистики...</span>
         </div>
       </div>
     );

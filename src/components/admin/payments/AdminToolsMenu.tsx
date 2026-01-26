@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Settings, Wrench, CheckCircle2, Link2, AlertTriangle, FileSearch } from "lucide-react";
+import { Settings, Wrench, CheckCircle2, Link2, AlertTriangle, FileSearch, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,14 +11,18 @@ import {
 } from "@/components/ui/dropdown-menu";
 import FalsePaymentsFixDialog from "./FalsePaymentsFixDialog";
 import ReconcileFileDialog from "./ReconcileFileDialog";
+import MaterializeQueueDialog from "./MaterializeQueueDialog";
 
 interface AdminToolsMenuProps {
   onRefetch?: () => void;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
-export default function AdminToolsMenu({ onRefetch }: AdminToolsMenuProps) {
+export default function AdminToolsMenu({ onRefetch, dateFrom, dateTo }: AdminToolsMenuProps) {
   const [fixFalsePaymentsOpen, setFixFalsePaymentsOpen] = useState(false);
   const [reconcileDialogOpen, setReconcileDialogOpen] = useState(false);
+  const [materializeDialogOpen, setMaterializeDialogOpen] = useState(false);
   
   return (
     <>
@@ -47,6 +51,22 @@ export default function AdminToolsMenu({ onRefetch }: AdminToolsMenuProps) {
               <span className="font-medium text-sm">Сверка с эталоном bePaid</span>
               <span className="text-xs text-muted-foreground">
                 Загрузить выписку и найти расхождения
+              </span>
+            </div>
+          </DropdownMenuItem>
+          
+          {/* Materialize queue */}
+          <DropdownMenuItem 
+            onClick={() => setMaterializeDialogOpen(true)}
+            className="flex items-start gap-3 p-3 cursor-pointer"
+          >
+            <div className="p-1.5 rounded-lg bg-purple-500/10 mt-0.5">
+              <Database className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="font-medium text-sm">Материализовать очередь</span>
+              <span className="text-xs text-muted-foreground">
+                Перенести queue → payments_v2 (CANON)
               </span>
             </div>
           </DropdownMenuItem>
@@ -118,6 +138,14 @@ export default function AdminToolsMenu({ onRefetch }: AdminToolsMenuProps) {
         open={reconcileDialogOpen}
         onOpenChange={setReconcileDialogOpen}
         onSuccess={onRefetch}
+      />
+      
+      <MaterializeQueueDialog
+        open={materializeDialogOpen}
+        onOpenChange={setMaterializeDialogOpen}
+        onSuccess={onRefetch}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
       />
     </>
   );

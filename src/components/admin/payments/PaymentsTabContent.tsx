@@ -4,8 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { 
-  Download, Upload, Search, Filter, X, RefreshCw
+  Download, Upload, Search, Filter, X, RefreshCw, Bug, Info, Layers
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -20,6 +23,8 @@ import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
 import SyncRunDialog from "@/components/admin/payments/SyncRunDialog";
 import { TimezoneSelector, usePersistedTimezone } from "./TimezoneSelector";
 import AdminToolsMenu from "./AdminToolsMenu";
+import DataTraceModal from "./DataTraceModal";
+import { useAuth } from "@/contexts/AuthContext";
 
 export type PaymentFilters = {
   search: string;
@@ -54,6 +59,10 @@ const defaultFilters: PaymentFilters = {
 export function PaymentsTabContent() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { role } = useAuth();
+  
+  // Check if user is superadmin
+  const isSuperadmin = role === 'superadmin' || role === 'admin';
   
   // Date filter - default to current month
   const now = new Date();
@@ -61,6 +70,9 @@ export function PaymentsTabContent() {
     from: format(startOfMonth(now), 'yyyy-MM-dd'),
     to: format(endOfMonth(now), 'yyyy-MM-dd'),
   });
+  
+  // Data source mode: 'canon' = payments_v2 only, 'unified' = payments_v2 + queue
+  const [sourceMode, setSourceMode] = useState<'canon' | 'unified'>('unified');
   
   // Filters
   const [filters, setFilters] = useState<PaymentFilters>(defaultFilters);
@@ -74,6 +86,9 @@ export function PaymentsTabContent() {
   
   // Sync dialog
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  
+  // Trace modal (superadmin only)
+  const [traceModalOpen, setTraceModalOpen] = useState(false);
   
   // Timezone - IANA timezone with persistence
   const { getInitialValue, setTimezone: persistTimezone } = usePersistedTimezone();
@@ -89,14 +104,23 @@ export function PaymentsTabContent() {
   const effectiveDateFilter = useMemo(() => ({
     ...dateFilter,
     includeImport: true,
-  }), [dateFilter]);
+    mode: sourceMode, // Pass mode to hook
+  }), [dateFilter, sourceMode]);
   
   const { 
-    payments, 
+    payments: allPayments, 
     isLoading, 
     stats, 
     refetch 
   } = useUnifiedPayments(effectiveDateFilter);
+
+  // Filter payments by source mode
+  const payments = useMemo(() => {
+    if (sourceMode === 'canon') {
+      return allPayments.filter(p => p.rawSource === 'payments_v2');
+    }
+    return allPayments;
+  }, [allPayments, sourceMode]);
 
   // Apply filters to payments
   const filteredPayments = useMemo(() => {
@@ -203,7 +227,7 @@ export function PaymentsTabContent() {
   // Export to CSV
   const handleExport = () => {
     const csv = [
-      ["UID", "Дата", "Тип", "Статус", "Сумма", "Валюта", "Email", "Телефон", "Карта", "Владелец", "Заказ", "Продукт", "Контакт", "Источник", "Чек", "Возвраты"].join(";"),
+      ["UID", "Дата", "Тип", "Статус", "Сумма", "Валюта", "Email", "Телефон", "Карта", "Владелец", "Заказ", "Продукт", "Контакт", "Источник", "Чек", "Возвраты", "RawSource"].join(";"),
       ...filteredPayments.map(p => [
         p.uid,
         p.paid_at ? format(new Date(p.paid_at), "dd.MM.yyyy HH:mm") : "",
@@ -221,14 +245,24 @@ export function PaymentsTabContent() {
         p.source,
         p.receipt_url ? "Да" : "Нет",
         p.refunds_count || 0,
+        p.rawSource,
       ].join(";"))
     ].join("\n");
 
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    // Add metadata header
+    const metadata = [
+      `# Export Date: ${new Date().toISOString()}`,
+      `# Mode: ${sourceMode}`,
+      `# Period: ${dateFilter.from} - ${dateFilter.to}`,
+      `# Filters: ${JSON.stringify(filters)}`,
+      '',
+    ].join('\n');
+
+    const blob = new Blob(["\uFEFF" + metadata + csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `payments-${format(new Date(), "yyyy-MM-dd-HHmm")}.csv`;
+    a.download = `payments-${sourceMode}-${format(new Date(), "yyyy-MM-dd-HHmm")}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success("CSV экспортирован");
@@ -262,6 +296,10 @@ export function PaymentsTabContent() {
     ([key, value]) => key !== 'search' && value !== 'all' && value !== ''
   ).length;
 
+  // Stats for current mode
+  const canonCount = allPayments.filter(p => p.rawSource === 'payments_v2').length;
+  const queueOnlyCount = allPayments.filter(p => p.rawSource === 'queue').length;
+
   return (
     <div className="space-y-4">
       {/* Pill-style Tabs for status */}
@@ -293,8 +331,43 @@ export function PaymentsTabContent() {
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-background/30 backdrop-blur-sm border border-border/20">
         <DatePeriodSelector value={dateFilter} onChange={setDateFilter} />
+        
+        {/* Source mode toggle (superadmin only) */}
+        {isSuperadmin && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/50 border border-slate-700/50">
+            <Layers className="h-3.5 w-3.5 text-slate-400" />
+            <Label htmlFor="staging-toggle" className="text-xs text-slate-400 cursor-pointer">
+              Staging
+            </Label>
+            <Switch
+              id="staging-toggle"
+              checked={sourceMode === 'unified'}
+              onCheckedChange={(checked) => setSourceMode(checked ? 'unified' : 'canon')}
+              className="scale-75"
+            />
+            <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${sourceMode === 'unified' ? 'border-amber-500/50 text-amber-400' : 'border-emerald-500/50 text-emerald-400'}`}>
+              {sourceMode === 'unified' ? 'Unified' : 'Canon'}
+            </Badge>
+          </div>
+        )}
+        
         <div className="flex-1 min-w-0" />
         <div className="flex items-center gap-2">
+          {/* Trace button (superadmin only) */}
+          {isSuperadmin && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setTraceModalOpen(true)}>
+                    <Bug className="h-4 w-4 text-purple-400" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Data Trace — источники данных</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <Button variant="outline" size="sm" className="h-8" onClick={handleBepaidSync}>
             <RefreshCw className="h-3.5 w-3.5 sm:mr-1.5" />
             <span className="hidden sm:inline">Sync</span>
@@ -303,7 +376,11 @@ export function PaymentsTabContent() {
             <Upload className="h-3.5 w-3.5 sm:mr-1.5" />
             <span className="hidden sm:inline">Импорт</span>
           </Button>
-          <AdminToolsMenu onRefetch={refetch} />
+          <AdminToolsMenu 
+            onRefetch={refetch} 
+            dateFrom={dateFilter.from}
+            dateTo={dateFilter.to}
+          />
         </div>
       </div>
 
@@ -321,8 +398,36 @@ export function PaymentsTabContent() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <CardTitle>Транзакции</CardTitle>
-              <CardDescription>
-                {filteredPayments.length} из {payments.length} транзакций
+              <CardDescription className="flex items-center gap-2">
+                <span>{filteredPayments.length} из {payments.length} транзакций</span>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <Info className="h-3 w-3 text-slate-500 cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <div className="text-xs space-y-1">
+                        <div>Mode: <span className="font-mono text-purple-300">{sourceMode}</span></div>
+                        <div>payments_v2: <span className="font-mono">{canonCount}</span></div>
+                        <div>queue_only: <span className="font-mono">{queueOnlyCount}</span></div>
+                        <div>Period: {dateFilter.from} — {dateFilter.to}</div>
+                        <div className="text-slate-400 pt-1">
+                          <button 
+                            onClick={() => setTraceModalOpen(true)}
+                            className="text-purple-400 hover:underline"
+                          >
+                            Открыть Trace →
+                          </button>
+                        </div>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                {sourceMode === 'unified' && queueOnlyCount > 0 && (
+                  <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-400">
+                    +{queueOnlyCount} queue
+                  </Badge>
+                )}
               </CardDescription>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -423,6 +528,19 @@ export function PaymentsTabContent() {
         onOpenChange={setSyncDialogOpen}
         onComplete={refetch}
       />
+      
+      {/* Trace modal (superadmin only) */}
+      {isSuperadmin && (
+        <DataTraceModal
+          open={traceModalOpen}
+          onOpenChange={setTraceModalOpen}
+          dateFrom={dateFilter.from}
+          dateTo={dateFilter.to || dateFilter.from}
+          uiRowsShown={filteredPayments.length}
+          activeFilters={filters}
+          mode={sourceMode}
+        />
+      )}
     </div>
   );
 }
