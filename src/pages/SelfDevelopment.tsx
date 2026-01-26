@@ -144,7 +144,7 @@ export default function SelfDevelopment() {
                   </div>
 
                   <p className="text-white/80 text-sm mb-4">
-                    Пошаговое обучение в стиле Mindvalley с видеоуроками и домашними заданиями
+                    Пошаговое обучение с видеоуроками и домашними заданиями
                   </p>
 
                   {isLoadingQuests ? (
