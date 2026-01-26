@@ -651,6 +651,28 @@ serve(async (req: Request): Promise<Response> => {
           });
         }
 
+        // Check if new email is already in use by another user
+        const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers({
+          page: 1,
+          perPage: 1,
+        });
+        
+        // More efficient: check via getUserByEmail-like approach
+        const { data: allUsers } = await supabaseAdmin.auth.admin.listUsers();
+        const emailTaken = allUsers?.users?.some(
+          u => u.email?.toLowerCase() === newEmail.toLowerCase() && u.id !== targetUserId
+        );
+        
+        if (emailTaken) {
+          return new Response(JSON.stringify({ 
+            error: "Email already in use",
+            message: "Этот email уже используется другим пользователем"
+          }), {
+            status: 409,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
         // Update email in auth.users via Admin API
         // email_confirm: true means no verification email needed (admin verified)
         const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(

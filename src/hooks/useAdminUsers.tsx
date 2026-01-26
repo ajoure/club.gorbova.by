@@ -370,7 +370,12 @@ export function useAdminUsers() {
       }
 
       if (response.data?.error) {
-        toast.error(response.data.error);
+        // Handle specific error messages
+        if (response.data.error === "Email already in use") {
+          toast.error("Этот email уже используется другим пользователем");
+        } else {
+          toast.error(response.data.message || response.data.error);
+        }
         return false;
       }
 
