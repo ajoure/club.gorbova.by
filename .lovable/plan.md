@@ -1,350 +1,303 @@
 
-# PATCH: Сверка платежей bePaid + Улучшение UI (Финальная версия)
+# СПРИНТ PAYMENTS: Полная сверка bePaid + Улучшение UI
 
-## Актуальное состояние (факт на 26.01.2026)
+## Текущее состояние базы данных (01-25 января 2026, Europe/Minsk)
 
-### Эталон bePaid (01.01-25.01.2026)
-| Категория | Количество | Сумма BYN | Комиссия BYN |
-|-----------|------------|-----------|--------------|
-| Платеж Успешный | **388** | **51,973.13** | 1,061.78 |
-| Платеж Неуспешный | 152 | 22,792.00 | 0 |
-| Возврат средств | 19 | 2,585.00 | 63.28 |
-| Отмена | 81 | 628.00 | 0 |
-| **ИТОГО** | **640** | | **1,125.06** |
+### Фактические цифры:
+| Источник | Уникальных UID | Строк | Статус |
+|----------|----------------|-------|--------|
+| payments_v2 | **462** | 464 | 2 дубля по UID |
+| payment_reconcile_queue | **253** | 253 | 162 НЕТ в payments_v2 |
+| **Unified (теоретически)** | **624** | | 462 + 162 |
+| **Эталон bePaid** | **640** | | ЦЕЛЬ |
+| **Разрыв** | **-16** | | Нужно найти |
 
-### Текущее состояние БД (payments_v2)
-| Категория | Количество | Сумма BYN |
-|-----------|------------|-----------|
-| Успешные (succeeded, payment, >0) | 328 | 45,846.13 |
-| Неуспешные (failed) | 87 | 15,561.00 |
-| Возвраты (refund/refunded) | 28 | 2,169.00 |
-| Отмены (void/canceled) | 16 | 414.00 |
-| **ИТОГО** | **464** | |
-
-### Разрыв к цели
-| Метрика | Факт | Цель | Дельта |
-|---------|------|------|--------|
-| Всего транзакций | 464 | 640 | **-176** |
-| Успешных платежей | 328 | 388 | **-60** |
-| Сумма успешных | 45,846.13 | 51,973.13 | **-6,127 BYN** |
+### Проблемы, выявленные в базе:
+1. **2 платежа без UID** (provider_payment_id = NULL):
+   - `32012a14-...`: 100 BYN, succeeded
+   - `caf2d8ed-...`: 250 BYN, succeeded
+2. **162 UID в очереди** не материализованы в payments_v2
+3. **16 UID** отсутствуют полностью (ни в payments_v2, ни в queue)
 
 ---
 
-## Причины расхождения (анализ)
+## PATCH-1: Staging таблица (statement_lines)
 
-### 1. Не материализованные записи из очереди
+**Статус:** Таблица `statement_lines` уже существует с нужной структурой.
 
-В `payment_reconcile_queue` есть **168 уникальных UID**, которых нет в `payments_v2`:
+**Текущие поля:**
+- `provider`, `stable_key` (UNIQUE)
+- `raw_data` (JSONB)
+- `parsed_amount`, `parsed_currency`, `parsed_status`, `parsed_paid_at`
+- `transaction_type`, `card_last4`, `customer_email`
+- `source`, `source_timezone`
+- `payment_id`, `order_id` (FK для связи после материализации)
 
-| status_normalized | Отсутствуют в БД | Уже есть в БД |
-|-------------------|------------------|---------------|
-| succeeded | 71 | 0 |
-| canceled | 56 | 0 |
-| failed | 40 | 28 |
-| refunded | 1 | 0 |
-| **Итого** | **168** | 91 (дубли) |
-
-**После материализации:** 464 + 168 = **632 транзакции**
-
-### 2. Остаток: 8 транзакций
-
-`640 - 632 = 8` транзакций отсутствуют и в БД, и в очереди → нужно импортировать напрямую из файла bePaid.
-
-### 3. Транзакции без UID
-
-Найдено **2 записи** в `payments_v2` без `provider_payment_id`:
-- `32012a14-...`: 100 BYN, succeeded, без profile
-- `caf2d8ed-...`: 250 BYN, succeeded, без profile
-
-Эти записи нужно либо связать с UID из bePaid, либо удалить как дубли.
-
-### 4. Дубли в очереди
-
-91 запись в очереди уже имеет соответствующую запись в `payments_v2` — это нормально (ранее материализованы), их можно пометить как `processed`.
+**Доработка:** Добавить поле `provider_payment_id` для хранения UID из bePaid напрямую, чтобы не парсить из stable_key.
 
 ---
 
-## План выполнения
+## PATCH-2 + PATCH-3: Диалог "Сверка с эталоном bePaid"
 
-### Блок 1: Улучшение UI статистической панели (iOS Glass Morphism)
+### Новый компонент: `ReconcileFileDialog.tsx`
 
-**Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
+**Функционал:**
+1. **Загрузка файла** (CSV/XLSX) с транзакциями bePaid
+2. **Парсинг** каждой строки и извлечение UID
+3. **Сверка** с unified view (payments_v2 + queue)
+4. **Полный отчёт** без лимита 50:
+   - Matched (UID + amount + status совпадают)
+   - Missing (в файле есть, в базе нет)
+   - Mismatch (UID есть, но разные amount/status/paid_at)
+   - Extra (в базе есть, в файле нет)
+5. **Кнопка EXECUTE** (после DRY-RUN):
+   - Missing: upsert в payments_v2, создать order при необходимости
+   - Mismatch: обновить amount/status в payments_v2
+   - Extra: пометить `integrity_status='suspect_extra'`
+
+**UI диалога:**
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Сверка с эталоном bePaid                                         [X]   │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  1. ЗАГРУЗКА ФАЙЛА                                                      │
+│     [Выбрать файл]  transactions_jan_2026.xlsx                          │
+│     Найдено: 640 транзакций                                             │
+│                                                                         │
+│  2. ПЕРИОД СВЕРКИ                                                       │
+│     С: [01.01.2026]  По: [25.01.2026]  TZ: [Europe/Minsk v]            │
+│                                                                         │
+│  3. РЕЗУЛЬТАТ СВЕРКИ                                                    │
+│     ┌────────────┬──────────┬────────────────┬─────────────────────┐   │
+│     │ Категория  │ Кол-во   │ Сумма BYN      │ Действие            │   │
+│     ├────────────┼──────────┼────────────────┼─────────────────────┤   │
+│     │ Matched    │ 608      │ 49,123.13      │ Без изменений       │   │
+│     │ Missing    │ 16       │ 2,850.00       │ Добавить            │   │
+│     │ Mismatch   │ 12       │ 1,200.00       │ Исправить           │   │
+│     │ Extra      │ 4        │ 350.00         │ Пометить            │   │
+│     └────────────┴──────────┴────────────────┴─────────────────────┘   │
+│                                                                         │
+│  4. ДЕТАЛИ (раскрываемые секции)                                        │
+│     ▼ Missing (16)                                                      │
+│       • abc123... | 250 BYN | Успешный | 15.01.2026                    │
+│       • def456... | 100 BYN | Неуспешный | 20.01.2026                  │
+│       ...                                                               │
+│                                                                         │
+│     ▼ Mismatch (12)                                                     │
+│       • xyz789... | Файл: 250 BYN | БД: 200 BYN | Δ50                   │
+│       ...                                                               │
+│                                                                         │
+│  [Скачать отчёт CSV]                                                    │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│  whoami: 1@ajoure.by | super_admin                                      │
+│                                                                         │
+│  [Запустить сверку (DRY-RUN)]        [Применить исправления (EXECUTE)]  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Обновление Edge Function: `bepaid-reconcile-file`
 
 **Изменения:**
-1. Более выраженный стеклянный эффект с `backdrop-blur-2xl`
-2. Внутреннее свечение (shine gradient)
-3. Тонкая анимация hover с `scale` и `glow`
-4. Улучшенная типографика:
-   - Суммы крупнее (2xl → 3xl)
-   - Акцентные цвета насыщеннее
-5. Добавить `group-hover:shadow-lg` для интерактивности
+1. Добавить параметр `include_queue: true` для сверки с unified view
+2. Убрать лимит `.slice(0, 50)` — возвращать полный список
+3. Добавить проверку hasValidAccess() перед отзывом доступов
+4. Записывать `reconcile_run_id` в audit_logs
+
+---
+
+## PATCH-4: UID-only дедупликация
+
+### Инварианты:
+1. `provider_payment_id` = единственный stable UID
+2. `tracking_id` НЕ использовать как ключ
+3. UNIQUE constraint на `(provider, provider_payment_id)`
+
+### Действия:
+1. Проверить наличие UNIQUE constraint
+2. Найти и исправить 2 записи без UID
+3. Создать RPC `get_payment_duplicates` если отсутствует
+
+---
+
+## PATCH-5: Улучшение дизайна статистических карточек
+
+### Проблемы текущего дизайна (по скриншоту):
+1. Текст "BYN" обрезается на некоторых карточках
+2. Недостаточно воздушный/стеклянный эффект
+3. Карточки слишком плотные
+
+### Новый дизайн iOS Glass Morphism:
 
 ```tsx
-// Новый дизайн StatCard
-<div className="group relative overflow-hidden rounded-2xl transition-all duration-300 hover:scale-[1.02]">
-  {/* Outer glow on hover */}
-  <div className="absolute -inset-0.5 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm bg-emerald-500/20" />
-  
-  {/* Main card */}
-  <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/70 dark:bg-black/40 backdrop-blur-2xl p-5 shadow-lg">
-    {/* Inner shine gradient */}
-    <div className="absolute inset-0 bg-gradient-to-br from-white/30 via-transparent to-transparent pointer-events-none" />
-    
-    {/* Content */}
-    <div className="relative z-10">...</div>
-  </div>
-</div>
-```
-
----
-
-### Блок 2: Улучшение UI выбора таймзоны
-
-**Проблема:** Текущий toggle "My TZ / UTC / Provider" неинформативен и плохо выглядит.
-
-**Решение:** Заменить на компактный Select с IANA таймзонами.
-
-**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
-
-**Новый компонент:** `TimezoneSelector.tsx`
-
-```tsx
-// Популярные таймзоны для выбора
-const COMMON_TIMEZONES = [
-  { value: 'Europe/Minsk', label: 'Минск (UTC+3)', short: 'MSK' },
-  { value: 'Europe/Moscow', label: 'Москва (UTC+3)', short: 'MSK' },
-  { value: 'Europe/Warsaw', label: 'Варшава (UTC+1)', short: 'CET' },
-  { value: 'Europe/London', label: 'Лондон (UTC+0)', short: 'GMT' },
-  { value: 'UTC', label: 'UTC', short: 'UTC' },
-  { value: 'Europe/Paris', label: 'Париж (UTC+1)', short: 'CET' },
-  { value: 'Africa/Cairo', label: 'Каир (UTC+2)', short: 'EET' },
-  // ... больше зон
-];
-
-// UI: компактный Select рядом с фильтрами
-<Select value={selectedTimezone} onValueChange={setSelectedTimezone}>
-  <SelectTrigger className="w-[140px] h-8">
-    <Clock className="h-3 w-3 mr-1" />
-    <SelectValue />
-  </SelectTrigger>
-  <SelectContent>
-    {COMMON_TIMEZONES.map(tz => (
-      <SelectItem key={tz.value} value={tz.value}>
-        {tz.label}
-      </SelectItem>
-    ))}
-  </SelectContent>
-</Select>
-```
-
-**Интеграция:**
-- Заменить `ToggleGroup` на `Select` с таймзонами
-- Сохранять выбор в `localStorage` для персистентности
-- По умолчанию: `Europe/Minsk` (время провайдера bePaid)
-
----
-
-### Блок 3: Материализация 168 недостающих транзакций
-
-**Функция:** `admin-materialize-queue-payments`
-
-**Проблема:** Функция работает только со статусом `completed` в очереди, а у нас записи в статусе `pending`.
-
-**Решение:**
-1. Обновить записи в очереди: `pending` → `completed` для тех, у кого есть `bepaid_uid`
-2. Запустить материализацию
-
-**SQL для подготовки:**
-```sql
--- Перевести pending записи с UID в completed для материализации
-UPDATE payment_reconcile_queue
-SET status = 'completed'
-WHERE paid_at >= '2026-01-01' AND paid_at < '2026-01-26'
-  AND status = 'pending'
-  AND bepaid_uid IS NOT NULL;
-```
-
-**Вызов Edge Function:**
-```json
-{
-  "dry_run": false,
-  "from_date": "2026-01-01",
-  "to_date": "2026-01-26",
-  "limit": 200
-}
-```
-
-**Ожидаемый результат:** +168 транзакций → 632 в БД
-
----
-
-### Блок 4: Импорт 8 недостающих транзакций из файла bePaid
-
-После материализации 168 записей останется разрыв в 8 транзакций.
-
-**Действия:**
-1. Запустить `bepaid-reconcile-file` с файлом bePaid
-2. Получить список `missing_in_db` (8 UID)
-3. Импортировать их через существующий механизм импорта
-
-**Ожидаемый результат:** 632 + 8 = **640 транзакций**
-
----
-
-### Блок 5: Исправление 2 транзакций без UID
-
-| ID | Сумма | Действие |
-|----|-------|----------|
-| `32012a14-...` | 100 BYN | Найти в bePaid по сумме/дате или удалить |
-| `caf2d8ed-...` | 250 BYN | Найти в bePaid по сумме/дате или удалить |
-
-**Метод:**
-1. Сопоставить с файлом bePaid по (сумма + дата + email/карта)
-2. Если найдено соответствие — обновить `provider_payment_id`
-3. Если не найдено — удалить как дубли
-
----
-
-### Блок 6: Инструменты администратора (русификация)
-
-**Файл:** `src/components/admin/payments/AdminToolsMenu.tsx` (создать)
-
-**Переименование инструментов:**
-
-| Текущее название | Новое название | Описание |
-|------------------|----------------|----------|
-| Fix False Payments | Исправить ошибочные платежи | Исправляет транзакции, которые отмечены успешными, но failed в bePaid |
-| Fix Payments Integrity | Проверить целостность данных | Находит несоответствия сумм между платежами и сделками |
-| Backfill 2026 Orders | Связать платежи со сделками | Создаёт сделки для "сиротских" платежей 2026 года |
-
-**UI: Меню-шестерёнка**
-
-```tsx
-<DropdownMenu>
-  <DropdownMenuTrigger asChild>
-    <Button variant="ghost" size="icon">
-      <Settings className="h-4 w-4" />
-    </Button>
-  </DropdownMenuTrigger>
-  <DropdownMenuContent align="end" className="w-64">
-    <DropdownMenuLabel>Инструменты обслуживания</DropdownMenuLabel>
-    <DropdownMenuSeparator />
-    
-    <DropdownMenuItem onClick={() => setFixFalsePaymentsOpen(true)}>
-      <Wrench className="h-4 w-4 mr-2" />
-      <div className="flex flex-col">
-        <span>Исправить ошибочные платежи</span>
-        <span className="text-xs text-muted-foreground">DRY-RUN по умолчанию</span>
+function StatCard({ title, amount, count, icon, colorClass, glowColor, currency = "BYN", subtitle }) {
+  return (
+    <div className="group relative overflow-hidden rounded-3xl transition-all duration-500 hover:scale-[1.03] hover:-translate-y-1">
+      {/* Outer glow on hover - larger and softer */}
+      <div className={`absolute -inset-1 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-500 blur-xl ${glowColor}`} />
+      
+      {/* Main card - more glass effect */}
+      <div className="relative overflow-hidden rounded-3xl border border-white/30 dark:border-white/10 bg-white/80 dark:bg-white/5 backdrop-blur-3xl p-6 shadow-2xl shadow-black/5 dark:shadow-black/30">
+        
+        {/* Inner shine gradient - stronger */}
+        <div className="absolute inset-0 bg-gradient-to-br from-white/60 via-white/20 to-transparent dark:from-white/15 dark:via-white/5 pointer-events-none" />
+        
+        {/* Top edge highlight */}
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/80 to-transparent dark:via-white/30" />
+        
+        {/* Left edge highlight */}
+        <div className="absolute inset-y-0 left-0 w-px bg-gradient-to-b from-white/60 via-transparent to-transparent dark:from-white/20" />
+        
+        {/* Content */}
+        <div className="relative z-10 flex flex-col gap-3">
+          {/* Header with icon */}
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-bold text-muted-foreground/70 uppercase tracking-[0.2em]">
+              {title}
+            </p>
+            <div className={`p-2.5 rounded-2xl bg-gradient-to-br ${glowColor.replace('/20', '/10')} backdrop-blur-xl border border-white/30 dark:border-white/10 shadow-lg`}>
+              {icon}
+            </div>
+          </div>
+          
+          {/* Amount - larger, breathing room */}
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className={`text-3xl font-bold tracking-tight tabular-nums ${colorClass}`}>
+              {amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className="text-sm font-semibold text-muted-foreground/60">
+              {currency}
+            </span>
+          </div>
+          
+          {/* Count and subtitle */}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
+            <span className="font-semibold tabular-nums">{count.toLocaleString('ru-RU')} шт</span>
+            {subtitle && (
+              <>
+                <span className="w-1 h-1 rounded-full bg-muted-foreground/30" />
+                <span>{subtitle}</span>
+              </>
+            )}
+          </div>
+        </div>
       </div>
-    </DropdownMenuItem>
-    
-    <DropdownMenuItem onClick={() => setIntegrityCheckOpen(true)}>
-      <CheckCircle className="h-4 w-4 mr-2" />
-      Проверить целостность данных
-    </DropdownMenuItem>
-    
-    <DropdownMenuItem onClick={() => setBackfillOrdersOpen(true)}>
-      <Link className="h-4 w-4 mr-2" />
-      Связать платежи со сделками
-    </DropdownMenuItem>
-  </DropdownMenuContent>
-</DropdownMenu>
-```
-
----
-
-### Блок 7: Edge Function admin-fix-false-payments — UI интеграция
-
-**Функция существует**, но нет UI для вызова.
-
-**Создать:** `src/components/admin/payments/FalsePaymentsFixDialog.tsx`
-
-```tsx
-interface Props {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+    </div>
+  );
 }
-
-// Диалог с:
-// 1. Текстовым полем для ввода UID (один на строку)
-// 2. Кнопка "Проверить (DRY-RUN)"
-// 3. Отображение результатов: какие платежи найдены, что будет изменено
-// 4. Кнопка "Выполнить" с подтверждением
-
-// Важно: DRY-RUN по умолчанию!
-// Показывать предупреждение, что доступы могут быть отозваны
 ```
+
+### Ключевые изменения:
+- `rounded-3xl` вместо `rounded-2xl` — более мягкие углы
+- `backdrop-blur-3xl` — усиленное размытие
+- `bg-white/80` — больше прозрачности
+- `p-6` вместо `p-5` — больше padding
+- `text-3xl` вместо `text-2xl` — крупнее суммы
+- `flex-wrap` для amount+currency — не обрезается
+- Двойной highlight (top + left edge) — iOS-эффект
+- `hover:-translate-y-1` — эффект "всплывания"
+- `shadow-2xl` — более глубокая тень
 
 ---
 
-## Порядок выполнения
+## PATCH-6: Инструменты админа
 
-| # | Действие | Файлы | Результат |
-|---|----------|-------|-----------|
-| 1 | Улучшить дизайн PaymentsStatsPanel (iOS Glass) | `PaymentsStatsPanel.tsx` | Красивая панель статистики |
-| 2 | Заменить TZ toggle на Select | `PaymentsTabContent.tsx`, `TimezoneSelector.tsx` | Выбор таймзоны IANA |
-| 3 | Создать меню инструментов (шестерёнка) | `AdminToolsMenu.tsx` | Русские названия, единая точка входа |
-| 4 | Создать UI для admin-fix-false-payments | `FalsePaymentsFixDialog.tsx` | DRY-RUN + EXECUTE |
-| 5 | SQL: перевести pending → completed | Миграция | Подготовка к материализации |
-| 6 | Материализовать 168 транзакций | Вызов Edge Function | 632 в БД |
-| 7 | Импортировать 8 недостающих | Через импорт | 640 в БД |
-| 8 | Исправить 2 транзакции без UID | SQL / UI | Все записи с UID |
+### Добавить в AdminToolsMenu:
+1. **"Сверка с эталоном bePaid"** — открывает ReconcileFileDialog
+2. Активировать disabled пункты:
+   - "Проверить целостность данных"
+   - "Связать платежи со сделками"
+
+### UI доработки:
+- Добавить `whoami` (email, uid, roles) в каждый диалог
+- Адаптивность на мобилке
+
+---
+
+## PATCH-7: Audit + DoD
+
+### Audit logs:
+```sql
+INSERT INTO audit_logs (action, actor_type, actor_label, meta)
+VALUES (
+  'payments.reconcile_run',
+  'system',
+  'bepaid-reconcile-file',
+  jsonb_build_object(
+    'requested_by_user_id', :user_id,
+    'requested_by_email', :email,
+    'file_count', 640,
+    'matched', 608,
+    'missing', 16,
+    'mismatch', 12,
+    'extra', 4,
+    'run_id', :run_id
+  )
+);
+```
+
+### Финальные DoD SQL:
+```sql
+-- 1) Дублей UID = 0
+SELECT provider_payment_id, COUNT(*) 
+FROM payments_v2 
+WHERE provider = 'bepaid' 
+GROUP BY provider_payment_id 
+HAVING COUNT(*) > 1;
+-- Ожидаемо: пустой результат
+
+-- 2) Orphan payments = 0
+SELECT COUNT(*) FROM payments_v2
+WHERE provider = 'bepaid'
+  AND status = 'succeeded'
+  AND profile_id IS NOT NULL
+  AND order_id IS NULL
+  AND paid_at >= '2025-12-31 21:00:00'
+  AND paid_at < '2026-01-25 21:00:00';
+-- Ожидаемо: 0
+
+-- 3) Всего = 640
+SELECT COUNT(DISTINCT provider_payment_id)
+FROM payments_v2
+WHERE provider = 'bepaid'
+  AND paid_at >= '2025-12-31 21:00:00'
+  AND paid_at < '2026-01-25 21:00:00';
+-- Ожидаемо: 640
+```
 
 ---
 
 ## Файлы для создания/изменения
 
-| Файл | Действие |
-|------|----------|
-| `src/components/admin/payments/PaymentsStatsPanel.tsx` | EDIT — iOS Glass дизайн |
-| `src/components/admin/payments/PaymentsTabContent.tsx` | EDIT — заменить TZ toggle на Select |
-| `src/components/admin/payments/TimezoneSelector.tsx` | CREATE — компонент выбора таймзоны |
-| `src/components/admin/payments/AdminToolsMenu.tsx` | CREATE — меню инструментов |
-| `src/components/admin/payments/FalsePaymentsFixDialog.tsx` | CREATE — UI для исправления платежей |
+| Файл | Действие | Описание |
+|------|----------|----------|
+| `src/components/admin/payments/PaymentsStatsPanel.tsx` | EDIT | iOS Glass дизайн карточек |
+| `src/components/admin/payments/ReconcileFileDialog.tsx` | CREATE | Диалог сверки с файлом |
+| `src/components/admin/payments/AdminToolsMenu.tsx` | EDIT | Добавить пункт "Сверка" |
+| `supabase/functions/bepaid-reconcile-file/index.ts` | EDIT | Убрать лимит 50, добавить queue |
 
 ---
 
-## DoD (Definition of Done)
+## Порядок выполнения
 
-### После UI изменений:
-- [ ] Панель статистики в стиле iOS Glass Morphism
-- [ ] Выбор таймзоны через Select с IANA зонами
-- [ ] Время в таблице меняется при смене TZ
-- [ ] Инструменты под шестерёнкой с русскими названиями
-
-### После данных:
-```sql
--- 1) Всего = 640
-SELECT COUNT(*) FROM payments_v2
-WHERE provider = 'bepaid' AND paid_at >= '2026-01-01' AND paid_at < '2026-01-26';
-
--- 2) Успешные = 388, сумма = 51,973.13
-SELECT COUNT(*), ROUND(SUM(amount)::numeric, 2)
-FROM payments_v2
-WHERE provider = 'bepaid' 
-  AND paid_at >= '2026-01-01' AND paid_at < '2026-01-26'
-  AND status = 'succeeded' AND transaction_type = 'payment' AND amount > 0;
-
--- 3) Нет транзакций без UID
-SELECT COUNT(*) FROM payments_v2
-WHERE provider = 'bepaid' 
-  AND paid_at >= '2026-01-01' AND paid_at < '2026-01-26'
-  AND (provider_payment_id IS NULL OR provider_payment_id = '');
--- Ожидаемо: 0
-```
+| # | Действие | Результат |
+|---|----------|-----------|
+| 1 | Обновить дизайн PaymentsStatsPanel | Красивые iOS Glass карточки |
+| 2 | Создать ReconcileFileDialog | UI для загрузки файла и сверки |
+| 3 | Добавить пункт в AdminToolsMenu | Доступ к сверке через шестерёнку |
+| 4 | Обновить Edge Function | Полные списки без лимита |
+| 5 | **Вы загружаете файл bePaid** | Получаем 640 UID |
+| 6 | Запускаете DRY-RUN | Видите missing/mismatch/extra |
+| 7 | Запускаете EXECUTE | Данные синхронизированы |
+| 8 | Проверка DoD SQL | 640 = 640, суммы бьются |
 
 ---
 
-## Техническая деталь: Почему material-materialize не работает
+## Следующий шаг после одобрения плана
 
-Функция `admin-materialize-queue-payments` обрабатывает только записи со статусом `completed`:
-
-```typescript
-// Строка 116-119 в admin-materialize-queue-payments
-let query = supabase
-  .from('payment_reconcile_queue')
-  .select('*')
-  .eq('status', 'completed')  // ← ТОЛЬКО completed!
-```
-
-А в очереди записи имеют статус `pending`. Поэтому нужно сначала обновить статус через SQL миграцию.
+После реализации UI вам нужно будет:
+1. Загрузить файл bePaid (640 транзакций)
+2. Система покажет точный список missing/mismatch/extra
+3. Вы решаете, применять ли исправления
+4. После EXECUTE — финальная проверка по DoD SQL
