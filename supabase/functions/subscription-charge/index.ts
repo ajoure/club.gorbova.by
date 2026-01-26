@@ -1212,10 +1212,12 @@ async function chargeSubscription(
               .eq('id', id);
           }
         }
-      } else if (!bepaidUid && amount > 0) {
-        // Missing bepaid_uid - log for investigation
+      } else if (amount > 0 && !bepaidUid) {
+        // CONSOLIDATED: Log missing bepaid_uid for any positive-amount payment
+        // Covers both paymentSucceeded=true and other cases
+        console.warn(`Renewal order skipped for subscription ${id}: missing bepaid_uid (amount=${amount}, paymentSucceeded=${paymentSucceeded})`);
         await supabase.from('audit_logs').insert({
-          action: 'subscription.renewal_order_create_failed',
+          action: 'subscription.renewal_order_skipped',
           actor_type: 'system',
           actor_user_id: null,
           actor_label: 'subscription-charge',
@@ -1226,23 +1228,7 @@ async function chargeSubscription(
             reason: 'missing_bepaid_uid',
             amount,
             currency,
-          },
-        });
-      } else if (amount > 0 && paymentSucceeded && !bepaidUid) {
-        // PATCH A3: Log skipped renewal if success but missing bepaid_uid
-        console.warn(`Renewal order skipped for subscription ${id}: missing bepaid_uid`);
-        await supabase.from('audit_logs').insert({
-          action: 'subscription.renewal_order_skipped',
-          actor_type: 'system',
-          actor_user_id: null,
-          actor_label: 'subscription-charge',
-          target_user_id: user_id,
-          meta: {
-            subscription_id: id,
-            payment_id: payment?.id,
-            reason: 'missing_bepaid_uid_after_success',
-            amount,
-            currency,
+            payment_succeeded: paymentSucceeded,
             tx_status: txStatus,
           },
         });

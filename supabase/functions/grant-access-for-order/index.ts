@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { ensureOrderForPayment } from "../_shared/ensure-order-for-payment.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,20 +26,60 @@ Deno.serve(async (req) => {
 
     const { 
       orderId, 
+      paymentId,  // Optional: if provided, ensure payment has valid order first
       customAccessDays,
       extendFromCurrent = true,
       grantTelegram = true,
       grantGetcourse = true,
     } = await req.json();
 
-    if (!orderId) {
+    // PATCH: If paymentId provided, ensure it has a valid order BEFORE granting access
+    // This prevents "access granted, deal missing" scenario
+    let resolvedOrderId = orderId;
+    
+    if (paymentId && !orderId) {
+      console.log(`[grant-access-for-order] Ensuring order for payment ${paymentId} before granting access`);
+      const ensureResult = await ensureOrderForPayment(supabase, paymentId, 'grant-access-for-order');
+      
+      if (ensureResult.action === 'error') {
+        return new Response(
+          JSON.stringify({ 
+            error: "Cannot grant access: failed to ensure order for payment",
+            details: ensureResult.reason,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      resolvedOrderId = ensureResult.orderId;
+      console.log(`[grant-access-for-order] Resolved order ${resolvedOrderId} from payment ${paymentId} (action: ${ensureResult.action})`);
+    }
+
+    if (!resolvedOrderId) {
+      // GUARD: Block access grant without orderId
+      // Audit log for traceability
+      await supabase.from('audit_logs').insert({
+        action: 'access.grant_blocked_no_order',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'grant-access-for-order',
+        meta: { 
+          provided_order_id: orderId,
+          provided_payment_id: paymentId,
+          reason: 'no_valid_order_id',
+        },
+      });
+      
       return new Response(
-        JSON.stringify({ error: "orderId is required" }),
+        JSON.stringify({ 
+          error: "orderId is required", 
+          details: "Cannot grant access without a valid order. Provide orderId or paymentId." 
+        }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Load order with product/tariff info
+    // Load order with product/tariff info (using resolved order ID)
     const { data: order, error: orderError } = await supabase
       .from("orders_v2")
       .select(`
@@ -46,7 +87,7 @@ Deno.serve(async (req) => {
         product:products_v2(id, name, code),
         tariff:tariffs(id, name, access_days)
       `)
-      .eq("id", orderId)
+      .eq("id", resolvedOrderId)
       .single();
 
     if (orderError || !order) {

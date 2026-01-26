@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { ensureOrderForPayment, EnsureOrderResult } from '../_shared/ensure-order-for-payment.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -7,15 +8,13 @@ const corsHeaders = {
 };
 
 /**
- * Admin Backfill: Create Renewal Orders for Existing Succeeded Payments
+ * Admin Backfill: Fix Payment-Order Invariants
  * 
- * Finds payments that:
- * - status = 'succeeded'
- * - amount > 10 (not trial)
- * - linked to trial order (is_trial = true)
- * - have no renewal_order_id in meta
+ * Handles TWO types of anomalies:
+ * 1. ORPHAN: payments with status='succeeded' AND order_id IS NULL
+ * 2. TRIAL_MISMATCH: payments with status='succeeded', amount > 10, linked to trial order, no renewal_order_id
  * 
- * Creates renewal orders and relinks payments.
+ * Uses centralized ensureOrderForPayment helper for consistency.
  */
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -27,122 +26,207 @@ serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
 
-    // Auth check using user's token
-    const authHeader = req.headers.get('Authorization');
-    const supabaseUser = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader || '' } },
-    });
-    const { data: { user }, error: authError } = await supabaseUser.auth.getUser();
+    // Check for internal key auth (service-only mode)
+    const internalKey = req.headers.get('X-Internal-Key');
+    const expectedInternalKey = Deno.env.get('INTERNAL_BACKFILL_KEY');
     
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    let requestedByUserId: string | null = null;
+
+    if (internalKey && expectedInternalKey && internalKey === expectedInternalKey) {
+      // Service-only mode: skip user auth
+      requestedByUserId = 'service-internal';
+      console.log('Backfill: service-only mode via X-Internal-Key');
+    } else {
+      // Auth check using user's token
+      const authHeader = req.headers.get('Authorization');
+      const supabaseUser = createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: authHeader || '' } },
       });
+      const { data: { user }, error: authError } = await supabaseUser.auth.getUser();
+      
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      
+      requestedByUserId = user.id;
+
+      // Admin client for data operations + RBAC check
+      const supabase = createClient(supabaseUrl, supabaseServiceKey);
+      
+      const { data: userRoles } = await supabase
+        .from('user_roles_v2')
+        .select('role_id, roles!inner(name)')
+        .eq('user_id', user.id);
+
+      const isAdmin = userRoles?.some((r: any) =>
+        ['admin', 'superadmin', 'super_admin'].includes(r.roles?.name?.toLowerCase())
+      );
+
+      if (!isAdmin) {
+        return new Response(JSON.stringify({ error: 'Forbidden: admin access required' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
-    // Admin client for data operations
+    // Admin client for operations
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    // RBAC check
-    const { data: userRoles } = await supabase
-      .from('user_roles_v2')
-      .select('role_id, roles!inner(name)')
-      .eq('user_id', user.id);
-
-    const isAdmin = userRoles?.some((r: any) =>
-      ['admin', 'superadmin', 'super_admin'].includes(r.roles?.name?.toLowerCase())
-    );
-
-    if (!isAdmin) {
-      return new Response(JSON.stringify({ error: 'Forbidden: admin access required' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
 
     // Parse request body
     const body = await req.json().catch(() => ({}));
     const dryRun = body.dry_run !== false; // Default to dry_run = true
-    const batchLimit = Math.min(body.batch_limit || 50, 200);
+    const batchLimit = Math.min(body.batch_limit || 100, 500);
+    const maxFailures = body.max_failures || 5;
     const specificPaymentId = body.payment_id || null;
+    const anomalyType = body.anomaly_type || 'all'; // 'orphan', 'trial_mismatch', or 'all'
 
-    console.log(`Backfill renewal orders: dry_run=${dryRun}, batch_limit=${batchLimit}, payment_id=${specificPaymentId}`);
+    console.log(`Backfill: dry_run=${dryRun}, batch_limit=${batchLimit}, anomaly_type=${anomalyType}, payment_id=${specificPaymentId}`);
 
-    // Find candidates: succeeded payments linked to trial orders without renewal_order_id
-    let query = supabase
-      .from('payments_v2')
-      .select(`
-        id,
-        amount,
-        status,
-        paid_at,
-        order_id,
-        user_id,
-        profile_id,
-        provider_payment_id,
-        currency,
-        meta,
-        orders_v2!inner(id, is_trial, product_id, tariff_id, customer_email, customer_phone)
-      `)
-      .eq('status', 'succeeded')
-      .gt('amount', 10)
-      .eq('orders_v2.is_trial', true)
-      .limit(batchLimit);
+    // ============= FIND CANDIDATES =============
+    
+    interface PaymentCandidate {
+      id: string;
+      amount: number;
+      order_id: string | null;
+      user_id: string | null;
+      provider_payment_id: string | null;
+      paid_at: string | null;
+      meta: Record<string, any> | null;
+      anomaly_type: 'orphan' | 'trial_mismatch';
+    }
+    
+    const candidates: PaymentCandidate[] = [];
 
-    if (specificPaymentId) {
-      query = query.eq('id', specificPaymentId);
+    // TYPE 1: ORPHAN payments (no order_id)
+    if (anomalyType === 'all' || anomalyType === 'orphan') {
+      let orphanQuery = supabase
+        .from('payments_v2')
+        .select('id, amount, order_id, user_id, provider_payment_id, paid_at, meta')
+        .eq('status', 'succeeded')
+        .gt('amount', 0)
+        .is('order_id', null)
+        .limit(batchLimit);
+
+      if (specificPaymentId) {
+        orphanQuery = orphanQuery.eq('id', specificPaymentId);
+      }
+
+      const { data: orphans, error: orphanErr } = await orphanQuery;
+
+      if (orphanErr) {
+        console.error('Failed to fetch orphan candidates:', orphanErr);
+      } else {
+        for (const p of orphans || []) {
+          candidates.push({
+            ...p,
+            meta: (p.meta || {}) as Record<string, any>,
+            anomaly_type: 'orphan',
+          });
+        }
+        console.log(`Found ${orphans?.length || 0} orphan payment candidates`);
+      }
     }
 
-    const { data: candidates, error: fetchError } = await query;
+    // TYPE 2: TRIAL MISMATCH (payment > trial amount, linked to trial order, no renewal_order_id)
+    if (anomalyType === 'all' || anomalyType === 'trial_mismatch') {
+      let trialQuery = supabase
+        .from('payments_v2')
+        .select(`
+          id,
+          amount,
+          order_id,
+          user_id,
+          provider_payment_id,
+          paid_at,
+          meta,
+          orders_v2!inner(id, is_trial, final_price)
+        `)
+        .eq('status', 'succeeded')
+        .gt('amount', 10)
+        .eq('orders_v2.is_trial', true)
+        .limit(batchLimit);
 
-    if (fetchError) {
-      console.error('Failed to fetch candidates:', fetchError);
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: fetchError.message 
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      if (specificPaymentId) {
+        trialQuery = trialQuery.eq('id', specificPaymentId);
+      }
+
+      const { data: trialMismatches, error: trialErr } = await trialQuery;
+
+      if (trialErr) {
+        console.error('Failed to fetch trial mismatch candidates:', trialErr);
+      } else {
+        // Filter out those that already have renewal_order_id
+        const filtered = (trialMismatches || []).filter((p: any) => {
+          const meta = (p.meta || {}) as Record<string, any>;
+          return !meta.renewal_order_id;
+        });
+        
+        for (const p of filtered) {
+          // Skip duplicates if already added as orphan
+          if (!candidates.find(c => c.id === p.id)) {
+            candidates.push({
+              id: p.id,
+              amount: p.amount,
+              order_id: p.order_id,
+              user_id: p.user_id,
+              provider_payment_id: p.provider_payment_id,
+              paid_at: p.paid_at,
+              meta: (p.meta || {}) as Record<string, any>,
+              anomaly_type: 'trial_mismatch',
+            });
+          }
+        }
+        console.log(`Found ${filtered.length} trial mismatch candidates`);
+      }
     }
 
-    // Filter out payments that already have renewal_order_id
-    const toProcess = (candidates || []).filter((p: any) => {
-      const meta = p.meta || {};
-      return !meta.renewal_order_id;
-    });
+    // Limit total candidates
+    const toProcess = candidates.slice(0, batchLimit);
+    const remaining = candidates.length - toProcess.length;
 
-    console.log(`Found ${candidates?.length || 0} candidates, ${toProcess.length} to process`);
+    console.log(`Total candidates: ${candidates.length}, processing: ${toProcess.length}, remaining: ${remaining}`);
 
+    // ============= DRY RUN MODE =============
     if (dryRun) {
-      // Log dry-run
       await supabase.from('audit_logs').insert({
         action: 'subscription.renewal_backfill_dry_run',
         actor_type: 'system',
         actor_user_id: null,
         actor_label: 'admin-backfill-renewal-orders',
         meta: {
-          requested_by_user_id: user.id,
+          requested_by_user_id: requestedByUserId,
           dry_run: true,
-          candidates_count: candidates?.length || 0,
+          anomaly_type: anomalyType,
+          orphan_count: candidates.filter(c => c.anomaly_type === 'orphan').length,
+          trial_mismatch_count: candidates.filter(c => c.anomaly_type === 'trial_mismatch').length,
+          total_candidates: candidates.length,
           to_process_count: toProcess.length,
-          sample_ids: toProcess.slice(0, 10).map((p: any) => p.id),
+          remaining,
+          sample_ids: toProcess.slice(0, 10).map(p => ({ id: p.id, type: p.anomaly_type })),
         },
       });
 
       return new Response(JSON.stringify({
         success: true,
         dry_run: true,
-        candidates_count: candidates?.length || 0,
+        anomaly_type: anomalyType,
+        orphan_count: candidates.filter(c => c.anomaly_type === 'orphan').length,
+        trial_mismatch_count: candidates.filter(c => c.anomaly_type === 'trial_mismatch').length,
+        total_candidates: candidates.length,
         to_process: toProcess.length,
-        sample: toProcess.slice(0, 10).map((p: any) => ({
+        remaining,
+        sample: toProcess.slice(0, 20).map(p => ({
           payment_id: p.id,
           amount: p.amount,
           order_id: p.order_id,
-          paid_at: p.paid_at,
           user_id: p.user_id,
-          bepaid_uid: p.provider_payment_id || (p.meta as any)?.bepaid_uid,
+          anomaly_type: p.anomaly_type,
+          bepaid_uid: p.provider_payment_id || p.meta?.bepaid_uid,
+          paid_at: p.paid_at,
         })),
       }), {
         status: 200,
@@ -150,150 +234,85 @@ serve(async (req: Request) => {
       });
     }
 
-    // EXECUTE mode
+    // ============= EXECUTE MODE =============
     let processed = 0;
+    let created = 0;
+    let relinked = 0;
+    let skipped = 0;
     let failed = 0;
     const errors: string[] = [];
-    const createdOrders: string[] = [];
+    const results: { payment_id: string; action: string; order_id?: string }[] = [];
 
     for (const payment of toProcess) {
       try {
-        const bepaidUid = payment.provider_payment_id || (payment.meta as any)?.bepaid_uid;
-        const order = payment.orders_v2 as any;
-
-        // Idempotency check: order already exists with this bepaid_uid?
-        if (bepaidUid) {
-          const { data: existingOrder } = await supabase
-            .from('orders_v2')
-            .select('id')
-            .eq('user_id', payment.user_id)
-            .contains('meta', { bepaid_uid: bepaidUid })
-            .maybeSingle();
-
-          if (existingOrder?.id) {
-            // Already exists, just relink payment
-            const existingPaymentMeta = (payment.meta || {}) as Record<string, any>;
-            await supabase
-              .from('payments_v2')
-              .update({
-                order_id: existingOrder.id,
-                meta: {
-                  ...existingPaymentMeta,
-                  renewal_order_id: existingOrder.id,
-                  original_trial_order_id: payment.order_id,
-                  backfill_relinked_at: new Date().toISOString(),
-                },
-              })
-              .eq('id', payment.id);
-
-            processed++;
-            createdOrders.push(existingOrder.id);
-            continue;
-          }
-        }
-
-        // Generate order number
-        const { data: ordNum } = await supabase.rpc('generate_order_number');
-        const orderNumber = ordNum || `REN-${Date.now().toString(36).toUpperCase()}`;
-
-        // Get profile_id if not set
-        let profileId = payment.profile_id;
-        if (!profileId && payment.user_id) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('user_id', payment.user_id)
-            .maybeSingle();
-          profileId = profile?.id ?? null;
-        }
-
-        // Create renewal order
-        const { data: newOrder, error: createErr } = await supabase
-          .from('orders_v2')
-          .insert({
-            order_number: orderNumber,
-            user_id: payment.user_id,
-            profile_id: profileId,
-            status: 'paid',
-            currency: payment.currency || 'BYN',
-            base_price: payment.amount,
-            final_price: payment.amount,
-            paid_amount: payment.amount,
-            is_trial: false,
-            product_id: order?.product_id ?? null,
-            tariff_id: order?.tariff_id ?? null,
-            customer_email: order?.customer_email ?? null,
-            customer_phone: order?.customer_phone ?? null,
-            meta: {
-              source: 'subscription-renewal',
-              backfill: true,
-              backfill_at: new Date().toISOString(),
-              payment_id: payment.id,
-              bepaid_uid: bepaidUid,
-              original_order_id: payment.order_id,
-            },
-          })
-          .select('id, order_number')
-          .single();
-
-        if (createErr || !newOrder) {
-          console.error(`Failed to create renewal order for payment ${payment.id}:`, createErr);
-          errors.push(`payment ${payment.id}: ${createErr?.message || 'unknown error'}`);
-          failed++;
-          continue;
-        }
-
-        // Relink payment to new order
-        const existingPaymentMeta = (payment.meta || {}) as Record<string, any>;
-        const { error: linkErr } = await supabase
-          .from('payments_v2')
-          .update({
-            order_id: newOrder.id,
-            meta: {
-              ...existingPaymentMeta,
-              renewal_order_id: newOrder.id,
-              original_trial_order_id: payment.order_id,
-              backfill_relinked_at: new Date().toISOString(),
-            },
-          })
-          .eq('id', payment.id);
-
-        if (linkErr) {
-          console.error(`Failed to relink payment ${payment.id}:`, linkErr);
-          errors.push(`payment ${payment.id} link: ${linkErr.message}`);
-          failed++;
-          continue;
-        }
+        // Use centralized helper for consistency
+        const result: EnsureOrderResult = await ensureOrderForPayment(
+          supabase, 
+          payment.id, 
+          'admin-backfill-renewal-orders'
+        );
 
         processed++;
-        createdOrders.push(newOrder.id);
-        console.log(`Created renewal order ${newOrder.order_number} for payment ${payment.id}`);
+
+        switch (result.action) {
+          case 'created':
+            created++;
+            results.push({ payment_id: payment.id, action: 'created', order_id: result.orderId! });
+            console.log(`Created order ${result.orderId} for payment ${payment.id} (${payment.anomaly_type})`);
+            break;
+          case 'relinked':
+            relinked++;
+            results.push({ payment_id: payment.id, action: 'relinked', order_id: result.orderId! });
+            console.log(`Relinked payment ${payment.id} to order ${result.orderId}`);
+            break;
+          case 'skipped':
+            skipped++;
+            results.push({ payment_id: payment.id, action: 'skipped' });
+            break;
+          case 'error':
+            failed++;
+            errors.push(`payment ${payment.id}: ${result.reason}`);
+            results.push({ payment_id: payment.id, action: 'error' });
+            break;
+        }
+
+        // STOP on too many failures
+        if (failed >= maxFailures) {
+          console.error(`Too many failures (${failed}), stopping batch`);
+          break;
+        }
       } catch (err) {
         console.error(`Error processing payment ${payment.id}:`, err);
         errors.push(`payment ${payment.id}: ${(err as Error).message}`);
         failed++;
-        // STOP on critical error
-        if (failed >= 5) {
-          console.error('Too many failures, stopping batch');
+        
+        if (failed >= maxFailures) {
+          console.error(`Too many failures (${failed}), stopping batch`);
           break;
         }
       }
     }
 
-    // Log execution result
+    // ============= AUDIT LOG =============
     await supabase.from('audit_logs').insert({
       action: 'subscription.renewal_backfill_executed',
       actor_type: 'system',
       actor_user_id: null,
       actor_label: 'admin-backfill-renewal-orders',
       meta: {
-        requested_by_user_id: user.id,
+        requested_by_user_id: requestedByUserId,
         dry_run: false,
-        candidates_count: candidates?.length || 0,
+        anomaly_type: anomalyType,
+        total_candidates: candidates.length,
         to_process_count: toProcess.length,
         processed,
+        created,
+        relinked,
+        skipped,
         failed,
-        created_order_ids: createdOrders.slice(0, 20),
+        remaining,
+        stopped_early: failed >= maxFailures,
+        sample_results: results.slice(0, 20),
         errors: errors.slice(0, 10),
       },
     });
@@ -301,11 +320,17 @@ serve(async (req: Request) => {
     return new Response(JSON.stringify({
       success: true,
       dry_run: false,
-      candidates_count: candidates?.length || 0,
+      anomaly_type: anomalyType,
+      total_candidates: candidates.length,
       to_process: toProcess.length,
       processed,
+      created,
+      relinked,
+      skipped,
       failed,
-      created_orders: createdOrders,
+      remaining,
+      stopped_early: failed >= maxFailures,
+      results: results.slice(0, 50),
       errors: errors.length > 0 ? errors : undefined,
     }), {
       status: 200,
