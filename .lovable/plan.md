@@ -1,192 +1,353 @@
-# План: Исправление токенизации карт для recurring-платежей без 3DS
 
-## Проблема
 
-При ручном списании с привязанной карты bePaid возвращает ошибку P.4011 (требуется 3D-Secure), хотя карта уже была привязана с прохождением 3DS.
+# План: Восстановление целостности системы "1 Payment = 1 Order"
 
-**Причина:** При токенизации карты не указывается `contract: ["recurring"]`, поэтому банк не знает, что карта предназначена для автоматических списаний.
+## Текущее состояние (диагностика)
 
----
+| Метрика | Значение | Статус |
+|---------|----------|--------|
+| Orphan payments | 1675 | ⚠️ Нужен backfill |
+| Trial mismatch | 0 | ✅ Исправлено |
+| Backfill orders без product_id | 690 | ⚠️ Нужна очистка |
+| Помечены needs_manual_mapping | 20 | ✅ Работает |
+| Доступ выдан backfill-orders | 0 | ✅ Защита работает |
+| Текущий enum order_status | failed, paid, refunded | Нет needs_mapping |
 
-## Решение
+## Критические проблемы для решения
 
-### Шаг 1: Исправить токенизацию карты
-
-**Файл:** `supabase/functions/payment-methods-tokenize/index.ts`
-
-Добавить `additional_data.contract: ["recurring"]` в запрос токенизации:
-
-```typescript
-// Строки 104-126 - изменить checkoutData:
-const checkoutData = {
-  checkout: {
-    test: testMode,
-    transaction_type: 'tokenization',
-    order: {
-      amount: tokenizationAmountSafe,
-      currency,
-      description: 'Card tokenization for recurring payments',
-    },
-    settings: {
-      return_url: returnUrl,
-      cancel_url: cancelUrl,
-      notification_url: `${supabaseUrl}/functions/v1/payment-methods-webhook`,
-      language: 'ru',
-    },
-    customer: {
-      email: user.email,
-      first_name: profile?.first_name || '',
-      last_name: profile?.last_name || '',
-      phone: profile?.phone || '',
-    },
-    // ДОБАВИТЬ: указываем что карта будет использоваться для recurring
-    additional_data: {
-      contract: ['recurring'],
-    },
-  },
-};
-```
+1. **690 "плохих" backfill orders** — созданы до PATCH 6, без product_id, засоряют UI
+2. **Advisory lock не работает** — RPC `pg_try_advisory_lock` не существует в Supabase
+3. **UI не скрывает проблемные сделки** — needs_mapping статус отсутствует
 
 ---
 
-### Шаг 2: Исправить функцию списания
+## PATCH 1: Database Migration — добавить enum + SQL functions
 
-**Файл:** `supabase/functions/admin-manual-charge/index.ts`
+**Тип:** Migration (структура БД)
 
-Добавить `card_on_file.initiator: "merchant"` в запрос списания (строки 110-124):
-
-```typescript
-const chargePayload = {
-  request: {
-    amount: amountKopecks,
-    currency,
-    description,
-    tracking_id: trackingId,
-    test: testMode,
-    credit_card: {
-      token: paymentToken,
-    },
-    additional_data: {
-      contract: ['recurring', 'unscheduled'],
-      // ДОБАВИТЬ: указываем что это merchant-initiated transaction
-      card_on_file: {
-        initiator: 'merchant',
-        type: 'delayed_charge',
-      },
-    },
-  },
-};
-```
-
----
-
-### Шаг 3: Обработка карт, привязанных ДО исправления
-
-Карты, которые были привязаны без `contract: ["recurring"]`, могут продолжать требовать 3DS. Для таких случаев:
-
-1. **Добавить флаг в payment_methods** - колонка `supports_recurring` (boolean)
-2. **При новой привязке** - устанавливать `supports_recurring = true`
-3. **При списании** - проверять флаг и выводить понятное сообщение для старых карт:
-   - "Эта карта была привязана до обновления системы. Попросите клиента перепривязать карту для автоматических списаний."
-
-**SQL миграция:**
 ```sql
-ALTER TABLE payment_methods 
-ADD COLUMN IF NOT EXISTS supports_recurring BOOLEAN DEFAULT false;
+-- 1. Добавить новое значение в enum order_status
+ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'needs_mapping';
 
--- Помечаем все существующие карты как НЕ поддерживающие recurring
-COMMENT ON COLUMN payment_methods.supports_recurring IS 
-  'true if card was tokenized with recurring contract, allowing merchant-initiated charges without 3DS';
+-- 2. Создать функции для advisory lock
+CREATE OR REPLACE FUNCTION public.try_backfill_lock(p_lock_id bigint)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = 'public'
+AS $$
+  SELECT pg_try_advisory_lock(p_lock_id);
+$$;
+
+CREATE OR REPLACE FUNCTION public.release_backfill_lock(p_lock_id bigint)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = 'public'
+AS $$
+  SELECT pg_advisory_unlock(p_lock_id);
+$$;
 ```
 
 ---
 
-### Шаг 4: Обновить webhook для сохранения флага
+## PATCH 2: Data Migration — пометить 690 backfill orders
 
-**Файл:** `supabase/functions/payment-methods-webhook/index.ts`
+**Тип:** Data update (через insert tool, НЕ migration)
 
-При сохранении новой карты устанавливать `supports_recurring = true`:
+```sql
+-- Пометить backfill orders без product_id как needs_mapping
+UPDATE orders_v2
+SET 
+  status = 'needs_mapping',
+  meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object(
+    'requires_manual_mapping', true,
+    'mapping_reason', 'no_product_recovered_backfill',
+    'marked_at', now()::text,
+    'marked_by', 'backfill_cleanup_patch'
+  )
+WHERE meta->>'source' IN ('orphan_payment_fix', 'orphan_backfill')
+  AND product_id IS NULL
+  AND status != 'needs_mapping';
+
+-- Audit log для трассировки
+INSERT INTO audit_logs (action, actor_type, actor_user_id, actor_label, meta)
+VALUES (
+  'orders.backfill_cleanup',
+  'system',
+  NULL,
+  'patch-cleanup-690-orders',
+  jsonb_build_object(
+    'orders_updated', (SELECT count(*) FROM orders_v2 WHERE status = 'needs_mapping'),
+    'reason', 'no_product_recovered_backfill',
+    'executed_at', now()::text
+  )
+);
+```
+
+---
+
+## PATCH 3: admin-backfill-renewal-orders — использовать SQL advisory lock
+
+**Файл:** `supabase/functions/admin-backfill-renewal-orders/index.ts`
+
+**Изменения (строки 103-148):**
 
 ```typescript
-// Строка 287-305 - добавить supports_recurring: true
-const { error: insertError } = await supabase
-  .from('payment_methods')
-  .insert({
-    user_id: userId,
-    provider: 'bepaid',
-    provider_token: cardToken,
-    brand: cardBrand,
-    last4: cardLast4,
-    exp_month: cardExpMonth,
-    exp_year: cardExpYear,
-    is_default: isFirstCard,
-    status: 'active',
-    card_product: cardProduct,
-    card_category: cardCategory,
-    supports_recurring: true,  // ДОБАВИТЬ
-    meta: {
-      tracking_id: trackingId,
-      transaction_id: transaction.uid,
-    },
+// ============= PATCH 3: PROPER ADVISORY LOCK =============
+if (!dryRun) {
+  // Try to acquire lock via SQL function
+  const { data: lockAcquired, error: lockError } = await supabase
+    .rpc('try_backfill_lock', { p_lock_id: BACKFILL_ADVISORY_LOCK_ID });
+  
+  if (lockError) {
+    console.error('Lock acquisition error:', lockError);
+    // Fallback to audit_logs check
+    const { data: recentRun } = await supabase
+      .from('audit_logs')
+      .select('id, created_at')
+      .eq('action', 'subscription.renewal_backfill_running')
+      .eq('actor_label', 'admin-backfill-renewal-orders')
+      .gte('created_at', new Date(Date.now() - 60000).toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    
+    if (recentRun) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'already_running',
+        message: 'Another backfill is currently running (fallback check).',
+        running_since: recentRun.created_at,
+      }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+  } else if (lockAcquired === false) {
+    return new Response(JSON.stringify({
+      success: false,
+      error: 'already_running',
+      message: 'Another backfill is currently running. Please wait.',
+    }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+  
+  // Mark as running (for UI visibility + fallback)
+  await supabase.from('audit_logs').insert({
+    action: 'subscription.renewal_backfill_running',
+    actor_type: 'system',
+    actor_user_id: null,
+    actor_label: 'admin-backfill-renewal-orders',
+    meta: { /* ... */ },
   });
+}
 ```
 
----
-
-### Шаг 5: Улучшить UX при списании
-
-**Файл:** `supabase/functions/admin-manual-charge/index.ts`
-
-Перед списанием проверять флаг `supports_recurring`:
+**В конце функции (release lock):**
 
 ```typescript
-// После получения payment method (строка ~217)
-if (!paymentMethod.supports_recurring) {
-  return new Response(JSON.stringify({ 
-    success: false, 
-    error: 'Карта не поддерживает автоматические списания. Клиенту нужно перепривязать карту.',
-    requires_rebind: true,
-  }), {
-    status: 400,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+// Release advisory lock in finally
+if (!dryRun) {
+  await supabase.rpc('release_backfill_lock', { p_lock_id: BACKFILL_ADVISORY_LOCK_ID }).catch(err => {
+    console.error('Failed to release lock:', err);
   });
 }
 ```
 
 ---
 
-## Файлы для изменения
+## PATCH 4: grant-access-for-payment — блок для backfill orders
 
-| Файл | Изменение |
-|------|-----------|
-| `supabase/functions/payment-methods-tokenize/index.ts` | Добавить `additional_data.contract: ["recurring"]` |
-| `supabase/functions/admin-manual-charge/index.ts` | Добавить `card_on_file: {initiator: "merchant"}` + проверка `supports_recurring` |
-| `supabase/functions/payment-methods-webhook/index.ts` | Сохранять `supports_recurring: true` |
-| SQL миграция | Добавить колонку `supports_recurring` |
+**Файл:** `supabase/functions/grant-access-for-payment/index.ts`
+
+**Добавить после строки 85 (после получения resolvedOrderId):**
+
+```typescript
+// ============= PATCH 4: Check if resolved order is backfill-source =============
+if (resolvedOrderId) {
+  const { data: orderCheck } = await supabase
+    .from('orders_v2')
+    .select('meta')
+    .eq('id', resolvedOrderId)
+    .single();
+  
+  const orderMeta = (orderCheck?.meta || {}) as Record<string, any>;
+  const orderSource = orderMeta.source || '';
+  
+  if (['orphan_payment_fix', 'orphan_backfill'].includes(orderSource)) {
+    await supabase.from('audit_logs').insert({
+      action: 'access.grant_blocked_backfill_order',
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'grant-access-for-payment',
+      meta: {
+        payment_id: paymentId,
+        order_id: resolvedOrderId,
+        order_source: orderSource,
+        reason: 'backfill_order_cannot_grant',
+      },
+    });
+    
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'backfill_order_blocked',
+        message: 'Backfill orders cannot grant access. Manual review required.',
+        paymentId,
+        orderId: resolvedOrderId,
+      }),
+      { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+}
+```
 
 ---
 
-## Ожидаемый результат
+## PATCH 5: UI — скрыть needs_mapping по умолчанию
 
-1. **Новые привязки карт:**
-   - Клиент проходит 3DS один раз при привязке
-   - Карта сохраняется с `supports_recurring = true`
-   - Все последующие списания проходят БЕЗ 3DS
+### 5.1 AdminDeals.tsx
 
-2. **Старые карты:**
-   - Система определяет что карта не поддерживает recurring
-   - Админ видит понятное сообщение с предложением перепривязать карту
-   - Нет попыток списания которые гарантированно провалятся
+**Файл:** `src/pages/admin/AdminDeals.tsx`
 
-3. **Автосписания по рассрочке:**
-   - Edge Function для автоматических списаний использует тот же подход
-   - Списания проходят автоматически без участия клиента
+**Добавить в STATUS_CONFIG (строка ~67):**
+
+```typescript
+needs_mapping: { 
+  label: "Требует маппинга", 
+  color: "bg-purple-500/20 text-purple-600", 
+  icon: AlertTriangle 
+},
+```
+
+**Добавить state (после строки ~85):**
+
+```typescript
+const [showProblematic, setShowProblematic] = useState(false);
+```
+
+**Модифицировать filteredDeals (строки 250-272):**
+
+```typescript
+const filteredDeals = useMemo(() => {
+  if (!deals) return [];
+  
+  // PATCH 5: Filter out needs_mapping by default
+  let result = deals;
+  if (!showProblematic) {
+    result = result.filter(deal => deal.status !== 'needs_mapping');
+  }
+  
+  // ... остальная логика фильтрации
+}, [deals, search, activeFilters, profilesMap, getDealFieldValue, showProblematic]);
+```
+
+**Добавить Toggle в UI (рядом с фильтрами):**
+
+```tsx
+<div className="flex items-center gap-2 ml-4">
+  <Switch 
+    checked={showProblematic}
+    onCheckedChange={setShowProblematic}
+    id="show-problematic"
+  />
+  <Label htmlFor="show-problematic" className="text-sm text-muted-foreground cursor-pointer">
+    Показать проблемные ({deals?.filter(d => d.status === 'needs_mapping').length || 0})
+  </Label>
+</div>
+```
+
+### 5.2 ContactDealsDialog.tsx
+
+**Файл:** `src/components/admin/bepaid/ContactDealsDialog.tsx`
+
+**Добавить в STATUS_CONFIG (строка ~26):**
+
+```typescript
+needs_mapping: { label: "Требует маппинга", color: "bg-purple-500/20 text-purple-600", icon: AlertTriangle },
+```
+
+**Модифицировать запрос (строка ~79):**
+
+```typescript
+// Фильтровать needs_mapping из подсчёта
+.neq('status', 'needs_mapping')
+```
+
+**Или в useMemo:**
+
+```typescript
+const displayedDeals = useMemo(() => {
+  if (!deals) return [];
+  return deals.filter(d => d.status !== 'needs_mapping');
+}, [deals]);
+```
 
 ---
 
-## Тестирование
+## Порядок применения
 
-1. Привязать новую карту через личный кабинет
-2. Убедиться что карта сохранена с `supports_recurring = true`
-3. Сделать ручное списание через админку
-4. Убедиться что списание прошло без ошибки P.4011
+| Шаг | Действие | Тип | Риск |
+|-----|----------|-----|------|
+| 1 | PATCH 1: Добавить enum + SQL functions | Migration | Низкий |
+| 2 | Deploy edge functions | Auto | — |
+| 3 | PATCH 2: Пометить 690 orders | Data update | Средний (одноразово) |
+| 4 | PATCH 3-4: Edge functions | Code | Низкий |
+| 5 | PATCH 5: UI filtering | Frontend | Низкий |
+| 6 | Продолжить backfill orphans | Execute | Контролируемый |
+| 7 | Верифицировать DoD | SQL queries | — |
+
+---
+
+## DoD — SQL проверки после всех патчей
+
+```sql
+-- 1. Orphan payments оставшиеся (до backfill)
+SELECT count(*) FROM payments_v2 
+WHERE status='succeeded' AND amount>0 AND order_id IS NULL;
+
+-- 2. Backfill orders без product теперь помечены
+SELECT count(*) FROM orders_v2 
+WHERE meta->>'source' IN ('orphan_payment_fix','orphan_backfill') 
+  AND product_id IS NULL 
+  AND status != 'needs_mapping';
+-- Ожидаемо: 0
+
+-- 3. Все 690 в статусе needs_mapping
+SELECT count(*) FROM orders_v2 WHERE status = 'needs_mapping';
+-- Ожидаемо: 690
+
+-- 4. Payments с needs_manual_mapping
+SELECT count(*) FROM payments_v2 WHERE meta->>'needs_manual_mapping' = 'true';
+
+-- 5. Нет выдачи доступа по backfill
+SELECT count(*) FROM audit_logs 
+WHERE action LIKE 'access.%' 
+  AND meta->>'order_source' IN ('orphan_payment_fix','orphan_backfill');
+-- Ожидаемо: 0
+
+-- 6. SYSTEM ACTOR proof
+SELECT action, count(*) FROM audit_logs 
+WHERE actor_type = 'system' AND actor_label LIKE '%backfill%'
+GROUP BY action ORDER BY count DESC;
+```
+
+---
+
+## UI DoD
+
+- В списке сделок Admin: `needs_mapping` сделки скрыты по умолчанию
+- Toggle "Показать проблемные (690)" отображает их
+- В карточке контакта: `needs_mapping` сделки не учитываются в "Сделки (N)"
+- Контакт "Ольга" с оплатами 55+100 показывает "Сделки (2)"
+
+---
+
+## Изменяемые файлы
+
+| Файл | Тип изменения |
+|------|---------------|
+| Database migration | ADD enum value + 2 SQL functions |
+| Data update (insert tool) | UPDATE 690 orders to needs_mapping |
+| `supabase/functions/admin-backfill-renewal-orders/index.ts` | Proper advisory lock |
+| `supabase/functions/grant-access-for-payment/index.ts` | Backfill order block |
+| `src/pages/admin/AdminDeals.tsx` | UI filtering + toggle |
+| `src/components/admin/bepaid/ContactDealsDialog.tsx` | Hide needs_mapping |
+
