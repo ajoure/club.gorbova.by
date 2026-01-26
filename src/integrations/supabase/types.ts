@@ -7972,6 +7972,7 @@ export type Database = {
         }
         Returns: string
       }
+      release_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
       resolve_user_id: {
         Args: { input_id: string }
         Returns: {
@@ -8016,6 +8017,7 @@ export type Database = {
         Returns: Json
       }
       trigger_card_verification: { Args: never; Returns: undefined }
+      try_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }
       unlock_stuck_media_jobs: {
         Args: { stuck_seconds?: number }
         Returns: number
@@ -8052,6 +8054,7 @@ export type Database = {
         | "failed"
         | "refunded"
         | "canceled"
+        | "needs_mapping"
       payment_plan_type: "full" | "installment" | "bank_installment" | "trial"
       payment_status:
         | "pending"
@@ -8232,6 +8235,7 @@ export const Constants = {
         "failed",
         "refunded",
         "canceled",
+        "needs_mapping",
       ],
       payment_plan_type: ["full", "installment", "bank_installment", "trial"],
       payment_status: [

@@ -84,6 +84,45 @@ Deno.serve(async (req) => {
     const resolvedOrderId = ensureResult.orderId;
     console.log(`[grant-access-for-payment] Resolved order ${resolvedOrderId} (action: ${ensureResult.action})`);
 
+    // ============= PATCH 4: Check if resolved order is backfill-source =============
+    if (resolvedOrderId) {
+      const { data: orderCheck } = await supabase
+        .from('orders_v2')
+        .select('meta')
+        .eq('id', resolvedOrderId)
+        .single();
+      
+      const orderMeta = (orderCheck?.meta || {}) as Record<string, any>;
+      const orderSource = orderMeta.source || '';
+      
+      if (['orphan_payment_fix', 'orphan_backfill'].includes(orderSource)) {
+        await supabase.from('audit_logs').insert({
+          action: 'access.grant_blocked_backfill_order',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'grant-access-for-payment',
+          meta: {
+            payment_id: paymentId,
+            order_id: resolvedOrderId,
+            order_source: orderSource,
+            reason: 'backfill_order_cannot_grant',
+          },
+        });
+
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: 'backfill_order_blocked',
+            message: 'Backfill orders cannot grant access. Manual review required.',
+            paymentId,
+            orderId: resolvedOrderId,
+          }),
+          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+    // ============= END PATCH 4 =============
+
     // ============= PATCH 7: Check if this is a "skipped due to needs_manual_mapping" =============
     // If ensureResult.reason starts with "needs_manual_mapping", do NOT call grant-access
     if (ensureResult.action === 'skipped' && ensureResult.reason?.startsWith('needs_manual_mapping')) {
