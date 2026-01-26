@@ -4866,6 +4866,7 @@ export type Database = {
           telegram_linked_at: string | null
           telegram_user_id: number | null
           telegram_username: string | null
+          timezone: string | null
           updated_at: string
           user_id: string | null
           was_club_member: boolean | null
@@ -4922,6 +4923,7 @@ export type Database = {
           telegram_linked_at?: string | null
           telegram_user_id?: number | null
           telegram_username?: string | null
+          timezone?: string | null
           updated_at?: string
           user_id?: string | null
           was_club_member?: boolean | null
@@ -4978,6 +4980,7 @@ export type Database = {
           telegram_linked_at?: string | null
           telegram_user_id?: number | null
           telegram_username?: string | null
+          timezone?: string | null
           updated_at?: string
           user_id?: string | null
           was_club_member?: boolean | null
@@ -5341,6 +5344,87 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      statement_lines: {
+        Row: {
+          card_last4: string | null
+          created_at: string | null
+          customer_email: string | null
+          error: string | null
+          id: string
+          order_id: string | null
+          parsed_amount: number | null
+          parsed_currency: string | null
+          parsed_paid_at: string | null
+          parsed_status: string | null
+          payment_id: string | null
+          processed_at: string | null
+          provider: string
+          raw_data: Json | null
+          source: string
+          source_timezone: string | null
+          stable_key: string
+          transaction_type: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          card_last4?: string | null
+          created_at?: string | null
+          customer_email?: string | null
+          error?: string | null
+          id?: string
+          order_id?: string | null
+          parsed_amount?: number | null
+          parsed_currency?: string | null
+          parsed_paid_at?: string | null
+          parsed_status?: string | null
+          payment_id?: string | null
+          processed_at?: string | null
+          provider?: string
+          raw_data?: Json | null
+          source?: string
+          source_timezone?: string | null
+          stable_key: string
+          transaction_type?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          card_last4?: string | null
+          created_at?: string | null
+          customer_email?: string | null
+          error?: string | null
+          id?: string
+          order_id?: string | null
+          parsed_amount?: number | null
+          parsed_currency?: string | null
+          parsed_paid_at?: string | null
+          parsed_status?: string | null
+          payment_id?: string | null
+          processed_at?: string | null
+          provider?: string
+          raw_data?: Json | null
+          source?: string
+          source_timezone?: string | null
+          stable_key?: string
+          transaction_type?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "statement_lines_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "statement_lines_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       subscriptions: {
         Row: {
@@ -7176,6 +7260,60 @@ export type Database = {
             columns: ["product_id"]
             isOneToOne: false
             referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      trial_blocks: {
+        Row: {
+          created_at: string | null
+          expires_at: string | null
+          id: string
+          meta: Json | null
+          product_id: string | null
+          profile_id: string | null
+          reason: string
+          removed_at: string | null
+          removed_by: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string
+          meta?: Json | null
+          product_id?: string | null
+          profile_id?: string | null
+          reason: string
+          removed_at?: string | null
+          removed_by?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string
+          meta?: Json | null
+          product_id?: string | null
+          profile_id?: string | null
+          reason?: string
+          removed_at?: string | null
+          removed_by?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trial_blocks_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trial_blocks_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

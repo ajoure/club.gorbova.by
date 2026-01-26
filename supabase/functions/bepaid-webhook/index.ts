@@ -2849,6 +2849,90 @@ async function createOrderFromWebhook(
     }
   }
   
+  // PATCH-2: Trial Guard - prevent trial orders for users with active subscriptions or trial blocks
+  const TRIAL_AMOUNT_THRESHOLD = 5; // BYN - amounts <= this are considered trial
+  const isTrialAmount = amountBYN <= TRIAL_AMOUNT_THRESHOLD;
+  
+  if (isTrialAmount && customerEmail) {
+    // Find user by email to check for active subscriptions
+    const { data: profileForTrialCheck } = await supabase
+      .from('profiles')
+      .select('id, user_id')
+      .eq('email', customerEmail)
+      .maybeSingle();
+    
+    if (profileForTrialCheck?.user_id) {
+      // Check for active subscription
+      const { data: activeSub } = await supabase
+        .from('subscriptions_v2')
+        .select('id, status, product_id')
+        .eq('user_id', profileForTrialCheck.user_id)
+        .in('status', ['active', 'trial', 'grace'])
+        .maybeSingle();
+      
+      // Check for trial block
+      const { data: trialBlock } = await supabase
+        .from('trial_blocks')
+        .select('id, reason, expires_at')
+        .eq('user_id', profileForTrialCheck.user_id)
+        .is('removed_at', null)
+        .maybeSingle();
+      
+      // If expires_at is set and passed, ignore the block
+      const isBlockActive = trialBlock && (!trialBlock.expires_at || new Date(trialBlock.expires_at) > now);
+      
+      if (activeSub || isBlockActive) {
+        console.warn(`[WEBHOOK] TRIAL BLOCKED for ${customerEmail}: activeSub=${!!activeSub}, trialBlock=${!!isBlockActive}`);
+        
+        // Log to audit
+        await supabase.from('audit_logs').insert({
+          actor_user_id: null,
+          actor_type: 'system',
+          actor_label: 'bepaid-webhook',
+          action: 'payment.trial_blocked',
+          target_user_id: profileForTrialCheck.user_id,
+          meta: {
+            bepaid_uid: transactionUid,
+            amount: amountBYN,
+            email: customerEmail,
+            has_active_subscription: !!activeSub,
+            active_subscription_id: activeSub?.id,
+            active_subscription_status: activeSub?.status,
+            has_trial_block: !!isBlockActive,
+            trial_block_id: trialBlock?.id,
+            trial_block_reason: trialBlock?.reason,
+          },
+        });
+        
+        // Save payment but mark as ignored
+        const { data: ignoredPayment } = await supabase
+          .from('payments_v2')
+          .insert({
+            provider_payment_id: transactionUid,
+            provider: 'bepaid',
+            amount: amountBYN,
+            currency: currency,
+            status: 'succeeded',
+            transaction_type: 'payment',
+            paid_at: now.toISOString(),
+            profile_id: profileForTrialCheck.id,
+            meta: {
+              ignored_reason: activeSub ? 'trial_blocked_active_subscription' : 'trial_blocked_by_block',
+              active_subscription_id: activeSub?.id,
+              trial_block_id: trialBlock?.id,
+              bepaid_transaction: transaction,
+            },
+            origin: 'bepaid',
+          })
+          .select()
+          .single();
+        
+        // Return null to indicate no order should be created
+        return null;
+      }
+    }
+  }
+  
   // Find or create user
   let userId: string | null = null;
   const { data: profile } = await supabase

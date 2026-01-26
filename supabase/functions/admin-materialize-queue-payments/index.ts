@@ -220,6 +220,47 @@ serve(async (req) => {
 
     // 5. Process each unmaterialized item
     for (const { item: queueItem, stableUid } of unmaterializedItems) {
+      // PATCH-7: Guard - reject 2026+ payments without bepaid_uid
+      const paidAtDate = queueItem.paid_at ? new Date(queueItem.paid_at) : null;
+      const is2026Plus = paidAtDate && paidAtDate >= new Date('2026-01-01');
+      
+      if (is2026Plus && !queueItem.bepaid_uid) {
+        result.stats.skipped++;
+        result.stats.to_create--;
+        
+        if (!dryRun) {
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'admin-materialize-queue-payments',
+            action: 'payment.import_rejected_missing_uid',
+            meta: {
+              queue_id: queueItem.id,
+              paid_at: queueItem.paid_at,
+              amount: queueItem.amount,
+              reason: '2026+ payment without bepaid_uid',
+            },
+          });
+          
+          // Mark as needs_uid
+          await supabase
+            .from('payment_reconcile_queue')
+            .update({ status: 'needs_uid', last_error: '2026+ payments require bepaid_uid' })
+            .eq('id', queueItem.id);
+        }
+        
+        if (result.samples.length < 10) {
+          result.samples.push({
+            queue_id: queueItem.id,
+            stable_uid: stableUid,
+            payment_id: null,
+            result: 'skipped',
+            error: '2026+ payment without bepaid_uid',
+          });
+        }
+        continue;
+      }
+      
       const mappedStatus = queueItem.status === 'completed' ? 'succeeded' : queueItem.status;
       
       const paymentData = {

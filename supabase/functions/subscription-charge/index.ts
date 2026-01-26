@@ -830,6 +830,31 @@ async function chargeSubscription(
     
     // 4. Final fallback: current tariff price (legacy behavior)
     if (!amount || amount <= 0) {
+      // PATCH-6: Guard against multiple active prices
+      const { count: activePricesCount } = await supabase
+        .from('tariff_prices')
+        .select('*', { count: 'exact', head: true })
+        .eq('tariff_id', tariff.id)
+        .eq('is_active', true);
+
+      if (activePricesCount && activePricesCount > 1) {
+        console.error(`Subscription ${id}: MULTIPLE ACTIVE PRICES FOUND (${activePricesCount}) for tariff ${tariff.id}`);
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'subscription-charge',
+          action: 'subscription.multiple_active_prices_error',
+          target_user_id: user_id,
+          meta: {
+            subscription_id: id,
+            tariff_id: tariff.id,
+            tariff_code: tariff.code,
+            active_prices_count: activePricesCount,
+          }
+        });
+        return { subscription_id: id, success: false, error: `Multiple active prices found for tariff ${tariff.code}` };
+      }
+
       const { data: priceData } = await supabase
         .from('tariff_prices')
         .select('price, final_price, currency')
