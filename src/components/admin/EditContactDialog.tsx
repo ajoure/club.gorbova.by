@@ -129,13 +129,18 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
     
     // If email changed AND user has auth account → sync auth.users
     if (emailChanged && contact.user_id) {
-      const { error: authError } = await supabase.functions.invoke("users-admin-actions", {
+      const { data, error: authError } = await supabase.functions.invoke("users-admin-actions", {
         body: {
           action: "change_email",
           targetUserId: contact.user_id,
           newEmail: formData.email,
         }
       });
+      
+      // Handle 409 conflict (email already in use) - comes in data, not error
+      if (data?.error === "Email already in use") {
+        throw new Error("Этот email уже используется другим пользователем");
+      }
       
       if (authError) {
         throw new Error(`Ошибка смены email для входа: ${authError.message}`);
