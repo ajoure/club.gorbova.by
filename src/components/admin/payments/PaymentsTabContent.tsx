@@ -12,6 +12,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { useUnifiedPayments, UnifiedPayment, DateFilter } from "@/hooks/useUnifiedPayments";
+import PaymentsStatsPanel from "./PaymentsStatsPanel";
 import SmartImportDialog from "@/components/admin/bepaid/SmartImportDialog";
 import PaymentsTable from "@/components/admin/payments/PaymentsTable";
 import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
@@ -296,6 +297,13 @@ export function PaymentsTabContent() {
           </Button>
         </div>
       </div>
+
+      {/* Stats Panel */}
+      <PaymentsStatsPanel 
+        payments={filteredPayments} 
+        isLoading={isLoading}
+        dateRange={dateFilter}
+      />
       
       {/* Main content */}
       <Card>
@@ -389,6 +397,7 @@ export function PaymentsTabContent() {
               onToggleSelectAll={toggleSelectAll}
               onToggleItem={toggleItem}
               onRefetch={refetch}
+              displayTimezone={displayTimezone}
             />
           </div>
         </CardContent>

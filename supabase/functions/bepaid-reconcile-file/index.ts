@@ -29,8 +29,12 @@ interface ReconcileRequest {
 interface ReconcileStats {
   file_count: number;
   db_count: number;
+  matched: number;
   missing_in_db: number;
+  extra_in_db: number;
   status_mismatches: number;
+  amount_mismatches: number;
+  type_mismatches: number;
   overrides_created: number;
   inserts_created: number;
   errors: number;
@@ -40,12 +44,23 @@ interface ReconcileResult {
   success: boolean;
   dry_run: boolean;
   stats: ReconcileStats;
-  missing: Array<{ uid: string; status: string; amount: number }>;
-  mismatches: Array<{ uid: string; file_status: string; db_status: string; db_tx_type: string }>;
+  missing: Array<{ uid: string; status: string; amount: number; transaction_type: string }>;
+  extra: Array<{ uid: string; amount: number; status: string }>;
+  mismatches: Array<{ 
+    uid: string; 
+    file_status: string; 
+    db_status: string; 
+    file_amount?: number;
+    db_amount?: number;
+    file_type?: string;
+    db_type?: string;
+    mismatch_type: 'status' | 'amount' | 'type';
+  }>;
   errors: string[];
   summary: {
-    file: { successful: number; failed: number; refunded: number; cancelled: number; total_amount: number };
+    file: { successful: number; failed: number; refunded: number; cancelled: number; total_amount: number; total_fees: number };
     db: { successful: number; failed: number; refunded: number; cancelled: number; total_amount: number };
+    net_revenue: number;
   };
 }
 
@@ -158,7 +173,7 @@ Deno.serve(async (req) => {
     const fileMap = new Map(transactions.map(t => [t.uid, t]));
 
     // Calculate summaries
-    const fileSummary = { successful: 0, failed: 0, refunded: 0, cancelled: 0, total_amount: 0 };
+    const fileSummary = { successful: 0, failed: 0, refunded: 0, cancelled: 0, total_amount: 0, total_fees: 0 };
     const dbSummary = { successful: 0, failed: 0, refunded: 0, cancelled: 0, total_amount: 0 };
 
     // File summary
@@ -198,12 +213,25 @@ Deno.serve(async (req) => {
     }
 
     // Find discrepancies
-    const missing: Array<{ uid: string; status: string; amount: number }> = [];
-    const mismatches: Array<{ uid: string; file_status: string; db_status: string; db_tx_type: string }> = [];
+    const missing: Array<{ uid: string; status: string; amount: number; transaction_type: string }> = [];
+    const mismatches: Array<{ 
+      uid: string; 
+      file_status: string; 
+      db_status: string; 
+      file_amount?: number;
+      db_amount?: number;
+      file_type?: string;
+      db_type?: string;
+      mismatch_type: 'status' | 'amount' | 'type';
+    }> = [];
+    const extra: Array<{ uid: string; amount: number; status: string }> = [];
     const errors: string[] = [];
 
     let overridesCreated = 0;
     let insertsCreated = 0;
+    let matched = 0;
+    let amountMismatches = 0;
+    let typeMismatches = 0;
 
     for (const tx of transactions) {
       const dbRec = dbMap.get(tx.uid);
@@ -211,7 +239,7 @@ Deno.serve(async (req) => {
 
       if (!dbRec) {
         // Missing in DB - needs insert
-        missing.push({ uid: tx.uid, status: tx.status, amount: tx.amount });
+        missing.push({ uid: tx.uid, status: tx.status, amount: tx.amount, transaction_type: tx.transaction_type });
 
         if (!dry_run) {
           // Insert directly into payments_v2
@@ -253,12 +281,24 @@ Deno.serve(async (req) => {
         const dbEffectiveStatus = override || dbRec.status;
         const dbNormStatus = normalizeDbStatus(dbEffectiveStatus, dbRec.transaction_type);
 
-        if (fileNormStatus !== dbNormStatus) {
+        // Check for amount mismatch
+        if (Math.abs(tx.amount) !== Math.abs(dbRec.amount)) {
           mismatches.push({ 
             uid: tx.uid, 
             file_status: fileNormStatus, 
             db_status: dbNormStatus,
-            db_tx_type: dbRec.transaction_type || 'unknown'
+            file_amount: tx.amount,
+            db_amount: dbRec.amount,
+            mismatch_type: 'amount'
+          });
+          amountMismatches++;
+        } else if (fileNormStatus !== dbNormStatus) {
+          // Status mismatch
+          mismatches.push({ 
+            uid: tx.uid, 
+            file_status: fileNormStatus, 
+            db_status: dbNormStatus,
+            mismatch_type: 'status'
           });
 
           if (!dry_run) {
@@ -293,15 +333,25 @@ Deno.serve(async (req) => {
     // Check for DB records not in file (possible orphans)
     const fileUids = new Set(transactions.map(t => t.uid));
     const orphansInDb = (dbRecords || []).filter(r => !fileUids.has(r.provider_payment_id));
+    for (const orphan of orphansInDb) {
+      extra.push({ uid: orphan.provider_payment_id, amount: orphan.amount, status: orphan.status });
+    }
     if (orphansInDb.length > 0) {
       console.log(`Warning: ${orphansInDb.length} records in DB not found in file`);
     }
 
+    // Calculate net revenue
+    const netRevenue = fileSummary.total_amount - fileSummary.total_fees;
+
     const stats: ReconcileStats = {
       file_count: transactions.length,
       db_count: dbRecords?.length || 0,
+      matched,
       missing_in_db: missing.length,
-      status_mismatches: mismatches.length,
+      extra_in_db: extra.length,
+      status_mismatches: mismatches.filter(m => m.mismatch_type === 'status').length,
+      amount_mismatches: amountMismatches,
+      type_mismatches: typeMismatches,
       overrides_created: overridesCreated,
       inserts_created: insertsCreated,
       errors: errors.length,
@@ -311,12 +361,14 @@ Deno.serve(async (req) => {
       success: true,
       dry_run,
       stats,
-      missing: missing.slice(0, 50), // Limit for response size
+      missing: missing.slice(0, 50),
+      extra: extra.slice(0, 50),
       mismatches: mismatches.slice(0, 50),
       errors: errors.slice(0, 20),
       summary: {
         file: fileSummary,
         db: dbSummary,
+        net_revenue: netRevenue,
       },
     };
 

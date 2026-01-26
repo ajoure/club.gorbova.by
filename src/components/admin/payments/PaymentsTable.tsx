@@ -6,11 +6,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { User, MoreHorizontal, Copy, Link2, ExternalLink, RefreshCw, GripVertical, Handshake, UserMinus, Unlink } from "lucide-react";
-import { format } from "date-fns";
-import { ru } from "date-fns/locale";
 import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { formatPaymentTime, TimezoneMode } from "@/lib/formatPaymentTime";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { LinkContactDialog } from "./LinkContactDialog";
 import { UnlinkContactDialog } from "./UnlinkContactDialog";
@@ -46,6 +45,7 @@ interface PaymentsTableProps {
   onToggleSelectAll: () => void;
   onToggleItem: (id: string) => void;
   onRefetch: () => void;
+  displayTimezone?: TimezoneMode;
 }
 
 // Column configuration
@@ -141,7 +141,7 @@ function SortableResizableHeader({ column, onResize, children }: SortableResizab
   );
 }
 
-export default function PaymentsTable({ payments, isLoading, selectedItems, onToggleSelectAll, onToggleItem, onRefetch }: PaymentsTableProps) {
+export default function PaymentsTable({ payments, isLoading, selectedItems, onToggleSelectAll, onToggleItem, onRefetch, displayTimezone = 'user' }: PaymentsTableProps) {
   // Dialog states
   const [linkContactOpen, setLinkContactOpen] = useState(false);
   const [unlinkContactOpen, setUnlinkContactOpen] = useState(false);
@@ -354,7 +354,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
       case 'date':
         return (
           <span className="whitespace-nowrap text-xs">
-            {payment.paid_at ? format(new Date(payment.paid_at), "dd.MM.yy HH:mm", { locale: ru }) : "—"}
+            {formatPaymentTime(payment.paid_at, displayTimezone)}
           </span>
         );
         
