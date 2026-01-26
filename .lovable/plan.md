@@ -1,195 +1,324 @@
+План: Исправление системы «1 Payment = 1 Order» (фиксированный, без перепланирования)
+
+Ключевые корректировки (обязательные, согласованы)
+
+Корректировка	Текущее состояние	Требуемое изменение
+DoD-1 закрытие	orphan_succeeded остаётся >0, потому что для части succeeded платежей не создаётся order / не проставляется order_id	bepaid-webhook на successful ВСЕГДА вызывает ensureOrderForPayment() и гарантирует, что у payment будет order_id: либо на paid order, либо на needs_mapping order
+Card-based recovery	card_profile_links даёт profile_id, а не user_id	Recovery делает JOIN: card_profile_links.profile_id → profiles.id → profiles.user_id
+Card collision guards	Нет строгого guard	0 match → requires_manual_mapping; 2+ match → audit payment.card_link_collision, STOP (без auto-grant), order всё равно создаётся как needs_mapping и payment.linked
+Grant rules	Блок по meta.source	Блок строго по условию: order.status='needs_mapping' AND mapping_applied_at IS NULL
+UI workflow	needs_mapping могут “прятаться”	Прятать можно, но Badge “Требуют маппинга: N” всегда виден + вкладка “Проблемные”
+Admin API	Нет dry-run	admin-map-order-product: dry-run → execute, SYSTEM ACTOR audit logs
+Backfill/Reconcile	Делается кусочно	После фикса webhook — reconcile батчами для закрытия DoD-1 до 0
 
 
-# План: Восстановление целостности системы "1 Payment = 1 Order"
+⸻
 
-## Текущее состояние (диагностика)
+PATCH 1: ensure-order-for-payment — Card-based user recovery + collision guards + ALWAYS create order
 
-| Метрика | Значение | Статус |
-|---------|----------|--------|
-| Orphan payments | 1675 | ⚠️ Нужен backfill |
-| Trial mismatch | 0 | ✅ Исправлено |
-| Backfill orders без product_id | 690 | ⚠️ Нужна очистка |
-| Помечены needs_manual_mapping | 20 | ✅ Работает |
-| Доступ выдан backfill-orders | 0 | ✅ Защита работает |
-| Текущий enum order_status | failed, paid, refunded | Нет needs_mapping |
+Файл: supabase/functions/_shared/ensure-order-for-payment.ts
 
-## Критические проблемы для решения
+1.1. Изменение recoverProductTariffForOrphan (точечная правка)
 
-1. **690 "плохих" backfill orders** — созданы до PATCH 6, без product_id, засоряют UI
-2. **Advisory lock не работает** — RPC `pg_try_advisory_lock` не существует в Supabase
-3. **UI не скрывает проблемные сделки** — needs_mapping статус отсутствует
+async function recoverProductTariffForOrphan(
+  supabase: SupabaseClient,
+  userId: string | null,
+  _amount: number,
+  _currency: string,
+  cardLast4: string | null,  // NEW
+  cardBrand: string | null   // NEW
+): Promise<{
+  productId: string | null;
+  tariffId: string | null;
+  offerId: string | null;
+  source: string | null;
+  requiresMapping: boolean;
+  mappingReason: string | null;
+  recoveredUserId: string | null;  // NEW
+  cardCollision: boolean;          // NEW
+}> {
+  let productId: string | null = null;
+  let tariffId: string | null = null;
+  let offerId: string | null = null;
+  let source: string | null = null;
 
----
+  let recoveredUserId = userId;
+  let cardCollision = false;
 
-## PATCH 1: Database Migration — добавить enum + SQL functions
+  // ============= PRIORITY 0: Card-based user recovery (STRICT GUARDED) =============
+  if (!recoveredUserId && cardLast4 && cardBrand) {
+    const normalizedBrand = normalizeBrand(cardBrand);
 
-**Тип:** Migration (структура БД)
+    // JOIN: card_profile_links.profile_id → profiles.id → profiles.user_id
+    const { data: cardLinks, error: cardErr } = await supabase
+      .from('card_profile_links')
+      .select('profile_id, profiles!inner(id, user_id)')
+      .eq('card_last4', cardLast4)
+      .eq('card_brand', normalizedBrand);
 
-```sql
--- 1. Добавить новое значение в enum order_status
-ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'needs_mapping';
+    if (!cardErr && Array.isArray(cardLinks)) {
+      if (cardLinks.length === 1) {
+        recoveredUserId = cardLinks[0].profiles?.user_id || null;
+        source = 'card_profile_link';
+      } else if (cardLinks.length >= 2) {
+        // Collision: do NOT pick one
+        cardCollision = true;
+      }
+      // 0 matches → keep recoveredUserId null
+    }
+  }
 
--- 2. Создать функции для advisory lock
-CREATE OR REPLACE FUNCTION public.try_backfill_lock(p_lock_id bigint)
-RETURNS boolean
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = 'public'
-AS $$
-  SELECT pg_try_advisory_lock(p_lock_id);
-$$;
-
-CREATE OR REPLACE FUNCTION public.release_backfill_lock(p_lock_id bigint)
-RETURNS boolean
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = 'public'
-AS $$
-  SELECT pg_advisory_unlock(p_lock_id);
-$$;
-```
-
----
-
-## PATCH 2: Data Migration — пометить 690 backfill orders
-
-**Тип:** Data update (через insert tool, НЕ migration)
-
-```sql
--- Пометить backfill orders без product_id как needs_mapping
-UPDATE orders_v2
-SET 
-  status = 'needs_mapping',
-  meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object(
-    'requires_manual_mapping', true,
-    'mapping_reason', 'no_product_recovered_backfill',
-    'marked_at', now()::text,
-    'marked_by', 'backfill_cleanup_patch'
-  )
-WHERE meta->>'source' IN ('orphan_payment_fix', 'orphan_backfill')
-  AND product_id IS NULL
-  AND status != 'needs_mapping';
-
--- Audit log для трассировки
-INSERT INTO audit_logs (action, actor_type, actor_user_id, actor_label, meta)
-VALUES (
-  'orders.backfill_cleanup',
-  'system',
-  NULL,
-  'patch-cleanup-690-orders',
-  jsonb_build_object(
-    'orders_updated', (SELECT count(*) FROM orders_v2 WHERE status = 'needs_mapping'),
-    'reason', 'no_product_recovered_backfill',
-    'executed_at', now()::text
-  )
-);
-```
-
----
-
-## PATCH 3: admin-backfill-renewal-orders — использовать SQL advisory lock
-
-**Файл:** `supabase/functions/admin-backfill-renewal-orders/index.ts`
-
-**Изменения (строки 103-148):**
-
-```typescript
-// ============= PATCH 3: PROPER ADVISORY LOCK =============
-if (!dryRun) {
-  // Try to acquire lock via SQL function
-  const { data: lockAcquired, error: lockError } = await supabase
-    .rpc('try_backfill_lock', { p_lock_id: BACKFILL_ADVISORY_LOCK_ID });
-  
-  if (lockError) {
-    console.error('Lock acquisition error:', lockError);
-    // Fallback to audit_logs check
-    const { data: recentRun } = await supabase
-      .from('audit_logs')
-      .select('id, created_at')
-      .eq('action', 'subscription.renewal_backfill_running')
-      .eq('actor_label', 'admin-backfill-renewal-orders')
-      .gte('created_at', new Date(Date.now() - 60000).toISOString())
+  // Priority 1: User latest subscription
+  if (recoveredUserId) {
+    const { data: userSub } = await supabase
+      .from('subscriptions_v2')
+      .select('product_id, tariff_id, offer_id')
+      .eq('user_id', recoveredUserId)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    
-    if (recentRun) {
-      return new Response(JSON.stringify({
-        success: false,
-        error: 'already_running',
-        message: 'Another backfill is currently running (fallback check).',
-        running_since: recentRun.created_at,
-      }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+    if (userSub?.product_id) {
+      productId = userSub.product_id;
+      tariffId = userSub.tariff_id;
+      offerId = userSub.offer_id;
+      source = source || 'user_subscription';
     }
-  } else if (lockAcquired === false) {
-    return new Response(JSON.stringify({
-      success: false,
-      error: 'already_running',
-      message: 'Another backfill is currently running. Please wait.',
-    }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
-  
-  // Mark as running (for UI visibility + fallback)
+
+  // Priority 2: User last paid order
+  if (!productId && recoveredUserId) {
+    const { data: lastOrder } = await supabase
+      .from('orders_v2')
+      .select('product_id, tariff_id, offer_id')
+      .eq('user_id', recoveredUserId)
+      .eq('status', 'paid')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastOrder?.product_id) {
+      productId = lastOrder.product_id;
+      tariffId = lastOrder.tariff_id;
+      offerId = lastOrder.offer_id;
+      source = source || 'last_paid_order';
+    }
+  }
+
+  const requiresMapping = !productId || cardCollision;
+
+  let mappingReason: string | null = null;
+  if (cardCollision) mappingReason = 'card_collision';
+  else if (!productId) mappingReason = recoveredUserId ? 'no_subscription_or_order_found' : 'no_user_id';
+
+  return {
+    productId,
+    tariffId,
+    offerId,
+    source,
+    requiresMapping,
+    mappingReason,
+    recoveredUserId,
+    cardCollision,
+  };
+}
+
+1.2. Изменение createOrderForOrphanPayment (ключевая гарантия DoD-1)
+
+Требование: при любом payment.status='succeeded' + order_id IS NULL — создаём order всегда.
+Если product неизвестен или collision — создаём orders_v2.status='needs_mapping', но всё равно привязываем payment к order.
+
+Дополнительно: если cardCollision=true — обязательно audit log payment.card_link_collision.
+
+// 1) Вызвать recover... с card данными
+const recovery = await recoverProductTariffForOrphan(
+  supabase,
+  payment.user_id,
+  payment.amount,
+  payment.currency || 'BYN',
+  payment.card_last4 ?? null,
+  payment.card_brand ?? null
+);
+
+if (recovery.cardCollision) {
   await supabase.from('audit_logs').insert({
-    action: 'subscription.renewal_backfill_running',
+    action: 'payment.card_link_collision',
     actor_type: 'system',
     actor_user_id: null,
-    actor_label: 'admin-backfill-renewal-orders',
-    meta: { /* ... */ },
+    actor_label: callerLabel,
+    target_user_id: null,
+    meta: {
+      payment_id: payment.id,
+      card_last4: payment.card_last4,
+      card_brand: payment.card_brand,
+      reason: 'multiple_profiles_for_card',
+    },
   });
 }
-```
 
-**В конце функции (release lock):**
+// 2) Определить статус order
+const orderStatus =
+  recovery.requiresMapping || !recovery.productId ? 'needs_mapping' : 'paid';
 
-```typescript
-// Release advisory lock in finally
-if (!dryRun) {
-  await supabase.rpc('release_backfill_lock', { p_lock_id: BACKFILL_ADVISORY_LOCK_ID }).catch(err => {
-    console.error('Failed to release lock:', err);
-  });
+// 3) Создать order (product_id может быть NULL)
+const { data: newOrder, error: createErr } = await supabase
+  .from('orders_v2')
+  .insert({
+    order_number: orderNumber,
+    user_id: recovery.recoveredUserId || payment.user_id,
+    profile_id: profileId,
+    status: orderStatus,
+    currency: payment.currency || 'BYN',
+    base_price: payment.amount,
+    final_price: payment.amount,
+    paid_amount: payment.amount,
+    is_trial: false,
+    product_id: recovery.productId, // может быть NULL при needs_mapping
+    tariff_id: recovery.tariffId,
+    offer_id: recovery.offerId,
+    meta: {
+      source: 'orphan_payment_fix',
+      payment_id: payment.id,
+      created_by: callerLabel,
+      product_source: recovery.source,
+      requires_manual_mapping: recovery.requiresMapping,
+      mapping_reason: recovery.mappingReason,
+      card_collision: recovery.cardCollision || false,
+    },
+  })
+  .select('id, order_number, status')
+  .single();
+
+// 4) ALWAYS link payment to order (закрываем DoD-1)
+await relinkPaymentToOrder(
+  supabase,
+  payment,
+  newOrder.id,
+  null,
+  callerLabel,
+  'orphan'
+);
+
+
+⸻
+
+PATCH 2: bepaid-webhook — ensureOrderForPayment всегда, grant только если не needs_mapping
+
+Файл: supabase/functions/bepaid-webhook/index.ts
+
+Правило:
+	•	На successful после update payment — всегда вызываем ensureOrderForPayment.
+	•	Если итоговый order имеет status='needs_mapping' и mapping_applied_at отсутствует — не выдаём доступ, логируем audit, webhook не фейлим.
+
+// After ensureOrderForPayment
+if (ensureResult.orderId) {
+  const { data: orderCheck } = await supabase
+    .from('orders_v2')
+    .select('status, meta, user_id')
+    .eq('id', ensureResult.orderId)
+    .single();
+
+  const orderMeta = (orderCheck?.meta || {}) as Record<string, any>;
+  const isNeedsMapping = orderCheck?.status === 'needs_mapping';
+  const hasMappingApplied = !!orderMeta.mapping_applied_at;
+
+  if (isNeedsMapping && !hasMappingApplied) {
+    await supabase.from('audit_logs').insert({
+      action: 'access.grant_skipped_needs_mapping',
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'bepaid-webhook',
+      target_user_id: orderCheck?.user_id,
+      meta: {
+        payment_id: paymentV2.id,
+        order_id: ensureResult.orderId,
+        bepaid_uid: transactionUid,
+      },
+    });
+
+    // Continue webhook processing but SKIP grant/subscription side-effects.
+    // Ensure: payment is linked to order already (DoD-1 satisfied).
+    return new Response(JSON.stringify({ success: true, skipped: 'needs_mapping' }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 }
-```
 
----
 
-## PATCH 4: grant-access-for-payment — блок для backfill orders
+⸻
 
-**Файл:** `supabase/functions/grant-access-for-payment/index.ts`
+PATCH 3: grant-access-for-order — блок только по статусу needs_mapping
 
-**Добавить после строки 85 (после получения resolvedOrderId):**
+Файл: supabase/functions/grant-access-for-order/index.ts
 
-```typescript
-// ============= PATCH 4: Check if resolved order is backfill-source =============
+const orderMeta = (order.meta || {}) as Record<string, any>;
+const isNeedsMapping = order.status === 'needs_mapping';
+const hasMappingApplied = !!orderMeta.mapping_applied_at;
+
+if (isNeedsMapping && !hasMappingApplied) {
+  await supabase.from('audit_logs').insert({
+    action: 'access.grant_blocked_needs_mapping',
+    actor_type: 'system',
+    actor_user_id: null,
+    actor_label: 'grant-access-for-order',
+    target_user_id: order.user_id,
+    meta: {
+      order_id: orderId,
+      order_status: order.status,
+      reason: 'needs_mapping_without_applied_at',
+    },
+  });
+
+  return new Response(
+    JSON.stringify({
+      success: false,
+      error: 'needs_mapping_blocked',
+      message: 'Order requires manual product mapping before access can be granted.',
+      orderId,
+    }),
+    { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  );
+}
+
+// If mapping applied — allow regardless of meta.source
+
+
+⸻
+
+PATCH 4: grant-access-for-payment — единый блок по needs_mapping
+
+Файл: supabase/functions/grant-access-for-payment/index.ts
+
 if (resolvedOrderId) {
   const { data: orderCheck } = await supabase
     .from('orders_v2')
-    .select('meta')
+    .select('status, meta')
     .eq('id', resolvedOrderId)
     .single();
-  
+
   const orderMeta = (orderCheck?.meta || {}) as Record<string, any>;
-  const orderSource = orderMeta.source || '';
-  
-  if (['orphan_payment_fix', 'orphan_backfill'].includes(orderSource)) {
+  const isNeedsMapping = orderCheck?.status === 'needs_mapping';
+  const hasMappingApplied = !!orderMeta.mapping_applied_at;
+
+  if (isNeedsMapping && !hasMappingApplied) {
     await supabase.from('audit_logs').insert({
-      action: 'access.grant_blocked_backfill_order',
+      action: 'access.grant_blocked_needs_mapping',
       actor_type: 'system',
       actor_user_id: null,
       actor_label: 'grant-access-for-payment',
       meta: {
         payment_id: paymentId,
         order_id: resolvedOrderId,
-        order_source: orderSource,
-        reason: 'backfill_order_cannot_grant',
+        reason: 'needs_mapping_without_applied_at',
       },
     });
-    
+
     return new Response(
       JSON.stringify({
         success: false,
-        error: 'backfill_order_blocked',
-        message: 'Backfill orders cannot grant access. Manual review required.',
+        error: 'needs_mapping_blocked',
+        message: 'Order requires manual product mapping before access can be granted.',
         paymentId,
         orderId: resolvedOrderId,
       }),
@@ -197,157 +326,134 @@ if (resolvedOrderId) {
     );
   }
 }
-```
 
----
 
-## PATCH 5: UI — скрыть needs_mapping по умолчанию
+⸻
 
-### 5.1 AdminDeals.tsx
+PATCH 5: admin-map-order-product — endpoint для ручного маппинга (dry-run → execute)
 
-**Файл:** `src/pages/admin/AdminDeals.tsx`
+Новый файл: supabase/functions/admin-map-order-product/index.ts
 
-**Добавить в STATUS_CONFIG (строка ~67):**
+Требования:
+	•	admin only (RBAC)
+	•	dry_run=true по умолчанию
+	•	execute обновляет order: product_id/tariff_id/offer_id, status='paid', meta.mapping_applied_at, meta.mapping_applied_by
+	•	SYSTEM ACTOR audit log: order.mapping_applied
+	•	optional grant_access вызывает grant-access-for-order
 
-```typescript
-needs_mapping: { 
-  label: "Требует маппинга", 
-  color: "bg-purple-500/20 text-purple-600", 
-  icon: AlertTriangle 
-},
-```
+(Код оставляем как в текущем плане — он соответствует требованиям. Единственное требование: не менять actor_type — строго system + actor_user_id=NULL.)
 
-**Добавить state (после строки ~85):**
+⸻
 
-```typescript
-const [showProblematic, setShowProblematic] = useState(false);
-```
+PATCH 6: UI — Badge + вкладка «Проблемные» + список needs_mapping
 
-**Модифицировать filteredDeals (строки 250-272):**
+6.1 AdminPaymentsHub.tsx — новая вкладка
 
-```typescript
-const filteredDeals = useMemo(() => {
-  if (!deals) return [];
-  
-  // PATCH 5: Filter out needs_mapping by default
-  let result = deals;
-  if (!showProblematic) {
-    result = result.filter(deal => deal.status !== 'needs_mapping');
-  }
-  
-  // ... остальная логика фильтрации
-}, [deals, search, activeFilters, profilesMap, getDealFieldValue, showProblematic]);
-```
+Файл: src/pages/admin/AdminPaymentsHub.tsx
 
-**Добавить Toggle в UI (рядом с фильтрами):**
+{ id: "needs-mapping", label: "Проблемные", icon: AlertTriangle, path: "/admin/payments/needs-mapping" },
 
-```tsx
-<div className="flex items-center gap-2 ml-4">
-  <Switch 
-    checked={showProblematic}
-    onCheckedChange={setShowProblematic}
-    id="show-problematic"
-  />
-  <Label htmlFor="show-problematic" className="text-sm text-muted-foreground cursor-pointer">
-    Показать проблемные ({deals?.filter(d => d.status === 'needs_mapping').length || 0})
-  </Label>
-</div>
-```
+и рендер:
 
-### 5.2 ContactDealsDialog.tsx
+{activeTab === "needs-mapping" && <NeedsMappingTabContent />}
 
-**Файл:** `src/components/admin/bepaid/ContactDealsDialog.tsx`
+6.2 NeedsMappingTabContent.tsx — новый компонент
 
-**Добавить в STATUS_CONFIG (строка ~26):**
+Новый файл: src/components/admin/payments/NeedsMappingTabContent.tsx
 
-```typescript
-needs_mapping: { label: "Требует маппинга", color: "bg-purple-500/20 text-purple-600", icon: AlertTriangle },
-```
+Функции:
+	•	грузит orders_v2 со status='needs_mapping' (+ связанный payment)
+	•	показывает: order_id, payment_id, card_last4, brand, amount, paid_at, mapping_reason
+	•	CTA “Смаппить” → вызывает admin-map-order-product (сначала dry-run, потом execute)
+	•	optional “Смаппить и выдать доступ”
 
-**Модифицировать запрос (строка ~79):**
+6.3 AdminDeals.tsx — Badge “Требуют маппинга: N” всегда виден
 
-```typescript
-// Фильтровать needs_mapping из подсчёта
-.neq('status', 'needs_mapping')
-```
+Файл: src/pages/admin/AdminDeals.tsx
+	•	needsMappingCount через useMemo
+	•	Badge кликабельный → ведёт на /admin/payments/needs-mapping
+	•	toggle show/hide в списке можно оставить
 
-**Или в useMemo:**
+⸻
 
-```typescript
-const displayedDeals = useMemo(() => {
-  if (!deals) return [];
-  return deals.filter(d => d.status !== 'needs_mapping');
-}, [deals]);
-```
+PATCH 7: admin-backfill-renewal-orders — reconcile после фикса webhook
 
----
+Файл: supabase/functions/admin-backfill-renewal-orders/index.ts
 
-## Порядок применения
+Смысл: после PATCH 1–4 backfill может безопасно прогнать исторические succeeded AND order_id IS NULL и довести DoD-1 до 0, потому что ensure теперь всегда создаёт order (paid или needs_mapping) и всегда линкует payment.
 
-| Шаг | Действие | Тип | Риск |
-|-----|----------|-----|------|
-| 1 | PATCH 1: Добавить enum + SQL functions | Migration | Низкий |
-| 2 | Deploy edge functions | Auto | — |
-| 3 | PATCH 2: Пометить 690 orders | Data update | Средний (одноразово) |
-| 4 | PATCH 3-4: Edge functions | Code | Низкий |
-| 5 | PATCH 5: UI filtering | Frontend | Низкий |
-| 6 | Продолжить backfill orphans | Execute | Контролируемый |
-| 7 | Верифицировать DoD | SQL queries | — |
+Требования:
+	•	dry_run → execute
+	•	батчи + timebox + cursor
+	•	audit_logs system actor на execute
 
----
+⸻
 
-## DoD — SQL проверки после всех патчей
+Порядок применения (без перепланирования)
 
-```sql
--- 1. Orphan payments оставшиеся (до backfill)
-SELECT count(*) FROM payments_v2 
+Шаг	Действие	Тип
+1	PATCH 1: Card recovery + collision + ALWAYS create order + ALWAYS link payment	Edge
+2	PATCH 2: bepaid-webhook — ensure всегда; grant только если not needs_mapping	Edge
+3	PATCH 3–4: grant blocks by status needs_mapping	Edge
+4	PATCH 5: admin-map-order-product (dry-run→execute)	Edge
+5	Deploy edge functions	Deploy
+6	PATCH 6: UI (Badge + вкладка + компонент)	Frontend
+7	PATCH 7: backfill/reconcile исторических orphan	Execute
+8	Verify DoD (SQL + UI)	Check
+
+
+⸻
+
+DoD — обязательные пруфы (SQL)
+
+-- DoD-1: главный инвариант (должен быть 0)
+SELECT count(*) FROM payments_v2
 WHERE status='succeeded' AND amount>0 AND order_id IS NULL;
 
--- 2. Backfill orders без product теперь помечены
-SELECT count(*) FROM orders_v2 
-WHERE meta->>'source' IN ('orphan_payment_fix','orphan_backfill') 
-  AND product_id IS NULL 
-  AND status != 'needs_mapping';
--- Ожидаемо: 0
+-- DoD-2: управляемый хвост needs_mapping (виден в UI и маппится)
+SELECT count(*) FROM payments_v2 p
+JOIN orders_v2 o ON o.id=p.order_id
+WHERE p.status='succeeded' AND o.status::text='needs_mapping';
 
--- 3. Все 690 в статусе needs_mapping
-SELECT count(*) FROM orders_v2 WHERE status = 'needs_mapping';
--- Ожидаемо: 690
+-- DoD-3: audit_logs proof (SYSTEM ACTOR)
+SELECT action, count(*)
+FROM audit_logs
+WHERE action IN (
+  'payment.order_ensured',
+  'payment.ensure_order_failed',
+  'payment.card_link_collision',
+  'order.mapping_applied',
+  'access.grant_blocked_needs_mapping',
+  'access.grant_skipped_needs_mapping'
+)
+AND actor_type='system' AND actor_user_id IS NULL
+GROUP BY action
+ORDER BY count DESC;
 
--- 4. Payments с needs_manual_mapping
-SELECT count(*) FROM payments_v2 WHERE meta->>'needs_manual_mapping' = 'true';
 
--- 5. Нет выдачи доступа по backfill
-SELECT count(*) FROM audit_logs 
-WHERE action LIKE 'access.%' 
-  AND meta->>'order_source' IN ('orphan_payment_fix','orphan_backfill');
--- Ожидаемо: 0
+⸻
 
--- 6. SYSTEM ACTOR proof
-SELECT action, count(*) FROM audit_logs 
-WHERE actor_type = 'system' AND actor_label LIKE '%backfill%'
-GROUP BY action ORDER BY count DESC;
-```
+UI DoD
+	•	Badge “Требуют маппинга: N” всегда виден в AdminDeals и ведёт на “Проблемные”
+	•	Вкладка “Проблемные” показывает needs_mapping orders
+	•	“Смаппить” делает dry-run → execute
+	•	После execute order становится paid, появляется mapping_applied_at
+	•	Доступ выдаётся только после маппинга (через кнопку/флаг grant_access)
 
----
+⸻
 
-## UI DoD
+Изменяемые файлы
 
-- В списке сделок Admin: `needs_mapping` сделки скрыты по умолчанию
-- Toggle "Показать проблемные (690)" отображает их
-- В карточке контакта: `needs_mapping` сделки не учитываются в "Сделки (N)"
-- Контакт "Ольга" с оплатами 55+100 показывает "Сделки (2)"
+Файл	Тип изменения
+supabase/functions/_shared/ensure-order-for-payment.ts	PATCH 1: Card recovery + collision + ALWAYS create order + ALWAYS link payment
+supabase/functions/bepaid-webhook/index.ts	PATCH 2: ensure всегда, grant только если not needs_mapping
+supabase/functions/grant-access-for-order/index.ts	PATCH 3: block by status needs_mapping
+supabase/functions/grant-access-for-payment/index.ts	PATCH 4: block by status needs_mapping
+supabase/functions/admin-map-order-product/index.ts	PATCH 5: NEW endpoint (dry-run→execute + system audit)
+src/pages/admin/AdminPaymentsHub.tsx	PATCH 6: New tab
+src/components/admin/payments/NeedsMappingTabContent.tsx	PATCH 6: NEW component
+src/pages/admin/AdminDeals.tsx	PATCH 6: Badge always visible
+supabase/functions/admin-backfill-renewal-orders/index.ts	PATCH 7: reconcile historical orphans using updated ensure
 
----
 
-## Изменяемые файлы
-
-| Файл | Тип изменения |
-|------|---------------|
-| Database migration | ADD enum value + 2 SQL functions |
-| Data update (insert tool) | UPDATE 690 orders to needs_mapping |
-| `supabase/functions/admin-backfill-renewal-orders/index.ts` | Proper advisory lock |
-| `supabase/functions/grant-access-for-payment/index.ts` | Backfill order block |
-| `src/pages/admin/AdminDeals.tsx` | UI filtering + toggle |
-| `src/components/admin/bepaid/ContactDealsDialog.tsx` | Hide needs_mapping |
-
+⸻
