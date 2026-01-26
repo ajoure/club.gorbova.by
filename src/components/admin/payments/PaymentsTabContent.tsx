@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { 
   Download, Upload, Search, Filter, X, RefreshCw
 } from "lucide-react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth } from "date-fns";
@@ -71,6 +72,9 @@ export function PaymentsTabContent() {
   
   // Sync dialog
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  
+  // Timezone display mode
+  const [displayTimezone, setDisplayTimezone] = useState<'user' | 'utc' | 'provider'>('user');
   
   // Fetch unified payment data - always include imports
   const effectiveDateFilter = useMemo(() => ({
@@ -341,6 +345,18 @@ export function PaymentsTabContent() {
                   <Download className="h-4 w-4 mr-2" />
                   CSV
                 </Button>
+                
+                {/* Timezone toggle */}
+                <ToggleGroup 
+                  type="single" 
+                  value={displayTimezone} 
+                  onValueChange={(v) => v && setDisplayTimezone(v as 'user' | 'utc' | 'provider')}
+                  className="border rounded-md"
+                >
+                  <ToggleGroupItem value="user" size="sm" className="text-xs px-2">My TZ</ToggleGroupItem>
+                  <ToggleGroupItem value="utc" size="sm" className="text-xs px-2">UTC</ToggleGroupItem>
+                  <ToggleGroupItem value="provider" size="sm" className="text-xs px-2">Provider</ToggleGroupItem>
+                </ToggleGroup>
               </div>
             </div>
           </div>

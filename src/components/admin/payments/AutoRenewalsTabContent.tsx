@@ -26,6 +26,7 @@ import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings"
 import { usePermissions } from "@/hooks/usePermissions";
 import { BackfillSnapshotTool } from "./BackfillSnapshotTool";
 import { Backfill2026OrdersTool } from "./Backfill2026OrdersTool";
+import { FixPaymentsIntegrityTool } from "./FixPaymentsIntegrityTool";
 import {
   DndContext,
   closestCenter,
@@ -350,6 +351,9 @@ export function AutoRenewalsTabContent() {
   
   // Backfill 2026 orders tool dialog state
   const [backfill2026DialogOpen, setBackfill2026DialogOpen] = useState(false);
+  
+  // Fix Payments Integrity tool dialog state
+  const [fixIntegrityDialogOpen, setFixIntegrityDialogOpen] = useState(false);
   
   // Column state with localStorage persistence
   const [columns, setColumns] = useState<ColumnConfig[]>(() => {
@@ -1232,6 +1236,13 @@ export function AutoRenewalsTabContent() {
                 <FileText className="h-4 w-4 mr-2" />
                 Backfill Orders 2026+
               </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => setFixIntegrityDialogOpen(true)}
+                disabled={!hasPermission('subscriptions.edit')}
+              >
+                <Wrench className="h-4 w-4 mr-2" />
+                Fix Integrity (2026+)
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           
@@ -1473,6 +1484,16 @@ export function AutoRenewalsTabContent() {
           open={backfill2026DialogOpen}
           onOpenChange={setBackfill2026DialogOpen}
         />
+        
+        {/* Fix Payments Integrity Tool */}
+        <Dialog open={fixIntegrityDialogOpen} onOpenChange={setFixIntegrityDialogOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Fix Payments Integrity (2026+)</DialogTitle>
+            </DialogHeader>
+            <FixPaymentsIntegrityTool />
+          </DialogContent>
+        </Dialog>
       </div>
     </TooltipProvider>
   );

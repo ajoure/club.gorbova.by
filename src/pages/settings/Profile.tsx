@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +28,7 @@ interface ProfileData {
   telegram_user_id: number | null;
   emails: unknown;
   phones: unknown;
+  timezone: string | null;
 }
 
 export default function ProfileSettings() {
@@ -39,6 +41,7 @@ export default function ProfileSettings() {
   const [phone, setPhone] = useState("");
   const [emails, setEmails] = useState<ContactItem[]>([]);
   const [phones, setPhones] = useState<ContactItem[]>([]);
+  const [timezone, setTimezone] = useState("Europe/Minsk");
   const [isDirty, setIsDirty] = useState(false);
 
   const { data: profile, isLoading } = useQuery({
@@ -47,7 +50,7 @@ export default function ProfileSettings() {
       if (!user) return null;
       const { data, error } = await supabase
         .from("profiles")
-        .select("id, user_id, email, full_name, first_name, last_name, phone, avatar_url, telegram_user_id, emails, phones")
+        .select("id, user_id, email, full_name, first_name, last_name, phone, avatar_url, telegram_user_id, emails, phones, timezone")
         .eq("user_id", user.id)
         .single();
       
@@ -71,12 +74,13 @@ export default function ProfileSettings() {
       setPhone(profile.phone || "");
       setEmails(Array.isArray(profile.emails) ? profile.emails : []);
       setPhones(Array.isArray(profile.phones) ? profile.phones : []);
+      setTimezone(profile.timezone || "Europe/Minsk");
       setIsDirty(false);
     }
   }, [profile]);
 
   const updateProfileMutation = useMutation({
-    mutationFn: async (data: { first_name: string; last_name: string; phone: string; emails: ContactItem[]; phones: ContactItem[] }) => {
+    mutationFn: async (data: { first_name: string; last_name: string; phone: string; emails: ContactItem[]; phones: ContactItem[]; timezone: string }) => {
       if (!user) throw new Error("Не авторизован");
       
       const { error } = await supabase
@@ -88,6 +92,7 @@ export default function ProfileSettings() {
           phone: data.phone,
           emails: data.emails as unknown as null,
           phones: data.phones as unknown as null,
+          timezone: data.timezone,
           updated_at: new Date().toISOString(),
         })
         .eq("user_id", user.id);
@@ -133,6 +138,7 @@ export default function ProfileSettings() {
       phone: phone.trim(),
       emails,
       phones,
+      timezone,
     });
   };
 
@@ -149,6 +155,7 @@ export default function ProfileSettings() {
       setPhone(profile.phone || "");
       setEmails(Array.isArray(profile.emails) ? profile.emails : []);
       setPhones(Array.isArray(profile.phones) ? profile.phones : []);
+      setTimezone(profile.timezone || "Europe/Minsk");
       setIsDirty(false);
     }
   };
@@ -526,6 +533,22 @@ export default function ProfileSettings() {
                     onChange={handleChange(setPhone)}
                     placeholder="+375 29 123 45 67"
                   />
+                </div>
+
+                {/* Timezone */}
+                <div className="space-y-2">
+                  <Label>Часовой пояс</Label>
+                  <Select value={timezone} onValueChange={(v) => { setTimezone(v); setIsDirty(true); }}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите часовой пояс" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Europe/Minsk">Минск (UTC+3)</SelectItem>
+                      <SelectItem value="Europe/Warsaw">Варшава (UTC+1/+2)</SelectItem>
+                      <SelectItem value="Europe/Moscow">Москва (UTC+3)</SelectItem>
+                      <SelectItem value="UTC">UTC</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 {/* Multiple Phones */}

@@ -7987,6 +7987,14 @@ export type Database = {
         Returns: string
       }
       get_order_expected_paid: { Args: { p_order_id: string }; Returns: number }
+      get_payment_duplicates: {
+        Args: never
+        Returns: {
+          duplicate_count: number
+          provider: string
+          provider_payment_id: string
+        }[]
+      }
       get_payments_stats:
         | { Args: { from_date: string; to_date: string }; Returns: Json }
         | {
