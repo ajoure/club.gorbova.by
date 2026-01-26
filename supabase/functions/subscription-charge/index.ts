@@ -1045,8 +1045,179 @@ async function chargeSubscription(
         })
         .eq('id', id);
 
+      // ============= PATCH: CREATE RENEWAL ORDER FOR EACH RECURRING CHARGE =============
+      // Purpose: Each successful recurring charge creates a SEPARATE order (deal) in orders_v2
+      // This ensures UI shows individual deals per billing cycle, not a single trial order
+      let renewalOrderId: string | null = null;
+      const bepaidUid = chargeResult?.transaction?.uid ?? null;
+      const pMeta = (payment?.meta || {}) as Record<string, unknown>;
+
+      // Guard 1: Only for successful charges with positive amount
+      if (amount > 0 && payment?.status === 'succeeded' && bepaidUid) {
+        // Guard 2: Idempotency - if already created for this payment, skip
+        if (!pMeta.renewal_order_id) {
+          // Guard 3: Hard idempotency by bePaid uid (avoid duplicates across retries)
+          const { data: existingRenewal } = await supabase
+            .from('orders_v2')
+            .select('id')
+            .eq('user_id', user_id)
+            .contains('meta', { bepaid_uid: bepaidUid })
+            .maybeSingle();
+
+          if (existingRenewal?.id) {
+            renewalOrderId = existingRenewal.id;
+            console.log(`Renewal order already exists: ${renewalOrderId} for bepaid_uid ${bepaidUid}`);
+          } else {
+            // Generate order number using DB function
+            const { data: ordNum } = await supabase.rpc('generate_order_number');
+            const orderNumber = ordNum || `REN-${Date.now().toString(36).toUpperCase()}`;
+
+            // Get profile_id
+            const { data: profileRow } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('user_id', user_id)
+              .maybeSingle();
+
+            // Create NEW deal for this renewal
+            const { data: newOrder, error: createErr } = await supabase
+              .from('orders_v2')
+              .insert({
+                order_number: orderNumber,
+                user_id,
+                profile_id: profileRow?.id ?? null,
+                status: 'paid',
+                currency,
+                base_price: amount,
+                final_price: amount,
+                paid_amount: amount,
+                is_trial: false,
+                product_id: subscription?.product_id ?? orderData?.product_id ?? null,
+                tariff_id: tariff_id ?? orderData?.tariff_id ?? null,
+                customer_email: orderData?.customer_email ?? null,
+                customer_phone: orderData?.customer_phone ?? null,
+                meta: {
+                  source: 'subscription-renewal',
+                  subscription_id: id,
+                  payment_id: payment.id,
+                  bepaid_uid: bepaidUid,
+                  original_order_id: order_id ?? null,
+                  is_trial_conversion: is_trial,
+                },
+              })
+              .select('id, order_number')
+              .single();
+
+            if (createErr) {
+              console.error('Failed to create renewal order:', createErr);
+              await supabase.from('audit_logs').insert({
+                action: 'subscription.renewal_order_create_failed',
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'subscription-charge',
+                target_user_id: user_id,
+                meta: {
+                  subscription_id: id,
+                  payment_id: payment.id,
+                  bepaid_uid: bepaidUid,
+                  amount,
+                  currency,
+                  error: createErr.message,
+                  error_code: createErr.code,
+                },
+              });
+            } else {
+              renewalOrderId = newOrder.id;
+              console.log(`Created renewal order ${newOrder.order_number} for subscription ${id}`);
+
+              // Log success (SYSTEM ACTOR)
+              await supabase.from('audit_logs').insert({
+                action: 'subscription.renewal_order_created',
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'subscription-charge',
+                target_user_id: user_id,
+                meta: {
+                  subscription_id: id,
+                  payment_id: payment.id,
+                  renewal_order_id: renewalOrderId,
+                  renewal_order_number: newOrder.order_number,
+                  amount,
+                  currency,
+                  bepaid_uid: bepaidUid,
+                },
+              });
+            }
+          }
+
+          // Relink payment to renewal order (if created or found)
+          if (renewalOrderId) {
+            const { error: linkErr } = await supabase
+              .from('payments_v2')
+              .update({
+                order_id: renewalOrderId,
+                meta: {
+                  ...pMeta,
+                  renewal_order_id: renewalOrderId,
+                  original_trial_order_id: order_id ?? null,
+                },
+              })
+              .eq('id', payment.id);
+
+            if (linkErr) {
+              console.error('Failed to link payment to renewal order:', linkErr);
+              await supabase.from('audit_logs').insert({
+                action: 'subscription.renewal_payment_link_failed',
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'subscription-charge',
+                target_user_id: user_id,
+                meta: {
+                  subscription_id: id,
+                  payment_id: payment.id,
+                  renewal_order_id: renewalOrderId,
+                  error: linkErr.message,
+                  error_code: linkErr.code,
+                },
+              });
+            } else {
+              console.log(`Payment ${payment.id} linked to renewal order ${renewalOrderId}`);
+            }
+
+            // Update subscription meta with last renewal order
+            await supabase
+              .from('subscriptions_v2')
+              .update({
+                meta: {
+                  ...(subMeta || {}),
+                  last_renewal_order_id: renewalOrderId,
+                },
+              })
+              .eq('id', id);
+          }
+        }
+      } else if (!bepaidUid && amount > 0) {
+        // Missing bepaid_uid - log for investigation
+        await supabase.from('audit_logs').insert({
+          action: 'subscription.renewal_order_create_failed',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'subscription-charge',
+          target_user_id: user_id,
+          meta: {
+            subscription_id: id,
+            payment_id: payment?.id,
+            reason: 'missing_bepaid_uid',
+            amount,
+            currency,
+          },
+        });
+      }
+      // ============= END PATCH: CREATE RENEWAL ORDER =============
+
       // PATCH 1-3: Sync orders_v2 with payments (idempotent, with guards and error handling)
-      if (order_id) {
+      // IMPORTANT: Skip trial order sync if renewal order was created (each deal is separate)
+      if (order_id && !renewalOrderId) {
         // PATCH-2: Use RPC for reliable SQL SUM (instead of JS reduce)
         const { data: expectedPaidResult, error: rpcError } = await supabase
           .rpc('get_order_expected_paid', { p_order_id: order_id });
@@ -1142,10 +1313,12 @@ async function chargeSubscription(
                 });
               }
             } else {
-              console.log(`Skipping order sync: order ${order_id} has protected status ${currentOrder?.status}`);
+              console.log(`Skipping order sync: order ${order_id} has protected status ${currentOrder?.status} or no payments`);
             }
           }
         }
+      } else if (renewalOrderId) {
+        console.log(`Skipping trial order sync: renewal order ${renewalOrderId} was created`);
       }
 
       // PATCH B: Log successful charge (SYSTEM ACTOR proof)
