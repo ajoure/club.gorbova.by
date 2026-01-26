@@ -74,6 +74,7 @@ export function AdminChargeDialog({
         .from("tariff_prices")
         .select("*")
         .eq("tariff_id", selectedTariffId)
+        .eq("is_active", true)  // PATCH-6: Only use active prices
         .order("created_at", { ascending: false })
         .limit(1);
       if (error) throw error;

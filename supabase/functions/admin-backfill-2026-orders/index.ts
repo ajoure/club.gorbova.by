@@ -305,17 +305,25 @@ serve(async (req) => {
     result.created_orders = createdOrderIds.slice(0, 50);
     result.errors = errorMessages;
 
-    // Write audit log
+    // Write audit log with enhanced meta
     await supabase.from('audit_logs').insert({
       actor_type: 'system',
       actor_user_id: null,
       actor_label: 'admin-backfill-2026-orders',
       action: dryRun ? 'subscription.renewal_backfill_2026_dry_run' : 'subscription.renewal_backfill_2026',
       meta: {
-        requested_by: user.id,
+        requested_by_user_id: user.id,
+        requested_by_email: user.email,
         dry_run: dryRun,
+        limit,
         stats: result.stats,
+        total_candidates: result.stats.scanned,
+        created_count: result.stats.created,
+        needs_mapping_count: result.stats.needs_mapping,
+        skipped_count: result.stats.skipped,
+        error_count: result.stats.errors,
         sample_payment_ids: result.samples.slice(0, 5).map(s => s.payment_id),
+        created_order_ids: createdOrderIds.slice(0, 10),
       },
     });
 

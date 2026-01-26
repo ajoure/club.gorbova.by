@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ export function ImpersonationBar() {
   const [isImpersonating, setIsImpersonating] = useState(false);
   const [impersonatedEmail, setImpersonatedEmail] = useState<string | null>(null);
   const [isReturning, setIsReturning] = useState(false);
+  const suspiciousStateLoggedRef = useRef(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -53,11 +54,41 @@ export function ImpersonationBar() {
       const impersonationStartTime = localStorage.getItem(IMPERSONATION_START_KEY);
 
       // Backward/bug-compat: if we have admin session backup but the flag is missing,
-      // force-enable impersonation mode so it's never “silent”.
+      // force-enable impersonation mode so it's never "silent".
+      // PATCH-10: This is a "suspicious state" that should be audited.
       if (hasAdminSessionBackup && localStorage.getItem(IS_IMPERSONATING_KEY) !== "true") {
         localStorage.setItem(IS_IMPERSONATING_KEY, "true");
         if (!impersonationStartTime) {
           localStorage.setItem(IMPERSONATION_START_KEY, Date.now().toString());
+        }
+        
+        // Audit suspicious state (async, fire-and-forget, only once per session)
+        if (!suspiciousStateLoggedRef.current) {
+          suspiciousStateLoggedRef.current = true;
+          supabase.auth.getUser().then(({ data }) => {
+            if (data?.user) {
+              supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'ImpersonationBar: suspicious state detected',
+                action: 'auth.suspicious_state_detected',
+                meta: {
+                  has_admin_session_backup: true,
+                  is_impersonating_flag_was_missing: true,
+                  current_user_email: data.user.email,
+                  current_user_id: data.user.id,
+                  url: window.location.href,
+                  detected_at: new Date().toISOString(),
+                },
+              }).then((result) => {
+                if (result.error) {
+                  console.error('[ImpersonationBar] Failed to log suspicious state:', result.error);
+                } else {
+                  console.warn('[ImpersonationBar] Suspicious state detected and logged');
+                }
+              });
+            }
+          });
         }
       }
       

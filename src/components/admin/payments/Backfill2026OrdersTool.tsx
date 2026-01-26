@@ -14,7 +14,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, AlertTriangle, CheckCircle2, XCircle, Play, Eye, FileText } from "lucide-react";
+import { Loader2, AlertTriangle, CheckCircle2, XCircle, Play, Eye, FileText, User } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface BackfillResult {
   success: boolean;
@@ -36,9 +38,18 @@ interface Backfill2026OrdersToolProps {
 }
 
 export function Backfill2026OrdersTool({ open, onOpenChange }: Backfill2026OrdersToolProps) {
+  const { user } = useAuth();
+  const { userRoles } = usePermissions();
   const [limit, setLimit] = useState(50);
   const [dryRunResult, setDryRunResult] = useState<BackfillResult | null>(null);
   const [executeResult, setExecuteResult] = useState<BackfillResult | null>(null);
+
+  // Whoami display data
+  const whoami = {
+    email: user?.email || "—",
+    id: user?.id || "—",
+    roles: userRoles.map(r => r.code).join(", ") || "—"
+  };
 
   const getInvokeErrorMessage = (err: unknown): string => {
     const e: any = err;
@@ -138,6 +149,21 @@ export function Backfill2026OrdersTool({ open, onOpenChange }: Backfill2026Order
             Создаёт сделки для платежей 2026+ без order_id (succeeded, amount&gt;0, profile_id not null).
           </DialogDescription>
         </DialogHeader>
+
+        {/* Whoami display */}
+        <div className="p-2 rounded-md bg-muted/50 border border-border/50 text-xs space-y-1">
+          <div className="flex items-center gap-2">
+            <User className="h-3 w-3 text-muted-foreground" />
+            <span className="text-muted-foreground">Запуск от:</span>
+            <span className="font-medium">{whoami.email}</span>
+          </div>
+          <div className="text-muted-foreground">
+            <span>ID: </span>
+            <code className="text-[10px] px-1 py-0.5 bg-background rounded">{whoami.id}</code>
+            <span className="ml-2">Роли: </span>
+            <span className="font-medium">{whoami.roles}</span>
+          </div>
+        </div>
 
         {/* Warning */}
         <Alert variant="destructive" className="border-orange-500/50 bg-orange-500/10">
