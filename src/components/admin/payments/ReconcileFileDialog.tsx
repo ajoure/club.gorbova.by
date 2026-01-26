@@ -248,13 +248,14 @@ function MismatchRow({ item, onCopy }: { item: MismatchItem; onCopy: (uid: strin
 
 // Virtualized table row component for Extra items
 function ExtraRow({ item, onCopy }: { item: ExtraItem; onCopy: (uid: string) => void }) {
+  const uidDisplay = item.uid ? `${item.uid.slice(0, 8)}...${item.uid.slice(-4)}` : item.db_id?.slice(0, 12) || '—';
   return (
     <div className="grid grid-cols-[1fr_100px_100px_100px_120px_60px] gap-2 px-3 py-2 text-xs border-b border-slate-700/30 hover:bg-slate-800/30 items-center">
       <div className="flex items-center gap-1.5 min-w-0">
-        <button onClick={() => onCopy(item.uid)} className="text-slate-500 hover:text-slate-300 shrink-0">
+        <button onClick={() => item.uid && onCopy(item.uid)} className="text-slate-500 hover:text-slate-300 shrink-0" disabled={!item.uid}>
           <Copy className="h-3 w-3" />
         </button>
-        <span className="font-mono text-slate-300 truncate">{item.uid.slice(0, 8)}...{item.uid.slice(-4)}</span>
+        <span className="font-mono text-slate-300 truncate">{uidDisplay}</span>
       </div>
       <div className="text-slate-400 truncate">{item.paid_at?.split(' ')[0] || '—'}</div>
       <div className="text-rose-400 tabular-nums text-right">{item.amount.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</div>
