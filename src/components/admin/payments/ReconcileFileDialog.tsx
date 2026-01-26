@@ -96,11 +96,15 @@ interface ReconcileResult {
   };
 }
 
-// UUID validation regex (8-4-4-4-12 format)
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 // Parse bePaid Excel file - processes ALL sheets looking for UID column
-function parseExcelFile(file: File): Promise<{ transactions: FileTransaction[]; sheetsProcessed: string[] }> {
+// PATCH-2: Improved parser - supports e-mail, paid at, non-UUID UIDs
+interface ParseResult {
+  transactions: FileTransaction[];
+  sheetsProcessed: string[];
+  skippedRows: { row: number; reason: string }[];
+}
+
+function parseExcelFile(file: File): Promise<ParseResult> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -110,6 +114,7 @@ function parseExcelFile(file: File): Promise<{ transactions: FileTransaction[]; 
         
         const transactions: FileTransaction[] = [];
         const sheetsProcessed: string[] = [];
+        const skippedRows: { row: number; reason: string }[] = [];
         const sheetNames = workbook.SheetNames;
         
         console.log(`[parseExcelFile] Found ${sheetNames.length} sheets:`, sheetNames);
@@ -147,27 +152,78 @@ function parseExcelFile(file: File): Promise<{ transactions: FileTransaction[]; 
             continue;
           }
           
-          console.log(`[parseExcelFile] Sheet "${sheetName}": found UID at row ${headerRowIdx}`);
+          console.log(`[parseExcelFile] Sheet "${sheetName}": found headers at row ${headerRowIdx}`);
           sheetsProcessed.push(sheetName);
           
+          // UID column
           const uidIdx = headers.findIndex(h => h === 'uid' || h.includes('id транз'));
+          
+          // Status column
           const statusIdx = headers.findIndex(h => h.includes('статус') || h.includes('status'));
+          
+          // Transaction type column
           const typeIdx = headers.findIndex(h => h.includes('тип') || h.includes('type') || h.includes('операц'));
+          
+          // Amount column
           const amountIdx = headers.findIndex(h => h.includes('сумма') || h.includes('amount'));
+          
+          // Currency column
           const currencyIdx = headers.findIndex(h => h.includes('валют') || h.includes('currency'));
-          const dateIdx = headers.findIndex(h => h.includes('дата') || h.includes('date') || h.includes('время'));
-          const emailIdx = headers.findIndex(h => h.includes('email') || h.includes('почт'));
+          
+          // Date column - PRIORITY: "дата оплаты" / "paid at" / "payment date" over "дата создания"
+          const paidAtIdx = headers.findIndex(h => 
+            h.includes('дата оплаты') || 
+            h.includes('paid at') || 
+            h.includes('payment date') ||
+            h.includes('дата платеж')
+          );
+          const createdAtIdx = headers.findIndex(h => 
+            h.includes('дата') || h.includes('date') || h.includes('время')
+          );
+          const dateIdx = paidAtIdx >= 0 ? paidAtIdx : createdAtIdx;
+          
+          // Email column - EXPANDED: e-mail, email, почта, почт, e mail, mail
+          const emailIdx = headers.findIndex(h => 
+            h === 'e-mail' || 
+            h === 'email' ||
+            h === 'e mail' ||
+            h.includes('email') || 
+            h.includes('почт') ||
+            h.includes('mail')
+          );
+          
+          // Card column
           const cardIdx = headers.findIndex(h => h.includes('карт') || h.includes('card') || h.includes('pan'));
+          
+          // Card holder column
+          const holderIdx = headers.findIndex(h => h.includes('владелец') || h.includes('holder') || h.includes('cardholder'));
+          
+          // Description column
+          const descIdx = headers.findIndex(h => h.includes('описание') || h.includes('description') || h.includes('назначен'));
+          
+          // Card brand column
+          const brandIdx = headers.findIndex(h => h.includes('способ оплаты') || h.includes('brand') || h.includes('тип карты'));
+          
+          console.log(`[parseExcelFile] Column indices: uid=${uidIdx}, status=${statusIdx}, type=${typeIdx}, amount=${amountIdx}, date=${dateIdx}, email=${emailIdx}`);
           
           for (let i = headerRowIdx + 1; i < jsonData.length; i++) {
             const row = jsonData[i];
             if (!row || row.length === 0) continue;
             
+            // PATCH-2: Accept string UID (min 10 chars), not just UUID format
             const uid = uidIdx >= 0 ? String(row[uidIdx] || '').trim() : '';
-            if (!uid || !UUID_REGEX.test(uid)) continue;
+            if (!uid || uid.length < 10) {
+              if (uid) skippedRows.push({ row: i + 1, reason: `short_uid: "${uid}"` });
+              continue;
+            }
             
             const amountRaw = amountIdx >= 0 ? row[amountIdx] : 0;
             const amount = typeof amountRaw === 'number' ? amountRaw : parseFloat(String(amountRaw).replace(/[^\d.-]/g, '')) || 0;
+            
+            if (amount === 0 && statusIdx < 0) {
+              skippedRows.push({ row: i + 1, reason: 'no_amount_no_status' });
+              continue;
+            }
             
             transactions.push({
               uid,
@@ -178,12 +234,15 @@ function parseExcelFile(file: File): Promise<{ transactions: FileTransaction[]; 
               paid_at: dateIdx >= 0 ? String(row[dateIdx] || '') : undefined,
               customer_email: emailIdx >= 0 ? String(row[emailIdx] || '') : undefined,
               card_last4: cardIdx >= 0 ? String(row[cardIdx] || '').slice(-4) : undefined,
+              card_holder: holderIdx >= 0 ? String(row[holderIdx] || '') : undefined,
+              card_brand: brandIdx >= 0 ? String(row[brandIdx] || '') : undefined,
+              description: descIdx >= 0 ? String(row[descIdx] || '') : undefined,
             });
           }
         }
         
-        console.log(`[parseExcelFile] Total: ${transactions.length} transactions from ${sheetsProcessed.length} sheets`);
-        resolve({ transactions, sheetsProcessed });
+        console.log(`[parseExcelFile] Total: ${transactions.length} transactions from ${sheetsProcessed.length} sheets, ${skippedRows.length} skipped`);
+        resolve({ transactions, sheetsProcessed, skippedRows });
       } catch (err) {
         reject(err);
       }
@@ -537,7 +596,7 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
           {/* Results Section */}
           {result ? (
             <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Stats Summary */}
+              {/* Stats Summary with Convergence Check */}
               <div className="shrink-0 px-6 py-3 border-b border-slate-700/30 bg-slate-800/20">
                 <div className="flex items-center gap-6 flex-wrap text-sm">
                   <div className="flex items-center gap-2">
@@ -563,6 +622,23 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
                     <span className="text-slate-400">Extra:</span>
                     <span className="font-semibold text-sky-400 tabular-nums">{result.stats.extra_in_db}</span>
                   </div>
+                  
+                  {/* PATCH-2: Convergence Check */}
+                  {(() => {
+                    const convergenceSum = result.stats.matched + result.stats.missing_in_db + result.stats.status_mismatches + result.stats.amount_mismatches;
+                    const convergenceOk = convergenceSum === result.stats.file_count;
+                    return (
+                      <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium ${
+                        convergenceOk 
+                          ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' 
+                          : 'bg-rose-500/15 text-rose-400 border border-rose-500/20'
+                      }`}>
+                        {convergenceOk ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                        <span>{convergenceSum}/{result.stats.file_count}</span>
+                      </div>
+                    );
+                  })()}
+                  
                   {result.dry_run && (
                     <span className="text-amber-500 font-medium text-xs uppercase tracking-wider">DRY-RUN</span>
                   )}

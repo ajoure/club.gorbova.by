@@ -280,47 +280,9 @@ Deno.serve(async (req) => {
           customer_email: tx.customer_email,
           card_last4: tx.card_last4,
         });
-      } else if (!dbRec && queueRec) {
-        // In queue but not materialized - check for status mismatch
-        const queueNormStatus = normalizeDbStatus(queueRec.status, '');
-        if (fileNormStatus !== queueNormStatus) {
-          mismatches.push({
-            uid: tx.uid,
-            file_status: fileNormStatus,
-            db_status: queueNormStatus,
-            mismatch_type: 'status',
-            paid_at: tx.paid_at,
-            customer_email: tx.customer_email,
-          });
-        } else if (Math.abs(tx.amount) !== Math.abs(queueRec.amount || 0)) {
-          mismatches.push({
-            uid: tx.uid,
-            file_status: fileNormStatus,
-            db_status: queueNormStatus,
-            file_amount: tx.amount,
-            db_amount: queueRec.amount,
-            mismatch_type: 'amount',
-            paid_at: tx.paid_at,
-            customer_email: tx.customer_email,
-          });
-          amountMismatches++;
-        } else {
-          matched++;
-        }
-      } else if (!dbRec) {
-        // This shouldn't happen given the logic above, but safety fallback
-        missing.push({ 
-          uid: tx.uid, 
-          status: tx.status, 
-          amount: tx.amount, 
-          transaction_type: tx.transaction_type,
-          paid_at: tx.paid_at,
-          customer_email: tx.customer_email,
-          card_last4: tx.card_last4,
-        });
 
+        // PATCH-2 FIX: Insert missing records into payments_v2 during EXECUTE
         if (!dry_run) {
-          // Insert directly into payments_v2
           const insertStatus = fileNormStatus === 'successful' ? 'succeeded' : 
                               fileNormStatus === 'refunded' ? 'refunded' :
                               fileNormStatus === 'cancelled' ? 'canceled' : 'failed';
@@ -337,11 +299,11 @@ Deno.serve(async (req) => {
               transaction_type: tx.transaction_type || 'payment',
               amount: insertAmount,
               currency: tx.currency || 'BYN',
-              origin: 'bepaid',
-              paid_at: tx.paid_at,
-              product_name_raw: tx.description,
-              card_last4: tx.card_last4,
-              card_brand: tx.card_brand,
+              origin: 'reconcile',
+              paid_at: tx.paid_at || null,
+              product_name_raw: tx.description || null,
+              card_last4: tx.card_last4 || null,
+              card_brand: tx.card_brand || null,
               import_ref: 'file_reconcile',
             });
 
@@ -353,14 +315,83 @@ Deno.serve(async (req) => {
             insertsCreated++;
           }
         }
-      } else {
-        // Exists in DB - check status match
+      } else if (!dbRec && queueRec) {
+        // In queue but not in payments_v2 - count as matched if status/amount match
+        // During EXECUTE: materialize to payments_v2
+        const queueNormStatus = normalizeDbStatus(queueRec.status, '');
+        const amountMatch = Math.abs(tx.amount) === Math.abs(queueRec.amount || 0);
+        const statusMatch = fileNormStatus === queueNormStatus;
+        
+        if (statusMatch && amountMatch) {
+          matched++; // PATCH-2 FIX: Count as matched
+          
+          // During EXECUTE: materialize queue record to payments_v2
+          if (!dry_run) {
+            const insertStatus = fileNormStatus === 'successful' ? 'succeeded' : 
+                                fileNormStatus === 'refunded' ? 'refunded' :
+                                fileNormStatus === 'cancelled' ? 'canceled' : 'failed';
+            
+            const insertAmount = (fileNormStatus === 'refunded' || fileNormStatus === 'cancelled') 
+              ? -Math.abs(tx.amount) : Math.abs(tx.amount);
+
+            const { error: insertError } = await supabase
+              .from('payments_v2')
+              .upsert({
+                provider: 'bepaid',
+                provider_payment_id: tx.uid,
+                status: insertStatus,
+                transaction_type: tx.transaction_type || 'payment',
+                amount: insertAmount,
+                currency: tx.currency || 'BYN',
+                origin: 'reconcile',
+                paid_at: tx.paid_at || queueRec.paid_at || null,
+                card_last4: tx.card_last4 || null,
+                card_brand: tx.card_brand || null,
+                import_ref: 'queue_materialized',
+              }, { onConflict: 'provider,provider_payment_id' });
+
+            if (insertError && !insertError.message.includes('duplicate')) {
+              errors.push(`Materialize ${tx.uid}: ${insertError.message}`);
+            } else if (!insertError) {
+              insertsCreated++;
+            }
+          }
+        } else if (!amountMatch) {
+          mismatches.push({
+            uid: tx.uid,
+            file_status: fileNormStatus,
+            db_status: queueNormStatus,
+            file_amount: tx.amount,
+            db_amount: queueRec.amount,
+            mismatch_type: 'amount',
+            paid_at: tx.paid_at,
+            customer_email: tx.customer_email,
+          });
+          amountMismatches++;
+        } else {
+          mismatches.push({
+            uid: tx.uid,
+            file_status: fileNormStatus,
+            db_status: queueNormStatus,
+            mismatch_type: 'status',
+            paid_at: tx.paid_at,
+            customer_email: tx.customer_email,
+          });
+        }
+      } else if (dbRec) {
+        // Exists in payments_v2 - check for match or mismatch
         const override = overridesMap.get(tx.uid);
         const dbEffectiveStatus = override || dbRec.status;
         const dbNormStatus = normalizeDbStatus(dbEffectiveStatus, dbRec.transaction_type);
+        
+        const amountMatch = Math.abs(tx.amount) === Math.abs(dbRec.amount);
+        const statusMatch = fileNormStatus === dbNormStatus;
 
-        // Check for amount mismatch
-        if (Math.abs(tx.amount) !== Math.abs(dbRec.amount)) {
+        if (amountMatch && statusMatch) {
+          // PATCH-2 FIX: Increment matched when FULL MATCH
+          matched++;
+        } else if (!amountMatch) {
+          // Amount mismatch
           mismatches.push({ 
             uid: tx.uid, 
             file_status: fileNormStatus, 
@@ -373,7 +404,7 @@ Deno.serve(async (req) => {
             db_id: dbRec.id,
           });
           amountMismatches++;
-        } else if (fileNormStatus !== dbNormStatus) {
+        } else {
           // Status mismatch
           mismatches.push({ 
             uid: tx.uid, 
@@ -461,21 +492,27 @@ Deno.serve(async (req) => {
       },
     };
 
-    // Log audit entry
-    if (!dry_run) {
-      await supabase.from('audit_logs').insert({
-        action: 'bepaid_file_reconcile',
-        actor_type: 'system',
-        meta: {
-          file_count: stats.file_count,
-          inserts: stats.inserts_created,
-          overrides: stats.overrides_created,
-          errors: stats.errors,
-          from_date,
-          to_date,
-        },
-      });
-    }
+    // PATCH-2 FIX: Log audit entry for BOTH dry_run and execute (SYSTEM ACTOR proof)
+    await supabase.from('audit_logs').insert({
+      action: dry_run ? 'payments.reconcile_dry_run' : 'payments.reconcile_execute',
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'bepaid-reconcile-file',
+      meta: {
+        dry_run,
+        file_count: stats.file_count,
+        db_count: stats.db_count,
+        matched: stats.matched,
+        missing_in_db: stats.missing_in_db,
+        mismatches: stats.status_mismatches + stats.amount_mismatches,
+        inserts_created: stats.inserts_created,
+        overrides_created: stats.overrides_created,
+        errors: stats.errors,
+        from_date,
+        to_date,
+        convergence_check: `${stats.matched} + ${stats.missing_in_db} + ${stats.status_mismatches + stats.amount_mismatches} = ${stats.matched + stats.missing_in_db + stats.status_mismatches + stats.amount_mismatches} / ${stats.file_count}`,
+      },
+    });
 
     console.log(`Reconciliation complete: ${JSON.stringify(stats)}`);
 
