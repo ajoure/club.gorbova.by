@@ -6,7 +6,7 @@ const corsHeaders = {
 };
 
 interface AdminActionRequest {
-  action: "block" | "unblock" | "delete" | "restore" | "reset_password" | "force_logout" | "impersonate_start" | "impersonate_stop" | "invite" | "change_email";
+  action: "block" | "unblock" | "delete" | "restore" | "reset_password" | "force_logout" | "impersonate_start" | "impersonate_stop" | "invite" | "change_email" | "delete_orphan_auth_user";
   targetUserId?: string;
   email?: string;
   newEmail?: string;
@@ -741,6 +741,72 @@ serve(async (req: Request): Promise<Response> => {
           success: true, 
           oldEmail, 
           newEmail: normalizedNewEmail 
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "delete_orphan_auth_user": {
+        // Delete an auth user that has NO profile (orphan)
+        if (!targetUserId) {
+          return new Response(JSON.stringify({ error: "targetUserId required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Only super_admin can delete orphan auth users
+        if (!(await isActorSuperAdmin())) {
+          return new Response(JSON.stringify({ error: "Super admin permission required" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Verify no profile exists for this auth user
+        const { data: existingProfile } = await supabaseAdmin
+          .from("profiles")
+          .select("id")
+          .eq("user_id", targetUserId)
+          .maybeSingle();
+
+        if (existingProfile) {
+          return new Response(JSON.stringify({ 
+            error: "Cannot delete: user has a profile",
+            message: "Этот пользователь имеет профиль. Используйте стандартное удаление.",
+            profileId: existingProfile.id
+          }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get user info before deletion for logging
+        const { data: targetAuthUser } = await supabaseAdmin.auth.admin.getUserById(targetUserId);
+        const orphanEmail = targetAuthUser?.user?.email || "unknown";
+
+        // Delete the auth user
+        const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(targetUserId);
+
+        if (deleteError) {
+          console.error("Delete orphan auth user error:", deleteError);
+          return new Response(JSON.stringify({ error: deleteError.message }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        await logAction("users.delete_orphan_auth", null, { 
+          deleted_auth_user_id: targetUserId,
+          deleted_email: orphanEmail
+        });
+
+        console.log(`Orphan auth user deleted: ${targetUserId} (${orphanEmail})`);
+
+        return new Response(JSON.stringify({ 
+          success: true, 
+          deletedUserId: targetUserId,
+          deletedEmail: orphanEmail
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
