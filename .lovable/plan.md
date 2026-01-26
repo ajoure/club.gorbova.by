@@ -1,7 +1,9 @@
 
-# PATCH: Статистическая панель + полная сверка и ремонт платежей по эталону bePaid (копейка в копейку)
+# PATCH: Сверка платежей bePaid + Улучшение UI (Финальная версия)
 
-## Эталон bePaid (01.01-25.01.2026)
+## Актуальное состояние (факт на 26.01.2026)
+
+### Эталон bePaid (01.01-25.01.2026)
 | Категория | Количество | Сумма BYN | Комиссия BYN |
 |-----------|------------|-----------|--------------|
 | Платеж Успешный | **388** | **51,973.13** | 1,061.78 |
@@ -10,386 +12,283 @@
 | Отмена | 81 | 628.00 | 0 |
 | **ИТОГО** | **640** | | **1,125.06** |
 
-## Текущее состояние базы
-| Категория | Количество | Сумма BYN | Дельта |
-|-----------|------------|-----------|--------|
-| Успешные | 328 | 45,846.13 | -60 шт, -6,127 BYN |
-| Неуспешные | 87 | 15,561.00 | -65 шт |
-| Возвраты | 28 | 2,169.00 | +9 шт (лишние?) |
-| Отмены | 13 | 411.00 | -68 шт |
-| **ИТОГО** | **464** | | **-176 шт** |
+### Текущее состояние БД (payments_v2)
+| Категория | Количество | Сумма BYN |
+|-----------|------------|-----------|
+| Успешные (succeeded, payment, >0) | 328 | 45,846.13 |
+| Неуспешные (failed) | 87 | 15,561.00 |
+| Возвраты (refund/refunded) | 28 | 2,169.00 |
+| Отмены (void/canceled) | 16 | 414.00 |
+| **ИТОГО** | **464** | |
+
+### Разрыв к цели
+| Метрика | Факт | Цель | Дельта |
+|---------|------|------|--------|
+| Всего транзакций | 464 | 640 | **-176** |
+| Успешных платежей | 328 | 388 | **-60** |
+| Сумма успешных | 45,846.13 | 51,973.13 | **-6,127 BYN** |
 
 ---
 
-## Блок 1: Статистическая панель (Glass Morphism)
+## Причины расхождения (анализ)
 
-### 1.1 Создать компонент PaymentsStatsPanel
+### 1. Не материализованные записи из очереди
+
+В `payment_reconcile_queue` есть **168 уникальных UID**, которых нет в `payments_v2`:
+
+| status_normalized | Отсутствуют в БД | Уже есть в БД |
+|-------------------|------------------|---------------|
+| succeeded | 71 | 0 |
+| canceled | 56 | 0 |
+| failed | 40 | 28 |
+| refunded | 1 | 0 |
+| **Итого** | **168** | 91 (дубли) |
+
+**После материализации:** 464 + 168 = **632 транзакции**
+
+### 2. Остаток: 8 транзакций
+
+`640 - 632 = 8` транзакций отсутствуют и в БД, и в очереди → нужно импортировать напрямую из файла bePaid.
+
+### 3. Транзакции без UID
+
+Найдено **2 записи** в `payments_v2` без `provider_payment_id`:
+- `32012a14-...`: 100 BYN, succeeded, без profile
+- `caf2d8ed-...`: 250 BYN, succeeded, без profile
+
+Эти записи нужно либо связать с UID из bePaid, либо удалить как дубли.
+
+### 4. Дубли в очереди
+
+91 запись в очереди уже имеет соответствующую запись в `payments_v2` — это нормально (ранее материализованы), их можно пометить как `processed`.
+
+---
+
+## План выполнения
+
+### Блок 1: Улучшение UI статистической панели (iOS Glass Morphism)
 
 **Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
 
-**Дизайн (5 карточек в ряд):**
-```
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐  │
-│ │   УСПЕШНЫЕ   │ │   ВОЗВРАТЫ   │ │    ОШИБКИ    │ │   КОМИССИЯ   │ │   ЧИСТАЯ     │  │
-│ │              │ │              │ │              │ │              │ │   ВЫРУЧКА    │  │
-│ │  51,973 BYN  │ │  2,585 BYN   │ │  22,792 BYN  │ │  1,125 BYN   │ │ 48,263 BYN   │  │
-│ │    388 шт    │ │    19 шт     │ │   152 шт     │ │    2.0%      │ │              │  │
-│ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘  │
-│                                                                                        │
-│ Период: 01.01.2026 - 25.01.2026                                                       │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-```
+**Изменения:**
+1. Более выраженный стеклянный эффект с `backdrop-blur-2xl`
+2. Внутреннее свечение (shine gradient)
+3. Тонкая анимация hover с `scale` и `glow`
+4. Улучшенная типографика:
+   - Суммы крупнее (2xl → 3xl)
+   - Акцентные цвета насыщеннее
+5. Добавить `group-hover:shadow-lg` для интерактивности
 
-**Стиль Glass Morphism:**
-- `backdrop-blur-xl`
-- `bg-gradient-to-br from-card/80 to-card/50`
-- `border border-border/30`
-- Цвета: зелёный (успешные), оранжевый (возвраты), красный (ошибки), синий (комиссия), изумрудный (чистая выручка)
-
-**Формула чистой выручки:**
-```
-Чистая выручка = Сумма успешных − Возвраты − Комиссия
-               = 51,973.13 − 2,585.00 − 1,125.06 = 48,263.07 BYN
-```
-
-### 1.2 Интегрировать в PaymentsTabContent
-
-**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
-
-Добавить `<PaymentsStatsPanel />` между toolbar и Card с таблицей.
-
-### 1.3 DoD блока 1
-- На экране видны 5 карточек: Успешные, Возвраты, Ошибки, Комиссия, Чистая выручка
-- Значения пересчитываются при изменении фильтра периода
-- Чистая выручка = Сумма − Комиссия (формула соблюдается)
-
----
-
-## Блок 2: Ремонт 7 "ложных успешных" платежей
-
-### 2.1 Выявленные кейсы
-
-При детальном анализе найдено **не 7, а больше** проблемных записей:
-
-**Тип A: Транзакции с отрицательной суммой и типом `payment` (должны быть refund):**
-| UID | Сумма | Статус | Действие |
-|-----|-------|--------|----------|
-| d788b73c-defa-4473-8adf-a4dc5e5f160a | -1.00 | succeeded / payment | Исправить тип на refund |
-| 34ec7bfa-bcf9-442a-98ac-d182f38ba2ee | -1.00 | succeeded / payment | Исправить тип на refund |
-| b9e28c61-4e32-4c9f-8727-fab86217de98 | -1.00 | succeeded / payment | Исправить тип на refund |
-| f58f89a4-7475-4eef-b2f9-e75119e0dab4 | -250.00 | succeeded / payment | Исправить тип на refund |
-| fb4b5c7c-3627-4cd2-9a6f-867a41220562 | -77.00 | succeeded / payment | Исправить тип на refund |
-| 146a4166-04a4-413c-be5a-1c2ff6228592 | -250.00 | canceled / payment | Исправить тип на refund |
-
-**Тип B: Токенизация карт (сумма = 0):**
-| UID | Сумма | Статус | Действие |
-|-----|-------|--------|----------|
-| 86e45f03-69f0-426c-b835-6820ee21a90a | 0.00 | succeeded | Не учитывать в статистике успешных платежей |
-| a217deb8-83e2-45a4-bd29-a9d397c4b509 | 0.00 | succeeded | Не учитывать в статистике успешных платежей |
-
-### 2.2 Алгоритм исправления (строгий)
-
-Для каждого кейса:
-
-1. **Найти payment** по UID и определить связанный profile
-2. **Найти все связанные сущности:** orders, subscriptions, entitlements, telegram_access
-3. **Определить наличие других валидных доступов:**
-   - Если есть другие paid orders / active subscriptions → доступы НЕ трогать
-   - Если доступ выдан ТОЛЬКО на основании ошибочного платежа → отозвать
-4. **Исправить данные:**
-   - payment: изменить transaction_type / status / пометить meta.is_invalid
-   - order: изменить status на cancelled (если создан ошибочно)
-   - subscription: отключить auto_renew (если привязана к ошибке)
-   - entitlement: отозвать (только если нет других оснований)
-
-### 2.3 Реализация: Edge Function + UI Tool
-
-**Файл:** `supabase/functions/admin-fix-false-payments/index.ts`
-
-```typescript
-interface FixRequest {
-  payment_uids: string[];
-  dry_run: boolean;
-  limit?: number;
-}
-
-interface FixResult {
-  success: boolean;
-  dry_run: boolean;
-  cases: Array<{
-    uid: string;
-    contact_email: string;
-    action_taken: 'status_fixed' | 'access_revoked' | 'access_kept' | 'skipped';
-    has_other_valid_access: boolean;
-    details: {
-      payment_id: string;
-      order_ids: string[];
-      subscription_ids: string[];
-      entitlement_ids: string[];
-    };
-  }>;
-  audit_actions: string[];
-}
-```
-
-**Audit logs (SYSTEM ACTOR):**
-- `payment.fix_case_dry_run` — при dry-run
-- `payment.fix_case_executed` — при execute
-- `access.revoke_safe` — при отзыве доступа
-- `order.deleted_as_invalid` — при аннулировании сделки
-
-Meta содержит: uid, contact_id, список изменённых id, признак `other_valid_access_present`
-
-### 2.4 DoD блока 2
-- Ошибочные "успешные" платежи не создают покупку/доступ
-- У пользователей с валидной покупкой доступ НЕ отозван
-- В audit_logs есть записи system actor по каждому кейсу
-- DRY-RUN показывает список затронутых сущностей перед EXECUTE
-
----
-
-## Блок 3: Полная сверка bePaid файл = эталон
-
-### 3.1 Дельта до достижения 640 транзакций
-
-**Текущее состояние:** 464 транзакции
-**Нужно:** 640 транзакций
-**Дельта:** +176 транзакций
-
-**Источники для добавления:**
-
-| Источник | Количество | Сумма BYN | Статус |
-|----------|------------|-----------|--------|
-| payment_reconcile_queue (succeeded) | 71 | 8,477.00 | Материализовать |
-| payment_reconcile_queue (canceled) | 56 | 56.00 | Материализовать |
-| payment_reconcile_queue (failed) | 40 | 1,881.00 | Материализовать |
-| payment_reconcile_queue (refunded) | 1 | 250.00 | Материализовать |
-| **Из очереди итого** | **168** | | |
-| **Остаток из файла** | **8** | | Импортировать напрямую |
-
-### 3.2 План достижения 640 транзакций
-
-**Шаг 1:** Материализовать 168 транзакций из `payment_reconcile_queue`
-```
-После: 464 + 168 = 632 транзакции
-```
-
-**Шаг 2:** Импортировать 8 недостающих транзакций из файла bePaid
-```
-После: 632 + 8 = 640 транзакций
-```
-
-**Шаг 3:** Исправить 6 транзакций с неверным типом (payment → refund)
-```
-Это уменьшит "успешные" и увеличит "возвраты" до правильных значений
-```
-
-### 3.3 Reconcile функция (усиленная)
-
-**Файл:** `supabase/functions/bepaid-reconcile-file/index.ts` (существует, дополнить)
-
-**Обязательные проверки для каждой строки файла:**
-- UID транзакции
-- Сумма (amount)
-- Статус (status)
-- Тип операции (transaction_type)
-- Время (paid_at) — с учётом Europe/Minsk
-- Карта (last4 / brand)
-
-**Выход reconcile:**
-```typescript
-interface ReconcileResult {
-  matched: number;           // Сопоставлено 1:1
-  missing_in_db: Array<{     // Есть в файле, нет в БД
-    uid: string;
-    amount: number;
-    status: string;
-  }>;
-  extra_in_db: Array<{       // Есть в БД, нет в файле
-    uid: string;
-    amount: number;
-  }>;
-  status_mismatch: Array<{   // UID совпадает, статус разный
-    uid: string;
-    file_status: string;
-    db_status: string;
-  }>;
-  amount_mismatch: Array<{   // UID совпадает, сумма разная
-    uid: string;
-    file_amount: number;
-    db_amount: number;
-  }>;
-  summary: {
-    file_total: number;
-    file_amount: number;
-    db_total: number;
-    db_amount: number;
-    fees_total: number;
-    net_revenue: number;
-  };
-}
-```
-
-### 3.4 DoD блока 3
-- После reconcile количество = 640 транзакций
-- Суммы совпадают:
-  - Успешные: 388 шт = 51,973.13 BYN
-  - Возвраты: 19 шт = 2,585.00 BYN
-  - Отмены: 81 шт = 628.00 BYN
-  - Неуспешные: 152 шт
-- Любая строка файла либо сопоставлена 1:1, либо в отчёте с причиной
-
----
-
-## Блок 4: Timezone переключатель
-
-### 4.1 Проблема
-
-Переключатель `My TZ / UTC / Provider` визуально присутствует в `PaymentsTabContent.tsx`, но **не подключён** к форматированию дат в таблице.
-
-### 4.2 Решение
-
-**Файл:** `src/components/admin/payments/PaymentsTable.tsx`
-
-1. Добавить prop `displayTimezone: 'user' | 'utc' | 'provider'`
-2. Создать утилиту форматирования:
-
-```typescript
-import { formatInTimeZone } from 'date-fns-tz';
-
-function formatPaymentTime(
-  utcDate: string,
-  mode: 'user' | 'utc' | 'provider',
-  userTimezone: string = 'Europe/Minsk'
-): string {
-  const date = new Date(utcDate);
-  
-  switch (mode) {
-    case 'utc':
-      return formatInTimeZone(date, 'UTC', 'dd.MM.yy HH:mm');
-    case 'provider':
-      return formatInTimeZone(date, 'Europe/Minsk', 'dd.MM.yy HH:mm');
-    case 'user':
-    default:
-      return formatInTimeZone(date, userTimezone, 'dd.MM.yy HH:mm');
-  }
-}
-```
-
-3. Применить в рендере колонки `date`:
-```typescript
-case 'date':
-  return (
-    <span className="whitespace-nowrap text-xs">
-      {payment.paid_at 
-        ? formatPaymentTime(payment.paid_at, displayTimezone, userTimezone) 
-        : "—"}
-    </span>
-  );
-```
-
-**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
-
-Передать `displayTimezone` в `PaymentsTable`:
 ```tsx
-<PaymentsTable
-  payments={filteredPayments}
-  displayTimezone={displayTimezone}
-  // ...остальные props
-/>
+// Новый дизайн StatCard
+<div className="group relative overflow-hidden rounded-2xl transition-all duration-300 hover:scale-[1.02]">
+  {/* Outer glow on hover */}
+  <div className="absolute -inset-0.5 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-sm bg-emerald-500/20" />
+  
+  {/* Main card */}
+  <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/70 dark:bg-black/40 backdrop-blur-2xl p-5 shadow-lg">
+    {/* Inner shine gradient */}
+    <div className="absolute inset-0 bg-gradient-to-br from-white/30 via-transparent to-transparent pointer-events-none" />
+    
+    {/* Content */}
+    <div className="relative z-10">...</div>
+  </div>
+</div>
 ```
-
-### 4.3 DoD блока 4
-- При переключении режимов время в таблице заметно меняется
-- UTC показывает время -3 часа от Minsk
-- Provider TZ = Europe/Minsk (время bePaid)
-- Нет "съезда дат" и дублей из-за TZ
 
 ---
 
-## Блок 5: Порядок выполнения
+### Блок 2: Улучшение UI выбора таймзоны
 
-| Шаг | Действие | Результат |
-|-----|----------|-----------|
-| 1 | Создать `PaymentsStatsPanel.tsx` | UI панель со статистикой |
-| 2 | Интегрировать в `PaymentsTabContent.tsx` | Панель видна над таблицей |
-| 3 | Подключить timezone в `PaymentsTable.tsx` | Переключатель работает |
-| 4 | Запустить reconcile DRY-RUN | Отчёт о расхождениях |
-| 5 | Материализовать 168 транзакций из queue | +168 записей в payments_v2 |
-| 6 | Импортировать 8 недостающих из файла | +8 записей |
-| 7 | Исправить 6 транзакций payment → refund | Корректные типы |
-| 8 | Исправить "ложные успешные" (блок 2) | Ошибки не создают доступ |
-| 9 | Финальная сверка | 640 транзакций, суммы бьются |
+**Проблема:** Текущий toggle "My TZ / UTC / Provider" неинформативен и плохо выглядит.
+
+**Решение:** Заменить на компактный Select с IANA таймзонами.
+
+**Файл:** `src/components/admin/payments/PaymentsTabContent.tsx`
+
+**Новый компонент:** `TimezoneSelector.tsx`
+
+```tsx
+// Популярные таймзоны для выбора
+const COMMON_TIMEZONES = [
+  { value: 'Europe/Minsk', label: 'Минск (UTC+3)', short: 'MSK' },
+  { value: 'Europe/Moscow', label: 'Москва (UTC+3)', short: 'MSK' },
+  { value: 'Europe/Warsaw', label: 'Варшава (UTC+1)', short: 'CET' },
+  { value: 'Europe/London', label: 'Лондон (UTC+0)', short: 'GMT' },
+  { value: 'UTC', label: 'UTC', short: 'UTC' },
+  { value: 'Europe/Paris', label: 'Париж (UTC+1)', short: 'CET' },
+  { value: 'Africa/Cairo', label: 'Каир (UTC+2)', short: 'EET' },
+  // ... больше зон
+];
+
+// UI: компактный Select рядом с фильтрами
+<Select value={selectedTimezone} onValueChange={setSelectedTimezone}>
+  <SelectTrigger className="w-[140px] h-8">
+    <Clock className="h-3 w-3 mr-1" />
+    <SelectValue />
+  </SelectTrigger>
+  <SelectContent>
+    {COMMON_TIMEZONES.map(tz => (
+      <SelectItem key={tz.value} value={tz.value}>
+        {tz.label}
+      </SelectItem>
+    ))}
+  </SelectContent>
+</Select>
+```
+
+**Интеграция:**
+- Заменить `ToggleGroup` на `Select` с таймзонами
+- Сохранять выбор в `localStorage` для персистентности
+- По умолчанию: `Europe/Minsk` (время провайдера bePaid)
 
 ---
 
-## Блок 6: Итоговые проверки (DoD)
+### Блок 3: Материализация 168 недостающих транзакций
 
-### SQL проверки
+**Функция:** `admin-materialize-queue-payments`
 
+**Проблема:** Функция работает только со статусом `completed` в очереди, а у нас записи в статусе `pending`.
+
+**Решение:**
+1. Обновить записи в очереди: `pending` → `completed` для тех, у кого есть `bepaid_uid`
+2. Запустить материализацию
+
+**SQL для подготовки:**
 ```sql
--- 1) Общее количество = 640
-SELECT COUNT(*) FROM payments_v2
-WHERE provider = 'bepaid'
-  AND paid_at >= '2026-01-01' AND paid_at < '2026-01-26';
--- Ожидаемо: 640
-
--- 2) Успешные = 388, сумма = 51,973.13
-SELECT COUNT(*), ROUND(SUM(amount)::numeric, 2)
-FROM payments_v2
-WHERE provider = 'bepaid'
-  AND paid_at >= '2026-01-01' AND paid_at < '2026-01-26'
-  AND status = 'succeeded'
-  AND transaction_type NOT IN ('refund', 'void')
-  AND amount > 0;
--- Ожидаемо: 388, 51973.13
-
--- 3) Возвраты = 19, сумма = 2,585.00
-SELECT COUNT(*), ROUND(SUM(ABS(amount))::numeric, 2)
-FROM payments_v2
-WHERE provider = 'bepaid'
-  AND paid_at >= '2026-01-01' AND paid_at < '2026-01-26'
-  AND (transaction_type = 'refund' OR status = 'refunded');
--- Ожидаемо: 19, 2585.00
-
--- 4) Отмены = 81, сумма = 628.00
-SELECT COUNT(*), ROUND(SUM(ABS(amount))::numeric, 2)
-FROM payments_v2
-WHERE provider = 'bepaid'
-  AND paid_at >= '2026-01-01' AND paid_at < '2026-01-26'
-  AND (transaction_type = 'void' OR status = 'canceled');
--- Ожидаемо: 81, 628.00
-
--- 5) Неуспешные = 152
-SELECT COUNT(*)
-FROM payments_v2
-WHERE provider = 'bepaid'
-  AND paid_at >= '2026-01-01' AND paid_at < '2026-01-26'
-  AND status = 'failed';
--- Ожидаемо: 152
+-- Перевести pending записи с UID в completed для материализации
+UPDATE payment_reconcile_queue
+SET status = 'completed'
+WHERE paid_at >= '2026-01-01' AND paid_at < '2026-01-26'
+  AND status = 'pending'
+  AND bepaid_uid IS NOT NULL;
 ```
 
-### UI проверки (из 1@ajoure.by)
-- Скрин: PaymentsStatsPanel с 5 карточками
-- Скрин: Чистая выручка = Сумма − Комиссия (48,263.07 BYN)
-- Скрин: Timezone переключатель работает (3 режима)
-
-### Audit logs (SYSTEM ACTOR)
-
-```sql
-SELECT action, COUNT(*) FROM audit_logs
-WHERE actor_type = 'system'
-  AND action IN (
-    'payment.fix_case_dry_run',
-    'payment.fix_case_executed',
-    'access.revoke_safe',
-    'order.deleted_as_invalid',
-    'bepaid_file_reconcile'
-  )
-  AND created_at >= '2026-01-26'
-GROUP BY action;
+**Вызов Edge Function:**
+```json
+{
+  "dry_run": false,
+  "from_date": "2026-01-01",
+  "to_date": "2026-01-26",
+  "limit": 200
+}
 ```
+
+**Ожидаемый результат:** +168 транзакций → 632 в БД
+
+---
+
+### Блок 4: Импорт 8 недостающих транзакций из файла bePaid
+
+После материализации 168 записей останется разрыв в 8 транзакций.
+
+**Действия:**
+1. Запустить `bepaid-reconcile-file` с файлом bePaid
+2. Получить список `missing_in_db` (8 UID)
+3. Импортировать их через существующий механизм импорта
+
+**Ожидаемый результат:** 632 + 8 = **640 транзакций**
+
+---
+
+### Блок 5: Исправление 2 транзакций без UID
+
+| ID | Сумма | Действие |
+|----|-------|----------|
+| `32012a14-...` | 100 BYN | Найти в bePaid по сумме/дате или удалить |
+| `caf2d8ed-...` | 250 BYN | Найти в bePaid по сумме/дате или удалить |
+
+**Метод:**
+1. Сопоставить с файлом bePaid по (сумма + дата + email/карта)
+2. Если найдено соответствие — обновить `provider_payment_id`
+3. Если не найдено — удалить как дубли
+
+---
+
+### Блок 6: Инструменты администратора (русификация)
+
+**Файл:** `src/components/admin/payments/AdminToolsMenu.tsx` (создать)
+
+**Переименование инструментов:**
+
+| Текущее название | Новое название | Описание |
+|------------------|----------------|----------|
+| Fix False Payments | Исправить ошибочные платежи | Исправляет транзакции, которые отмечены успешными, но failed в bePaid |
+| Fix Payments Integrity | Проверить целостность данных | Находит несоответствия сумм между платежами и сделками |
+| Backfill 2026 Orders | Связать платежи со сделками | Создаёт сделки для "сиротских" платежей 2026 года |
+
+**UI: Меню-шестерёнка**
+
+```tsx
+<DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button variant="ghost" size="icon">
+      <Settings className="h-4 w-4" />
+    </Button>
+  </DropdownMenuTrigger>
+  <DropdownMenuContent align="end" className="w-64">
+    <DropdownMenuLabel>Инструменты обслуживания</DropdownMenuLabel>
+    <DropdownMenuSeparator />
+    
+    <DropdownMenuItem onClick={() => setFixFalsePaymentsOpen(true)}>
+      <Wrench className="h-4 w-4 mr-2" />
+      <div className="flex flex-col">
+        <span>Исправить ошибочные платежи</span>
+        <span className="text-xs text-muted-foreground">DRY-RUN по умолчанию</span>
+      </div>
+    </DropdownMenuItem>
+    
+    <DropdownMenuItem onClick={() => setIntegrityCheckOpen(true)}>
+      <CheckCircle className="h-4 w-4 mr-2" />
+      Проверить целостность данных
+    </DropdownMenuItem>
+    
+    <DropdownMenuItem onClick={() => setBackfillOrdersOpen(true)}>
+      <Link className="h-4 w-4 mr-2" />
+      Связать платежи со сделками
+    </DropdownMenuItem>
+  </DropdownMenuContent>
+</DropdownMenu>
+```
+
+---
+
+### Блок 7: Edge Function admin-fix-false-payments — UI интеграция
+
+**Функция существует**, но нет UI для вызова.
+
+**Создать:** `src/components/admin/payments/FalsePaymentsFixDialog.tsx`
+
+```tsx
+interface Props {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+// Диалог с:
+// 1. Текстовым полем для ввода UID (один на строку)
+// 2. Кнопка "Проверить (DRY-RUN)"
+// 3. Отображение результатов: какие платежи найдены, что будет изменено
+// 4. Кнопка "Выполнить" с подтверждением
+
+// Важно: DRY-RUN по умолчанию!
+// Показывать предупреждение, что доступы могут быть отозваны
+```
+
+---
+
+## Порядок выполнения
+
+| # | Действие | Файлы | Результат |
+|---|----------|-------|-----------|
+| 1 | Улучшить дизайн PaymentsStatsPanel (iOS Glass) | `PaymentsStatsPanel.tsx` | Красивая панель статистики |
+| 2 | Заменить TZ toggle на Select | `PaymentsTabContent.tsx`, `TimezoneSelector.tsx` | Выбор таймзоны IANA |
+| 3 | Создать меню инструментов (шестерёнка) | `AdminToolsMenu.tsx` | Русские названия, единая точка входа |
+| 4 | Создать UI для admin-fix-false-payments | `FalsePaymentsFixDialog.tsx` | DRY-RUN + EXECUTE |
+| 5 | SQL: перевести pending → completed | Миграция | Подготовка к материализации |
+| 6 | Материализовать 168 транзакций | Вызов Edge Function | 632 в БД |
+| 7 | Импортировать 8 недостающих | Через импорт | 640 в БД |
+| 8 | Исправить 2 транзакции без UID | SQL / UI | Все записи с UID |
 
 ---
 
@@ -397,18 +296,55 @@ GROUP BY action;
 
 | Файл | Действие |
 |------|----------|
-| `src/components/admin/payments/PaymentsStatsPanel.tsx` | CREATE |
-| `src/components/admin/payments/PaymentsTabContent.tsx` | EDIT (добавить панель + передать TZ) |
-| `src/components/admin/payments/PaymentsTable.tsx` | EDIT (подключить TZ форматирование) |
-| `supabase/functions/admin-fix-false-payments/index.ts` | CREATE |
-| `supabase/functions/bepaid-reconcile-file/index.ts` | EDIT (расширить) |
+| `src/components/admin/payments/PaymentsStatsPanel.tsx` | EDIT — iOS Glass дизайн |
+| `src/components/admin/payments/PaymentsTabContent.tsx` | EDIT — заменить TZ toggle на Select |
+| `src/components/admin/payments/TimezoneSelector.tsx` | CREATE — компонент выбора таймзоны |
+| `src/components/admin/payments/AdminToolsMenu.tsx` | CREATE — меню инструментов |
+| `src/components/admin/payments/FalsePaymentsFixDialog.tsx` | CREATE — UI для исправления платежей |
 
 ---
 
-## Важные ограничения
+## DoD (Definition of Done)
 
-1. **Не ломать существующие связи** — карты-контакты, транзакции-сделки, доступы
-2. **DRY-RUN обязателен** — перед любыми массовыми изменениями
-3. **Проверка других доступов** — перед отзывом убедиться, что нет валидных оснований
-4. **Часовой пояс** — хранение в UTC, отображение по выбору
-5. **Пруфы из 1@ajoure.by** — все скрины и audit_logs
+### После UI изменений:
+- [ ] Панель статистики в стиле iOS Glass Morphism
+- [ ] Выбор таймзоны через Select с IANA зонами
+- [ ] Время в таблице меняется при смене TZ
+- [ ] Инструменты под шестерёнкой с русскими названиями
+
+### После данных:
+```sql
+-- 1) Всего = 640
+SELECT COUNT(*) FROM payments_v2
+WHERE provider = 'bepaid' AND paid_at >= '2026-01-01' AND paid_at < '2026-01-26';
+
+-- 2) Успешные = 388, сумма = 51,973.13
+SELECT COUNT(*), ROUND(SUM(amount)::numeric, 2)
+FROM payments_v2
+WHERE provider = 'bepaid' 
+  AND paid_at >= '2026-01-01' AND paid_at < '2026-01-26'
+  AND status = 'succeeded' AND transaction_type = 'payment' AND amount > 0;
+
+-- 3) Нет транзакций без UID
+SELECT COUNT(*) FROM payments_v2
+WHERE provider = 'bepaid' 
+  AND paid_at >= '2026-01-01' AND paid_at < '2026-01-26'
+  AND (provider_payment_id IS NULL OR provider_payment_id = '');
+-- Ожидаемо: 0
+```
+
+---
+
+## Техническая деталь: Почему material-materialize не работает
+
+Функция `admin-materialize-queue-payments` обрабатывает только записи со статусом `completed`:
+
+```typescript
+// Строка 116-119 в admin-materialize-queue-payments
+let query = supabase
+  .from('payment_reconcile_queue')
+  .select('*')
+  .eq('status', 'completed')  // ← ТОЛЬКО completed!
+```
+
+А в очереди записи имеют статус `pending`. Поэтому нужно сначала обновить статус через SQL миграцию.
