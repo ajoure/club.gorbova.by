@@ -1,17 +1,17 @@
-import { useState, useCallback, useMemo } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { useState, useCallback, useMemo, useRef } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   FileSearch, Upload, Play, CheckCircle2, AlertTriangle, XCircle, 
-  ChevronDown, Download, Loader2, FileSpreadsheet, Clock
+  Download, Loader2, FileSpreadsheet, Clock, Copy, ExternalLink
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import * as XLSX from "xlsx";
 
 interface ReconcileFileDialogProps {
@@ -48,20 +48,46 @@ interface ReconcileStats {
   errors: number;
 }
 
+interface MissingItem {
+  uid: string;
+  status: string;
+  amount: number;
+  transaction_type: string;
+  paid_at?: string;
+  customer_email?: string;
+  card_last4?: string;
+}
+
+interface MismatchItem {
+  uid: string;
+  file_status: string;
+  db_status: string;
+  file_amount?: number;
+  db_amount?: number;
+  file_type?: string;
+  db_type?: string;
+  mismatch_type: string;
+  paid_at?: string;
+  customer_email?: string;
+  db_id?: string;
+}
+
+interface ExtraItem {
+  uid: string;
+  amount: number;
+  status: string;
+  db_id?: string;
+  paid_at?: string;
+  customer_email?: string;
+}
+
 interface ReconcileResult {
   success: boolean;
   dry_run: boolean;
   stats: ReconcileStats;
-  missing: Array<{ uid: string; status: string; amount: number; transaction_type: string }>;
-  extra: Array<{ uid: string; amount: number; status: string }>;
-  mismatches: Array<{ 
-    uid: string; 
-    file_status: string; 
-    db_status: string; 
-    file_amount?: number;
-    db_amount?: number;
-    mismatch_type: string;
-  }>;
+  missing: MissingItem[];
+  extra: ExtraItem[];
+  mismatches: MismatchItem[];
   errors: string[];
   summary: {
     file: { successful: number; failed: number; refunded: number; cancelled: number; total_amount: number };
@@ -88,18 +114,14 @@ function parseExcelFile(file: File): Promise<{ transactions: FileTransaction[]; 
         
         console.log(`[parseExcelFile] Found ${sheetNames.length} sheets:`, sheetNames);
         
-        // Process ALL sheets, not just "Cards"/"ERIP"
         for (const sheetName of sheetNames) {
           const sheet = workbook.Sheets[sheetName];
           const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
           
-          // Skip empty sheets
           if (!jsonData || jsonData.length < 2) {
-            console.log(`[parseExcelFile] Sheet "${sheetName}": empty, skipping`);
             continue;
           }
           
-          // Find header row with UID column (check first 15 rows)
           let headerRowIdx = -1;
           let headers: string[] = [];
           
@@ -107,7 +129,6 @@ function parseExcelFile(file: File): Promise<{ transactions: FileTransaction[]; 
             const row = jsonData[i];
             if (!row) continue;
             
-            // Look for UID column specifically
             const rowStr = row.map((c: any) => String(c || '').toLowerCase().trim());
             const hasUid = rowStr.some((h: string) => 
               h === 'uid' || 
@@ -122,16 +143,13 @@ function parseExcelFile(file: File): Promise<{ transactions: FileTransaction[]; 
             }
           }
           
-          // If no UID column found in this sheet, skip it
           if (headerRowIdx === -1) {
-            console.log(`[parseExcelFile] Sheet "${sheetName}": no UID column found, skipping`);
             continue;
           }
           
-          console.log(`[parseExcelFile] Sheet "${sheetName}": found UID at row ${headerRowIdx}, parsing...`);
+          console.log(`[parseExcelFile] Sheet "${sheetName}": found UID at row ${headerRowIdx}`);
           sheetsProcessed.push(sheetName);
           
-          // Find column indices
           const uidIdx = headers.findIndex(h => h === 'uid' || h.includes('id транз'));
           const statusIdx = headers.findIndex(h => h.includes('статус') || h.includes('status'));
           const typeIdx = headers.findIndex(h => h.includes('тип') || h.includes('type') || h.includes('операц'));
@@ -141,24 +159,12 @@ function parseExcelFile(file: File): Promise<{ transactions: FileTransaction[]; 
           const emailIdx = headers.findIndex(h => h.includes('email') || h.includes('почт'));
           const cardIdx = headers.findIndex(h => h.includes('карт') || h.includes('card') || h.includes('pan'));
           
-          console.log(`[parseExcelFile] Column indices: UID=${uidIdx}, Status=${statusIdx}, Amount=${amountIdx}`);
-          
-          // Parse data rows
-          let validCount = 0;
-          let skippedInvalidUid = 0;
-          
           for (let i = headerRowIdx + 1; i < jsonData.length; i++) {
             const row = jsonData[i];
             if (!row || row.length === 0) continue;
             
             const uid = uidIdx >= 0 ? String(row[uidIdx] || '').trim() : '';
-            if (!uid) continue;
-            
-            // Validate UUID format
-            if (!UUID_REGEX.test(uid)) {
-              skippedInvalidUid++;
-              continue;
-            }
+            if (!uid || !UUID_REGEX.test(uid)) continue;
             
             const amountRaw = amountIdx >= 0 ? row[amountIdx] : 0;
             const amount = typeof amountRaw === 'number' ? amountRaw : parseFloat(String(amountRaw).replace(/[^\d.-]/g, '')) || 0;
@@ -173,10 +179,7 @@ function parseExcelFile(file: File): Promise<{ transactions: FileTransaction[]; 
               customer_email: emailIdx >= 0 ? String(row[emailIdx] || '') : undefined,
               card_last4: cardIdx >= 0 ? String(row[cardIdx] || '').slice(-4) : undefined,
             });
-            validCount++;
           }
-          
-          console.log(`[parseExcelFile] Sheet "${sheetName}": parsed ${validCount} transactions, skipped ${skippedInvalidUid} invalid UIDs`);
         }
         
         console.log(`[parseExcelFile] Total: ${transactions.length} transactions from ${sheetsProcessed.length} sheets`);
@@ -188,6 +191,139 @@ function parseExcelFile(file: File): Promise<{ transactions: FileTransaction[]; 
     reader.onerror = () => reject(new Error('Ошибка чтения файла'));
     reader.readAsArrayBuffer(file);
   });
+}
+
+// Copy to clipboard helper
+function copyToClipboard(text: string, toast: any) {
+  navigator.clipboard.writeText(text).then(() => {
+    toast({ title: "Скопировано", description: text.slice(0, 30) + "..." });
+  }).catch(() => {
+    toast({ title: "Ошибка копирования", variant: "destructive" });
+  });
+}
+
+// Virtualized table row component for Missing items
+function MissingRow({ item, onCopy }: { item: MissingItem; onCopy: (uid: string) => void }) {
+  return (
+    <div className="grid grid-cols-[1fr_100px_100px_100px_120px_80px_60px] gap-2 px-3 py-2 text-xs border-b border-slate-700/30 hover:bg-slate-800/30 items-center">
+      <div className="flex items-center gap-1.5 min-w-0">
+        <button onClick={() => onCopy(item.uid)} className="text-slate-500 hover:text-slate-300 shrink-0">
+          <Copy className="h-3 w-3" />
+        </button>
+        <span className="font-mono text-slate-300 truncate">{item.uid.slice(0, 8)}...{item.uid.slice(-4)}</span>
+      </div>
+      <div className="text-slate-400 truncate">{item.paid_at?.split(' ')[0] || '—'}</div>
+      <div className="text-emerald-400 tabular-nums text-right">{item.amount.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</div>
+      <div className="text-emerald-400 truncate">{item.status || '—'}</div>
+      <div className="text-slate-400 truncate">{item.customer_email || '—'}</div>
+      <div className="text-slate-500 truncate">{item.card_last4 ? `****${item.card_last4}` : '—'}</div>
+      <div className="text-amber-400 text-[10px]">Добавить</div>
+    </div>
+  );
+}
+
+// Virtualized table row component for Mismatch items
+function MismatchRow({ item, onCopy }: { item: MismatchItem; onCopy: (uid: string) => void }) {
+  const amountDiff = (item.file_amount || 0) - (item.db_amount || 0);
+  return (
+    <div className="grid grid-cols-[1fr_100px_100px_100px_100px_100px_80px_60px] gap-2 px-3 py-2 text-xs border-b border-slate-700/30 hover:bg-slate-800/30 items-center">
+      <div className="flex items-center gap-1.5 min-w-0">
+        <button onClick={() => onCopy(item.uid)} className="text-slate-500 hover:text-slate-300 shrink-0">
+          <Copy className="h-3 w-3" />
+        </button>
+        <span className="font-mono text-slate-300 truncate">{item.uid.slice(0, 8)}...{item.uid.slice(-4)}</span>
+      </div>
+      <div className="text-slate-400 truncate">{item.paid_at?.split(' ')[0] || '—'}</div>
+      <div className="text-emerald-400 tabular-nums text-right">{(item.file_amount || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</div>
+      <div className="text-rose-400 tabular-nums text-right">{(item.db_amount || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</div>
+      <div className="text-emerald-400 truncate">{item.file_status}</div>
+      <div className="text-rose-400 truncate">{item.db_status}</div>
+      <div className={`tabular-nums text-right ${amountDiff > 0 ? 'text-emerald-400' : amountDiff < 0 ? 'text-rose-400' : 'text-slate-500'}`}>
+        {amountDiff !== 0 ? `${amountDiff > 0 ? '+' : ''}${amountDiff.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}` : '—'}
+      </div>
+      <div className="text-amber-400 text-[10px]">Исправить</div>
+    </div>
+  );
+}
+
+// Virtualized table row component for Extra items
+function ExtraRow({ item, onCopy }: { item: ExtraItem; onCopy: (uid: string) => void }) {
+  return (
+    <div className="grid grid-cols-[1fr_100px_100px_100px_120px_60px] gap-2 px-3 py-2 text-xs border-b border-slate-700/30 hover:bg-slate-800/30 items-center">
+      <div className="flex items-center gap-1.5 min-w-0">
+        <button onClick={() => onCopy(item.uid)} className="text-slate-500 hover:text-slate-300 shrink-0">
+          <Copy className="h-3 w-3" />
+        </button>
+        <span className="font-mono text-slate-300 truncate">{item.uid.slice(0, 8)}...{item.uid.slice(-4)}</span>
+      </div>
+      <div className="text-slate-400 truncate">{item.paid_at?.split(' ')[0] || '—'}</div>
+      <div className="text-rose-400 tabular-nums text-right">{item.amount.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</div>
+      <div className="text-rose-400 truncate">{item.status}</div>
+      <div className="text-slate-400 truncate">{item.customer_email || '—'}</div>
+      <div className="text-sky-400 text-[10px]">Пометить</div>
+    </div>
+  );
+}
+
+// Virtualized list component
+function VirtualizedList<T>({ 
+  items, 
+  renderRow,
+  headerRow,
+  parentRef,
+}: { 
+  items: T[];
+  renderRow: (item: T, index: number) => React.ReactNode;
+  headerRow: React.ReactNode;
+  parentRef: React.RefObject<HTMLDivElement>;
+}) {
+  const rowVirtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 40,
+    overscan: 15,
+  });
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Sticky header */}
+      <div className="shrink-0 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/50 sticky top-0 z-10">
+        {headerRow}
+      </div>
+      {/* Virtualized content */}
+      <div 
+        ref={parentRef}
+        className="flex-1 overflow-auto"
+      >
+        <div
+          style={{
+            height: `${rowVirtualizer.getTotalSize()}px`,
+            width: '100%',
+            position: 'relative',
+          }}
+        >
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const item = items[virtualRow.index];
+            return (
+              <div
+                key={virtualRow.key}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                {renderRow(item, virtualRow.index)}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: ReconcileFileDialogProps) {
@@ -202,7 +338,11 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
   const [isLoading, setIsLoading] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [result, setResult] = useState<ReconcileResult | null>(null);
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const [activeTab, setActiveTab] = useState("missing");
+  
+  const missingListRef = useRef<HTMLDivElement>(null);
+  const mismatchListRef = useRef<HTMLDivElement>(null);
+  const extraListRef = useRef<HTMLDivElement>(null);
   
   const whoami = useMemo(() => ({
     email: user?.email || 'unknown',
@@ -225,7 +365,7 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
       setSheetsInfo(sheetsProcessed);
       toast({
         title: "Файл загружен",
-        description: `Найдено ${parsed.length} транзакций из листов: ${sheetsProcessed.join(', ') || 'нет'}`,
+        description: `Найдено ${parsed.length} транзакций`,
       });
     } catch (err: any) {
       toast({
@@ -261,6 +401,7 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
       if (error) throw error;
       
       setResult(data as ReconcileResult);
+      setActiveTab("missing");
       
       toast({
         title: dryRun ? "Сверка завершена (DRY-RUN)" : "Исправления применены",
@@ -281,9 +422,9 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
     }
   }, [transactions, fromDate, toDate, toast, onSuccess]);
   
-  const toggleSection = (section: string) => {
-    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
-  };
+  const handleCopyUid = useCallback((uid: string) => {
+    copyToClipboard(uid, toast);
+  }, [toast]);
   
   const downloadReport = useCallback(() => {
     if (!result) return;
@@ -303,17 +444,14 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
       `Status mismatches: ${result.stats.status_mismatches}`,
       `Amount mismatches: ${result.stats.amount_mismatches}`,
       '',
-      '=== MISSING (in file, not in DB) ===',
+      '=== MISSING ===',
       ...result.missing.map(m => `${m.uid} | ${m.status} | ${m.amount} BYN | ${m.transaction_type}`),
       '',
-      '=== EXTRA (in DB, not in file) ===',
+      '=== EXTRA ===',
       ...result.extra.map(e => `${e.uid} | ${e.status} | ${e.amount} BYN`),
       '',
       '=== MISMATCHES ===',
-      ...result.mismatches.map(m => `${m.uid} | File: ${m.file_status} | DB: ${m.db_status} | Type: ${m.mismatch_type}`),
-      '',
-      '=== ERRORS ===',
-      ...result.errors,
+      ...result.mismatches.map(m => `${m.uid} | File: ${m.file_status}/${m.file_amount} | DB: ${m.db_status}/${m.db_amount}`),
     ];
     
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
@@ -325,291 +463,257 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
     URL.revokeObjectURL(url);
   }, [result, fromDate, toDate]);
   
+  const totalToFix = result ? (result.stats.missing_in_db + result.stats.status_mismatches + result.stats.amount_mismatches) : 0;
+  
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileSearch className="h-5 w-5 text-primary" />
+      <DialogContent className="max-w-6xl h-[90vh] flex flex-col p-0 gap-0 overflow-hidden bg-slate-900/95 backdrop-blur-xl border-slate-700/50">
+        {/* Header */}
+        <DialogHeader className="shrink-0 px-6 py-4 border-b border-slate-700/50">
+          <DialogTitle className="flex items-center gap-2 text-slate-100">
+            <FileSearch className="h-5 w-5 text-purple-400" />
             Сверка с эталоном bePaid
           </DialogTitle>
-          <DialogDescription>
-            Загрузите выписку bePaid и сравните с базой данных
-          </DialogDescription>
         </DialogHeader>
         
-        <ScrollArea className="flex-1 pr-4">
-          <div className="space-y-6 pb-4">
-            {/* Step 1: File Upload */}
-            <div className="space-y-3">
-              <Label className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                1. Загрузка файла
-              </Label>
-              <div className="flex items-center gap-4">
-                <div className="relative flex-1">
-                  <Input
-                    type="file"
-                    accept=".xlsx,.xls,.csv"
-                    onChange={handleFileChange}
-                    className="hidden"
-                    id="reconcile-file-input"
-                  />
-                  <label
-                    htmlFor="reconcile-file-input"
-                    className="flex items-center gap-3 px-4 py-3 rounded-2xl border-2 border-dashed border-muted-foreground/30 hover:border-primary/50 transition-colors cursor-pointer bg-muted/20 backdrop-blur-sm"
-                  >
-                    {isParsing ? (
-                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                    ) : (
-                      <Upload className="h-5 w-5 text-muted-foreground" />
-                    )}
-                    <span className="text-sm text-muted-foreground">
-                      {file ? file.name : "Выберите файл Excel/CSV"}
-                    </span>
-                  </label>
-                </div>
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Upload & Date Section */}
+          <div className="shrink-0 px-6 py-4 border-b border-slate-700/30 bg-slate-800/30">
+            <div className="flex items-center gap-6 flex-wrap">
+              {/* File Upload */}
+              <div className="flex items-center gap-3">
+                <Input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleFileChange}
+                  className="hidden"
+                  id="reconcile-file-input"
+                />
+                <label
+                  htmlFor="reconcile-file-input"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-600/50 hover:border-purple-500/50 transition-colors cursor-pointer bg-slate-800/50"
+                >
+                  {isParsing ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-purple-400" />
+                  ) : (
+                    <Upload className="h-4 w-4 text-slate-400" />
+                  )}
+                  <span className="text-sm text-slate-300">
+                    {file ? file.name : "Выберите файл"}
+                  </span>
+                </label>
                 {transactions.length > 0 && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-                    <FileSpreadsheet className="h-4 w-4 text-emerald-500" />
-                    <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                    <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="text-xs font-medium text-emerald-400">
                       {transactions.length} транзакций
                     </span>
                   </div>
                 )}
               </div>
-            </div>
-            
-            {/* Step 2: Date Range */}
-            <div className="space-y-3">
-              <Label className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                2. Период сверки (Europe/Minsk)
-              </Label>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                  <Input
-                    type="date"
-                    value={fromDate}
-                    onChange={(e) => setFromDate(e.target.value)}
-                    className="w-40"
-                  />
-                </div>
-                <span className="text-muted-foreground">—</span>
+              
+              {/* Date Range */}
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-slate-500" />
+                <Input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  className="w-36 h-9 bg-slate-800/50 border-slate-600/50 text-slate-300 text-sm"
+                />
+                <span className="text-slate-500">—</span>
                 <Input
                   type="date"
                   value={toDate}
                   onChange={(e) => setToDate(e.target.value)}
-                  className="w-40"
+                  className="w-36 h-9 bg-slate-800/50 border-slate-600/50 text-slate-300 text-sm"
                 />
               </div>
             </div>
-            
-            {/* Step 3: Results */}
-            {result && (
-              <div className="space-y-4">
-                <Label className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                  3. Результат сверки {result.dry_run && <span className="text-amber-500">(DRY-RUN)</span>}
-                </Label>
-                
-                {/* Summary Table */}
-                <div className="rounded-2xl border border-border/50 overflow-hidden bg-card/50 backdrop-blur-sm">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-muted/30">
-                        <th className="text-left px-4 py-2 font-semibold">Категория</th>
-                        <th className="text-right px-4 py-2 font-semibold">Кол-во</th>
-                        <th className="text-right px-4 py-2 font-semibold">Сумма BYN</th>
-                        <th className="text-left px-4 py-2 font-semibold">Действие</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="border-t border-border/30">
-                        <td className="px-4 py-2 flex items-center gap-2">
-                          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                          Matched
-                        </td>
-                        <td className="text-right px-4 py-2 tabular-nums">{result.stats.matched}</td>
-                        <td className="text-right px-4 py-2 tabular-nums">—</td>
-                        <td className="px-4 py-2 text-muted-foreground text-xs">Без изменений</td>
-                      </tr>
-                      <tr className="border-t border-border/30">
-                        <td className="px-4 py-2 flex items-center gap-2">
-                          <XCircle className="h-4 w-4 text-red-500" />
-                          Missing
-                        </td>
-                        <td className="text-right px-4 py-2 tabular-nums font-semibold text-red-600">{result.stats.missing_in_db}</td>
-                        <td className="text-right px-4 py-2 tabular-nums">
-                          {result.missing.reduce((sum, m) => sum + Math.abs(m.amount), 0).toLocaleString('ru-RU', { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground text-xs">Добавить в БД</td>
-                      </tr>
-                      <tr className="border-t border-border/30">
-                        <td className="px-4 py-2 flex items-center gap-2">
-                          <AlertTriangle className="h-4 w-4 text-amber-500" />
-                          Mismatch
-                        </td>
-                        <td className="text-right px-4 py-2 tabular-nums font-semibold text-amber-600">
-                          {result.stats.status_mismatches + result.stats.amount_mismatches}
-                        </td>
-                        <td className="text-right px-4 py-2 tabular-nums">
-                          {result.mismatches.reduce((sum, m) => sum + Math.abs((m.file_amount || 0) - (m.db_amount || 0)), 0).toLocaleString('ru-RU', { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground text-xs">Исправить</td>
-                      </tr>
-                      <tr className="border-t border-border/30">
-                        <td className="px-4 py-2 flex items-center gap-2">
-                          <AlertTriangle className="h-4 w-4 text-blue-500" />
-                          Extra
-                        </td>
-                        <td className="text-right px-4 py-2 tabular-nums font-semibold text-blue-600">{result.stats.extra_in_db}</td>
-                        <td className="text-right px-4 py-2 tabular-nums">
-                          {result.extra.reduce((sum, e) => sum + Math.abs(e.amount), 0).toLocaleString('ru-RU', { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground text-xs">Пометить</td>
-                      </tr>
-                    </tbody>
-                    <tfoot className="bg-muted/50 border-t-2 border-border">
-                      <tr>
-                        <td className="px-4 py-3 font-bold">ИТОГО после исправлений</td>
-                        <td className="text-right px-4 py-3 tabular-nums font-bold">
-                          {(result.stats.matched ?? 0) + (result.stats.missing_in_db ?? 0) + 
-                           (result.stats.status_mismatches ?? 0) + (result.stats.amount_mismatches ?? 0)}
-                        </td>
-                        <td className="text-right px-4 py-3 tabular-nums font-bold text-emerald-600">
-                          {(result.missing.reduce((sum, m) => sum + Math.abs(m.amount || 0), 0) + 
-                            (result.stats.matched ?? 0) * 0 +
-                            result.mismatches.reduce((sum, m) => sum + Math.abs(m.file_amount || 0), 0))
-                            .toLocaleString('ru-RU', { minimumFractionDigits: 2 })} BYN
-                        </td>
-                        <td className="px-4 py-3"></td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-                
-                {/* Collapsible Details */}
-                <div className="space-y-2">
-                  {result.missing.length > 0 && (
-                    <Collapsible open={expandedSections['missing']} onOpenChange={() => toggleSection('missing')}>
-                      <CollapsibleTrigger className="flex items-center justify-between w-full px-4 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/15 transition-colors">
-                        <span className="font-medium text-red-600 dark:text-red-400">
-                          Missing ({result.missing.length})
-                        </span>
-                        <ChevronDown className={`h-4 w-4 transition-transform ${expandedSections['missing'] ? 'rotate-180' : ''}`} />
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="mt-2">
-                        <ScrollArea className="h-64">
-                          <div className="rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
-                            {result.missing.map((m, i) => (
-                              <div key={i} className="flex items-center gap-2">
-                                <span className="text-muted-foreground">{(m.uid || '—').slice(0, 12)}...</span>
-                                <span className="text-foreground">{m.amount} BYN</span>
-                                <span className="text-muted-foreground">{m.status}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </ScrollArea>
-                      </CollapsibleContent>
-                    </Collapsible>
-                  )}
-                  
-                  {result.mismatches.length > 0 && (
-                    <Collapsible open={expandedSections['mismatch']} onOpenChange={() => toggleSection('mismatch')}>
-                      <CollapsibleTrigger className="flex items-center justify-between w-full px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/15 transition-colors">
-                        <span className="font-medium text-amber-600 dark:text-amber-400">
-                          Mismatch ({result.mismatches.length})
-                        </span>
-                        <ChevronDown className={`h-4 w-4 transition-transform ${expandedSections['mismatch'] ? 'rotate-180' : ''}`} />
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="mt-2">
-                        <ScrollArea className="h-64">
-                          <div className="rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
-                            {result.mismatches.map((m, i) => (
-                              <div key={i} className="flex items-center gap-2">
-                                <span className="text-muted-foreground">{(m.uid || '—').slice(0, 12)}...</span>
-                                <span className="text-emerald-600">File: {m.file_status}</span>
-                                <span className="text-red-600">DB: {m.db_status}</span>
-                                <span className="text-muted-foreground">({m.mismatch_type})</span>
-                              </div>
-                            ))}
-                          </div>
-                        </ScrollArea>
-                      </CollapsibleContent>
-                    </Collapsible>
-                  )}
-                  
-                  {result.extra.length > 0 && (
-                    <Collapsible open={expandedSections['extra']} onOpenChange={() => toggleSection('extra')}>
-                      <CollapsibleTrigger className="flex items-center justify-between w-full px-4 py-2 rounded-xl bg-blue-500/10 hover:bg-blue-500/15 transition-colors">
-                        <span className="font-medium text-blue-600 dark:text-blue-400">
-                          Extra ({result.extra.length})
-                        </span>
-                        <ChevronDown className={`h-4 w-4 transition-transform ${expandedSections['extra'] ? 'rotate-180' : ''}`} />
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="mt-2">
-                        <ScrollArea className="h-64">
-                          <div className="rounded-xl bg-muted/30 p-3 text-xs font-mono space-y-1">
-                            {result.extra.map((e, i) => (
-                              <div key={i} className="flex items-center gap-2">
-                                <span className="text-muted-foreground">{(e.uid || '—').slice(0, 12)}...</span>
-                                <span className="text-foreground">{e.amount} BYN</span>
-                                <span className="text-muted-foreground">{e.status}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </ScrollArea>
-                      </CollapsibleContent>
-                    </Collapsible>
-                  )}
-                </div>
-                
-                {/* Download Report */}
-                <Button variant="outline" size="sm" onClick={downloadReport} className="gap-2">
-                  <Download className="h-4 w-4" />
-                  Скачать отчёт
-                </Button>
-              </div>
-            )}
-          </div>
-        </ScrollArea>
-        
-        {/* Footer */}
-        <div className="pt-4 border-t border-border/50 space-y-3">
-          {/* Whoami */}
-          <div className="text-xs text-muted-foreground flex items-center gap-2">
-            <span className="font-mono">{whoami.email}</span>
-            <span>•</span>
-            <span className="font-mono">{whoami.roles}</span>
           </div>
           
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-3">
-            <Button
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Закрыть
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => runReconcile(true)}
-              disabled={isLoading || transactions.length === 0}
-              className="gap-2"
-            >
-              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              Запустить сверку (DRY-RUN)
-            </Button>
-            {result && result.dry_run && (
+          {/* Results Section */}
+          {result ? (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Stats Summary */}
+              <div className="shrink-0 px-6 py-3 border-b border-slate-700/30 bg-slate-800/20">
+                <div className="flex items-center gap-6 flex-wrap text-sm">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                    <span className="text-slate-400">Matched:</span>
+                    <span className="font-semibold text-emerald-400 tabular-nums">{result.stats.matched}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <XCircle className="h-4 w-4 text-rose-400" />
+                    <span className="text-slate-400">Missing:</span>
+                    <span className="font-semibold text-rose-400 tabular-nums">{result.stats.missing_in_db}</span>
+                    <span className="text-slate-500 text-xs">
+                      ({result.missing.reduce((s, m) => s + Math.abs(m.amount), 0).toLocaleString('ru-RU', { minimumFractionDigits: 2 })} BYN)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-400" />
+                    <span className="text-slate-400">Mismatch:</span>
+                    <span className="font-semibold text-amber-400 tabular-nums">{result.stats.status_mismatches + result.stats.amount_mismatches}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-sky-400" />
+                    <span className="text-slate-400">Extra:</span>
+                    <span className="font-semibold text-sky-400 tabular-nums">{result.stats.extra_in_db}</span>
+                  </div>
+                  {result.dry_run && (
+                    <span className="text-amber-500 font-medium text-xs uppercase tracking-wider">DRY-RUN</span>
+                  )}
+                </div>
+              </div>
+              
+              {/* Tabs */}
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
+                <TabsList className="shrink-0 mx-6 mt-3 bg-slate-800/50 border border-slate-700/30 h-9">
+                  <TabsTrigger value="missing" className="text-xs data-[state=active]:bg-rose-500/20 data-[state=active]:text-rose-300">
+                    Missing ({result.missing.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="mismatch" className="text-xs data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-300">
+                    Mismatch ({result.mismatches.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="extra" className="text-xs data-[state=active]:bg-sky-500/20 data-[state=active]:text-sky-300">
+                    Extra ({result.extra.length})
+                  </TabsTrigger>
+                </TabsList>
+                
+                <div className="flex-1 overflow-hidden mx-6 mt-3 mb-3 rounded-lg border border-slate-700/30 bg-slate-800/20">
+                  {/* Missing Tab */}
+                  <TabsContent value="missing" className="h-full m-0 data-[state=inactive]:hidden">
+                    {result.missing.length === 0 ? (
+                      <div className="flex items-center justify-center h-full text-slate-500 text-sm">
+                        Нет отсутствующих записей
+                      </div>
+                    ) : (
+                      <VirtualizedList
+                        items={result.missing}
+                        parentRef={missingListRef}
+                        headerRow={
+                          <div className="grid grid-cols-[1fr_100px_100px_100px_120px_80px_60px] gap-2 px-3 py-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                            <div>UID</div>
+                            <div>Дата</div>
+                            <div className="text-right">Сумма (File)</div>
+                            <div>Статус (File)</div>
+                            <div>Email</div>
+                            <div>Карта</div>
+                            <div>Действие</div>
+                          </div>
+                        }
+                        renderRow={(item) => <MissingRow item={item} onCopy={handleCopyUid} />}
+                      />
+                    )}
+                  </TabsContent>
+                  
+                  {/* Mismatch Tab */}
+                  <TabsContent value="mismatch" className="h-full m-0 data-[state=inactive]:hidden">
+                    {result.mismatches.length === 0 ? (
+                      <div className="flex items-center justify-center h-full text-slate-500 text-sm">
+                        Нет расхождений
+                      </div>
+                    ) : (
+                      <VirtualizedList
+                        items={result.mismatches}
+                        parentRef={mismatchListRef}
+                        headerRow={
+                          <div className="grid grid-cols-[1fr_100px_100px_100px_100px_100px_80px_60px] gap-2 px-3 py-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                            <div>UID</div>
+                            <div>Дата</div>
+                            <div className="text-right">File</div>
+                            <div className="text-right">DB</div>
+                            <div>Статус File</div>
+                            <div>Статус DB</div>
+                            <div className="text-right">Δ</div>
+                            <div>Действие</div>
+                          </div>
+                        }
+                        renderRow={(item) => <MismatchRow item={item} onCopy={handleCopyUid} />}
+                      />
+                    )}
+                  </TabsContent>
+                  
+                  {/* Extra Tab */}
+                  <TabsContent value="extra" className="h-full m-0 data-[state=inactive]:hidden">
+                    {result.extra.length === 0 ? (
+                      <div className="flex items-center justify-center h-full text-slate-500 text-sm">
+                        Нет лишних записей в БД
+                      </div>
+                    ) : (
+                      <VirtualizedList
+                        items={result.extra}
+                        parentRef={extraListRef}
+                        headerRow={
+                          <div className="grid grid-cols-[1fr_100px_100px_100px_120px_60px] gap-2 px-3 py-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                            <div>UID</div>
+                            <div>Дата</div>
+                            <div className="text-right">Сумма (DB)</div>
+                            <div>Статус (DB)</div>
+                            <div>Email</div>
+                            <div>Действие</div>
+                          </div>
+                        }
+                        renderRow={(item) => <ExtraRow item={item} onCopy={handleCopyUid} />}
+                      />
+                    )}
+                  </TabsContent>
+                </div>
+              </Tabs>
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
+              Загрузите файл и запустите сверку
+            </div>
+          )}
+        </div>
+        
+        {/* Footer */}
+        <div className="shrink-0 px-6 py-4 border-t border-slate-700/50 bg-slate-800/30">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="text-xs text-slate-500">
+                <span className="font-mono">{whoami.email}</span>
+                <span className="mx-2">•</span>
+                <span className="font-mono">{whoami.roles}</span>
+              </div>
+              {result && (
+                <Button variant="ghost" size="sm" onClick={downloadReport} className="gap-1.5 text-slate-400 hover:text-slate-200">
+                  <Download className="h-3.5 w-3.5" />
+                  Отчёт
+                </Button>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
               <Button
-                variant="default"
-                onClick={() => runReconcile(false)}
-                disabled={isLoading}
-                className="gap-2"
+                variant="ghost"
+                onClick={() => onOpenChange(false)}
+                className="text-slate-400 hover:text-slate-200"
               >
-                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                Применить исправления
+                Закрыть
               </Button>
-            )}
+              <Button
+                variant="secondary"
+                onClick={() => runReconcile(true)}
+                disabled={isLoading || transactions.length === 0}
+                className="gap-2 bg-slate-700 hover:bg-slate-600 text-slate-200"
+              >
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                DRY-RUN
+              </Button>
+              {result && result.dry_run && totalToFix > 0 && (
+                <Button
+                  onClick={() => runReconcile(false)}
+                  disabled={isLoading}
+                  className="gap-2 bg-purple-600 hover:bg-purple-500 text-white"
+                >
+                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Применить ({totalToFix})
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </DialogContent>

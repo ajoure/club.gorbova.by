@@ -45,8 +45,8 @@ interface ReconcileResult {
   success: boolean;
   dry_run: boolean;
   stats: ReconcileStats;
-  missing: Array<{ uid: string; status: string; amount: number; transaction_type: string }>;
-  extra: Array<{ uid: string; amount: number; status: string }>;
+  missing: Array<{ uid: string; status: string; amount: number; transaction_type: string; paid_at?: string; customer_email?: string; card_last4?: string }>;
+  extra: Array<{ uid: string; amount: number; status: string; db_id?: string; paid_at?: string; customer_email?: string }>;
   mismatches: Array<{ 
     uid: string; 
     file_status: string; 
@@ -56,6 +56,9 @@ interface ReconcileResult {
     file_type?: string;
     db_type?: string;
     mismatch_type: 'status' | 'amount' | 'type';
+    paid_at?: string;
+    customer_email?: string;
+    db_id?: string;
   }>;
   errors: string[];
   summary: {
@@ -238,18 +241,21 @@ Deno.serve(async (req) => {
     }
 
     // Find discrepancies
-    const missing: Array<{ uid: string; status: string; amount: number; transaction_type: string }> = [];
-    const mismatches: Array<{ 
-      uid: string; 
-      file_status: string; 
-      db_status: string; 
-      file_amount?: number;
-      db_amount?: number;
-      file_type?: string;
-      db_type?: string;
-      mismatch_type: 'status' | 'amount' | 'type';
-    }> = [];
-    const extra: Array<{ uid: string; amount: number; status: string }> = [];
+  const missing: Array<{ uid: string; status: string; amount: number; transaction_type: string; paid_at?: string; customer_email?: string; card_last4?: string }> = [];
+  const mismatches: Array<{ 
+    uid: string; 
+    file_status: string; 
+    db_status: string; 
+    file_amount?: number;
+    db_amount?: number;
+    file_type?: string;
+    db_type?: string;
+    mismatch_type: 'status' | 'amount' | 'type';
+    paid_at?: string;
+    customer_email?: string;
+    db_id?: string;
+  }> = [];
+  const extra: Array<{ uid: string; amount: number; status: string; db_id?: string; paid_at?: string; customer_email?: string }> = [];
     const errors: string[] = [];
 
     let overridesCreated = 0;
@@ -265,7 +271,15 @@ Deno.serve(async (req) => {
 
       if (!dbRec && !queueRec) {
         // Missing in both DB and queue - needs insert
-        missing.push({ uid: tx.uid, status: tx.status, amount: tx.amount, transaction_type: tx.transaction_type });
+        missing.push({ 
+          uid: tx.uid, 
+          status: tx.status, 
+          amount: tx.amount, 
+          transaction_type: tx.transaction_type,
+          paid_at: tx.paid_at,
+          customer_email: tx.customer_email,
+          card_last4: tx.card_last4,
+        });
       } else if (!dbRec && queueRec) {
         // In queue but not materialized - check for status mismatch
         const queueNormStatus = normalizeDbStatus(queueRec.status, '');
@@ -275,6 +289,8 @@ Deno.serve(async (req) => {
             file_status: fileNormStatus,
             db_status: queueNormStatus,
             mismatch_type: 'status',
+            paid_at: tx.paid_at,
+            customer_email: tx.customer_email,
           });
         } else if (Math.abs(tx.amount) !== Math.abs(queueRec.amount || 0)) {
           mismatches.push({
@@ -284,6 +300,8 @@ Deno.serve(async (req) => {
             file_amount: tx.amount,
             db_amount: queueRec.amount,
             mismatch_type: 'amount',
+            paid_at: tx.paid_at,
+            customer_email: tx.customer_email,
           });
           amountMismatches++;
         } else {
@@ -291,7 +309,15 @@ Deno.serve(async (req) => {
         }
       } else if (!dbRec) {
         // This shouldn't happen given the logic above, but safety fallback
-        missing.push({ uid: tx.uid, status: tx.status, amount: tx.amount, transaction_type: tx.transaction_type });
+        missing.push({ 
+          uid: tx.uid, 
+          status: tx.status, 
+          amount: tx.amount, 
+          transaction_type: tx.transaction_type,
+          paid_at: tx.paid_at,
+          customer_email: tx.customer_email,
+          card_last4: tx.card_last4,
+        });
 
         if (!dry_run) {
           // Insert directly into payments_v2
@@ -341,7 +367,10 @@ Deno.serve(async (req) => {
             db_status: dbNormStatus,
             file_amount: tx.amount,
             db_amount: dbRec.amount,
-            mismatch_type: 'amount'
+            mismatch_type: 'amount',
+            paid_at: tx.paid_at,
+            customer_email: tx.customer_email,
+            db_id: dbRec.id,
           });
           amountMismatches++;
         } else if (fileNormStatus !== dbNormStatus) {
@@ -350,7 +379,10 @@ Deno.serve(async (req) => {
             uid: tx.uid, 
             file_status: fileNormStatus, 
             db_status: dbNormStatus,
-            mismatch_type: 'status'
+            mismatch_type: 'status',
+            paid_at: tx.paid_at,
+            customer_email: tx.customer_email,
+            db_id: dbRec.id,
           });
 
           if (!dry_run) {
@@ -386,7 +418,12 @@ Deno.serve(async (req) => {
     const fileUids = new Set(transactions.map(t => t.uid));
     const orphansInDb = (dbRecords || []).filter(r => !fileUids.has(r.provider_payment_id));
     for (const orphan of orphansInDb) {
-      extra.push({ uid: orphan.provider_payment_id, amount: orphan.amount, status: orphan.status });
+      extra.push({ 
+        uid: orphan.provider_payment_id, 
+        amount: orphan.amount, 
+        status: orphan.status,
+        db_id: orphan.id,
+      });
     }
     if (orphansInDb.length > 0) {
       console.log(`Warning: ${orphansInDb.length} records in DB not found in file`);
@@ -413,10 +450,10 @@ Deno.serve(async (req) => {
       success: true,
       dry_run,
       stats,
-      missing: missing.slice(0, 50),
-      extra: extra.slice(0, 50),
-      mismatches: mismatches.slice(0, 50),
-      errors: errors.slice(0, 20),
+      missing,
+      extra,
+      mismatches,
+      errors: errors.slice(0, 50),
       summary: {
         file: fileSummary,
         db: dbSummary,

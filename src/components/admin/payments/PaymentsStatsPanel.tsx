@@ -15,62 +15,41 @@ interface StatCardProps {
   count: number;
   icon: React.ReactNode;
   colorClass: string;
-  glowColor: string;
+  accentGradient: string;
   currency?: string;
   subtitle?: string;
 }
 
-function StatCard({ title, amount, count, icon, colorClass, glowColor, currency = "BYN", subtitle }: StatCardProps) {
+// Dark Luxury stat card
+function StatCard({ title, amount, count, icon, colorClass, accentGradient, currency = "BYN", subtitle }: StatCardProps) {
   return (
-    <div className="group relative overflow-hidden rounded-3xl transition-all duration-500 hover:scale-[1.03] hover:-translate-y-1">
-      {/* Outer glow on hover - larger and softer */}
-      <div className={`absolute -inset-1 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-500 blur-xl ${glowColor}`} />
+    <div className="relative rounded-xl p-3 md:p-4 border border-slate-700/40 bg-slate-900/60 backdrop-blur-xl overflow-hidden transition-all duration-300 hover:border-slate-600/50 hover:bg-slate-900/70">
+      {/* Gradient accent line top */}
+      <div className={`absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r ${accentGradient}`} />
       
-      {/* Main card - enhanced glass effect */}
-      <div className="relative overflow-hidden rounded-3xl border border-white/30 dark:border-white/10 bg-white/80 dark:bg-white/5 backdrop-blur-3xl p-6 shadow-2xl shadow-black/5 dark:shadow-black/30">
-        
-        {/* Inner shine gradient - stronger */}
-        <div className="absolute inset-0 bg-gradient-to-br from-white/60 via-white/20 to-transparent dark:from-white/15 dark:via-white/5 pointer-events-none" />
-        
-        {/* Top edge highlight */}
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/80 to-transparent dark:via-white/30" />
-        
-        {/* Left edge highlight */}
-        <div className="absolute inset-y-0 left-0 w-px bg-gradient-to-b from-white/60 via-transparent to-transparent dark:from-white/20" />
-        
-        {/* Content */}
-        <div className="relative z-10 flex flex-col gap-3">
-          {/* Header with icon */}
-          <div className="flex items-center justify-between">
-            <p className="text-[10px] font-bold text-muted-foreground/70 uppercase tracking-[0.2em]">
-              {title}
-            </p>
-            <div className={`p-2.5 rounded-2xl bg-gradient-to-br ${glowColor.replace('/20', '/10')} backdrop-blur-xl border border-white/30 dark:border-white/10 shadow-lg`}>
-              {icon}
-            </div>
-          </div>
-          
-          {/* Amount - responsive sizing with wrapping for currency */}
-          <div className="flex items-baseline gap-1.5 flex-wrap min-w-0">
-            <span className={`text-2xl md:text-3xl font-bold tracking-tight tabular-nums min-w-0 ${colorClass}`}>
-              {amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-            <span className="text-xs md:text-sm font-semibold text-muted-foreground/60 shrink-0">
-              {currency}
-            </span>
-          </div>
-          
-          {/* Count and subtitle */}
-          <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
-            <span className="font-semibold tabular-nums">{count.toLocaleString('ru-RU')} шт</span>
-            {subtitle && (
-              <>
-                <span className="w-1 h-1 rounded-full bg-muted-foreground/30" />
-                <span>{subtitle}</span>
-              </>
-            )}
-          </div>
-        </div>
+      {/* Header: title + icon inline */}
+      <div className="relative z-10 flex items-center gap-2 mb-2">
+        <div className="shrink-0">{icon}</div>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+          {title}
+        </span>
+      </div>
+      
+      {/* Amount */}
+      <div className={`relative z-10 text-lg md:text-xl font-bold tabular-nums ${colorClass} flex items-baseline gap-1.5 flex-wrap`}>
+        <span>{amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        <span className="text-xs text-slate-500 font-medium">{currency}</span>
+      </div>
+      
+      {/* Count and subtitle */}
+      <div className="relative z-10 flex items-center gap-2 text-xs text-slate-500 mt-1.5">
+        <span className="tabular-nums">{count.toLocaleString('ru-RU')} шт</span>
+        {subtitle && (
+          <>
+            <span className="w-1 h-1 rounded-full bg-slate-600" />
+            <span className="text-slate-400">{subtitle}</span>
+          </>
+        )}
       </div>
     </div>
   );
@@ -149,66 +128,66 @@ export default function PaymentsStatsPanel({ payments, isLoading, dateRange }: P
 
   if (isLoading) {
     return (
-      <div className="rounded-3xl border border-white/30 dark:border-white/10 bg-white/80 dark:bg-white/5 backdrop-blur-3xl p-8 shadow-2xl">
-        <div className="flex items-center justify-center gap-3 text-muted-foreground">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          <span className="text-sm font-medium">Загрузка статистики...</span>
+      <div className="rounded-xl border border-slate-700/40 bg-slate-900/60 backdrop-blur-xl p-6">
+        <div className="flex items-center justify-center gap-3 text-slate-400">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-xs font-medium">Загрузка...</span>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Stats Grid - 5 cards in row on desktop */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard
           title="Успешные"
           amount={stats.successful.amount}
           count={stats.successful.count}
-          icon={<CheckCircle2 className="h-5 w-5 text-emerald-500" />}
-          colorClass="text-emerald-600 dark:text-emerald-400"
-          glowColor="bg-emerald-500/20"
+          icon={<CheckCircle2 className="h-4 w-4 text-emerald-400" />}
+          colorClass="text-emerald-400"
+          accentGradient="from-emerald-500 to-emerald-400"
         />
         <StatCard
           title="Возвраты"
           amount={stats.refunded.amount}
           count={stats.refunded.count}
-          icon={<RotateCcw className="h-5 w-5 text-orange-500" />}
-          colorClass="text-orange-600 dark:text-orange-400"
-          glowColor="bg-orange-500/20"
+          icon={<RotateCcw className="h-4 w-4 text-amber-400" />}
+          colorClass="text-amber-400"
+          accentGradient="from-amber-500 to-amber-400"
         />
         <StatCard
           title="Ошибки"
           amount={stats.failed.amount}
           count={stats.failed.count}
-          icon={<XCircle className="h-5 w-5 text-red-500" />}
-          colorClass="text-red-600 dark:text-red-400"
-          glowColor="bg-red-500/20"
+          icon={<XCircle className="h-4 w-4 text-rose-400" />}
+          colorClass="text-rose-400"
+          accentGradient="from-rose-500 to-rose-400"
         />
         <StatCard
           title="Комиссия"
           amount={stats.fees.amount}
           count={stats.successful.count}
           subtitle={`${stats.fees.percent.toFixed(1)}%`}
-          icon={<Percent className="h-5 w-5 text-blue-500" />}
-          colorClass="text-blue-600 dark:text-blue-400"
-          glowColor="bg-blue-500/20"
+          icon={<Percent className="h-4 w-4 text-sky-400" />}
+          colorClass="text-sky-400"
+          accentGradient="from-sky-500 to-sky-400"
         />
         <StatCard
           title="Чистая выручка"
           amount={stats.netRevenue}
           count={stats.successful.count - stats.refunded.count}
-          icon={<TrendingUp className="h-5 w-5 text-teal-500" />}
-          colorClass="text-teal-600 dark:text-teal-400"
-          glowColor="bg-teal-500/20"
+          icon={<TrendingUp className="h-4 w-4 text-purple-400" />}
+          colorClass="text-purple-400"
+          accentGradient="from-purple-500 via-fuchsia-500 to-pink-400"
         />
       </div>
 
       {/* Period indicator */}
       {dateRange && (
-        <div className="text-xs text-muted-foreground/70 text-center font-medium">
-          Период: {dateRange.from} — {dateRange.to || 'сегодня'}
+        <div className="text-[10px] text-slate-500 text-center font-medium tracking-wide">
+          {dateRange.from} — {dateRange.to || 'сегодня'}
         </div>
       )}
     </div>
