@@ -4453,6 +4453,7 @@ export type Database = {
         Row: {
           amount: number
           card_brand: string | null
+          card_holder: string | null
           card_last4: string | null
           created_at: string
           currency: string
@@ -4484,6 +4485,7 @@ export type Database = {
         Insert: {
           amount: number
           card_brand?: string | null
+          card_holder?: string | null
           card_last4?: string | null
           created_at?: string
           currency?: string
@@ -4515,6 +4517,7 @@ export type Database = {
         Update: {
           amount?: number
           card_brand?: string | null
+          card_holder?: string | null
           card_last4?: string | null
           created_at?: string
           currency?: string

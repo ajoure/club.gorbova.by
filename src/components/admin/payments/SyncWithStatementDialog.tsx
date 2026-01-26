@@ -461,67 +461,67 @@ export default function SyncWithStatementDialog({
                         <td className="p-2 text-muted-foreground">Успешные</td>
                         <td className="p-2 text-center">
                           <div className="font-medium">{stats.statement_stats.succeeded.count}</div>
-                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.succeeded.amount)} ₽</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.succeeded.amount)} BYN</div>
                         </td>
                         <td className="p-2 text-center">
                           <div>{stats.payments_stats.succeeded.count}</div>
-                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.succeeded.amount)} ₽</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.succeeded.amount)} BYN</div>
                         </td>
                         <td className="p-2 text-center text-blue-600">
                           <div className="font-medium">{stats.projected_stats.succeeded.count}</div>
-                          <div className="text-xs">{formatAmount(stats.projected_stats.succeeded.amount)} ₽</div>
+                          <div className="text-xs">{formatAmount(stats.projected_stats.succeeded.amount)} BYN</div>
                         </td>
                       </tr>
                       <tr>
                         <td className="p-2 text-muted-foreground">Возвраты</td>
                         <td className="p-2 text-center">
                           <div className="font-medium">{stats.statement_stats.refunded.count}</div>
-                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.refunded.amount)} ₽</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.refunded.amount)} BYN</div>
                         </td>
                         <td className="p-2 text-center">
                           <div>{stats.payments_stats.refunded.count}</div>
-                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.refunded.amount)} ₽</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.refunded.amount)} BYN</div>
                         </td>
                         <td className="p-2 text-center text-blue-600">
                           <div className="font-medium">{stats.projected_stats.refunded.count}</div>
-                          <div className="text-xs">{formatAmount(stats.projected_stats.refunded.amount)} ₽</div>
+                          <div className="text-xs">{formatAmount(stats.projected_stats.refunded.amount)} BYN</div>
                         </td>
                       </tr>
                       <tr>
                         <td className="p-2 text-muted-foreground">Отмены</td>
                         <td className="p-2 text-center">
                           <div className="font-medium">{stats.statement_stats.cancelled.count}</div>
-                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.cancelled.amount)} ₽</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.cancelled.amount)} BYN</div>
                         </td>
                         <td className="p-2 text-center">
                           <div>{stats.payments_stats.cancelled.count}</div>
-                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.cancelled.amount)} ₽</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.cancelled.amount)} BYN</div>
                         </td>
                         <td className="p-2 text-center text-blue-600">
                           <div className="font-medium">{stats.projected_stats.cancelled.count}</div>
-                          <div className="text-xs">{formatAmount(stats.projected_stats.cancelled.amount)} ₽</div>
+                          <div className="text-xs">{formatAmount(stats.projected_stats.cancelled.amount)} BYN</div>
                         </td>
                       </tr>
                       <tr>
                         <td className="p-2 text-muted-foreground">Ошибки</td>
                         <td className="p-2 text-center">
                           <div className="font-medium">{stats.statement_stats.failed.count}</div>
-                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.failed.amount)} ₽</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.failed.amount)} BYN</div>
                         </td>
                         <td className="p-2 text-center">
                           <div>{stats.payments_stats.failed.count}</div>
-                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.failed.amount)} ₽</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.failed.amount)} BYN</div>
                         </td>
                         <td className="p-2 text-center text-blue-600">
                           <div className="font-medium">{stats.projected_stats.failed.count}</div>
-                          <div className="text-xs">{formatAmount(stats.projected_stats.failed.amount)} ₽</div>
+                          <div className="text-xs">{formatAmount(stats.projected_stats.failed.amount)} BYN</div>
                         </td>
                       </tr>
                       <tr className="bg-muted/30">
                         <td className="p-2 text-muted-foreground font-medium">Комиссия</td>
-                        <td className="p-2 text-center font-medium">{formatAmount(stats.statement_stats.commission_total)} ₽</td>
+                        <td className="p-2 text-center font-medium">{formatAmount(stats.statement_stats.commission_total)} BYN</td>
                         <td className="p-2 text-center text-muted-foreground">—</td>
-                        <td className="p-2 text-center font-medium text-blue-600">{formatAmount(stats.projected_stats.commission_total)} ₽</td>
+                        <td className="p-2 text-center font-medium text-blue-600">{formatAmount(stats.projected_stats.commission_total)} BYN</td>
                       </tr>
                     </tbody>
                   </table>

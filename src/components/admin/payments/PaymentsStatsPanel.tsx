@@ -157,7 +157,7 @@ export default function PaymentsStatsPanel({ payments, isLoading, dateRange }: P
   return (
     <div className="space-y-3">
       {/* Stats Grid - 5 cards in row on desktop */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatCard
           title="Успешные"
           amount={stats.successful.amount}
@@ -173,6 +173,14 @@ export default function PaymentsStatsPanel({ payments, isLoading, dateRange }: P
           icon={<RotateCcw className="h-4 w-4 text-amber-400" />}
           colorClass="text-amber-400"
           accentGradient="from-amber-500 to-amber-400"
+        />
+        <StatCard
+          title="Отмены"
+          amount={stats.cancelled.amount}
+          count={stats.cancelled.count}
+          icon={<XCircle className="h-4 w-4 text-orange-400" />}
+          colorClass="text-orange-400"
+          accentGradient="from-orange-500 to-orange-400"
         />
         <StatCard
           title="Ошибки"

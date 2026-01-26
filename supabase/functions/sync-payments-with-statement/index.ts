@@ -55,6 +55,7 @@ interface SyncStats {
   to_delete: number;
   applied: number;
   skipped: number;
+  errors: number;
   statement_stats?: DetailedStats;
   payments_stats?: DetailedStats;
   projected_stats?: DetailedStats;
@@ -77,7 +78,7 @@ function normalizeStatus(rawStatus: string | null): string {
   if (['successful', 'успешный', 'succeeded', 'success'].includes(s)) return 'succeeded';
   if (['failed', 'неуспешный', 'failure', 'error', 'declined'].includes(s)) return 'failed';
   if (['refund', 'refunded', 'возврат средств', 'возврат'].includes(s)) return 'refunded';
-  if (['cancelled', 'canceled', 'отмена', 'void'].includes(s)) return 'cancelled';
+  if (['cancelled', 'canceled', 'отмена', 'void'].includes(s)) return 'canceled';
   if (['pending', 'processing', 'в обработке'].includes(s)) return 'pending';
   
   return s;
@@ -637,6 +638,7 @@ Deno.serve(async (req) => {
       to_delete: changes.filter(c => c.action === 'delete').length,
       applied: 0,
       skipped: 0,
+      errors: 0,
       statement_stats: statementStats,
       payments_stats: paymentsStats,
       projected_stats: projectedStats,
@@ -657,7 +659,7 @@ Deno.serve(async (req) => {
         try {
           if (change.action === 'create') {
             const stmt = change.statement_data;
-            await supabaseAdmin.from('payments_v2').insert({
+            const { error: insertError } = await supabaseAdmin.from('payments_v2').insert({
               provider: 'bepaid',
               provider_payment_id: change.uid,
               origin: 'statement_sync',
@@ -679,7 +681,13 @@ Deno.serve(async (req) => {
                 synced_by: user.id,
               },
             });
-            stats.applied++;
+            
+            if (insertError) {
+              console.error(`[sync-statement] Error creating payment ${change.uid}:`, insertError);
+              stats.errors++;
+            } else {
+              stats.applied++;
+            }
           }
           
           if (change.action === 'update') {
@@ -704,10 +712,16 @@ Deno.serve(async (req) => {
               },
             };
             
-            await supabaseAdmin
+            const { error: updateError } = await supabaseAdmin
               .from('payments_v2')
               .update(updates)
               .eq('id', pmt.id);
+            
+            if (updateError) {
+              console.error(`[sync-statement] Error updating payment ${change.uid}:`, updateError);
+              stats.errors++;
+              continue; // Skip cascade if main update failed
+            }
             
             // Apply cascade: update order amount if needed
             const amountDiff = change.differences?.find(d => d.field === 'amount');
@@ -727,22 +741,23 @@ Deno.serve(async (req) => {
                 .eq('id', pmt.order_id);
             }
             
-            // Apply cascade: revoke access if status changed to failed
+            // Apply cascade: revoke access if status changed to failed/canceled/refunded
             const statusDiff = change.differences?.find(d => d.field === 'status');
             const newStatus = statusDiff ? normalizeStatus(stmt.status) : null;
-            if (statusDiff && ['failed', 'cancelled', 'refunded'].includes(newStatus!)) {
-              // Cancel order
+            if (statusDiff && ['failed', 'canceled', 'refunded'].includes(newStatus!)) {
+              // DELETE order (per user request) instead of cancelling
               if (pmt.order_id) {
+                // First revoke entitlements
+                await supabaseAdmin
+                  .from('entitlements')
+                  .update({ status: 'revoked' })
+                  .eq('order_id', pmt.order_id)
+                  .eq('status', 'active');
+                
+                // Then delete the order
                 await supabaseAdmin
                   .from('orders_v2')
-                  .update({
-                    status: 'cancelled',
-                    meta: {
-                      cancelled_by: 'statement_sync',
-                      cancelled_at: new Date().toISOString(),
-                      previous_status: change.cascade?.orders[0]?.current_status,
-                    },
-                  })
+                  .delete()
                   .eq('id', pmt.order_id);
               }
               
@@ -751,7 +766,7 @@ Deno.serve(async (req) => {
                 await supabaseAdmin
                   .from('subscriptions_v2')
                   .update({
-                    status: 'cancelled',
+                    status: 'canceled',
                     auto_renew: false,
                     meta: {
                       cancelled_by: 'statement_sync',
@@ -760,15 +775,6 @@ Deno.serve(async (req) => {
                   })
                   .eq('user_id', pmt.user_id)
                   .in('status', ['active', 'trial']);
-                
-                // Revoke entitlements
-                if (pmt.order_id) {
-                  await supabaseAdmin
-                    .from('entitlements')
-                    .update({ status: 'revoked' })
-                    .eq('order_id', pmt.order_id)
-                    .eq('status', 'active');
-                }
                 
                 // Revoke Telegram access
                 if (change.cascade?.telegram_access) {
@@ -789,18 +795,19 @@ Deno.serve(async (req) => {
           if (change.action === 'delete') {
             const pmt = change.payment_data;
             
-            // Apply cascade first
+            // Apply cascade first - DELETE orders instead of cancelling
             if (pmt.order_id) {
+              // First revoke entitlements linked to this order
+              await supabaseAdmin
+                .from('entitlements')
+                .update({ status: 'revoked' })
+                .eq('order_id', pmt.order_id)
+                .eq('status', 'active');
+              
+              // Then DELETE the order (per user request)
               await supabaseAdmin
                 .from('orders_v2')
-                .update({
-                  status: 'cancelled',
-                  meta: {
-                    cancelled_by: 'statement_sync_delete',
-                    cancelled_at: new Date().toISOString(),
-                    deleted_payment_uid: change.uid,
-                  },
-                })
+                .delete()
                 .eq('id', pmt.order_id);
             }
             
@@ -808,7 +815,7 @@ Deno.serve(async (req) => {
               await supabaseAdmin
                 .from('subscriptions_v2')
                 .update({
-                  status: 'cancelled',
+                  status: 'canceled',
                   auto_renew: false,
                   meta: {
                     cancelled_by: 'statement_sync_delete',
@@ -817,14 +824,6 @@ Deno.serve(async (req) => {
                 })
                 .eq('user_id', pmt.user_id)
                 .in('status', ['active', 'trial']);
-              
-              if (pmt.order_id) {
-                await supabaseAdmin
-                  .from('entitlements')
-                  .update({ status: 'revoked' })
-                  .eq('order_id', pmt.order_id)
-                  .eq('status', 'active');
-              }
               
               if (change.cascade?.telegram_access) {
                 try {
@@ -838,15 +837,21 @@ Deno.serve(async (req) => {
             }
             
             // Delete the payment
-            await supabaseAdmin
+            const { error: deleteError } = await supabaseAdmin
               .from('payments_v2')
               .delete()
               .eq('id', pmt.id);
             
-            stats.applied++;
+            if (deleteError) {
+              console.error(`[sync-statement] Error deleting payment ${change.uid}:`, deleteError);
+              stats.errors++;
+            } else {
+              stats.applied++;
+            }
           }
         } catch (e: any) {
           console.error(`[sync-statement] Error applying change ${change.uid}:`, e);
+          stats.errors++;
         }
       }
       
