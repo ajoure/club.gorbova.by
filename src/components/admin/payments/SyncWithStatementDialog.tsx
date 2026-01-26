@@ -53,6 +53,15 @@ interface SyncChange {
   is_dangerous: boolean;
 }
 
+interface DetailedStats {
+  total: number;
+  succeeded: { count: number; amount: number };
+  refunded: { count: number; amount: number };
+  cancelled: { count: number; amount: number };
+  failed: { count: number; amount: number };
+  commission_total: number;
+}
+
 interface SyncStats {
   statement_count: number;
   payments_count: number;
@@ -62,7 +71,25 @@ interface SyncStats {
   to_delete: number;
   applied: number;
   skipped: number;
+  statement_stats?: DetailedStats;
+  payments_stats?: DetailedStats;
+  projected_stats?: DetailedStats;
 }
+
+// Human-readable labels for transaction types
+const TX_TYPE_LABELS: Record<string, string> = {
+  'payment': 'Платёж',
+  'refund': 'Возврат',
+  'void': 'Отмена',
+};
+
+// Format amount with currency
+const formatAmount = (amount: number) => {
+  return new Intl.NumberFormat('ru-RU', { 
+    minimumFractionDigits: 0, 
+    maximumFractionDigits: 2 
+  }).format(amount);
+};
 
 interface SyncWithStatementDialogProps {
   open: boolean;
@@ -253,18 +280,29 @@ export default function SyncWithStatementDialog({
             {/* For UPDATE - show differences */}
             {change.action === 'update' && change.differences && (
               <div className="space-y-1.5">
-                {change.differences.map((diff, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm">
-                    <span className="text-muted-foreground min-w-[100px]">{diff.label}:</span>
-                    <span className="text-red-500 dark:text-red-400 line-through">
-                      {String(diff.current ?? '—')}
-                    </span>
-                    <span className="text-muted-foreground">→</span>
-                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                      {String(diff.statement ?? '—')}
-                    </span>
-                  </div>
-                ))}
+                {change.differences.map((diff, i) => {
+                  // For transaction_type, show human-readable labels
+                  const isTransactionType = diff.field === 'transaction_type';
+                  const currentDisplay = isTransactionType 
+                    ? TX_TYPE_LABELS[String(diff.current)] || String(diff.current ?? '—')
+                    : String(diff.current ?? '—');
+                  const statementDisplay = isTransactionType 
+                    ? TX_TYPE_LABELS[String(diff.statement)] || String(diff.statement ?? '—')
+                    : String(diff.statement ?? '—');
+                  
+                  return (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      <span className="text-muted-foreground min-w-[100px]">{diff.label}:</span>
+                      <span className="text-red-500 dark:text-red-400 line-through">
+                        {currentDisplay}
+                      </span>
+                      <span className="text-muted-foreground">→</span>
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                        {statementDisplay}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
             
@@ -314,7 +352,7 @@ export default function SyncWithStatementDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <RefreshCw className="h-5 w-5" />
@@ -380,7 +418,7 @@ export default function SyncWithStatementDialog({
           {/* Preview */}
           {(status === 'preview' || status === 'applying') && stats && (
             <>
-              {/* Stats summary */}
+              {/* Stats summary - basic counts */}
               <div className="grid grid-cols-4 gap-2">
                 <div className="text-center p-2 rounded-lg bg-muted/50">
                   <div className="text-lg font-bold">{stats.statement_count}</div>
@@ -400,6 +438,96 @@ export default function SyncWithStatementDialog({
                 </div>
               </div>
 
+              {/* Detailed statistics comparison table */}
+              {stats.statement_stats && stats.payments_stats && stats.projected_stats && (
+                <div className="border rounded-lg overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50">
+                      <tr>
+                        <th className="text-left p-2 font-medium">Метрика</th>
+                        <th className="text-center p-2 font-medium text-emerald-600">Выписка 🟢</th>
+                        <th className="text-center p-2 font-medium text-red-500">Payments 🔴</th>
+                        <th className="text-center p-2 font-medium text-blue-600">После →</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      <tr>
+                        <td className="p-2 text-muted-foreground">Всего транзакций</td>
+                        <td className="p-2 text-center font-medium">{stats.statement_stats.total}</td>
+                        <td className="p-2 text-center">{stats.payments_stats.total}</td>
+                        <td className="p-2 text-center font-medium text-blue-600">{stats.projected_stats.total}</td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 text-muted-foreground">Успешные</td>
+                        <td className="p-2 text-center">
+                          <div className="font-medium">{stats.statement_stats.succeeded.count}</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.succeeded.amount)} ₽</div>
+                        </td>
+                        <td className="p-2 text-center">
+                          <div>{stats.payments_stats.succeeded.count}</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.succeeded.amount)} ₽</div>
+                        </td>
+                        <td className="p-2 text-center text-blue-600">
+                          <div className="font-medium">{stats.projected_stats.succeeded.count}</div>
+                          <div className="text-xs">{formatAmount(stats.projected_stats.succeeded.amount)} ₽</div>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 text-muted-foreground">Возвраты</td>
+                        <td className="p-2 text-center">
+                          <div className="font-medium">{stats.statement_stats.refunded.count}</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.refunded.amount)} ₽</div>
+                        </td>
+                        <td className="p-2 text-center">
+                          <div>{stats.payments_stats.refunded.count}</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.refunded.amount)} ₽</div>
+                        </td>
+                        <td className="p-2 text-center text-blue-600">
+                          <div className="font-medium">{stats.projected_stats.refunded.count}</div>
+                          <div className="text-xs">{formatAmount(stats.projected_stats.refunded.amount)} ₽</div>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 text-muted-foreground">Отмены</td>
+                        <td className="p-2 text-center">
+                          <div className="font-medium">{stats.statement_stats.cancelled.count}</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.cancelled.amount)} ₽</div>
+                        </td>
+                        <td className="p-2 text-center">
+                          <div>{stats.payments_stats.cancelled.count}</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.cancelled.amount)} ₽</div>
+                        </td>
+                        <td className="p-2 text-center text-blue-600">
+                          <div className="font-medium">{stats.projected_stats.cancelled.count}</div>
+                          <div className="text-xs">{formatAmount(stats.projected_stats.cancelled.amount)} ₽</div>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 text-muted-foreground">Ошибки</td>
+                        <td className="p-2 text-center">
+                          <div className="font-medium">{stats.statement_stats.failed.count}</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.statement_stats.failed.amount)} ₽</div>
+                        </td>
+                        <td className="p-2 text-center">
+                          <div>{stats.payments_stats.failed.count}</div>
+                          <div className="text-xs text-muted-foreground">{formatAmount(stats.payments_stats.failed.amount)} ₽</div>
+                        </td>
+                        <td className="p-2 text-center text-blue-600">
+                          <div className="font-medium">{stats.projected_stats.failed.count}</div>
+                          <div className="text-xs">{formatAmount(stats.projected_stats.failed.amount)} ₽</div>
+                        </td>
+                      </tr>
+                      <tr className="bg-muted/30">
+                        <td className="p-2 text-muted-foreground font-medium">Комиссия</td>
+                        <td className="p-2 text-center font-medium">{formatAmount(stats.statement_stats.commission_total)} ₽</td>
+                        <td className="p-2 text-center text-muted-foreground">—</td>
+                        <td className="p-2 text-center font-medium text-blue-600">{formatAmount(stats.projected_stats.commission_total)} ₽</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               {/* Selection controls */}
               {changes.length > 0 && (
                 <div className="flex items-center gap-2 text-sm">
@@ -417,8 +545,8 @@ export default function SyncWithStatementDialog({
                 </div>
               )}
 
-              {/* Changes list */}
-              <ScrollArea className="flex-1 min-h-0 border rounded-lg">
+              {/* Changes list - with fixed height for scroll */}
+              <ScrollArea className="h-[400px] border rounded-lg">
                 <div className="p-3 space-y-4">
                   {/* Create section */}
                   {createChanges.length > 0 && (

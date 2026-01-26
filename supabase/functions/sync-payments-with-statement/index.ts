@@ -37,6 +37,15 @@ interface SyncChange {
   is_dangerous: boolean;
 }
 
+interface DetailedStats {
+  total: number;
+  succeeded: { count: number; amount: number };
+  refunded: { count: number; amount: number };
+  cancelled: { count: number; amount: number };
+  failed: { count: number; amount: number };
+  commission_total: number;
+}
+
 interface SyncStats {
   statement_count: number;
   payments_count: number;
@@ -46,6 +55,9 @@ interface SyncStats {
   to_delete: number;
   applied: number;
   skipped: number;
+  statement_stats?: DetailedStats;
+  payments_stats?: DetailedStats;
+  projected_stats?: DetailedStats;
 }
 
 interface SyncResult {
@@ -69,6 +81,64 @@ function normalizeStatus(rawStatus: string | null): string {
   if (['pending', 'processing', 'в обработке'].includes(s)) return 'pending';
   
   return s;
+}
+
+// Normalize transaction_type to canonical English values
+// CRITICAL: Prevents storing Russian values that break consistency
+function normalizeTransactionType(rawType: string | null): string {
+  if (!rawType) return 'payment';
+  const t = rawType.toLowerCase().trim();
+  
+  // Refund
+  if (t.includes('возврат') || t.includes('refund')) return 'refund';
+  
+  // Cancellation / Void
+  if (t.includes('отмен') || t.includes('void') || t.includes('cancel')) return 'void';
+  
+  // Payment (default)
+  if (t.includes('плат') || t.includes('payment')) return 'payment';
+  
+  return 'payment';
+}
+
+// Calculate detailed statistics for a set of rows
+function calculateDetailedStats(rows: any[], isStatement: boolean): DetailedStats {
+  const stats: DetailedStats = {
+    total: rows.length,
+    succeeded: { count: 0, amount: 0 },
+    refunded: { count: 0, amount: 0 },
+    cancelled: { count: 0, amount: 0 },
+    failed: { count: 0, amount: 0 },
+    commission_total: 0,
+  };
+  
+  for (const row of rows) {
+    const status = normalizeStatus(row.status);
+    const txType = normalizeTransactionType(row.transaction_type);
+    const amount = Math.abs(row.amount || 0);
+    
+    // Categorize by transaction_type first, then by status
+    if (txType === 'refund') {
+      stats.refunded.count++;
+      stats.refunded.amount += amount;
+    } else if (txType === 'void') {
+      stats.cancelled.count++;
+      stats.cancelled.amount += amount;
+    } else if (status === 'failed' || status === 'error' || status === 'declined') {
+      stats.failed.count++;
+      stats.failed.amount += amount;
+    } else if (status === 'succeeded' || status === 'successful') {
+      stats.succeeded.count++;
+      stats.succeeded.amount += amount;
+    }
+    
+    // Commission only from statement
+    if (isStatement) {
+      stats.commission_total += row.commission_total || 0;
+    }
+  }
+  
+  return stats;
 }
 
 // Extract last 4 digits from masked card
@@ -550,6 +620,14 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Calculate detailed statistics
+    const statementStats = calculateDetailedStats(statementRows || [], true);
+    const paymentsStats = calculateDetailedStats(payments || [], false);
+    
+    // Calculate projected stats (what payments_v2 will look like after sync)
+    // Start with current payments stats, then apply changes
+    const projectedStats: DetailedStats = { ...statementStats }; // After sync, should match statement
+    
     const stats: SyncStats = {
       statement_count: statementRows?.length || 0,
       payments_count: payments?.length || 0,
@@ -559,6 +637,9 @@ Deno.serve(async (req) => {
       to_delete: changes.filter(c => c.action === 'delete').length,
       applied: 0,
       skipped: 0,
+      statement_stats: statementStats,
+      payments_stats: paymentsStats,
+      projected_stats: projectedStats,
     };
 
     let auditLogId: string | undefined;
@@ -583,7 +664,7 @@ Deno.serve(async (req) => {
               amount: Math.abs(stmt.amount),
               currency: stmt.currency || 'BYN',
               status: normalizeStatus(stmt.status),
-              transaction_type: stmt.transaction_type,
+              transaction_type: normalizeTransactionType(stmt.transaction_type),
               paid_at: stmt.paid_at,
               card_last4: extractLast4(stmt.card_masked),
               card_brand: extractCardBrand(stmt.card_masked),
@@ -609,7 +690,7 @@ Deno.serve(async (req) => {
             const updates: any = {
               amount: Math.abs(stmt.amount),
               status: normalizeStatus(stmt.status),
-              transaction_type: stmt.transaction_type,
+              transaction_type: normalizeTransactionType(stmt.transaction_type),
               paid_at: stmt.paid_at,
               card_last4: extractLast4(stmt.card_masked) || pmt.card_last4,
               card_brand: extractCardBrand(stmt.card_masked) || pmt.card_brand,
