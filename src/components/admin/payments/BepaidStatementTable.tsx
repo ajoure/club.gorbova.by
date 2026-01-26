@@ -178,12 +178,14 @@ export function BepaidStatementTable({
 
   return (
     <div className="rounded-lg border border-border/50 bg-card/30 backdrop-blur-sm overflow-hidden">
-      <div className="overflow-x-auto">
+      {/* Scrollable container with max height */}
+      <div className="max-h-[70vh] overflow-auto">
         <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-border/50 bg-muted/30">
-              {/* Checkbox column - sticky */}
-              <th className="sticky left-0 z-20 bg-muted/80 backdrop-blur-sm p-2 w-10">
+          {/* Sticky header */}
+          <thead className="sticky top-0 z-30">
+            <tr className="border-b border-border/50 bg-muted/95 backdrop-blur-sm">
+              {/* Checkbox column - sticky left + top */}
+              <th className="sticky left-0 top-0 z-40 bg-muted/95 backdrop-blur-sm p-2 w-10">
                 <button
                   onClick={handleSelectAll}
                   className="flex items-center justify-center w-full"
@@ -197,15 +199,15 @@ export function BepaidStatementTable({
                   )}
                 </button>
               </th>
-              {/* UID column - sticky */}
-              <th className="sticky left-10 z-20 bg-muted/80 backdrop-blur-sm p-2 text-left font-medium text-muted-foreground whitespace-nowrap">
+              {/* UID column - sticky left + top */}
+              <th className="sticky left-10 top-0 z-40 bg-muted/95 backdrop-blur-sm p-2 text-left font-medium text-muted-foreground whitespace-nowrap">
                 UID
               </th>
               {/* Other columns */}
               {COLUMNS.slice(1).map(col => (
                 <th 
                   key={col.key} 
-                  className="p-2 text-left font-medium text-muted-foreground whitespace-nowrap"
+                  className="p-2 text-left font-medium text-muted-foreground whitespace-nowrap bg-muted/95"
                   style={{ minWidth: col.width }}
                 >
                   {col.label}
@@ -225,16 +227,22 @@ export function BepaidStatementTable({
                     idx % 2 === 0 && "bg-muted/5"
                   )}
                 >
-                  {/* Checkbox - sticky */}
-                  <td className="sticky left-0 z-10 bg-inherit p-2">
+                  {/* Checkbox - sticky left */}
+                  <td className={cn(
+                    "sticky left-0 z-10 p-2",
+                    isSelected ? "bg-primary/10" : idx % 2 === 0 ? "bg-muted/5" : "bg-card/30"
+                  )}>
                     <Checkbox
                       checked={isSelected}
                       onCheckedChange={() => handleSelectRow(row.id)}
                     />
                   </td>
-                  {/* UID - sticky */}
+                  {/* UID - sticky left */}
                   <td 
-                    className="sticky left-10 z-10 bg-inherit p-2 font-mono text-[10px] cursor-pointer hover:text-primary truncate max-w-[120px]"
+                    className={cn(
+                      "sticky left-10 z-10 p-2 font-mono text-[10px] cursor-pointer hover:text-primary truncate max-w-[120px]",
+                      isSelected ? "bg-primary/10" : idx % 2 === 0 ? "bg-muted/5" : "bg-card/30"
+                    )}
                     onClick={() => copyToClipboard(row.uid)}
                     title={row.uid}
                   >

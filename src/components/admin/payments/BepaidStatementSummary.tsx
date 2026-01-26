@@ -1,6 +1,8 @@
-import { CreditCard, RotateCcw, XCircle, Percent, Banknote } from "lucide-react";
+import { CreditCard, RotateCcw, XCircle, Percent, Banknote, AlertTriangle } from "lucide-react";
 import { BepaidStatementStats } from "@/hooks/useBepaidStatement";
 import { cn } from "@/lib/utils";
+
+export type StatementFilterType = 'payments' | 'refunds' | 'cancellations' | 'errors' | null;
 
 interface StatCardProps {
   title: string;
@@ -8,9 +10,12 @@ interface StatCardProps {
   subtitle?: string;
   icon: React.ReactNode;
   variant?: 'default' | 'success' | 'warning' | 'danger';
+  onClick?: () => void;
+  isActive?: boolean;
+  isClickable?: boolean;
 }
 
-function StatCard({ title, value, subtitle, icon, variant = 'default' }: StatCardProps) {
+function StatCard({ title, value, subtitle, icon, variant = 'default', onClick, isActive, isClickable = true }: StatCardProps) {
   const variantStyles = {
     default: 'from-slate-500/10 to-slate-600/5 border-slate-500/20',
     success: 'from-emerald-500/10 to-emerald-600/5 border-emerald-500/20',
@@ -26,10 +31,15 @@ function StatCard({ title, value, subtitle, icon, variant = 'default' }: StatCar
   };
 
   return (
-    <div className={cn(
-      "relative overflow-hidden rounded-xl border bg-gradient-to-br backdrop-blur-xl p-4",
-      variantStyles[variant]
-    )}>
+    <div 
+      className={cn(
+        "relative overflow-hidden rounded-xl border bg-gradient-to-br backdrop-blur-xl p-4 transition-all duration-200",
+        variantStyles[variant],
+        isClickable && "cursor-pointer hover:scale-[1.02] hover:shadow-lg",
+        isActive && "ring-2 ring-primary scale-[1.02] shadow-lg"
+      )}
+      onClick={onClick}
+    >
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <p className="text-xs font-medium text-muted-foreground">{title}</p>
@@ -42,6 +52,9 @@ function StatCard({ title, value, subtitle, icon, variant = 'default' }: StatCar
           {icon}
         </div>
       </div>
+      {isActive && (
+        <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-primary animate-pulse" />
+      )}
     </div>
   );
 }
@@ -49,9 +62,11 @@ function StatCard({ title, value, subtitle, icon, variant = 'default' }: StatCar
 interface BepaidStatementSummaryProps {
   stats: BepaidStatementStats | undefined;
   isLoading: boolean;
+  activeFilter: StatementFilterType;
+  onFilterChange: (filter: StatementFilterType) => void;
 }
 
-export function BepaidStatementSummary({ stats, isLoading }: BepaidStatementSummaryProps) {
+export function BepaidStatementSummary({ stats, isLoading, activeFilter, onFilterChange }: BepaidStatementSummaryProps) {
   const formatAmount = (amount: number) => {
     return new Intl.NumberFormat('ru-BY', {
       minimumFractionDigits: 2,
@@ -59,10 +74,14 @@ export function BepaidStatementSummary({ stats, isLoading }: BepaidStatementSumm
     }).format(amount);
   };
 
+  const handleClick = (filter: StatementFilterType) => {
+    onFilterChange(activeFilter === filter ? null : filter);
+  };
+
   if (isLoading) {
     return (
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {[...Array(5)].map((_, i) => (
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+        {[...Array(6)].map((_, i) => (
           <div key={i} className="h-24 rounded-xl bg-muted/30 animate-pulse" />
         ))}
       </div>
@@ -76,19 +95,23 @@ export function BepaidStatementSummary({ stats, isLoading }: BepaidStatementSumm
     refunds_amount: 0,
     cancellations_count: 0,
     cancellations_amount: 0,
+    errors_count: 0,
+    errors_amount: 0,
     commission_total: 0,
     payout_total: 0,
     total_count: 0,
   };
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+    <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
       <StatCard
         title="Платежи"
         value={formatAmount(data.payments_amount)}
         subtitle={`${data.payments_count} шт`}
         icon={<CreditCard className="h-4 w-4" />}
         variant="success"
+        onClick={() => handleClick('payments')}
+        isActive={activeFilter === 'payments'}
       />
       <StatCard
         title="Возвраты"
@@ -96,6 +119,8 @@ export function BepaidStatementSummary({ stats, isLoading }: BepaidStatementSumm
         subtitle={`${data.refunds_count} шт`}
         icon={<RotateCcw className="h-4 w-4" />}
         variant="warning"
+        onClick={() => handleClick('refunds')}
+        isActive={activeFilter === 'refunds'}
       />
       <StatCard
         title="Отмены"
@@ -103,18 +128,31 @@ export function BepaidStatementSummary({ stats, isLoading }: BepaidStatementSumm
         subtitle={`${data.cancellations_count} шт`}
         icon={<XCircle className="h-4 w-4" />}
         variant="danger"
+        onClick={() => handleClick('cancellations')}
+        isActive={activeFilter === 'cancellations'}
+      />
+      <StatCard
+        title="Ошибки"
+        value={formatAmount(data.errors_amount)}
+        subtitle={`${data.errors_count} шт`}
+        icon={<AlertTriangle className="h-4 w-4" />}
+        variant="danger"
+        onClick={() => handleClick('errors')}
+        isActive={activeFilter === 'errors'}
       />
       <StatCard
         title="Комиссия"
         value={formatAmount(data.commission_total)}
         icon={<Percent className="h-4 w-4" />}
         variant="default"
+        isClickable={false}
       />
       <StatCard
         title="Перечислено"
         value={formatAmount(data.payout_total)}
         icon={<Banknote className="h-4 w-4" />}
         variant="success"
+        isClickable={false}
       />
     </div>
   );
