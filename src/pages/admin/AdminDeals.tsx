@@ -1,5 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -65,6 +67,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
   cancelled: { label: "Отменён", color: "bg-red-500/20 text-red-600", icon: XCircle },
   refunded: { label: "Возврат", color: "bg-red-500/20 text-red-600", icon: XCircle },
   expired: { label: "Истёк", color: "bg-muted text-muted-foreground", icon: XCircle },
+  needs_mapping: { label: "Требует маппинга", color: "bg-purple-500/20 text-purple-600", icon: AlertTriangle },
 };
 
 export default function AdminDeals() {
@@ -83,6 +86,7 @@ export default function AdminDeals() {
   const [showBulkEditDialog, setShowBulkEditDialog] = useState(false);
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
   const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
+  const [showProblematic, setShowProblematic] = useState(false);
   const queryClient = useQueryClient();
 
   // Fetch deals (orders_v2) with related data
@@ -250,8 +254,13 @@ export default function AdminDeals() {
   const filteredDeals = useMemo(() => {
     if (!deals) return [];
     
-    // First apply search
+    // PATCH 5: Filter out needs_mapping by default unless showProblematic
     let result = deals;
+    if (!showProblematic) {
+      result = result.filter(deal => deal.status !== 'needs_mapping');
+    }
+    
+    // Then apply search
     if (search) {
       const searchLower = search.toLowerCase();
       result = result.filter(deal => {
@@ -269,7 +278,12 @@ export default function AdminDeals() {
     
     // Then apply filters
     return applyFilters(result, activeFilters, getDealFieldValue);
-  }, [deals, search, activeFilters, profilesMap, getDealFieldValue]);
+  }, [deals, search, activeFilters, profilesMap, getDealFieldValue, showProblematic]);
+
+  // Count problematic deals
+  const problematicCount = useMemo(() => {
+    return deals?.filter(d => d.status === 'needs_mapping').length || 0;
+  }, [deals]);
 
   // Calculate stats from filtered deals (after filteredDeals is defined)
   const stats = useMemo(() => {
@@ -641,9 +655,21 @@ export default function AdminDeals() {
         </div>
       </div>
 
-      {/* Stats line */}
-      <div className="flex items-center gap-4 text-sm text-muted-foreground">
+      {/* Stats line with problematic toggle */}
+      <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground px-1">
         <span>Найдено: <strong className="text-foreground">{filteredDeals.length}</strong></span>
+        {problematicCount > 0 && (
+          <div className="flex items-center gap-2">
+            <Switch 
+              checked={showProblematic}
+              onCheckedChange={setShowProblematic}
+              id="show-problematic"
+            />
+            <Label htmlFor="show-problematic" className="text-sm cursor-pointer">
+              Показать проблемные ({problematicCount})
+            </Label>
+          </div>
+        )}
       </div>
 
       {/* Deals Table */}
