@@ -70,8 +70,11 @@ interface ReconcileResult {
   };
 }
 
-// Parse bePaid Excel file
-function parseExcelFile(file: File): Promise<FileTransaction[]> {
+// UUID validation regex (8-4-4-4-12 format)
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Parse bePaid Excel file - processes ALL sheets looking for UID column
+function parseExcelFile(file: File): Promise<{ transactions: FileTransaction[]; sheetsProcessed: string[] }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -80,40 +83,56 @@ function parseExcelFile(file: File): Promise<FileTransaction[]> {
         const workbook = XLSX.read(data, { type: 'array' });
         
         const transactions: FileTransaction[] = [];
-        
-        // Check both "Cards" and "ERIP" sheets (or first sheet)
+        const sheetsProcessed: string[] = [];
         const sheetNames = workbook.SheetNames;
-        const sheetsToProcess = sheetNames.filter(n => 
-          n.toLowerCase().includes('card') || 
-          n.toLowerCase().includes('erip') ||
-          sheetNames.length === 1
-        );
         
-        for (const sheetName of sheetsToProcess.length > 0 ? sheetsToProcess : [sheetNames[0]]) {
+        console.log(`[parseExcelFile] Found ${sheetNames.length} sheets:`, sheetNames);
+        
+        // Process ALL sheets, not just "Cards"/"ERIP"
+        for (const sheetName of sheetNames) {
           const sheet = workbook.Sheets[sheetName];
           const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
           
-          // Find header row (looking for "UID" or "ID транзакции")
+          // Skip empty sheets
+          if (!jsonData || jsonData.length < 2) {
+            console.log(`[parseExcelFile] Sheet "${sheetName}": empty, skipping`);
+            continue;
+          }
+          
+          // Find header row with UID column (check first 15 rows)
           let headerRowIdx = -1;
           let headers: string[] = [];
           
-          for (let i = 0; i < Math.min(10, jsonData.length); i++) {
+          for (let i = 0; i < Math.min(15, jsonData.length); i++) {
             const row = jsonData[i];
-            if (row && row.some((cell: any) => 
-              String(cell).toLowerCase().includes('uid') || 
-              String(cell).toLowerCase().includes('id транз') ||
-              String(cell).toLowerCase() === 'id'
-            )) {
+            if (!row) continue;
+            
+            // Look for UID column specifically
+            const rowStr = row.map((c: any) => String(c || '').toLowerCase().trim());
+            const hasUid = rowStr.some((h: string) => 
+              h === 'uid' || 
+              h.includes('id транз') ||
+              h.startsWith('uid')
+            );
+            
+            if (hasUid) {
               headerRowIdx = i;
-              headers = row.map((h: any) => String(h || '').toLowerCase().trim());
+              headers = rowStr;
               break;
             }
           }
           
-          if (headerRowIdx === -1) continue;
+          // If no UID column found in this sheet, skip it
+          if (headerRowIdx === -1) {
+            console.log(`[parseExcelFile] Sheet "${sheetName}": no UID column found, skipping`);
+            continue;
+          }
+          
+          console.log(`[parseExcelFile] Sheet "${sheetName}": found UID at row ${headerRowIdx}, parsing...`);
+          sheetsProcessed.push(sheetName);
           
           // Find column indices
-          const uidIdx = headers.findIndex(h => h.includes('uid') || h === 'id' || h.includes('id транз'));
+          const uidIdx = headers.findIndex(h => h === 'uid' || h.includes('id транз'));
           const statusIdx = headers.findIndex(h => h.includes('статус') || h.includes('status'));
           const typeIdx = headers.findIndex(h => h.includes('тип') || h.includes('type') || h.includes('операц'));
           const amountIdx = headers.findIndex(h => h.includes('сумма') || h.includes('amount'));
@@ -122,13 +141,24 @@ function parseExcelFile(file: File): Promise<FileTransaction[]> {
           const emailIdx = headers.findIndex(h => h.includes('email') || h.includes('почт'));
           const cardIdx = headers.findIndex(h => h.includes('карт') || h.includes('card') || h.includes('pan'));
           
+          console.log(`[parseExcelFile] Column indices: UID=${uidIdx}, Status=${statusIdx}, Amount=${amountIdx}`);
+          
           // Parse data rows
+          let validCount = 0;
+          let skippedInvalidUid = 0;
+          
           for (let i = headerRowIdx + 1; i < jsonData.length; i++) {
             const row = jsonData[i];
             if (!row || row.length === 0) continue;
             
             const uid = uidIdx >= 0 ? String(row[uidIdx] || '').trim() : '';
             if (!uid) continue;
+            
+            // Validate UUID format
+            if (!UUID_REGEX.test(uid)) {
+              skippedInvalidUid++;
+              continue;
+            }
             
             const amountRaw = amountIdx >= 0 ? row[amountIdx] : 0;
             const amount = typeof amountRaw === 'number' ? amountRaw : parseFloat(String(amountRaw).replace(/[^\d.-]/g, '')) || 0;
@@ -143,10 +173,14 @@ function parseExcelFile(file: File): Promise<FileTransaction[]> {
               customer_email: emailIdx >= 0 ? String(row[emailIdx] || '') : undefined,
               card_last4: cardIdx >= 0 ? String(row[cardIdx] || '').slice(-4) : undefined,
             });
+            validCount++;
           }
+          
+          console.log(`[parseExcelFile] Sheet "${sheetName}": parsed ${validCount} transactions, skipped ${skippedInvalidUid} invalid UIDs`);
         }
         
-        resolve(transactions);
+        console.log(`[parseExcelFile] Total: ${transactions.length} transactions from ${sheetsProcessed.length} sheets`);
+        resolve({ transactions, sheetsProcessed });
       } catch (err) {
         reject(err);
       }
@@ -162,6 +196,7 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
   
   const [file, setFile] = useState<File | null>(null);
   const [transactions, setTransactions] = useState<FileTransaction[]>([]);
+  const [sheetsInfo, setSheetsInfo] = useState<string[]>([]);
   const [fromDate, setFromDate] = useState("2026-01-01");
   const [toDate, setToDate] = useState("2026-01-25");
   const [isLoading, setIsLoading] = useState(false);
@@ -182,13 +217,15 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
     setFile(selectedFile);
     setIsParsing(true);
     setResult(null);
+    setSheetsInfo([]);
     
     try {
-      const parsed = await parseExcelFile(selectedFile);
+      const { transactions: parsed, sheetsProcessed } = await parseExcelFile(selectedFile);
       setTransactions(parsed);
+      setSheetsInfo(sheetsProcessed);
       toast({
         title: "Файл загружен",
-        description: `Найдено ${parsed.length} транзакций`,
+        description: `Найдено ${parsed.length} транзакций из листов: ${sheetsProcessed.join(', ') || 'нет'}`,
       });
     } catch (err: any) {
       toast({
@@ -197,6 +234,7 @@ export default function ReconcileFileDialog({ open, onOpenChange, onSuccess }: R
         variant: "destructive",
       });
       setTransactions([]);
+      setSheetsInfo([]);
     } finally {
       setIsParsing(false);
     }
