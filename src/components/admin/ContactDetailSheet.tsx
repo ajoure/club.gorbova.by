@@ -814,6 +814,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         }));
         localStorage.setItem("admin_return_url", window.location.pathname);
         localStorage.setItem("impersonation_start_time", Date.now().toString());
+        // Critical: ensure impersonation can never be “silent”
+        localStorage.setItem("is_impersonating", "true");
       }
 
       const result = await startImpersonation(contact.user_id);

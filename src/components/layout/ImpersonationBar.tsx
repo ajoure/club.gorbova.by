@@ -47,8 +47,19 @@ export function ImpersonationBar() {
       localStorage.setItem(IMPERSONATION_START_KEY, Date.now().toString());
     } else {
       // Check localStorage for persistent impersonation state
-      const storedImpersonating = localStorage.getItem(IS_IMPERSONATING_KEY) === "true";
+      const hasAdminSessionBackup = !!localStorage.getItem(ADMIN_SESSION_KEY);
+      const storedImpersonating =
+        localStorage.getItem(IS_IMPERSONATING_KEY) === "true" || hasAdminSessionBackup;
       const impersonationStartTime = localStorage.getItem(IMPERSONATION_START_KEY);
+
+      // Backward/bug-compat: if we have admin session backup but the flag is missing,
+      // force-enable impersonation mode so it's never “silent”.
+      if (hasAdminSessionBackup && localStorage.getItem(IS_IMPERSONATING_KEY) !== "true") {
+        localStorage.setItem(IS_IMPERSONATING_KEY, "true");
+        if (!impersonationStartTime) {
+          localStorage.setItem(IMPERSONATION_START_KEY, Date.now().toString());
+        }
+      }
       
       // Check if impersonation session has expired (15 minute limit)
       if (storedImpersonating && impersonationStartTime) {
