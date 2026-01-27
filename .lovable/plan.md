@@ -1,211 +1,222 @@
 
+# План: Улучшение мастера добавления контента и исправление багов тренингов
 
-# План: Интерактивный мастер добавления контента
+## Выявленные проблемы
 
-## Обзор существующей системы
+### 1. Размер диалога мастера слишком мал
+- На скриншотах видно, что поля «Стиль отображения» обрезаются
+- Нужно увеличить высоту и ширину диалога
+- Шаги прогресса обрезаются справа
 
-На основе анализа кодовой базы выявлено:
+### 2. Ошибка «duplicate key value violates unique constraint»
+- В консоли: `training_modules_slug_key` уже существует
+- Модуль `baza-znanij` уже есть в БД (id: `300bffb2-...`)
+- Нужно проверять уникальность slug перед созданием и предлагать альтернативу
 
-### Уже реализовано (переиспользуем)
-- **Хуки**: `useTrainingModules` (createModule, updateModule), `useTrainingLessons` (createLesson), `useLessonBlocks` (addBlock)
-- **Формы**: `ModuleFormContent` (поля модуля), `LessonFormContent` (поля урока)
-- **Селекторы**: `ContentSectionSelector` (выбор раздела меню), `CompactAccessSelector` (настройка доступа по тарифам), `DisplayLayoutSelector` (стиль отображения)
-- **Редактор**: `LessonBlockEditor` — полноценный редактор блоков с drag-n-drop
-- **Storage**: bucket `training-assets` для обложек и изображений
+### 3. Нет возможности удалять созданные вкладки
+- Сейчас `ContentSectionSelector` умеет только создавать вкладки
+- Нужно добавить кнопку удаления для вкладок (только созданных пользователем)
 
-### Паттерны wizard в проекте
-- `SmartImportWizard`: 5 шагов с прогрессом, состояние `step`, визуализация
-- `GetCourseContentImportDialog`: пошаговый импорт тренингов
+### 4. Шаг урока избыточен
+- video_url из формы не используется в редакторе контента
+- Редактор блоков — единственное место для добавления видео
+- Нужно упростить шаг урока до названия + описание (без типа контента и URL)
+
+### 5. Режим «Просмотр» показывает пустую страницу
+- Блок видео создан (id: `92a3bf6d-...`), в нём есть контент
+- Проблема: `useLessonBlocks` в режиме preview не обновляет данные
+- Кнопка «Просмотр» показывает «Нет блоков для отображения»
+
+### 6. Хлебные крошки ведут на /library вместо /knowledge
+- Модули созданы с `menu_section_key: products-library`
+- Хлебные крошки показывают «База знаний» → `/library`
+- Нужно корректно маппировать на `/knowledge` для knowledge-секций
+
+### 7. Нет кнопки генерации обложки AI
+- Пользователь хочет кнопку «Сгенерировать обложку» рядом с загрузкой
+- Использовать Lovable AI (`google/gemini-2.5-flash-image`)
 
 ---
 
-## Архитектура мастера добавления контента
+## План исправлений
 
-### Структура шагов
-```text
-Шаг 1: Выбор раздела → Шаг 2: Создание модуля → Шаг 3: Добавление урока → Шаг 4: Настройка доступа → Готово
-  ○────────○────────────────○─────────────────────○────────────────────────○
+### Этап A: Увеличение диалога мастера
+
+**Файл:** `src/components/admin/trainings/ContentCreationWizard.tsx`
+
+Изменения:
+1. Увеличить `max-w-2xl` до `max-w-3xl`
+2. Добавить минимальную высоту `min-h-[600px]`
+3. Улучшить отступы контента
+
+**Файл:** `src/components/admin/trainings/WizardStepIndicator.tsx`
+
+Изменения:
+- Сделать шаги более компактными для мобильных
+- Добавить горизонтальный скролл на узких экранах
+
+---
+
+### Этап B: Проверка уникальности slug
+
+**Файл:** `src/components/admin/trainings/ContentCreationWizard.tsx`
+
+Логика:
+1. Перед созданием модуля проверять существование slug в БД:
+```typescript
+const checkSlugExists = async (slug: string): Promise<boolean> => {
+  const { data } = await supabase
+    .from("training_modules")
+    .select("id")
+    .eq("slug", slug)
+    .limit(1);
+  return data && data.length > 0;
+};
 ```
-
-### Шаг 1: Выбор раздела
-- Переиспользуем `ContentSectionSelector`
-- Показываем иерархию: Раздел → Вкладка
-- Можно создать новую вкладку прямо из мастера
-
-### Шаг 2: Создание модуля (папки)
-- Переиспользуем `ModuleFormContent` с адаптацией
-- Поля: Название, Описание, Обложка (upload/AI), Цвет градиента
-- Slug генерируется автоматически
-- Переиспользуем `DisplayLayoutSelector` для стиля
-
-### Шаг 3: Добавление первого урока
-- Переиспользуем `LessonFormContent`
-- Поля: Название, Тип контента, URL видео (если видео)
-- Опционально: пропустить и добавить уроки позже
-
-### Шаг 4: Настройка доступа
-- Переиспользуем `CompactAccessSelector`
-- Визуальное объяснение: "Кто увидит контент"
-- Если ничего не выбрано → доступ для всех
-
-### Шаг 5: Готово
-- Сводка созданного контента
-- Кнопки: "Редактировать урок" → `/admin/training-lessons/{moduleId}/edit/{lessonId}`
-- Кнопки: "Добавить ещё урок", "Открыть модуль в каталоге"
+2. Если slug занят — добавить суффикс `-2`, `-3` и т.д.
+3. Показать предупреждение пользователю
 
 ---
 
-## Компоненты для создания
+### Этап C: Удаление созданных вкладок
 
-### 1. ContentCreationWizard (новый компонент)
-**Путь**: `src/components/admin/trainings/ContentCreationWizard.tsx`
+**Файл:** `src/components/admin/trainings/ContentSectionSelector.tsx`
+
+Изменения:
+1. Добавить кнопку удаления рядом с каждой вкладкой в правой колонке
+2. Удалять можно только вкладки с `kind: 'tab'` (не страницы)
+3. Запретить удаление если есть связанные модули
+4. Добавить диалог подтверждения
 
 ```tsx
-interface ContentCreationWizardProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onComplete?: (result: { moduleId: string; lessonId?: string }) => void;
-  initialSection?: string; // Предзаполнить раздел
-}
+const handleDeleteSection = async (key: string) => {
+  // Проверить наличие модулей с этой секцией
+  const { data: modules } = await supabase
+    .from("training_modules")
+    .select("id")
+    .eq("menu_section_key", key)
+    .limit(1);
 
-// Состояние
-const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
-const [wizardData, setWizardData] = useState<WizardData>({
-  menuSectionKey: null,
-  module: { title: "", slug: "", ... },
-  lesson: { title: "", content_type: "video", ... },
-  tariffIds: [],
+  if (modules && modules.length > 0) {
+    toast.error("Нельзя удалить: есть привязанные модули");
+    return;
+  }
+
+  await supabase.from("user_menu_sections").delete().eq("key", key);
+};
+```
+
+---
+
+### Этап D: Упрощение шага урока
+
+**Файл:** `src/components/admin/trainings/LessonFormFields.tsx`
+
+Изменения:
+1. Убрать поля: `content_type`, `video_url`, `audio_url`, `duration_minutes`
+2. Оставить только: `title`, `slug`, `description`
+3. Добавить подсказку: «Контент урока добавляется в редакторе блоков после создания»
+
+**Файл:** `src/components/admin/trainings/ContentCreationWizard.tsx`
+
+Изменения:
+1. При создании урока устанавливать `content_type: 'mixed'` по умолчанию
+2. Убрать условные поля для video/audio
+
+---
+
+### Этап E: Исправление режима «Просмотр»
+
+**Файл:** `src/pages/admin/AdminLessonBlockEditor.tsx`
+
+Проблема: `useLessonBlocks` вызывается с `lessonId`, но `blocks` пустой при первом рендере.
+
+Решение:
+1. Добавить `refetch()` при переключении режима
+2. Использовать `blocks` из хука напрямую:
+
+```tsx
+const { blocks, refetch } = useLessonBlocks(lessonId);
+
+const handleTogglePreview = () => {
+  setPreviewMode(!previewMode);
+  if (!previewMode) {
+    refetch(); // Обновить блоки перед показом preview
+  }
+};
+```
+
+---
+
+### Этап F: Исправление хлебных крошек
+
+**Файл:** `src/pages/LibraryModule.tsx` и `src/pages/LibraryLesson.tsx`
+
+Текущий маппинг:
+```typescript
+'knowledge-videos': { path: '/library', label: 'База знаний' },
+```
+
+Нужно:
+```typescript
+'knowledge-videos': { path: '/knowledge', label: 'База знаний' },
+'knowledge-questions': { path: '/knowledge', label: 'База знаний' },
+'products-library': { path: '/products?tab=library', label: 'Моя библиотека' },
+```
+
+---
+
+### Этап G: Генерация обложки AI
+
+**Файл:** `src/components/admin/trainings/ModuleFormFields.tsx`
+
+Новые элементы:
+1. Кнопка «Сгенерировать обложку» рядом с полем URL
+2. При нажатии вызывать edge function
+
+**Файл:** `supabase/functions/generate-cover/index.ts` (новый)
+
+Логика:
+1. Получить название модуля и описание
+2. Вызвать Lovable AI с моделью `google/gemini-2.5-flash-image`
+3. Загрузить результат в storage `training-assets`
+4. Вернуть URL
+
+```typescript
+const prompt = `Создай минималистичную обложку для обучающего модуля "${title}". 
+Стиль: современный, чистый, градиентный фон с абстрактными формами. 
+Формат: 1200x630px, без текста.`;
+
+const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${LOVABLE_API_KEY}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    model: "google/gemini-2.5-flash-image",
+    messages: [{ role: "user", content: prompt }],
+    modalities: ["image", "text"],
+  }),
 });
 ```
 
-### 2. WizardStepIndicator (новый UI-компонент)
-**Путь**: `src/components/admin/trainings/WizardStepIndicator.tsx`
-
-Визуальный индикатор прогресса:
-```tsx
-<div className="flex items-center gap-2 mb-6">
-  {steps.map((s, i) => (
-    <div className={cn(
-      "flex items-center gap-1.5",
-      i < currentStep ? "text-primary" : "text-muted-foreground"
-    )}>
-      <div className={cn(
-        "w-8 h-8 rounded-full flex items-center justify-center",
-        i < currentStep ? "bg-primary text-white" : 
-        i === currentStep ? "bg-primary/20 text-primary" : "bg-muted"
-      )}>
-        {i < currentStep ? <Check className="h-4 w-4" /> : i + 1}
-      </div>
-      <span className="text-sm font-medium hidden md:block">{s.label}</span>
-      {i < steps.length - 1 && <ChevronRight className="h-4 w-4" />}
-    </div>
-  ))}
-</div>
-```
-
-### 3. Интеграция в AdminTrainingModules
-Добавить кнопку "Мастер добавления контента" рядом с "+ Создать модуль"
-
 ---
 
-## Переиспользование существующих компонентов
+### Этап H: Мобильная адаптация
 
-### ContentSectionSelector
-- Используем как есть в Шаге 1
-- Передаём `value` и `onChange` из wizardData
+**Файл:** `src/components/admin/trainings/ContentCreationWizard.tsx`
 
-### ModuleFormContent
-- Выносим в отдельный файл `src/components/admin/trainings/ModuleFormFields.tsx`
-- Импортируем в wizard и в AdminTrainingModules (без дублирования)
+Изменения:
+1. На мобильных — fullscreen диалог (уже есть в базовом Dialog)
+2. Компактные лейблы шагов
+3. Вертикальный скролл для форм
 
-### LessonFormContent  
-- Аналогично выносим в `src/components/admin/trainings/LessonFormFields.tsx`
-- Переиспользуем в wizard и AdminTrainingLessons
+**Файл:** `src/components/admin/trainings/ModuleFormFields.tsx`
 
-### CompactAccessSelector
-- Используем как есть в Шаге 4
-
----
-
-## Логика сохранения
-
-### При переходе с Шага 2 на Шаг 3
-```tsx
-const handleModuleNext = async () => {
-  const result = await createModule({
-    ...wizardData.module,
-    menu_section_key: wizardData.menuSectionKey,
-    tariff_ids: [], // Настроим позже
-  });
-  if (result) {
-    setCreatedModuleId(result.id);
-    setStep(3);
-  }
-};
-```
-
-### При переходе с Шага 3 на Шаг 4
-```tsx
-const handleLessonNext = async () => {
-  if (wizardData.lesson.title) {
-    const result = await createLesson({
-      ...wizardData.lesson,
-      module_id: createdModuleId,
-    });
-    if (result) {
-      setCreatedLessonId(result.id);
-    }
-  }
-  setStep(4);
-};
-```
-
-### При завершении (Шаг 4 → 5)
-```tsx
-const handleAccessSave = async () => {
-  await updateModule(createdModuleId, {
-    tariff_ids: wizardData.tariffIds,
-  });
-  setStep(5);
-};
-```
-
----
-
-## UI/UX улучшения
-
-### Подсказки на каждом шаге
-- Шаг 1: "Выберите, где будет отображаться ваш контент в меню пользователя"
-- Шаг 2: "Создайте папку для группировки уроков"
-- Шаг 3: "Добавьте первый урок (можно пропустить)"
-- Шаг 4: "Настройте, кто увидит контент"
-
-### Валидация
-- Шаг 1: Раздел должен быть выбран
-- Шаг 2: Название модуля обязательно
-- Шаг 3: Опционально (кнопка "Пропустить")
-- Шаг 4: Без валидации (пустой = для всех)
-
-### Кнопки навигации
-```tsx
-<DialogFooter className="flex justify-between">
-  {step > 1 && (
-    <Button variant="outline" onClick={() => setStep(s => s - 1)}>
-      ← Назад
-    </Button>
-  )}
-  <div className="flex-1" />
-  {step < 4 ? (
-    <Button onClick={handleNext} disabled={!canProceed}>
-      Далее →
-    </Button>
-  ) : (
-    <Button onClick={handleComplete}>
-      Завершить ✓
-    </Button>
-  )}
-</DialogFooter>
-```
+Изменения:
+1. `DisplayLayoutSelector` — горизонтальный скролл на мобильных
+2. Уменьшить padding для compact режима
 
 ---
 
@@ -213,52 +224,58 @@ const handleAccessSave = async () => {
 
 | Файл | Действие |
 |------|----------|
-| `src/components/admin/trainings/ContentCreationWizard.tsx` | Создать — основной компонент мастера |
-| `src/components/admin/trainings/WizardStepIndicator.tsx` | Создать — индикатор прогресса |
-| `src/components/admin/trainings/ModuleFormFields.tsx` | Создать — вынести форму модуля из AdminTrainingModules |
-| `src/components/admin/trainings/LessonFormFields.tsx` | Создать — вынести форму урока из AdminTrainingLessons |
-| `src/pages/admin/AdminTrainingModules.tsx` | Изменить — добавить кнопку мастера, импортировать ModuleFormFields |
-| `src/pages/admin/AdminTrainingLessons.tsx` | Изменить — импортировать LessonFormFields |
-
----
-
-## Дополнительные улучшения
-
-### AI-генерация обложки (опционально, следующий спринт)
-- Кнопка "Сгенерировать обложку" в Шаге 2
-- Вызов Lovable AI для создания минималистичного изображения
-- Fallback: градиент с названием модуля
-
-### Быстрые пресеты
-- "Вебинар": тип = video, layout = list
-- "Курс": тип = mixed, layout = grid
-- "Документы": тип = document, layout = compact
+| `src/components/admin/trainings/ContentCreationWizard.tsx` | Увеличить диалог, проверка slug, упростить логику |
+| `src/components/admin/trainings/WizardStepIndicator.tsx` | Адаптивные шаги |
+| `src/components/admin/trainings/ContentSectionSelector.tsx` | Добавить удаление вкладок |
+| `src/components/admin/trainings/LessonFormFields.tsx` | Упростить форму урока |
+| `src/components/admin/trainings/ModuleFormFields.tsx` | Добавить кнопку генерации AI |
+| `src/pages/admin/AdminLessonBlockEditor.tsx` | Исправить preview |
+| `src/pages/LibraryModule.tsx` | Исправить хлебные крошки |
+| `src/pages/LibraryLesson.tsx` | Исправить хлебные крошки |
+| `supabase/functions/generate-cover/index.ts` | Создать edge function для AI |
+| `supabase/config.toml` | Добавить конфиг для новой функции |
 
 ---
 
 ## Технические детали
 
-### Изоляция от существующего кода
-- Wizard не изменяет логику существующих страниц
-- Все создания идут через существующие хуки (createModule, createLesson)
-- Формы выносятся в отдельные файлы для переиспользования
+### Проверка уникальности slug
+```typescript
+const ensureUniqueSlug = async (baseSlug: string): Promise<string> => {
+  let slug = baseSlug;
+  let suffix = 2;
+  
+  while (await checkSlugExists(slug)) {
+    slug = `${baseSlug}-${suffix}`;
+    suffix++;
+  }
+  
+  return slug;
+};
+```
 
-### Совместимость с мобильными устройствами
-- Шаги отображаются компактно (номера вместо текста)
-- Диалог занимает весь экран на мобильном
-- Touch-friendly кнопки (min 44px)
+### Условие удаления вкладки
+- Только если `kind === 'tab'`
+- Только если нет модулей с этим `menu_section_key`
+- С диалогом подтверждения
+
+### AI генерация обложки
+- Модель: `google/gemini-2.5-flash-image`
+- Формат ответа: base64 изображение
+- Сохранение в storage: `training-assets/ai-covers/{moduleId}.png`
+- UI: индикатор загрузки, кнопка «Перегенерировать»
 
 ---
 
 ## Проверка готовности (DoD)
 
-- [ ] Wizard открывается из AdminTrainingModules
-- [ ] Шаг 1: выбор раздела работает
-- [ ] Шаг 2: модуль создаётся в базе
-- [ ] Шаг 3: урок создаётся (или пропускается)
-- [ ] Шаг 4: доступ сохраняется
-- [ ] Шаг 5: показывается сводка с ссылками
-- [ ] Формы модуля/урока переиспользуются без дублирования
-- [ ] Прогресс-бар отображает текущий шаг
+- [ ] Диалог мастера помещает все поля без обрезки
+- [ ] Шаги прогресса видны полностью
+- [ ] Slug проверяется на уникальность перед созданием
+- [ ] Созданные вкладки можно удалять (с защитой)
+- [ ] Форма урока упрощена (только название + описание)
+- [ ] Режим «Просмотр» показывает созданные блоки
+- [ ] Хлебные крошки ведут на правильные страницы
+- [ ] Кнопка «Сгенерировать обложку» работает
+- [ ] Мобильная версия не ломается
 - [ ] Весь UI на русском языке
-
