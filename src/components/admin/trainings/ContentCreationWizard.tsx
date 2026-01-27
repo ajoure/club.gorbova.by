@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Dialog,
@@ -83,6 +83,7 @@ export function ContentCreationWizard({
   initialSectionKey,
 }: ContentCreationWizardProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const [step, setStep] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
@@ -242,6 +243,12 @@ export function ContentCreationWizard({
       }));
       
       setCreatedModuleId(newModule.id);
+      
+      // Инвалидируем кэш чтобы модуль появился в UI сразу
+      queryClient.invalidateQueries({ queryKey: ["sidebar-modules"] });
+      queryClient.invalidateQueries({ queryKey: ["page-sections-tabs"] });
+      queryClient.invalidateQueries({ queryKey: ["training-modules"] });
+      
       toast.success("Модуль создан");
       setStep(2);
     } catch (error: any) {

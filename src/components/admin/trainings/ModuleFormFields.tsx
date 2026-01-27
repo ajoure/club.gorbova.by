@@ -129,10 +129,12 @@ export function ModuleFormFields({
     }
 
     setGenerating(true);
+    const toastId = toast.loading("Генерация обложки AI... (~15 сек)");
+    
     try {
       const { data: session } = await supabase.auth.getSession();
       if (!session?.session?.access_token) {
-        toast.error("Необходимо авторизоваться");
+        toast.error("Необходимо авторизоваться", { id: toastId });
         return;
       }
 
@@ -145,18 +147,28 @@ export function ModuleFormFields({
       });
 
       if (response.error) {
-        throw new Error(response.error.message || "Ошибка генерации");
+        console.error("Generate cover error:", response.error);
+        
+        // Детализированные ошибки
+        if (response.error.message?.includes("404")) {
+          toast.error("Функция генерации недоступна. Обратитесь в поддержку.", { id: toastId });
+        } else if (response.error.message?.includes("429")) {
+          toast.error("Превышен лимит запросов. Попробуйте позже.", { id: toastId });
+        } else {
+          toast.error(`Ошибка: ${response.error.message}`, { id: toastId });
+        }
+        return;
       }
 
       if (response.data?.url) {
         onChange({ ...formData, cover_image: response.data.url });
-        toast.success("Обложка сгенерирована!");
+        toast.success("Обложка сгенерирована!", { id: toastId });
       } else {
-        throw new Error("Не удалось получить URL обложки");
+        toast.error("Не удалось получить URL обложки", { id: toastId });
       }
     } catch (error: any) {
       console.error("Generation error:", error);
-      toast.error(`Ошибка генерации: ${error.message}`);
+      toast.error(`Ошибка генерации: ${error.message}`, { id: toastId });
     } finally {
       setGenerating(false);
     }

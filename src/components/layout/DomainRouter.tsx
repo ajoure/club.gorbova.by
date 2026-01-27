@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { usePublicProduct, getCurrentDomain } from "@/hooks/usePublicProduct";
 import { ProductLanding } from "@/components/landing/ProductLanding";
 import { ProductLandingHeader } from "@/components/landing/ProductLandingHeader";
@@ -43,9 +44,19 @@ export function DomainHomePage() {
     isMainDomain ? null : domain
   );
 
+  // Дополнительная задержка для HMR — даём время Supabase восстановить сессию
+  const [isInitializing, setIsInitializing] = useState(true);
+  
+  useEffect(() => {
+    // Ждём 500ms перед тем как считать, что пользователь точно не авторизован
+    const timer = setTimeout(() => setIsInitializing(false), 500);
+    return () => clearTimeout(timer);
+  }, []);
+
   // Main domain or development: redirect logged-in users to dashboard
   if (isMainDomain) {
-    if (authLoading) {
+    // Показываем loader пока loading ИЛИ пока идёт инициализация
+    if (authLoading || isInitializing) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-background">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
