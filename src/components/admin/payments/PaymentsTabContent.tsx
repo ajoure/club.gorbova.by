@@ -344,12 +344,14 @@ export function PaymentsTabContent() {
   return (
     <div className="space-y-3">
       {/* 1. Stats Panel - на самом верху после вкладок */}
-      <PaymentsStatsPanel 
-        payments={payments} 
-        isLoading={isLoading}
-        activeFilter={statsFilter}
-        onFilterChange={setStatsFilter}
-      />
+      <div className="pt-1">
+        <PaymentsStatsPanel 
+          payments={payments} 
+          isLoading={isLoading}
+          activeFilter={statsFilter}
+          onFilterChange={setStatsFilter}
+        />
+      </div>
       
       {/* 2. Строка периода + счётчик транзакций */}
       <div className="text-xs text-muted-foreground text-center py-1">
@@ -376,10 +378,10 @@ export function PaymentsTabContent() {
                   setFilters(prev => ({ ...prev, status: tab.id }));
                   setStatsFilter(null); // Clear stats filter when using pill tabs
                 }}
-                className={`relative flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+                className={`relative flex items-center gap-1.5 px-3 h-8 rounded-full text-xs transition-all duration-200 whitespace-nowrap ${
                   isActive
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-background text-foreground shadow-sm font-semibold"
+                    : "text-muted-foreground hover:text-foreground font-medium"
                 }`}
               >
                 <span>{tab.label}</span>
@@ -397,7 +399,7 @@ export function PaymentsTabContent() {
         {/* Sync dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="h-8 gap-1 text-xs">
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 px-3 text-xs font-medium">
               <RefreshCw className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Sync</span>
               <ChevronDown className="h-3 w-3 opacity-50" />
@@ -488,9 +490,9 @@ export function PaymentsTabContent() {
           variant={showFilters ? "secondary" : "outline"} 
           size="sm"
           onClick={() => setShowFilters(!showFilters)}
-          className="h-9 gap-2 text-xs"
+          className="h-8 gap-1.5 px-3 text-xs font-medium"
         >
-          <Filter className="h-4 w-4" />
+          <Filter className="h-3.5 w-3.5" />
           Фильтры
           {activeFiltersCount > 0 && (
             <Badge variant="secondary" className="ml-1 h-5 px-1.5">{activeFiltersCount}</Badge>
@@ -498,8 +500,8 @@ export function PaymentsTabContent() {
         </Button>
         
         {activeFiltersCount > 0 && (
-          <Button variant="ghost" size="sm" onClick={resetFilters} className="h-9 text-xs">
-            <X className="h-4 w-4 mr-1" />
+          <Button variant="ghost" size="sm" onClick={resetFilters} className="h-8 px-3 text-xs font-medium">
+            <X className="h-3.5 w-3.5 mr-1" />
             Сбросить
           </Button>
         )}

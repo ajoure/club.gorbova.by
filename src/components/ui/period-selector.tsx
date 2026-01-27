@@ -272,16 +272,16 @@ export function PeriodSelector({ value, onChange, className, align = "start" }: 
         <Button
           variant="outline"
           className={cn(
-            "h-9 gap-2 px-3",
+            "h-8 gap-2 px-3 text-xs",
             "bg-background/60 backdrop-blur-sm border-border/50",
             "hover:bg-background/80 hover:border-border",
             "transition-all duration-200",
             className
           )}
         >
-          <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+          <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" />
           <span className="font-medium">{formatPeriodLabel(value)}</span>
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          <ChevronDown className="h-3 w-3 text-muted-foreground" />
         </Button>
       </PopoverTrigger>
       <PopoverContent 
