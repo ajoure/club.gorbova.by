@@ -46,6 +46,12 @@ interface DetailedStats {
   commission_total: number;
 }
 
+interface ErrorDetail {
+  uid: string;
+  action: string;
+  error: string;
+}
+
 interface SyncStats {
   statement_count: number;
   payments_count: number;
@@ -56,6 +62,7 @@ interface SyncStats {
   applied: number;
   skipped: number;
   errors: number;
+  error_details?: ErrorDetail[];
   statement_stats?: DetailedStats;
   payments_stats?: DetailedStats;
   projected_stats?: DetailedStats;
@@ -659,6 +666,8 @@ Deno.serve(async (req) => {
         try {
           if (change.action === 'create') {
             const stmt = change.statement_data;
+            // NOTE: customer_email and customer_phone columns don't exist in payments_v2
+            // Store email/phone in meta instead
             const { error: insertError } = await supabaseAdmin.from('payments_v2').insert({
               provider: 'bepaid',
               provider_payment_id: change.uid,
@@ -671,11 +680,11 @@ Deno.serve(async (req) => {
               card_last4: extractLast4(stmt.card_masked),
               card_brand: extractCardBrand(stmt.card_masked),
               card_holder: stmt.card_holder,
-              customer_email: stmt.email,
-              customer_phone: stmt.phone,
               meta: {
                 commission_total: stmt.commission_total,
                 payout_amount: stmt.payout_amount,
+                customer_email: stmt.email,
+                customer_phone: stmt.phone,
                 synced_from_statement: true,
                 synced_at: new Date().toISOString(),
                 synced_by: user.id,
@@ -685,6 +694,13 @@ Deno.serve(async (req) => {
             if (insertError) {
               console.error(`[sync-statement] Error creating payment ${change.uid}:`, insertError);
               stats.errors++;
+              // Track error details for UI
+              if (!stats.error_details) stats.error_details = [];
+              stats.error_details.push({
+                uid: change.uid,
+                action: 'create',
+                error: insertError.message || String(insertError),
+              });
             } else {
               stats.applied++;
             }
@@ -720,6 +736,12 @@ Deno.serve(async (req) => {
             if (updateError) {
               console.error(`[sync-statement] Error updating payment ${change.uid}:`, updateError);
               stats.errors++;
+              if (!stats.error_details) stats.error_details = [];
+              stats.error_details.push({
+                uid: change.uid,
+                action: 'update',
+                error: updateError.message || String(updateError),
+              });
               continue; // Skip cascade if main update failed
             }
             
@@ -845,6 +867,12 @@ Deno.serve(async (req) => {
             if (deleteError) {
               console.error(`[sync-statement] Error deleting payment ${change.uid}:`, deleteError);
               stats.errors++;
+              if (!stats.error_details) stats.error_details = [];
+              stats.error_details.push({
+                uid: change.uid,
+                action: 'delete',
+                error: deleteError.message || String(deleteError),
+              });
             } else {
               stats.applied++;
             }
