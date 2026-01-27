@@ -62,6 +62,12 @@ interface DetailedStats {
   commission_total: number;
 }
 
+interface ErrorDetail {
+  uid: string;
+  action: string;
+  error: string;
+}
+
 interface SyncStats {
   statement_count: number;
   payments_count: number;
@@ -71,6 +77,8 @@ interface SyncStats {
   to_delete: number;
   applied: number;
   skipped: number;
+  errors?: number;
+  error_details?: ErrorDetail[];
   statement_stats?: DetailedStats;
   payments_stats?: DetailedStats;
   projected_stats?: DetailedStats;
@@ -643,6 +651,26 @@ export default function SyncWithStatementDialog({
                   <div className="text-muted-foreground">Пропущено</div>
                 </div>
               </div>
+              
+              {/* Error details block */}
+              {(stats.errors ?? 0) > 0 && (
+                <div className="w-full mt-4 rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-left">
+                  <div className="flex items-center gap-2 text-destructive mb-2">
+                    <AlertTriangle className="h-4 w-4" />
+                    <span className="font-medium">Ошибки: {stats.errors}</span>
+                  </div>
+                  {stats.error_details?.slice(0, 10).map((e, i) => (
+                    <div key={i} className="text-xs text-muted-foreground truncate">
+                      <span className="font-mono">{e.uid.slice(0, 12)}...</span>: {e.error}
+                    </div>
+                  ))}
+                  {(stats.error_details?.length ?? 0) > 10 && (
+                    <div className="text-xs text-muted-foreground mt-1">
+                      ... и ещё {(stats.error_details?.length ?? 0) - 10} ошибок
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

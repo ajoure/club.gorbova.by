@@ -185,10 +185,11 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           .not("paid_at", "is", null); // Sync with RPC: exclude pending/manual with null paid_at
         
         // Filter by origin based on includeImport toggle
+        // IMPORTANT: Always include 'statement_sync' to show records synced from bePaid statements
         if (includeImport) {
-          query = query.in("origin", ["bepaid", "import"]);
+          query = query.in("origin", ["bepaid", "import", "statement_sync"]);
         } else {
-          query = query.eq("origin", "bepaid");
+          query = query.in("origin", ["bepaid", "statement_sync"]);
         }
         
         query = query.gte("paid_at", `${fromDate}T00:00:00Z`);
