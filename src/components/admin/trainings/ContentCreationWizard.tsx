@@ -378,7 +378,7 @@ export function ContentCreationWizard({
           description: wizardData.lesson.description || null,
           content_type: "mixed",
           is_active: true,
-          sort_order: Date.now(), // Use timestamp for reverse chronological order
+          sort_order: 0, // New lessons first, sorted by created_at DESC
         })
         .select()
         .single();
