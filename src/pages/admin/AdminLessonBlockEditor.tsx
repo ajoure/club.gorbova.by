@@ -79,7 +79,7 @@ export default function AdminLessonBlockEditor() {
           <p className="text-muted-foreground mb-4">
             Указанный урок не существует или был удалён.
           </p>
-          <Button onClick={() => navigate(`/admin/training-lessons/${moduleId}`)}>
+          <Button onClick={() => navigate(`/admin/training-modules/${moduleId}/lessons`)}>
             Вернуться к урокам
           </Button>
         </div>
@@ -106,7 +106,7 @@ export default function AdminLessonBlockEditor() {
           <div className="flex gap-2 flex-wrap">
             <Button 
               variant="outline" 
-              onClick={() => navigate(`/admin/training-lessons/${moduleId}`)}
+              onClick={() => navigate(`/admin/training-modules/${moduleId}/lessons`)}
             >
               <ArrowLeft className="mr-2 h-4 w-4" />
               Назад

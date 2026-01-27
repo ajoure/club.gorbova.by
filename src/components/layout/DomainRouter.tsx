@@ -6,8 +6,11 @@ import Landing from "@/pages/Landing";
 import CourseAccountant from "@/pages/CourseAccountant";
 import Consultation from "@/pages/Consultation";
 import { Loader2 } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { Navigate } from "react-router-dom";
 
 export function DomainHomePage() {
+  const { user, loading: authLoading } = useAuth();
   const hostname = window.location.hostname;
   const domain = getCurrentDomain();
   
@@ -40,8 +43,18 @@ export function DomainHomePage() {
     isMainDomain ? null : domain
   );
 
-  // Main domain or development → show club landing
+  // Main domain or development: redirect logged-in users to dashboard
   if (isMainDomain) {
+    if (authLoading) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-background">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      );
+    }
+    if (user) {
+      return <Navigate to="/dashboard" replace />;
+    }
     return <Landing />;
   }
 

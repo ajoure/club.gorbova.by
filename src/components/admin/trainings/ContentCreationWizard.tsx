@@ -356,7 +356,7 @@ export function ContentCreationWizard({
   const handleAddAnotherLesson = () => {
     if (createdModuleId) {
       handleOpenChange(false);
-      navigate(`/admin/training-lessons/${createdModuleId}`);
+      navigate(`/admin/training-modules/${createdModuleId}/lessons`);
     }
   };
 

@@ -37,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Plus,
   Pencil,
@@ -120,43 +121,6 @@ const LessonFormContent = memo(function LessonFormContent({
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="lesson-content_type">Тип контента</Label>
-          <Select
-            value={formData.content_type}
-            onValueChange={(value: any) => onFormDataChange(prev => ({ ...prev, content_type: value }))}
-          >
-            <SelectTrigger id="lesson-content_type">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {contentTypeOptions.map(opt => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  <div className="flex items-center gap-2">
-                    <opt.icon className="h-4 w-4" />
-                    {opt.label}
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="lesson-duration">Длительность (минуты)</Label>
-          <Input
-            id="lesson-duration"
-            type="number"
-            value={formData.duration_minutes || ""}
-            onChange={(e) => onFormDataChange(prev => ({ 
-              ...prev, 
-              duration_minutes: e.target.value ? parseInt(e.target.value) : undefined 
-            }))}
-            placeholder="15"
-          />
-        </div>
-      </div>
-
       <div className="space-y-2">
         <Label htmlFor="lesson-description">Краткое описание</Label>
         <Textarea
@@ -168,44 +132,12 @@ const LessonFormContent = memo(function LessonFormContent({
         />
       </div>
 
-      {(formData.content_type === "video" || formData.content_type === "mixed") && (
-        <div className="space-y-2">
-          <Label htmlFor="lesson-video_url">URL видео</Label>
-          <Input
-            id="lesson-video_url"
-            value={formData.video_url || ""}
-            onChange={(e) => onFormDataChange(prev => ({ ...prev, video_url: e.target.value }))}
-            placeholder="https://youtube.com/watch?v=... или https://vimeo.com/..."
-          />
-          <p className="text-xs text-muted-foreground">
-            Поддерживается YouTube, Vimeo или прямая ссылка на видео
-          </p>
-        </div>
-      )}
-
-      {(formData.content_type === "audio" || formData.content_type === "mixed") && (
-        <div className="space-y-2">
-          <Label htmlFor="lesson-audio_url">URL аудио</Label>
-          <Input
-            id="lesson-audio_url"
-            value={formData.audio_url || ""}
-            onChange={(e) => onFormDataChange(prev => ({ ...prev, audio_url: e.target.value }))}
-            placeholder="https://..."
-          />
-        </div>
-      )}
-
-      <div className="space-y-2">
-        <Label htmlFor="lesson-content">Текстовый контент (HTML)</Label>
-        <Textarea
-          id="lesson-content"
-          value={formData.content}
-          onChange={(e) => onFormDataChange(prev => ({ ...prev, content: e.target.value }))}
-          placeholder="<p>Содержимое урока...</p>"
-          rows={6}
-          className="font-mono text-sm"
-        />
-      </div>
+      <Alert className="border-primary/30 bg-primary/5">
+        <Blocks className="h-4 w-4 text-primary" />
+        <AlertDescription className="ml-2">
+          Видео, текст и другой контент добавляются через кнопку «Контент» после создания урока
+        </AlertDescription>
+      </Alert>
 
       <div className="flex items-center space-x-2">
         <Switch

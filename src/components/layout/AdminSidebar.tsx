@@ -307,7 +307,7 @@ export function AdminSidebar() {
                     tooltip={collapsed ? "Назад к приложению" : undefined}
                   >
                     <NavLink
-                      to="/"
+                      to="/dashboard"
                       className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent text-sidebar-foreground/70"
                     >
                       <ArrowLeft className="h-5 w-5 shrink-0" />
