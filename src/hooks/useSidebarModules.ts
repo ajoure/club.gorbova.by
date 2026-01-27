@@ -10,6 +10,7 @@ export interface SidebarModule {
   menu_section_key: string | null;
   icon: string | null;
   sort_order: number;
+  is_container?: boolean;
   has_access?: boolean;
 }
 
@@ -37,7 +38,8 @@ export function useSidebarModules() {
           slug,
           menu_section_key,
           icon,
-          sort_order
+          sort_order,
+          is_container
         `)
         .eq("is_active", true)
         .order("sort_order");
