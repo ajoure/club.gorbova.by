@@ -1,156 +1,289 @@
 
-Цели этого исправления (по вашим жалобам)
-1) Новые тестовые модули должны появляться в «Базе знаний» (/knowledge) сразу после создания (без «магии» и ожиданий).
-2) После обновления/перезагрузки вы не должны «вываливаться» из кабинета (и не должны попадать на лендинг вместо кабинета).
-3) «Назад к приложению» из админки должен вести в кабинет (/dashboard), а не на публичный лендинг.
-4) В общем меню переименовать «Админ‑панель» в «Панель управления».
-5) Убрать бессмысленные поля “URL видео / HTML контент” из формы создания/редактирования урока в админке (контент делается в редакторе блоков).
-6) «Назад» из редактора контента урока не должен вести на 404.
-7) Генерация обложки должна реально работать (с кнопки AI) и выдавать URL.
+# План: Комплексное исправление мастера контента и навигации
 
-Что уже найдено (по коду и логам)
-A) 404 из редактора урока — это реальный баг маршрута.
-- В приложении нет маршрута `/admin/training-lessons/:moduleId` (в App.tsx есть только `/admin/training-modules/:moduleId/lessons` и `/admin/training-lessons/:moduleId/edit/:lessonId`).
-- Но в `AdminLessonBlockEditor.tsx` кнопка «Назад» ведёт на `/admin/training-lessons/${moduleId}` → гарантированный 404.
-- Та же ошибка есть в мастере: `ContentCreationWizard.tsx` после создания урока делает `navigate(/admin/training-lessons/${createdModuleId})`.
+## Обнаруженные проблемы (по коду)
 
-B) «Назад к приложению» в админ‑сайдбаре ведёт на `/`.
-- В `AdminSidebar.tsx` это жёстко задано `to="/"`.
-- А `"/"` у вас управляется `DomainHomePage` и на основном домене/preview показывает ЛЕНДИНГ (Landing), а не кабинет.
-- Поэтому создаётся ощущение «меня выбросило» даже если сессия жива.
+### 1. Неправильные маршруты "Назад" (вызывают 404)
 
-C) Новые вкладки/разделы и модули могут “не появляться” из‑за кеша react-query и неправильной инвалидции.
-- `usePageSections("knowledge")` кэшируется (staleTime 5 минут).
-- В `ContentSectionSelector.tsx` инвалидируется `["page-sections-tabs"]`, но реальный ключ запроса: `["page-sections-tabs", pageKey]`. То есть создаёте вкладку — а табы /knowledge могут не обновиться.
-- Модули на /knowledge берутся из `useSidebarModules()` (queryKey `["sidebar-modules", user?.id]`) и тоже не инвалидируются после создания модуля в мастере/в админке.
+**Файл:** `src/pages/admin/AdminLessonBlockEditor.tsx` (строка 82, 109)
+```tsx
+// ТЕКУЩИЙ КОД (неправильно):
+navigate(`/admin/training-lessons/${moduleId}`)
 
-D) Форма урока с video_url/content всё ещё присутствует в “Уроки модуля”.
-- `AdminTrainingLessons.tsx` до сих пор использует старый `LessonFormContent` с полями `content`, `video_url`, `audio_url`, `duration_minutes`, `content_type`.
-- То есть вы правы: “я сказал убрать — не убрано”.
+// НУЖНО:
+navigate(`/admin/training-modules/${moduleId}/lessons`)
+```
 
-E) AI-обложка не работает, потому что функция не доступна по HTTP (404).
-- Вызов `/generate-cover` возвращает 404, логов функции нет → фактически функция не поднята/не развернулась или не доступна по имени.
-- Даже если UI-кнопка есть, сейчас она будет падать.
+**Файл:** `src/components/admin/trainings/ContentCreationWizard.tsx` (строки 352, 359)
+```tsx
+// handleEditLesson - правильно: /admin/training-lessons/${moduleId}/edit/${lessonId}
 
-План работ (что именно сделаем в следующем запросе в режиме редактирования)
+// handleAddAnotherLesson - НЕПРАВИЛЬНО:
+navigate(`/admin/training-lessons/${createdModuleId}`)
+// НУЖНО:
+navigate(`/admin/training-modules/${createdModuleId}/lessons`)
+```
 
-1) Починить все неправильные маршруты “назад”, чтобы не было 404
-Файлы:
-- `src/pages/admin/AdminLessonBlockEditor.tsx`
-- `src/components/admin/trainings/ContentCreationWizard.tsx`
-Что делаем:
-- Заменяем все переходы вида:
-  - `/admin/training-lessons/${moduleId}`
-  - на корректный список уроков модуля:
-  - `/admin/training-modules/${moduleId}/lessons`
-- Проверяем также карточки/кнопки “Уроки/Назад” по админскому разделу тренингов, чтобы нигде больше не было устаревшего пути.
-Результат:
-- “Назад” из редактора контента всегда возвращает на страницу уроков модуля без 404.
+### 2. "Назад к приложению" ведёт на лендинг вместо кабинета
 
-2) Сделать «Назад к приложению» реально возвращающим в кабинет, а не на лендинг
-Файлы:
-- `src/components/layout/AdminSidebar.tsx`
-Опция (рекомендуемая):
-- “Назад к приложению” ведёт на `/dashboard` (кабинет).
-Дополнительно (чтобы было идеально):
-- Запоминать “последний не‑админский маршрут” в localStorage (например `last_app_route`) и возвращать туда; если нет — fallback `/dashboard`.
-Почему это важно:
-- Сейчас `"/"` — это лендинг (по DomainRouter), поэтому “назад” уводит на публичный сайт и это воспринимается как logout.
+**Файл:** `src/components/layout/AdminSidebar.tsx` (строка 310)
+```tsx
+// ТЕКУЩИЙ КОД:
+<NavLink to="/" ...>
 
-3) Исправить ощущение “меня выбрасывает после обновления”
-Файлы:
-- `src/components/layout/DomainRouter.tsx` (или логика в `DomainHomePage`)
-- (возможны небольшие правки в `ProtectedRoute` или логике после логина)
-Что делаем:
-- Для главного домена/preview:
-  - если пользователь авторизован → `"/"` должен перекидывать в `/dashboard` (кабинет),
-  - если не авторизован → показываем Landing как сейчас.
-Почему это решит проблему:
-- Даже при живой сессии сейчас перезагрузка `"/"` даёт лендинг, и вы вынуждены “вновь входить в кабинет”. Мы уберём этот “ложный logout”.
-Параллельно:
-- Добавим диагностические логи/тосты (в дев-режиме) только на случаи реального SIGNED_OUT события, чтобы отличать “попал на лендинг” от “сессия слетела”.
+// НУЖНО:
+<NavLink to="/dashboard" ...>
+```
 
-4) Переименовать “Админ‑панель” в меню пользователя в “Панель управления”
-Файлы:
-- `src/components/layout/AppSidebar.tsx` (текст и tooltip)
-- `src/pages/Dashboard.tsx` (ссылка “Перейти в админ-панель”)
-- `src/pages/Help.tsx` (карточка/раздел справки)
-Что делаем:
-- Меняем тексты на “Панель управления” (везде единообразно).
-Результат:
-- В UI больше не будет “Админ‑панель”, только “Панель управления”.
+### 3. "Админ-панель" вместо "Панель управления" в меню пользователя
 
-5) Убрать поля URL видео / HTML контент из админской формы урока (оставить только метаданные)
-Файлы:
-- `src/pages/admin/AdminTrainingLessons.tsx`
-- (возможно) `src/hooks/useTrainingLessons.tsx` и тип `TrainingLessonFormData` (если типы строго требуют эти поля)
-Что делаем:
-- Заменяем текущий `LessonFormContent` на упрощённый компонент (аналогичный `LessonFormFieldsSimple`):
-  - название, slug, краткое описание, активность (и при необходимости sort_order).
-- Убираем UI для `content_type`, `video_url`, `audio_url`, `content`.
-- В подсказке в диалоге пишем явно: “Видео/текст добавляйте в редакторе блоков в кнопке «Контент»”.
-Важно:
-- Колонки в базе можно оставить (не ломаем историю), просто перестаём их использовать.
-Результат:
-- Никакого дублирования: контент только через редактор блоков.
+**Файл:** `src/components/layout/AppSidebar.tsx` (строки 271-274)
+```tsx
+// ТЕКУЩИЙ КОД:
+tooltip={collapsed ? "Админ-панель" : undefined}
+{!collapsed && <span>Админ-панель</span>}
 
-6) Сделать так, чтобы новые модули и вкладки сразу появлялись в /knowledge
-Файлы:
-- `src/components/admin/trainings/ContentSectionSelector.tsx`
-- `src/components/admin/trainings/ContentCreationWizard.tsx`
-- `src/hooks/useSidebarModules.ts`
-- `src/hooks/usePageSections.ts` (если нужно централизовать invalidate)
-Что делаем:
-- Исправляем инвалидцию query key:
-  - вместо `invalidateQueries(["page-sections-tabs"])` → инвалидируем `["page-sections-tabs", parent.page_key]` и `["page-sections-tree", parent.page_key]` (или корректный pageKey).
-- После создания/удаления вкладки и после создания модуля:
-  - инвалидируем `["sidebar-modules", userId]` (и общий `["sidebar-modules"]` если где-то используется).
-- В мастере и/или в админке после “Готово” делаем принудительный refresh этих кэшей.
-Результат:
-- Создали вкладку/модуль → они появляются в /knowledge сразу, без ожидания 5 минут.
+// НУЖНО:
+tooltip={collapsed ? "Панель управления" : undefined}
+{!collapsed && <span>Панель управления</span>}
+```
 
-7) Починить генерацию AI-обложки (сейчас функция фактически недоступна)
-Проблема:
-- Вызов `/generate-cover` сейчас 404 и логов нет → функция не развернута или не доступна по имени.
-Файлы:
-- `supabase/functions/generate-cover/index.ts`
-- `supabase/config.toml`
-Что делаем:
-- В режиме редактирования:
-  1) Переразвернём функцию принудительно (deploy) и проверим вызовом.
-  2) Если 404 останется — проверим конфигурацию имени/папки и исправим так, чтобы endpoint существовал.
-  3) Добавим явный возврат ошибок в UI (toast) с понятным текстом.
-- В UI (`ModuleFormFields.tsx`) улучшим UX:
-  - отображение прогресса,
-  - кнопка “Перегенерировать”,
-  - если модуль ещё не создан — генерируем во временный путь, а после сохранения модуля (в мастере) перезаписываем обложку уже с moduleId.
-Результат:
-- Нажали “AI” → получили реальную обложку (URL), которая отображается и сохраняется.
+### 4. Форма урока содержит лишние поля (video_url, content, audio_url)
 
-8) Проверочный прогон (симуляция end-to-end, чтобы больше не было “ничего не работает”)
-Сценарий теста (в админке):
-1) Создать вкладку в /knowledge (только созданные вкладки).
-2) Создать модуль через мастер в эту вкладку.
-3) Сгенерировать AI-обложку (проверить, что URL появился и картинка грузится).
-4) Создать урок (только название/описание).
-5) Открыть “Контент” и добавить блок Video (кинескоп/любая ссылка) → убедиться, что блок сохраняется.
-6) Нажать “Просмотр” в редакторе контента → убедиться, что блоки отображаются.
-7) Нажать “Назад” → убедиться, что нет 404 и вы возвращаетесь к урокам модуля.
-8) Открыть /knowledge → убедиться, что созданный модуль появился в нужной вкладке.
-9) Перезагрузить страницу (Ctrl+R) в кабинете/админке → убедиться, что вы остались залогинены и попали в кабинет, а не на лендинг.
+**Файл:** `src/pages/admin/AdminTrainingLessons.tsx` (строки 88-220)
+- Компонент `LessonFormContent` содержит:
+  - Тип контента (content_type) — не нужен
+  - URL видео (video_url) — не нужен (контент в блоках)
+  - URL аудио (audio_url) — не нужен
+  - HTML контент (content) — не нужен
+  - Длительность — можно оставить
 
-Критические уточнения (чтобы сделать ровно “как вы хотите”, без угадываний)
-1) Когда вы говорите “не выбрасывало после обновления”, правильное целевое поведение такое?
-- Перезагружаю /dashboard → остаюсь в кабинете без логина.
-- Перезагружаю / → если я залогинен, меня сразу переносит в /dashboard.
-2) “База знаний”: вы хотите, чтобы все новые “knowledge-*” модули открывались и жили на пути `/library/:moduleSlug` (как сейчас), но в хлебных крошках и входной точке всегда показывалось /knowledge — правильно? (Сейчас так и задумано: /knowledge — каталог/вкладки, /library — страница конкретного модуля/урока.)
+**Решение:** Упростить `LessonFormContent` до:
+- Название, Slug, Описание, Активен
 
-Объем изменений (чтобы вы понимали масштаб)
-- Это не “косметика”, а серия точечных фиксов маршрутов, кэш-инвалидации и поведения главной страницы для залогиненного пользователя + восстановление работоспособности AI-функции.
+### 5. Генерация обложки не работает (функция не развёрнута)
 
-После выполнения вы получите
-- Никаких 404 “назад”.
-- “Назад к приложению” ведет в кабинет.
-- Модули/вкладки появляются в /knowledge сразу.
-- В уроках исчезнут поля, которые не используются редактором контента.
-- AI-обложка реально генерируется и ставится.
+**Файл:** `supabase/functions/generate-cover/index.ts`
+- Код есть и правильный
+- Конфиг в `config.toml` есть (строка 297-298)
+- Логов нет → функция не развёрнута
+
+**Решение:** Развернуть функцию принудительно
+
+### 6. DomainHomePage не редиректит залогиненного пользователя
+
+**Файл:** `src/components/layout/DomainRouter.tsx` (строки 43-46)
+```tsx
+// ТЕКУЩИЙ КОД:
+if (isMainDomain) {
+  return <Landing />;  // ← Всегда лендинг, даже если залогинен!
+}
+
+// НУЖНО:
+// Добавить проверку авторизации и редирект на /dashboard
+```
+
+---
+
+## План изменений
+
+### Этап 1: Исправить все маршруты "Назад"
+
+**Файл:** `src/pages/admin/AdminLessonBlockEditor.tsx`
+- Строка 82: `navigate(/admin/training-modules/${moduleId}/lessons)`
+- Строка 109: `navigate(/admin/training-modules/${moduleId}/lessons)`
+
+**Файл:** `src/components/admin/trainings/ContentCreationWizard.tsx`
+- Строка 359: `navigate(/admin/training-modules/${createdModuleId}/lessons)`
+
+### Этап 2: Исправить "Назад к приложению"
+
+**Файл:** `src/components/layout/AdminSidebar.tsx`
+- Строка 310: Изменить `to="/"` на `to="/dashboard"`
+
+### Этап 3: Переименовать "Админ-панель" → "Панель управления"
+
+**Файл:** `src/components/layout/AppSidebar.tsx`
+- Строка 271: tooltip → "Панель управления"
+- Строка 274: `<span>Панель управления</span>`
+- Строка 266: Группа label → "Управление" (вместо "Администрирование")
+
+### Этап 4: Упростить форму урока
+
+**Файл:** `src/pages/admin/AdminTrainingLessons.tsx`
+
+Заменить `LessonFormContent` на упрощённую версию:
+```tsx
+const LessonFormContent = memo(function LessonFormContent({ 
+  formData, 
+  onFormDataChange,
+  editingLesson 
+}: LessonFormContentProps) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="lesson-title">Название *</Label>
+          <Input
+            id="lesson-title"
+            value={formData.title}
+            onChange={(e) => {
+              const newTitle = e.target.value;
+              onFormDataChange(prev => ({
+                ...prev,
+                title: newTitle,
+                slug: editingLesson ? prev.slug : generateSlug(newTitle),
+              }));
+            }}
+            placeholder="Введение в тему"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="lesson-slug">URL-slug *</Label>
+          <Input
+            id="lesson-slug"
+            value={formData.slug}
+            onChange={(e) => onFormDataChange(prev => ({ ...prev, slug: e.target.value }))}
+            placeholder="vvedenie-v-temu"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="lesson-description">Краткое описание</Label>
+        <Textarea
+          id="lesson-description"
+          value={formData.description}
+          onChange={(e) => onFormDataChange(prev => ({ ...prev, description: e.target.value }))}
+          placeholder="О чём этот урок..."
+          rows={2}
+        />
+      </div>
+
+      <Alert className="border-primary/30 bg-primary/5">
+        <Blocks className="h-4 w-4 text-primary" />
+        <AlertDescription className="ml-2">
+          Видео, текст и другой контент добавляются через кнопку «Контент» после создания урока
+        </AlertDescription>
+      </Alert>
+
+      <div className="flex items-center space-x-2">
+        <Switch
+          id="lesson-is_active"
+          checked={formData.is_active}
+          onCheckedChange={(checked) => onFormDataChange(prev => ({ ...prev, is_active: checked }))}
+        />
+        <Label htmlFor="lesson-is_active">Активен</Label>
+      </div>
+    </div>
+  );
+});
+```
+
+Также обновить `formData` state:
+```tsx
+const [formData, setFormData] = useState<TrainingLessonFormData>({
+  module_id: moduleId || "",
+  title: "",
+  slug: "",
+  description: "",
+  content: "",
+  content_type: "mixed",  // Всегда mixed
+  video_url: "",
+  audio_url: "",
+  duration_minutes: undefined,
+  is_active: true,
+});
+```
+
+### Этап 5: Добавить редирект на /dashboard для залогиненных
+
+**Файл:** `src/components/layout/DomainRouter.tsx`
+
+```tsx
+import { useAuth } from "@/contexts/AuthContext";
+import { Navigate } from "react-router-dom";
+
+export function DomainHomePage() {
+  const { user, loading } = useAuth();
+  const hostname = window.location.hostname;
+  
+  const isMainDomain = hostname === "localhost" || 
+                       hostname === "127.0.0.1" ||
+                       hostname === "club.gorbova.by" ||
+                       hostname === "gorbova.by" ||
+                       hostname.includes(".lovable.app") ||
+                       hostname.includes(".lovableproject.com");
+  
+  // ... остальные проверки доменов ...
+
+  // Main domain: если залогинен → кабинет, иначе → лендинг
+  if (isMainDomain) {
+    if (loading) {
+      return <Loader2 className="..." />;
+    }
+    if (user) {
+      return <Navigate to="/dashboard" replace />;
+    }
+    return <Landing />;
+  }
+  
+  // ... остальной код ...
+}
+```
+
+### Этап 6: Развернуть edge function generate-cover
+
+Принудительно развернуть функцию через deploy tool.
+
+---
+
+## Файлы для изменения
+
+| Файл | Изменения |
+|------|-----------|
+| `src/pages/admin/AdminLessonBlockEditor.tsx` | Исправить маршруты "Назад" (2 места) |
+| `src/components/admin/trainings/ContentCreationWizard.tsx` | Исправить маршрут handleAddAnotherLesson |
+| `src/components/layout/AdminSidebar.tsx` | "Назад к приложению" → `/dashboard` |
+| `src/components/layout/AppSidebar.tsx` | "Админ-панель" → "Панель управления" |
+| `src/pages/admin/AdminTrainingLessons.tsx` | Упростить форму урока (убрать video_url, content, audio_url) |
+| `src/components/layout/DomainRouter.tsx` | Редирект залогиненных на /dashboard |
+
+---
+
+## Результат после выполнения
+
+1. **Нет 404** — кнопка "Назад" из редактора контента ведёт на список уроков модуля
+2. **"Назад к приложению"** ведёт в личный кабинет (`/dashboard`), а не на лендинг
+3. **Нет ощущения "выброса"** — перезагрузка "/" при авторизации ведёт в кабинет
+4. **"Панель управления"** — единое название в меню
+5. **Простая форма урока** — только название, slug, описание (без дублирования редактора блоков)
+6. **AI-обложка работает** — функция развёрнута и доступна
+
+---
+
+## Технические детали
+
+### Проверка уникальности slug
+Уже реализована в `ContentCreationWizard.tsx` через `ensureUniqueSlug()` — добавляет суффикс `-2`, `-3` если slug занят.
+
+### LOVABLE_API_KEY
+Секрет уже настроен в проекте — функция должна работать после развёртывания.
+
+### React Query invalidation
+При создании модулей/вкладок нужно инвалидировать:
+- `["page-sections-tabs", pageKey]`
+- `["sidebar-modules", userId]`
+
+Это уже частично реализовано, но может потребовать дополнительных проверок в ContentSectionSelector.
+
+---
+
+## Порядок реализации
+
+1. Исправить маршруты (AdminLessonBlockEditor, ContentCreationWizard)
+2. Исправить "Назад к приложению" (AdminSidebar)
+3. Переименовать "Админ-панель" (AppSidebar)
+4. Упростить форму урока (AdminTrainingLessons)
+5. Добавить редирект для залогиненных (DomainRouter)
+6. Развернуть edge function generate-cover
