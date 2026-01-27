@@ -652,23 +652,22 @@ export default function SyncWithStatementDialog({
                 </div>
               </div>
               
-              {/* Error details block */}
+              {/* Error details block with scroll */}
               {(stats.errors ?? 0) > 0 && (
                 <div className="w-full mt-4 rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-left">
                   <div className="flex items-center gap-2 text-destructive mb-2">
                     <AlertTriangle className="h-4 w-4" />
                     <span className="font-medium">Ошибки: {stats.errors}</span>
                   </div>
-                  {stats.error_details?.slice(0, 10).map((e, i) => (
-                    <div key={i} className="text-xs text-muted-foreground truncate">
-                      <span className="font-mono">{e.uid.slice(0, 12)}...</span>: {e.error}
+                  <ScrollArea className="max-h-40">
+                    <div className="space-y-1 pr-2">
+                      {stats.error_details?.map((e, i) => (
+                        <div key={i} className="text-xs text-muted-foreground py-0.5">
+                          <span className="font-mono text-[10px]">{e.uid?.slice(0, 16)}...</span>: {e.error}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                  {(stats.error_details?.length ?? 0) > 10 && (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      ... и ещё {(stats.error_details?.length ?? 0) - 10} ошибок
-                    </div>
-                  )}
+                  </ScrollArea>
                 </div>
               )}
             </div>

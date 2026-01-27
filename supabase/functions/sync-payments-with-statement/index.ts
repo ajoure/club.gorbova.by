@@ -156,7 +156,7 @@ function extractLast4(cardMasked: string | null): string | null {
   return match ? match[1] : null;
 }
 
-// Extract card brand from masked card
+// Extract card brand from masked card or BIN
 function extractCardBrand(cardMasked: string | null): string | null {
   if (!cardMasked) return null;
   const upper = cardMasked.toUpperCase();
@@ -164,6 +164,92 @@ function extractCardBrand(cardMasked: string | null): string | null {
   if (upper.includes('MASTER') || upper.includes('MC')) return 'mastercard';
   if (upper.includes('BELKART')) return 'belkart';
   if (upper.includes('MIR') || upper.includes('МИР')) return 'mir';
+  
+  // Try to detect by BIN (first 4-6 digits)
+  const cleanNumber = cardMasked.replace(/\s+/g, '').replace(/xxxx/gi, '');
+  if (cleanNumber.startsWith('4')) return 'visa';
+  if (cleanNumber.startsWith('5') || cleanNumber.startsWith('2')) return 'mastercard';
+  if (cleanNumber.startsWith('9112')) return 'belkart';
+  
+  return null;
+}
+
+// Determine if payment is ERIP (no card, or payment_method contains 'erip')
+function isEripPayment(cardMasked: string | null, paymentMethod: string | null): boolean {
+  if (!cardMasked || cardMasked.trim() === '') return true;
+  const pm = (paymentMethod || '').toLowerCase();
+  return pm.includes('erip') || pm.includes('ерип');
+}
+
+// Find profile by card data (auto-link)
+async function findProfileByCard(
+  supabase: any,
+  cardMasked: string | null,
+  paymentMethod: string | null
+): Promise<{ profile_id: string; user_id: string | null } | null> {
+  // ERIP - don't try to link by card
+  if (isEripPayment(cardMasked, paymentMethod)) {
+    return null;
+  }
+  
+  const last4 = extractLast4(cardMasked);
+  const brand = extractCardBrand(cardMasked);
+  
+  if (!last4) return null;
+  
+  // 1. Search in card_profile_links (exact match on last4 + brand)
+  const { data: links } = await supabase
+    .from('card_profile_links')
+    .select('profile_id, card_last4, card_brand')
+    .eq('card_last4', last4)
+    .eq('card_brand', brand || 'unknown');
+  
+  if (links?.length === 1) {
+    // Get user_id from profiles
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id, user_id')
+      .eq('id', links[0].profile_id)
+      .maybeSingle();
+    if (profile) {
+      console.log(`[sync-statement] Auto-linked to profile ${profile.id} via card_profile_links`);
+      return { profile_id: profile.id, user_id: profile.user_id };
+    }
+  }
+  
+  // 2. Search in payment_methods (active card for user)
+  const brandFilter = brand || 'unknown';
+  const { data: methods } = await supabase
+    .from('payment_methods')
+    .select('user_id, last4, brand')
+    .eq('last4', last4)
+    .eq('status', 'active');
+  
+  // Filter by brand in JS to handle null/unknown cases
+  const matchingMethods = methods?.filter((m: any) => {
+    const mBrand = (m.brand || 'unknown').toLowerCase();
+    return mBrand === brandFilter.toLowerCase() || 
+           (brandFilter === 'unknown' && !mBrand) ||
+           (mBrand === 'master' && brandFilter === 'mastercard');
+  });
+  
+  if (matchingMethods?.length === 1) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id, user_id')
+      .eq('user_id', matchingMethods[0].user_id)
+      .maybeSingle();
+    if (profile) {
+      console.log(`[sync-statement] Auto-linked to profile ${profile.id} via payment_methods`);
+      return { profile_id: profile.id, user_id: profile.user_id };
+    }
+  }
+  
+  // Collision (2+ profiles) or not found
+  if ((links?.length || 0) > 1 || (matchingMethods?.length || 0) > 1) {
+    console.log(`[sync-statement] Card collision for last4=${last4}, brand=${brand}: ${links?.length || 0} links, ${matchingMethods?.length || 0} methods`);
+  }
+  
   return null;
 }
 
@@ -664,11 +750,26 @@ Deno.serve(async (req) => {
         }
         
         try {
-          if (change.action === 'create') {
+        if (change.action === 'create') {
             const stmt = change.statement_data;
-            // NOTE: customer_email and customer_phone columns don't exist in payments_v2
-            // Store email/phone in meta instead
-            const { error: insertError } = await supabaseAdmin.from('payments_v2').insert({
+            
+            // Determine if ERIP payment
+            const isErip = isEripPayment(stmt.card_masked, stmt.payment_method);
+            const card_brand = isErip ? 'erip' : extractCardBrand(stmt.card_masked);
+            const card_last4 = isErip ? null : extractLast4(stmt.card_masked);
+            
+            // Try to auto-link to existing profile by card
+            const linkedProfile = await findProfileByCard(
+              supabaseAdmin,
+              stmt.card_masked,
+              stmt.payment_method
+            );
+            
+            // Normalize paid_at to UTC ISO string
+            const paid_at_utc = stmt.paid_at ? new Date(stmt.paid_at).toISOString() : null;
+            
+            // Use UPSERT to handle duplicates gracefully
+            const { error: upsertError } = await supabaseAdmin.from('payments_v2').upsert({
               provider: 'bepaid',
               provider_payment_id: change.uid,
               origin: 'statement_sync',
@@ -676,10 +777,12 @@ Deno.serve(async (req) => {
               currency: stmt.currency || 'BYN',
               status: normalizeStatus(stmt.status),
               transaction_type: normalizeTransactionType(stmt.transaction_type),
-              paid_at: stmt.paid_at,
-              card_last4: extractLast4(stmt.card_masked),
-              card_brand: extractCardBrand(stmt.card_masked),
+              paid_at: paid_at_utc,
+              card_last4,
+              card_brand,
               card_holder: stmt.card_holder,
+              profile_id: linkedProfile?.profile_id || null,
+              user_id: linkedProfile?.user_id || null,
               meta: {
                 commission_total: stmt.commission_total,
                 payout_amount: stmt.payout_amount,
@@ -688,18 +791,23 @@ Deno.serve(async (req) => {
                 synced_from_statement: true,
                 synced_at: new Date().toISOString(),
                 synced_by: user.id,
+                is_erip: isErip,
+                auto_linked: !!linkedProfile,
               },
+            }, {
+              onConflict: 'provider,provider_payment_id',
+              ignoreDuplicates: false, // Update on conflict
             });
             
-            if (insertError) {
-              console.error(`[sync-statement] Error creating payment ${change.uid}:`, insertError);
+            if (upsertError) {
+              console.error(`[sync-statement] Error upserting payment ${change.uid}:`, upsertError);
               stats.errors++;
               // Track error details for UI
               if (!stats.error_details) stats.error_details = [];
               stats.error_details.push({
                 uid: change.uid,
                 action: 'create',
-                error: insertError.message || String(insertError),
+                error: upsertError.message || String(upsertError),
               });
             } else {
               stats.applied++;

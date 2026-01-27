@@ -45,17 +45,18 @@ export function detectPaymentMethodKind(
     if (lowerWallet.includes('apple') || lowerWallet.includes('apple_pay')) return 'apple_pay';
     if (lowerWallet.includes('google') || lowerWallet.includes('google_pay')) return 'google_pay';
     if (lowerWallet.includes('samsung') || lowerWallet.includes('samsung_pay')) return 'samsung_pay';
-    if (lowerWallet.includes('erip')) return 'erip';
+    if (lowerWallet.includes('erip') || lowerWallet.includes('ерип')) return 'erip';
   }
   
-  // Check for ERIP
+  // Check for ERIP in payment_method_type
   const paymentMethod = providerResponse?.transaction?.payment_method_type ||
                         providerResponse?.payment_method_type;
   if (paymentMethod?.toLowerCase() === 'erip') return 'erip';
   
-  // Check card brand
+  // Check card brand directly (including 'erip' brand from statement sync)
   if (cardBrand) {
     const lowerBrand = cardBrand.toLowerCase();
+    if (lowerBrand === 'erip' || lowerBrand.includes('ерип')) return 'erip';
     if (lowerBrand.includes('visa')) return 'visa';
     if (lowerBrand.includes('master') || lowerBrand.includes('mc')) return 'mastercard';
     if (lowerBrand.includes('belkart') || lowerBrand.includes('belcard') || lowerBrand.includes('белкарт')) return 'belkart';
