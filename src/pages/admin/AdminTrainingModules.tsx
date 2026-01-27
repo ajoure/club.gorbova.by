@@ -48,6 +48,8 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Sparkles,
+  Loader2,
   BookOpen,
   Eye,
   EyeOff,
@@ -105,6 +107,35 @@ interface ModuleFormContentProps {
 function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormContentProps) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = React.useState(false);
+  const [generating, setGenerating] = React.useState(false);
+
+  const handleGenerateCover = async () => {
+    if (!formData.title) {
+      toast.error("Введите название модуля для генерации обложки");
+      return;
+    }
+    setGenerating(true);
+    const toastId = toast.loading("Генерация обложки AI... (~15 сек)");
+    try {
+      const response = await supabase.functions.invoke("generate-cover", {
+        body: { title: formData.title, description: formData.description, moduleId: editingModule?.id || "new" },
+      });
+      if (response.error) {
+        toast.error(`Ошибка: ${response.error.message}`, { id: toastId });
+        return;
+      }
+      if (response.data?.url) {
+        setFormData((prev) => ({ ...prev, cover_image: response.data.url }));
+        toast.success("Обложка сгенерирована!", { id: toastId });
+      } else {
+        toast.error("Не удалось получить URL обложки", { id: toastId });
+      }
+    } catch (error: any) {
+      toast.error(`Ошибка: ${error.message}`, { id: toastId });
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -216,13 +247,28 @@ function ModuleFormContent({ formData, setFormData, editingModule }: ModuleFormC
             variant="outline"
             size="icon"
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
+            disabled={uploading || generating}
           >
             {uploading ? (
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Upload className="h-4 w-4" />
             )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleGenerateCover}
+            disabled={uploading || generating || !formData.title}
+            className="gap-2"
+            title="Сгенерировать обложку с помощью AI"
+          >
+            {generating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+            <span className="hidden sm:inline">AI</span>
           </Button>
         </div>
         {formData.cover_image && (
