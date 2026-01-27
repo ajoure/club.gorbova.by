@@ -21,18 +21,16 @@ export function ModuleCard({ module, variant = "default" }: ModuleCardProps) {
   const hasAccess = module.has_access !== false;
 
   const handleClick = () => {
-    if (hasAccess) {
-      navigate(`/library/${module.slug}`);
-    }
+    // Всегда позволяем переход, доступ проверяется на странице модуля
+    navigate(`/library/${module.slug}`);
   };
 
   return (
     <GlassCard 
       className={cn(
         "overflow-hidden group relative bg-background/60 backdrop-blur-xl border border-border/30 transition-all duration-300",
-        hasAccess 
-          ? "hover:border-primary/40 hover:shadow-xl cursor-pointer" 
-          : "opacity-70 cursor-not-allowed"
+        "hover:border-primary/40 hover:shadow-xl cursor-pointer",
+        !hasAccess && "opacity-80"
       )}
       onClick={handleClick}
     >

@@ -1,15 +1,22 @@
+import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { LessonBlockEditor } from "@/components/admin/lesson-editor/LessonBlockEditor";
+import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
+import { useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, BookOpen, Eye } from "lucide-react";
+import { ArrowLeft, BookOpen, Eye, Edit } from "lucide-react";
 
 export default function AdminLessonBlockEditor() {
   const { moduleId, lessonId } = useParams<{ moduleId: string; lessonId: string }>();
   const navigate = useNavigate();
+  const [previewMode, setPreviewMode] = useState(false);
+  
+  // Fetch blocks for preview mode
+  const { blocks } = useLessonBlocks(lessonId);
 
   // Fetch module info
   const { data: module, isLoading: moduleLoading } = useQuery({
@@ -96,18 +103,48 @@ export default function AdminLessonBlockEditor() {
               Назад
             </Button>
             <Button 
+              variant={previewMode ? "default" : "outline"}
+              onClick={() => setPreviewMode(!previewMode)}
+            >
+              {previewMode ? (
+                <>
+                  <Edit className="mr-2 h-4 w-4" />
+                  Редактирование
+                </>
+              ) : (
+                <>
+                  <Eye className="mr-2 h-4 w-4" />
+                  Просмотр
+                </>
+              )}
+            </Button>
+            <Button 
               variant="outline"
               onClick={() => window.open(`/library/${module.slug}/${lesson.slug}`, '_blank')}
             >
               <Eye className="mr-2 h-4 w-4" />
-              Просмотр
+              На сайте
             </Button>
           </div>
         </div>
 
-        {/* Block Editor */}
+        {/* Block Editor or Preview */}
         <div className="bg-card border rounded-lg p-6">
-          <LessonBlockEditor lessonId={lessonId!} />
+          {previewMode ? (
+            <div className="prose prose-sm max-w-none dark:prose-invert">
+              {blocks.length > 0 ? (
+                <LessonBlockRenderer blocks={blocks} lessonId={lessonId} />
+              ) : (
+                <div className="text-center py-12 text-muted-foreground">
+                  <BookOpen className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                  <p>Нет блоков для отображения</p>
+                  <p className="text-sm">Переключитесь в режим редактирования, чтобы добавить контент</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <LessonBlockEditor lessonId={lessonId!} />
+          )}
         </div>
       </div>
     </AdminLayout>
