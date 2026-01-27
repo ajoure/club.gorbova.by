@@ -76,7 +76,7 @@ serve(async (req: Request): Promise<Response> => {
       });
     }
 
-    const { action, targetUserId, email, newEmail }: AdminActionRequest = await req.json();
+    const { action, targetUserId, email, newEmail, roleCode }: AdminActionRequest = await req.json();
     console.log(`Action: ${action}, Actor: ${actorUserId}, Target: ${targetUserId || email}`);
 
     // Helper function to check permission
@@ -510,7 +510,8 @@ serve(async (req: Request): Promise<Response> => {
       }
 
       case "invite": {
-        const { action: _, targetUserId: __, email: inviteEmail, roleCode } = await req.json() as AdminActionRequest & { roleCode?: string };
+        // Use already-parsed email from the initial req.json() call
+        const inviteEmail = email;
         
         if (!inviteEmail) {
           return new Response(JSON.stringify({ error: "email required" }), {
