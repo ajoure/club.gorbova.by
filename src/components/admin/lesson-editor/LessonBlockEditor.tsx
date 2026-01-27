@@ -110,39 +110,39 @@ interface BlockConfig {
 }
 
 const blockTypeConfig: Record<BlockType, BlockConfig> = {
-  // Text blocks
+  // Text blocks — Текстовые блоки
   heading: { icon: Heading, label: "Заголовок", color: "bg-blue-500/10 text-blue-600", category: 'text' },
   text: { icon: Type, label: "Текст", color: "bg-green-500/10 text-green-600", category: 'text' },
   accordion: { icon: List, label: "Аккордеон", color: "bg-violet-500/10 text-violet-600", category: 'text' },
   tabs: { icon: Layers, label: "Вкладки", color: "bg-teal-500/10 text-teal-600", category: 'text' },
   spoiler: { icon: Eye, label: "Спойлер", color: "bg-slate-500/10 text-slate-600", category: 'text' },
-  callout: { icon: AlertCircle, label: "Callout", color: "bg-amber-500/10 text-amber-600", category: 'text' },
+  callout: { icon: AlertCircle, label: "Выноска", color: "bg-amber-500/10 text-amber-600", category: 'text' },
   quote: { icon: Quote, label: "Цитата", color: "bg-rose-500/10 text-rose-600", category: 'text' },
   
-  // Media blocks
+  // Media blocks — Медиа блоки
   video: { icon: Video, label: "Видео", color: "bg-purple-500/10 text-purple-600", category: 'media' },
   audio: { icon: Music, label: "Аудио", color: "bg-orange-500/10 text-orange-600", category: 'media' },
   image: { icon: Image, label: "Изображение", color: "bg-pink-500/10 text-pink-600", category: 'media' },
   gallery: { icon: LayoutGrid, label: "Галерея", color: "bg-fuchsia-500/10 text-fuchsia-600", category: 'media' },
   file: { icon: FileText, label: "Файл", color: "bg-amber-500/10 text-amber-600", category: 'media' },
   
-  // Interactive blocks
+  // Interactive blocks — Интерактивные блоки
   button: { icon: Link, label: "Кнопки", color: "bg-cyan-500/10 text-cyan-600", category: 'interactive' },
-  embed: { icon: Code, label: "Embed", color: "bg-indigo-500/10 text-indigo-600", category: 'interactive' },
+  embed: { icon: Code, label: "Встраивание", color: "bg-indigo-500/10 text-indigo-600", category: 'interactive' },
   divider: { icon: Minus, label: "Разделитель", color: "bg-gray-500/10 text-gray-600", category: 'interactive' },
-  timeline: { icon: Clock, label: "Таймлайн", color: "bg-emerald-500/10 text-emerald-600", category: 'interactive' },
+  timeline: { icon: Clock, label: "Хронология", color: "bg-emerald-500/10 text-emerald-600", category: 'interactive' },
   steps: { icon: Footprints, label: "Шаги", color: "bg-sky-500/10 text-sky-600", category: 'interactive' },
   
-  // Quiz blocks (Iteration 2 - placeholders)
+  // Quiz blocks — Блоки тестов
   quiz_single: { icon: CircleDot, label: "Один ответ", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
   quiz_multiple: { icon: CheckSquare, label: "Несколько ответов", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
   quiz_true_false: { icon: ToggleLeft, label: "Да/Нет", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
   quiz_fill_blank: { icon: PenLine, label: "Заполнить пропуск", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
   quiz_matching: { icon: GitBranch, label: "Соответствие", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
   quiz_sequence: { icon: List, label: "Последовательность", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
-  quiz_hotspot: { icon: Image, label: "Hotspot", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
+  quiz_hotspot: { icon: Image, label: "Точка на изображении", color: "bg-blue-500/10 text-blue-600", category: 'quiz' },
   
-  // Input blocks (Iteration 3 - placeholders)
+  // Input blocks — Блоки ввода
   input_short: { icon: AlignLeft, label: "Короткий ответ", color: "bg-green-500/10 text-green-600", category: 'input' },
   input_long: { icon: AlignLeft, label: "Развёрнутый ответ", color: "bg-green-500/10 text-green-600", category: 'input' },
   checklist: { icon: ListChecks, label: "Чек-лист", color: "bg-green-500/10 text-green-600", category: 'input' },
@@ -150,7 +150,7 @@ const blockTypeConfig: Record<BlockType, BlockConfig> = {
   file_upload: { icon: Upload, label: "Загрузка файла", color: "bg-green-500/10 text-green-600", category: 'input' },
   rating: { icon: Star, label: "Оценка", color: "bg-green-500/10 text-green-600", category: 'input' },
   
-  // Meta blocks (Iteration 4 - placeholders)
+  // Meta blocks — Структурные блоки
   container: { icon: Box, label: "Контейнер", color: "bg-gray-500/10 text-gray-600", category: 'meta' },
   columns: { icon: Columns, label: "Колонки", color: "bg-gray-500/10 text-gray-600", category: 'meta' },
   condition: { icon: GitBranch, label: "Условие", color: "bg-gray-500/10 text-gray-600", category: 'meta' },

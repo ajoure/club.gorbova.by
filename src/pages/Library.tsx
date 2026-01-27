@@ -22,9 +22,8 @@ export default function Library() {
   const accessibleModules = modules.filter(m => m.is_active);
 
   const handleModuleClick = (module: typeof modules[0]) => {
-    if (module.has_access) {
-      navigate(`/library/${module.slug}`);
-    }
+    // Всегда позволяем переход, доступ проверяется на странице модуля
+    navigate(`/library/${module.slug}`);
   };
 
   return (
@@ -71,10 +70,8 @@ export default function Library() {
               return (
                 <Card
                   key={module.id}
-                  className={`overflow-hidden transition-all duration-300 group ${
-                    module.has_access
-                      ? "cursor-pointer hover:shadow-lg hover:-translate-y-1"
-                      : "opacity-75"
+                  className={`overflow-hidden transition-all duration-300 group cursor-pointer hover:shadow-lg hover:-translate-y-1 ${
+                    !module.has_access ? "opacity-80" : ""
                   }`}
                   onClick={() => handleModuleClick(module)}
                 >

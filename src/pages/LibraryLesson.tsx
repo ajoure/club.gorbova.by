@@ -33,6 +33,22 @@ const contentTypeConfig = {
   mixed: { icon: BookOpen, label: "Материал", color: "text-pink-500" },
 };
 
+// Маппинг секций меню для динамических хлебных крошек
+const menuSectionMap: Record<string, { path: string; label: string }> = {
+  'knowledge-videos': { path: '/library', label: 'База знаний' },
+  'knowledge-questions': { path: '/library', label: 'База знаний' },
+  'products-library': { path: '/library', label: 'Библиотека' },
+  'products': { path: '/products', label: 'Продукты' },
+  'trainings': { path: '/library', label: 'Тренинги' },
+  'courses': { path: '/library', label: 'Курсы' },
+};
+
+const getMenuSectionPath = (key: string | null): string => 
+  menuSectionMap[key || 'products-library']?.path || '/library';
+
+const getMenuSectionLabel = (key: string | null): string => 
+  menuSectionMap[key || 'products-library']?.label || 'База знаний';
+
 export default function LibraryLesson() {
   const { moduleSlug, lessonSlug } = useParams<{ moduleSlug: string; lessonSlug: string }>();
   const navigate = useNavigate();
@@ -110,10 +126,13 @@ export default function LibraryLesson() {
   return (
     <DashboardLayout>
       <div className="container mx-auto px-4 py-6 max-w-4xl">
-        {/* Breadcrumb */}
+        {/* Breadcrumb - динамический на основе menu_section_key */}
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-6 flex-wrap">
-          <Link to="/library" className="hover:text-foreground transition-colors">
-            База знаний
+          <Link 
+            to={getMenuSectionPath(module.menu_section_key)} 
+            className="hover:text-foreground transition-colors"
+          >
+            {getMenuSectionLabel(module.menu_section_key)}
           </Link>
           <ChevronRight className="h-4 w-4" />
           <Link to={`/library/${moduleSlug}`} className="hover:text-foreground transition-colors">

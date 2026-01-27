@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 
 export interface AccessibleProduct {
@@ -50,8 +51,10 @@ export interface TrainingModuleFormData {
 
 export function useTrainingModules() {
   const { user } = useAuth();
+  const { isAdmin } = usePermissions();
   const [modules, setModules] = useState<TrainingModule[]>([]);
   const [loading, setLoading] = useState(true);
+  const isAdminUser = isAdmin();
 
   const fetchModules = useCallback(async () => {
     try {
@@ -109,7 +112,8 @@ export function useTrainingModules() {
         const lessonCount = lessonsData?.filter(l => l.module_id === mod.id).length || 0;
         const moduleAccess = accessData?.filter(a => a.module_id === mod.id) || [];
         const accessibleTariffs = moduleAccess.map(a => (a.tariffs as any)?.name || "");
-        const hasAccess = moduleAccess.length === 0 || 
+        // Администраторы имеют доступ ко всему контенту
+        const hasAccess = isAdminUser || moduleAccess.length === 0 || 
           moduleAccess.some(a => userTariffIds.includes(a.tariff_id));
 
         // Group by product for compact display
