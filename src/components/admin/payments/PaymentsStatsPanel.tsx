@@ -199,80 +199,70 @@ export default function PaymentsStatsPanel({
   }
 
   return (
-    <div className="space-y-3">
-      {/* Stats Grid - 6 cards in row on desktop */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard
-          title="Успешные"
-          amount={stats.successful.amount}
-          count={stats.successful.count}
-          icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />}
-          colorClass="text-emerald-500"
-          accentGradient="from-emerald-500 to-emerald-400"
-          isActive={activeFilter === 'successful'}
-          isClickable={!!onFilterChange}
-          onClick={() => handleFilterClick('successful')}
-        />
-        <StatCard
-          title="Возвраты"
-          amount={stats.refunded.amount}
-          count={stats.refunded.count}
-          icon={<RotateCcw className="h-4 w-4 text-amber-500" />}
-          colorClass="text-amber-500"
-          accentGradient="from-amber-500 to-amber-400"
-          isActive={activeFilter === 'refunded'}
-          isClickable={!!onFilterChange}
-          onClick={() => handleFilterClick('refunded')}
-        />
-        <StatCard
-          title="Отмены"
-          amount={stats.cancelled.amount}
-          count={stats.cancelled.count}
-          icon={<XCircle className="h-4 w-4 text-orange-500" />}
-          colorClass="text-orange-500"
-          accentGradient="from-orange-500 to-orange-400"
-          isActive={activeFilter === 'cancelled'}
-          isClickable={!!onFilterChange}
-          onClick={() => handleFilterClick('cancelled')}
-        />
-        <StatCard
-          title="Ошибки"
-          amount={stats.failed.amount}
-          count={stats.failed.count}
-          icon={<XCircle className="h-4 w-4 text-rose-500" />}
-          colorClass="text-rose-500"
-          accentGradient="from-rose-500 to-rose-400"
-          isActive={activeFilter === 'failed'}
-          isClickable={!!onFilterChange}
-          onClick={() => handleFilterClick('failed')}
-        />
-        <StatCard
-          title="Комиссия"
-          amount={stats.fees.amount}
-          count={stats.successful.count}
-          subtitle={`${stats.fees.percent.toFixed(1)}%`}
-          icon={<Percent className="h-4 w-4 text-sky-500" />}
-          colorClass="text-sky-500"
-          accentGradient="from-sky-500 to-sky-400"
-          isClickable={false}
-        />
-        <StatCard
-          title="Чистая выручка"
-          amount={stats.netRevenue}
-          count={stats.successful.count - stats.refunded.count}
-          icon={<TrendingUp className="h-4 w-4 text-purple-500" />}
-          colorClass="text-purple-500"
-          accentGradient="from-purple-500 via-fuchsia-500 to-pink-400"
-          isClickable={false}
-        />
-      </div>
-
-      {/* Period indicator */}
-      {dateRange && (
-        <div className="text-[10px] text-muted-foreground text-center font-medium tracking-wide">
-          {dateRange.from} — {dateRange.to || 'сегодня'}
-        </div>
-      )}
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <StatCard
+        title="Успешные"
+        amount={stats.successful.amount}
+        count={stats.successful.count}
+        icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />}
+        colorClass="text-emerald-500"
+        accentGradient="from-emerald-500 to-emerald-400"
+        isActive={activeFilter === 'successful'}
+        isClickable={!!onFilterChange}
+        onClick={() => handleFilterClick('successful')}
+      />
+      <StatCard
+        title="Возвраты"
+        amount={stats.refunded.amount}
+        count={stats.refunded.count}
+        icon={<RotateCcw className="h-4 w-4 text-amber-500" />}
+        colorClass="text-amber-500"
+        accentGradient="from-amber-500 to-amber-400"
+        isActive={activeFilter === 'refunded'}
+        isClickable={!!onFilterChange}
+        onClick={() => handleFilterClick('refunded')}
+      />
+      <StatCard
+        title="Отмены"
+        amount={stats.cancelled.amount}
+        count={stats.cancelled.count}
+        icon={<XCircle className="h-4 w-4 text-orange-500" />}
+        colorClass="text-orange-500"
+        accentGradient="from-orange-500 to-orange-400"
+        isActive={activeFilter === 'cancelled'}
+        isClickable={!!onFilterChange}
+        onClick={() => handleFilterClick('cancelled')}
+      />
+      <StatCard
+        title="Ошибки"
+        amount={stats.failed.amount}
+        count={stats.failed.count}
+        icon={<XCircle className="h-4 w-4 text-rose-500" />}
+        colorClass="text-rose-500"
+        accentGradient="from-rose-500 to-rose-400"
+        isActive={activeFilter === 'failed'}
+        isClickable={!!onFilterChange}
+        onClick={() => handleFilterClick('failed')}
+      />
+      <StatCard
+        title="Комиссия"
+        amount={stats.fees.amount}
+        count={stats.successful.count}
+        subtitle={`${stats.fees.percent.toFixed(1)}%`}
+        icon={<Percent className="h-4 w-4 text-sky-500" />}
+        colorClass="text-sky-500"
+        accentGradient="from-sky-500 to-sky-400"
+        isClickable={false}
+      />
+      <StatCard
+        title="Чистая выручка"
+        amount={stats.netRevenue}
+        count={stats.successful.count - stats.refunded.count}
+        icon={<TrendingUp className="h-4 w-4 text-purple-500" />}
+        colorClass="text-purple-500"
+        accentGradient="from-purple-500 via-fuchsia-500 to-pink-400"
+        isClickable={false}
+      />
     </div>
   );
 }

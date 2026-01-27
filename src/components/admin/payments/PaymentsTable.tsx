@@ -10,7 +10,6 @@ import { UnifiedPayment, PaymentSource } from "@/hooks/useUnifiedPayments";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { formatPaymentTime, formatPaymentTimeIANA, TimezoneMode } from "@/lib/formatPaymentTime";
-import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { LinkContactDialog } from "./LinkContactDialog";
 import { UnlinkContactDialog } from "./UnlinkContactDialog";
 import { LinkDealDialog } from "./LinkDealDialog";
@@ -38,19 +37,17 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-interface PaymentsTableProps {
-  payments: UnifiedPayment[];
-  isLoading: boolean;
-  selectedItems: Set<string>;
-  onToggleSelectAll: () => void;
-  onToggleItem: (id: string) => void;
-  onRefetch: () => void;
-  displayTimezone?: TimezoneMode;
-  selectedTimezoneIANA?: string;
+// Exported column configuration type
+export interface ColumnConfig {
+  key: string;
+  label: string;
+  visible: boolean;
+  width: number;
+  order: number;
 }
 
-// Column configuration
-const DEFAULT_COLUMNS: ColumnConfig[] = [
+// Exported default columns
+export const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
   { key: "date", label: "Дата", visible: true, width: 110, order: 1 },
   { key: "uid", label: "UID", visible: true, width: 110, order: 2 },
@@ -65,7 +62,19 @@ const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "actions", label: "", visible: true, width: 50, order: 11 },
 ];
 
-const STORAGE_KEY = 'admin_payments_columns_v1';
+interface PaymentsTableProps {
+  payments: UnifiedPayment[];
+  isLoading: boolean;
+  selectedItems: Set<string>;
+  onToggleSelectAll: () => void;
+  onToggleItem: (id: string) => void;
+  onRefetch: () => void;
+  displayTimezone?: TimezoneMode;
+  selectedTimezoneIANA?: string;
+  // Lifted column state from parent
+  columns?: ColumnConfig[];
+  onColumnsChange?: (columns: ColumnConfig[]) => void;
+}
 
 // Sortable resizable header
 interface SortableResizableHeaderProps {
@@ -142,7 +151,18 @@ function SortableResizableHeader({ column, onResize, children }: SortableResizab
   );
 }
 
-export default function PaymentsTable({ payments, isLoading, selectedItems, onToggleSelectAll, onToggleItem, onRefetch, displayTimezone = 'user', selectedTimezoneIANA = 'Europe/Minsk' }: PaymentsTableProps) {
+export default function PaymentsTable({ 
+  payments, 
+  isLoading, 
+  selectedItems, 
+  onToggleSelectAll, 
+  onToggleItem, 
+  onRefetch, 
+  displayTimezone = 'user', 
+  selectedTimezoneIANA = 'Europe/Minsk',
+  columns: externalColumns,
+  onColumnsChange,
+}: PaymentsTableProps) {
   // Dialog states
   const [linkContactOpen, setLinkContactOpen] = useState(false);
   const [unlinkContactOpen, setUnlinkContactOpen] = useState(false);
@@ -157,28 +177,9 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
   const [selectedContact, setSelectedContact] = useState<any>(null);
   const [selectedDealProfile, setSelectedDealProfile] = useState<any>(null);
   
-  // Column state with localStorage persistence
-  const [columns, setColumns] = useState<ColumnConfig[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        // Merge with defaults to ensure all columns exist
-        return DEFAULT_COLUMNS.map(dc => {
-          const savedCol = parsed.find((p: ColumnConfig) => p.key === dc.key);
-          return savedCol ? { ...dc, ...savedCol } : dc;
-        });
-      } catch {
-        return DEFAULT_COLUMNS;
-      }
-    }
-    return DEFAULT_COLUMNS;
-  });
-  
-  // Save to localStorage on change
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(columns));
-  }, [columns]);
+  // Use external columns if provided, otherwise use internal state
+  const columns = externalColumns || DEFAULT_COLUMNS;
+  const setColumns = onColumnsChange || (() => {});
   
   // DnD sensors
   const sensors = useSensors(
@@ -208,12 +209,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
   };
   
   const handleResize = (key: string, width: number) => {
-    setColumns(prev => prev.map(c => c.key === key ? { ...c, width } : c));
-  };
-  
-  const resetColumns = () => {
-    setColumns(DEFAULT_COLUMNS);
-    localStorage.removeItem(STORAGE_KEY);
+    setColumns(columns.map(c => c.key === key ? { ...c, width } : c));
   };
   
   // Open dialogs
@@ -444,7 +440,7 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
       case 'amount': {
         const isNegative = payment.amount < 0;
         return (
-          <span className={`font-medium ${isNegative ? 'text-red-500' : ''}`}>
+          <span className={`font-medium tabular-nums ${isNegative ? 'text-red-500' : ''}`}>
             {payment.amount.toFixed(2)} {payment.currency}
           </span>
         );
@@ -676,15 +672,6 @@ export default function PaymentsTable({ payments, isLoading, selectedItems, onTo
   return (
     <TooltipProvider>
       <div className="space-y-2">
-        {/* Column settings */}
-        <div className="flex justify-end">
-          <ColumnSettings 
-            columns={columns} 
-            onChange={setColumns}
-            onReset={resetColumns}
-          />
-        </div>
-        
         {/* E1: Sticky header table container */}
         <div className="overflow-auto max-h-[600px] relative">
           <DndContext

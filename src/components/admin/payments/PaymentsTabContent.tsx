@@ -1,12 +1,8 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,25 +10,23 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
 import { 
-  Download, Upload, Search, Filter, X, RefreshCw, Bug, Info, Layers, ChevronDown, FileSpreadsheet
+  Download, Search, Filter, X, RefreshCw, ChevronDown, FileSpreadsheet, Settings
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { useUnifiedPayments, UnifiedPayment, DateFilter } from "@/hooks/useUnifiedPayments";
 import PaymentsStatsPanel, { StatsFilterType } from "./PaymentsStatsPanel";
-import SmartImportDialog from "@/components/admin/bepaid/SmartImportDialog";
-import PaymentsTable from "@/components/admin/payments/PaymentsTable";
+import PaymentsTable, { ColumnConfig, DEFAULT_COLUMNS } from "@/components/admin/payments/PaymentsTable";
 import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
 import DatePeriodSelector from "@/components/admin/payments/DatePeriodSelector";
 import SyncRunDialog from "@/components/admin/payments/SyncRunDialog";
 import SyncWithStatementDialog from "@/components/admin/payments/SyncWithStatementDialog";
 import { TimezoneSelector, usePersistedTimezone } from "./TimezoneSelector";
-import AdminToolsMenu from "./AdminToolsMenu";
-import DataTraceModal from "./DataTraceModal";
 import { useAuth } from "@/contexts/AuthContext";
 
 export type PaymentFilters = {
@@ -65,13 +59,12 @@ const defaultFilters: PaymentFilters = {
   source: "all",
 };
 
+const COLUMNS_STORAGE_KEY = 'admin_payments_columns_v1';
+
 export function PaymentsTabContent() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { role } = useAuth();
-  
-  // Check if user is superadmin
-  const isSuperadmin = role === 'superadmin' || role === 'admin';
   
   // Date filter - default to current month
   const now = new Date();
@@ -79,9 +72,6 @@ export function PaymentsTabContent() {
     from: format(startOfMonth(now), 'yyyy-MM-dd'),
     to: format(endOfMonth(now), 'yyyy-MM-dd'),
   });
-  
-  // Data source mode: 'canon' = payments_v2 only, 'unified' = payments_v2 + queue
-  const [sourceMode, setSourceMode] = useState<'canon' | 'unified'>('unified');
   
   // Filters
   const [filters, setFilters] = useState<PaymentFilters>(defaultFilters);
@@ -93,19 +83,41 @@ export function PaymentsTabContent() {
   // Selection for batch operations
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   
-  // Import dialog
-  const [importDialogOpen, setImportDialogOpen] = useState(false);
-  
   // Sync dialogs
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
   const [syncStatementDialogOpen, setSyncStatementDialogOpen] = useState(false);
   
-  // Trace modal (superadmin only)
-  const [traceModalOpen, setTraceModalOpen] = useState(false);
-  
   // Timezone - IANA timezone with persistence
   const { getInitialValue, setTimezone: persistTimezone } = usePersistedTimezone();
   const [selectedTimezone, setSelectedTimezone] = useState(getInitialValue);
+  
+  // Column state (lifted from PaymentsTable for settings dropdown)
+  const [columns, setColumns] = useState<ColumnConfig[]>(() => {
+    const saved = localStorage.getItem(COLUMNS_STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return DEFAULT_COLUMNS.map(dc => {
+          const savedCol = parsed.find((p: ColumnConfig) => p.key === dc.key);
+          return savedCol ? { ...dc, ...savedCol } : dc;
+        });
+      } catch {
+        return DEFAULT_COLUMNS;
+      }
+    }
+    return DEFAULT_COLUMNS;
+  });
+  
+  // Save columns to localStorage
+  useEffect(() => {
+    localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(columns));
+  }, [columns]);
+  
+  const resetColumns = () => {
+    setColumns(DEFAULT_COLUMNS);
+    localStorage.removeItem(COLUMNS_STORAGE_KEY);
+    toast.success("Колонки сброшены");
+  };
   
   // Persist timezone changes
   const handleTimezoneChange = (tz: string) => {
@@ -113,12 +125,11 @@ export function PaymentsTabContent() {
     persistTimezone(tz);
   };
   
-  // Fetch unified payment data - always include imports
+  // Fetch unified payment data
   const effectiveDateFilter = useMemo(() => ({
     ...dateFilter,
     includeImport: true,
-    mode: sourceMode, // Pass mode to hook
-  }), [dateFilter, sourceMode]);
+  }), [dateFilter]);
   
   const { 
     payments: allPayments, 
@@ -127,13 +138,8 @@ export function PaymentsTabContent() {
     refetch 
   } = useUnifiedPayments(effectiveDateFilter);
 
-  // Filter payments by source mode
-  const payments = useMemo(() => {
-    if (sourceMode === 'canon') {
-      return allPayments.filter(p => p.rawSource === 'payments_v2');
-    }
-    return allPayments;
-  }, [allPayments, sourceMode]);
+  // Always use all payments (no more source mode filtering)
+  const payments = allPayments;
 
   // Helper to normalize transaction type
   const normalizeType = (raw: string | null | undefined) => {
@@ -264,7 +270,7 @@ export function PaymentsTabContent() {
   // Export to CSV
   const handleExport = () => {
     const csv = [
-      ["UID", "Дата", "Тип", "Статус", "Сумма", "Валюта", "Email", "Телефон", "Карта", "Владелец", "Заказ", "Продукт", "Контакт", "Источник", "Чек", "Возвраты", "RawSource"].join(";"),
+      ["UID", "Дата", "Тип", "Статус", "Сумма", "Валюта", "Email", "Телефон", "Карта", "Владелец", "Заказ", "Продукт", "Контакт", "Источник", "Чек", "Возвраты"].join(";"),
       ...filteredPayments.map(p => [
         p.uid,
         p.paid_at ? format(new Date(p.paid_at), "dd.MM.yyyy HH:mm") : "",
@@ -282,14 +288,12 @@ export function PaymentsTabContent() {
         p.source,
         p.receipt_url ? "Да" : "Нет",
         p.refunds_count || 0,
-        p.rawSource,
       ].join(";"))
     ].join("\n");
 
     // Add metadata header
     const metadata = [
       `# Export Date: ${new Date().toISOString()}`,
-      `# Mode: ${sourceMode}`,
       `# Period: ${dateFilter.from} - ${dateFilter.to}`,
       `# Filters: ${JSON.stringify(filters)}`,
       '',
@@ -299,7 +303,7 @@ export function PaymentsTabContent() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `payments-${sourceMode}-${format(new Date(), "yyyy-MM-dd-HHmm")}.csv`;
+    a.download = `payments-${format(new Date(), "yyyy-MM-dd-HHmm")}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success("CSV экспортирован");
@@ -327,21 +331,38 @@ export function PaymentsTabContent() {
   // Reset filters
   const resetFilters = () => {
     setFilters(defaultFilters);
+    setStatsFilter(null);
   };
 
   const activeFiltersCount = Object.entries(filters).filter(
-    ([key, value]) => key !== 'search' && value !== 'all' && value !== ''
-  ).length;
+    ([key, value]) => key !== 'search' && value !== 'all' && value !== '' && value !== defaultFilters[key as keyof PaymentFilters]
+  ).length + (statsFilter ? 1 : 0);
 
-  // Stats for current mode
-  const canonCount = allPayments.filter(p => p.rawSource === 'payments_v2').length;
-  const queueOnlyCount = allPayments.filter(p => p.rawSource === 'queue').length;
+  // Get visible columns for settings
+  const visibleColumns = columns.filter(c => c.key !== 'checkbox' && c.key !== 'actions');
 
   return (
-    <div className="space-y-4">
-      {/* Pill-style Tabs for status */}
-      <div className="px-1 pt-1 pb-1.5 shrink-0">
-        <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+    <div className="space-y-3">
+      {/* 1. Stats Panel - на самом верху после вкладок */}
+      <PaymentsStatsPanel 
+        payments={payments} 
+        isLoading={isLoading}
+        activeFilter={statsFilter}
+        onFilterChange={setStatsFilter}
+      />
+      
+      {/* 2. Строка периода + счётчик транзакций */}
+      <div className="text-xs text-muted-foreground text-center py-1">
+        {dateFilter.from} — {dateFilter.to || 'сегодня'} — {filteredPayments.length} из {payments.length} транзакций
+      </div>
+      
+      {/* 3. Quick Filters Row - единая строка */}
+      <div className="flex flex-wrap items-center gap-2 px-1">
+        {/* Period selector */}
+        <DatePeriodSelector value={dateFilter} onChange={setDateFilter} />
+        
+        {/* Pill-style status tabs */}
+        <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20">
           {[
             { id: "successful_and_refunds", label: "Успешные" },
             { id: "all", label: "Все" },
@@ -351,8 +372,11 @@ export function PaymentsTabContent() {
             return (
               <button
                 key={tab.id}
-                onClick={() => setFilters(prev => ({ ...prev, status: tab.id }))}
-                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+                onClick={() => {
+                  setFilters(prev => ({ ...prev, status: tab.id }));
+                  setStatsFilter(null); // Clear stats filter when using pill tabs
+                }}
+                className={`relative flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
                   isActive
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
@@ -363,236 +387,160 @@ export function PaymentsTabContent() {
             );
           })}
         </div>
-      </div>
-      
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-background/30 backdrop-blur-sm border border-border/20">
-        <DatePeriodSelector value={dateFilter} onChange={setDateFilter} />
         
-        {/* Source mode toggle (superadmin only) */}
-        {isSuperadmin && (
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/50 border border-slate-700/50">
-            <Layers className="h-3.5 w-3.5 text-slate-400" />
-            <Label htmlFor="staging-toggle" className="text-xs text-slate-400 cursor-pointer">
-              Staging
-            </Label>
-            <Switch
-              id="staging-toggle"
-              checked={sourceMode === 'unified'}
-              onCheckedChange={(checked) => setSourceMode(checked ? 'unified' : 'canon')}
-              className="scale-75"
-            />
-            <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${sourceMode === 'unified' ? 'border-amber-500/50 text-amber-400' : 'border-emerald-500/50 text-emerald-400'}`}>
-              {sourceMode === 'unified' ? 'Unified' : 'Canon'}
-            </Badge>
-          </div>
-        )}
+        {/* Timezone selector */}
+        <TimezoneSelector 
+          value={selectedTimezone} 
+          onValueChange={handleTimezoneChange} 
+        />
+        
+        {/* Sync dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 gap-1 text-xs">
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Sync</span>
+              <ChevronDown className="h-3 w-3 opacity-50" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+              Синхронизация с bePaid
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handleBepaidSync} className="gap-3 p-3 cursor-pointer">
+              <div className="p-1.5 rounded-lg bg-primary/10">
+                <RefreshCw className="h-4 w-4 text-primary" />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="font-medium text-sm">Синхронизировать с API</span>
+                <span className="text-xs text-muted-foreground">
+                  Получить новые транзакции
+                </span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSyncStatementDialogOpen(true)} className="gap-3 p-3 cursor-pointer">
+              <div className="p-1.5 rounded-lg bg-emerald-500/10">
+                <FileSpreadsheet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="font-medium text-sm">Синхронизировать с Выпиской</span>
+                <span className="text-xs text-muted-foreground">
+                  Сверить с загруженной выпиской
+                </span>
+              </div>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         
         <div className="flex-1 min-w-0" />
-        <div className="flex items-center gap-2">
-          {/* Trace button (superadmin only) */}
-          {isSuperadmin && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setTraceModalOpen(true)}>
-                    <Bug className="h-4 w-4 text-purple-400" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Data Trace — источники данных</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 gap-1">
-                <RefreshCw className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Sync</span>
-                <ChevronDown className="h-3 w-3 opacity-50" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                Синхронизация с bePaid
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleBepaidSync} className="gap-3 p-3 cursor-pointer">
-                <div className="p-1.5 rounded-lg bg-primary/10">
-                  <RefreshCw className="h-4 w-4 text-primary" />
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium text-sm">Синхронизировать с API</span>
-                  <span className="text-xs text-muted-foreground">
-                    Получить новые транзакции
-                  </span>
-                </div>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSyncStatementDialogOpen(true)} className="gap-3 p-3 cursor-pointer">
-                <div className="p-1.5 rounded-lg bg-emerald-500/10">
-                  <FileSpreadsheet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium text-sm">Синхронизировать с Выпиской</span>
-                  <span className="text-xs text-muted-foreground">
-                    Сверить с загруженной выпиской
-                  </span>
-                </div>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button size="sm" className="h-8" onClick={() => setImportDialogOpen(true)}>
-            <Upload className="h-3.5 w-3.5 sm:mr-1.5" />
-            <span className="hidden sm:inline">Импорт</span>
-          </Button>
-          <AdminToolsMenu 
-            onRefetch={refetch} 
-            dateFrom={dateFilter.from}
-            dateTo={dateFilter.to}
+        
+        {/* Settings gear - справа */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Settings className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuItem onClick={handleExport} disabled={filteredPayments.length === 0}>
+              <Download className="h-4 w-4 mr-2" />
+              Экспорт CSV
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+              Колонки
+            </DropdownMenuLabel>
+            {visibleColumns.map((col) => (
+              <DropdownMenuCheckboxItem
+                key={col.key}
+                checked={col.visible}
+                onCheckedChange={(checked) => {
+                  setColumns(prev => prev.map(c => 
+                    c.key === col.key ? { ...c, visible: checked } : c
+                  ));
+                }}
+              >
+                {col.label}
+              </DropdownMenuCheckboxItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={resetColumns} className="text-xs text-muted-foreground">
+              Сбросить колонки
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      
+      {/* 4. Search row + Filters button */}
+      <div className="flex items-center gap-2 px-1">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Поиск по UID, email, телефону, карте..."
+            value={filters.search}
+            onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+            className="pl-10 h-9 text-sm"
           />
         </div>
-      </div>
-
-      {/* Stats Panel - pass ALL payments for period, not filtered */}
-      <PaymentsStatsPanel 
-        payments={payments} 
-        isLoading={isLoading}
-        dateRange={dateFilter}
-        activeFilter={statsFilter}
-        onFilterChange={setStatsFilter}
-      />
-      
-      {/* Main content */}
-      <Card>
-        <CardHeader className="pb-4">
-          {/* Responsive header: stacked on mobile */}
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <CardTitle>Транзакции</CardTitle>
-              <CardDescription className="flex items-center gap-2">
-                <span>{filteredPayments.length} из {payments.length} транзакций</span>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <Info className="h-3 w-3 text-slate-500 cursor-help" />
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs">
-                      <div className="text-xs space-y-1">
-                        <div>Mode: <span className="font-mono text-purple-300">{sourceMode}</span></div>
-                        <div>payments_v2: <span className="font-mono">{canonCount}</span></div>
-                        <div>queue_only: <span className="font-mono">{queueOnlyCount}</span></div>
-                        <div>Period: {dateFilter.from} — {dateFilter.to}</div>
-                        <div className="text-slate-400 pt-1">
-                          <button 
-                            onClick={() => setTraceModalOpen(true)}
-                            className="text-purple-400 hover:underline"
-                          >
-                            Открыть Trace →
-                          </button>
-                        </div>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-                {sourceMode === 'unified' && queueOnlyCount > 0 && (
-                  <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-400">
-                    +{queueOnlyCount} queue
-                  </Badge>
-                )}
-              </CardDescription>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              {/* Search - full width on mobile */}
-              <div className="relative w-full sm:w-80">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Поиск..."
-                  value={filters.search}
-                  onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                  className="pl-10 w-full"
-                />
-              </div>
-              
-              {/* Filter buttons */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <Button 
-                  variant={showFilters ? "secondary" : "outline"} 
-                  onClick={() => setShowFilters(!showFilters)}
-                  className="gap-2"
-                >
-                  <Filter className="h-4 w-4" />
-                  Фильтры
-                  {activeFiltersCount > 0 && (
-                    <Badge variant="secondary" className="ml-1">{activeFiltersCount}</Badge>
-                  )}
-                </Button>
-                
-                {activeFiltersCount > 0 && (
-                  <Button variant="ghost" size="sm" onClick={resetFilters}>
-                    <X className="h-4 w-4 mr-1" />
-                    Сбросить
-                  </Button>
-                )}
-                
-                <Button variant="outline" onClick={handleExport} disabled={filteredPayments.length === 0}>
-                  <Download className="h-4 w-4 mr-2" />
-                  CSV
-                </Button>
-                
-                {/* Timezone selector - IANA timezones */}
-                <TimezoneSelector 
-                  value={selectedTimezone} 
-                  onValueChange={handleTimezoneChange} 
-                />
-              </div>
-            </div>
-          </div>
-          
-          {/* Filters panel */}
-          {showFilters && (
-            <PaymentsFilters filters={filters} setFilters={setFilters} />
-          )}
-        </CardHeader>
         
-        <CardContent>
-          {/* Batch actions */}
-          {selectedItems.size > 0 && (
-            <PaymentsBatchActions
-              selectedPayments={filteredPayments.filter(p => selectedItems.has(p.id))}
-              onSuccess={() => {
-                setSelectedItems(new Set());
-                refetch();
-              }}
-              onClearSelection={() => setSelectedItems(new Set())}
-            />
+        <Button 
+          variant={showFilters ? "secondary" : "outline"} 
+          size="sm"
+          onClick={() => setShowFilters(!showFilters)}
+          className="h-9 gap-2 text-xs"
+        >
+          <Filter className="h-4 w-4" />
+          Фильтры
+          {activeFiltersCount > 0 && (
+            <Badge variant="secondary" className="ml-1 h-5 px-1.5">{activeFiltersCount}</Badge>
           )}
-          
-          {/* Table with horizontal scroll */}
-          <div className="overflow-x-auto -mx-4 sm:mx-0">
-            <PaymentsTable
-              payments={filteredPayments}
-              isLoading={isLoading}
-              selectedItems={selectedItems}
-              onToggleSelectAll={toggleSelectAll}
-              onToggleItem={toggleItem}
-              onRefetch={refetch}
-              displayTimezone="user"
-              selectedTimezoneIANA={selectedTimezone}
-            />
-          </div>
-        </CardContent>
-      </Card>
+        </Button>
+        
+        {activeFiltersCount > 0 && (
+          <Button variant="ghost" size="sm" onClick={resetFilters} className="h-9 text-xs">
+            <X className="h-4 w-4 mr-1" />
+            Сбросить
+          </Button>
+        )}
+      </div>
       
-      {/* Import dialog */}
-      <SmartImportDialog
-        open={importDialogOpen}
-        onOpenChange={setImportDialogOpen}
-        onSuccess={() => {
-          refetch();
-          setImportDialogOpen(false);
-        }}
-      />
+      {/* Filters panel */}
+      {showFilters && (
+        <div className="px-1">
+          <PaymentsFilters filters={filters} setFilters={setFilters} />
+        </div>
+      )}
+      
+      {/* Batch actions */}
+      {selectedItems.size > 0 && (
+        <div className="px-1">
+          <PaymentsBatchActions
+            selectedPayments={filteredPayments.filter(p => selectedItems.has(p.id))}
+            onSuccess={() => {
+              setSelectedItems(new Set());
+              refetch();
+            }}
+            onClearSelection={() => setSelectedItems(new Set())}
+          />
+        </div>
+      )}
+      
+      {/* 5. Table - без Card wrapper */}
+      <div className="overflow-x-auto">
+        <PaymentsTable
+          payments={filteredPayments}
+          isLoading={isLoading}
+          selectedItems={selectedItems}
+          onToggleSelectAll={toggleSelectAll}
+          onToggleItem={toggleItem}
+          onRefetch={refetch}
+          displayTimezone="user"
+          selectedTimezoneIANA={selectedTimezone}
+          columns={columns}
+          onColumnsChange={setColumns}
+        />
+      </div>
       
       {/* Sync dialog - API */}
       <SyncRunDialog 
@@ -609,19 +557,6 @@ export function PaymentsTabContent() {
         defaultFromDate={dateFilter.from}
         defaultToDate={dateFilter.to}
       />
-      
-      {/* Trace modal (superadmin only) */}
-      {isSuperadmin && (
-        <DataTraceModal
-          open={traceModalOpen}
-          onOpenChange={setTraceModalOpen}
-          dateFrom={dateFilter.from}
-          dateTo={dateFilter.to || dateFilter.from}
-          uiRowsShown={filteredPayments.length}
-          activeFilters={filters}
-          mode={sourceMode}
-        />
-      )}
     </div>
   );
 }
