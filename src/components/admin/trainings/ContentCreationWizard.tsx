@@ -13,15 +13,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, Wand2, BookOpen, FileText, Settings, CheckCircle2, ArrowLeft, ArrowRight, SkipForward, ExternalLink, Plus, AlertTriangle } from "lucide-react";
+import { Loader2, Wand2, BookOpen, FileText, CheckCircle2, ArrowLeft, ArrowRight, SkipForward, ExternalLink, Plus, AlertTriangle, Video } from "lucide-react";
 import { toast } from "sonner";
 
 import { WizardStepIndicator } from "./WizardStepIndicator";
 import { ContentSectionSelector } from "./ContentSectionSelector";
+import { ContentTypeSelector, ContentType } from "./ContentTypeSelector";
 import { ModuleFormFields, ModuleFormData, generateSlug } from "./ModuleFormFields";
 import { LessonFormFieldsSimple, LessonFormDataSimple, generateLessonSlug } from "./LessonFormFieldsSimple";
 import { CompactAccessSelector } from "./CompactAccessSelector";
-import { cn } from "@/lib/utils";
 
 interface ContentCreationWizardProps {
   open: boolean;
@@ -31,26 +31,47 @@ interface ContentCreationWizardProps {
 }
 
 interface WizardData {
+  contentType: ContentType;
   menuSectionKey: string;
   module: ModuleFormData;
   lesson: LessonFormDataSimple;
   tariffIds: string[];
 }
 
-const STEPS = [
+// Steps for MODULE flow
+const MODULE_STEPS = [
   { label: "Раздел", shortLabel: "1" },
-  { label: "Модуль", shortLabel: "2" },
+  { label: "Тип", shortLabel: "2" },
+  { label: "Модуль", shortLabel: "3" },
+  { label: "Урок", shortLabel: "4" },
+  { label: "Доступ", shortLabel: "5" },
+  { label: "Готово", shortLabel: "✓" },
+];
+
+// Steps for LESSON flow (standalone lesson)
+const LESSON_STEPS = [
+  { label: "Раздел", shortLabel: "1" },
+  { label: "Тип", shortLabel: "2" },
   { label: "Урок", shortLabel: "3" },
   { label: "Доступ", shortLabel: "4" },
   { label: "Готово", shortLabel: "✓" },
 ];
 
-const STEP_HINTS = [
+const MODULE_HINTS = [
   "Выберите, где будет отображаться ваш контент в меню пользователя",
+  "Выберите тип создаваемого контента",
   "Создайте папку для группировки уроков — это карточка модуля",
   "Добавьте первый урок. Контент урока редактируется после создания в редакторе блоков",
   "Настройте, кто увидит контент. Пустой выбор = доступно всем",
   "Отлично! Контент создан и готов к редактированию",
+];
+
+const LESSON_HINTS = [
+  "Выберите, где будет отображаться ваш урок в меню пользователя",
+  "Выберите тип создаваемого контента",
+  "Создайте урок (видеоответ, выпуск). Контент редактируется после создания",
+  "Настройте, кто увидит контент. Пустой выбор = доступно всем",
+  "Отлично! Урок создан и готов к редактированию",
 ];
 
 // Check if slug exists in database
@@ -76,6 +97,59 @@ const ensureUniqueSlug = async (baseSlug: string): Promise<string> => {
   return slug;
 };
 
+// Get or create container module for standalone lessons
+const getOrCreateContainerModule = async (sectionKey: string): Promise<string> => {
+  // 1. Find existing container
+  const { data: existing, error: findError } = await supabase
+    .from("training_modules")
+    .select("id")
+    .eq("menu_section_key", sectionKey)
+    .eq("is_container", true)
+    .maybeSingle();
+  
+  if (findError) throw findError;
+  if (existing) return existing.id;
+  
+  // 2. Create new container
+  const containerSlug = await ensureUniqueSlug(`container-${sectionKey}`);
+  
+  const { data: newModule, error: createError } = await supabase
+    .from("training_modules")
+    .insert({
+      title: `Уроки: ${sectionKey}`,
+      slug: containerSlug,
+      menu_section_key: sectionKey,
+      is_container: true,
+      is_active: true,
+      display_layout: "standalone-lessons",
+    })
+    .select("id")
+    .single();
+  
+  if (createError) throw createError;
+  return newModule.id;
+};
+
+const createInitialState = (initialSectionKey?: string): WizardData => ({
+  contentType: "module",
+  menuSectionKey: initialSectionKey || "products-library",
+  module: {
+    title: "",
+    slug: "",
+    description: "",
+    color_gradient: "from-pink-500 to-fuchsia-600",
+    is_active: true,
+    menu_section_key: initialSectionKey || "products-library",
+    display_layout: "grid",
+  },
+  lesson: {
+    title: "",
+    slug: "",
+    description: "",
+  },
+  tariffIds: [],
+});
+
 export function ContentCreationWizard({
   open,
   onOpenChange,
@@ -91,24 +165,15 @@ export function ContentCreationWizard({
   const [createdLessonId, setCreatedLessonId] = useState<string | null>(null);
   const [slugWarning, setSlugWarning] = useState<string | null>(null);
 
-  const [wizardData, setWizardData] = useState<WizardData>({
-    menuSectionKey: initialSectionKey || "products-library",
-    module: {
-      title: "",
-      slug: "",
-      description: "",
-      color_gradient: "from-pink-500 to-fuchsia-600",
-      is_active: true,
-      menu_section_key: initialSectionKey || "products-library",
-      display_layout: "grid",
-    },
-    lesson: {
-      title: "",
-      slug: "",
-      description: "",
-    },
-    tariffIds: [],
-  });
+  const [wizardData, setWizardData] = useState<WizardData>(() => 
+    createInitialState(initialSectionKey)
+  );
+
+  // Determine which flow we're in
+  const isLessonFlow = wizardData.contentType === "lesson";
+  const steps = isLessonFlow ? LESSON_STEPS : MODULE_STEPS;
+  const hints = isLessonFlow ? LESSON_HINTS : MODULE_HINTS;
+  const maxStep = steps.length - 1;
 
   // Fetch products with tariffs
   const { data: productsWithTariffs } = useQuery({
@@ -140,47 +205,38 @@ export function ContentCreationWizard({
         setCreatedModuleId(null);
         setCreatedLessonId(null);
         setSlugWarning(null);
-        setWizardData({
-          menuSectionKey: initialSectionKey || "products-library",
-          module: {
-            title: "",
-            slug: "",
-            description: "",
-            color_gradient: "from-pink-500 to-fuchsia-600",
-            is_active: true,
-            menu_section_key: initialSectionKey || "products-library",
-            display_layout: "grid",
-          },
-          lesson: {
-            title: "",
-            slug: "",
-            description: "",
-          },
-          tariffIds: [],
-        });
+        setWizardData(createInitialState(initialSectionKey));
       }
       onOpenChange(newOpen);
     },
     [onOpenChange, initialSectionKey]
   );
 
-  // Validation
+  // Validation based on current step and flow
   const canProceed = useMemo(() => {
-    switch (step) {
-      case 0:
-        return !!wizardData.menuSectionKey;
-      case 1:
-        return !!wizardData.module.title && !!wizardData.module.slug;
-      case 2:
-        return true; // Optional step
-      case 3:
-        return true; // No validation needed
-      case 4:
-        return true;
-      default:
-        return false;
+    if (isLessonFlow) {
+      // Lesson flow: Section -> Type -> Lesson -> Access -> Done
+      switch (step) {
+        case 0: return !!wizardData.menuSectionKey;
+        case 1: return true; // Type selection always valid
+        case 2: return !!wizardData.lesson.title && !!wizardData.lesson.slug;
+        case 3: return true; // Access is optional
+        case 4: return true; // Done
+        default: return false;
+      }
+    } else {
+      // Module flow: Section -> Type -> Module -> Lesson -> Access -> Done
+      switch (step) {
+        case 0: return !!wizardData.menuSectionKey;
+        case 1: return true; // Type selection always valid
+        case 2: return !!wizardData.module.title && !!wizardData.module.slug;
+        case 3: return true; // Lesson is optional
+        case 4: return true; // Access is optional
+        case 5: return true; // Done
+        default: return false;
+      }
     }
-  }, [step, wizardData]);
+  }, [step, wizardData, isLessonFlow]);
 
   // Update section in module data
   const handleSectionChange = (key: string) => {
@@ -189,6 +245,11 @@ export function ContentCreationWizard({
       menuSectionKey: key,
       module: { ...prev.module, menu_section_key: key },
     }));
+  };
+
+  // Handle content type change
+  const handleContentTypeChange = (type: ContentType) => {
+    setWizardData((prev) => ({ ...prev, contentType: type }));
   };
 
   // Handle module form changes
@@ -205,13 +266,12 @@ export function ContentCreationWizard({
     setWizardData((prev) => ({ ...prev, lesson: data }));
   };
 
-  // Create module (step 1 -> 2)
+  // Create module (module flow step 2 -> 3)
   const handleCreateModule = async () => {
     setIsCreating(true);
     setSlugWarning(null);
     
     try {
-      // Check and ensure unique slug
       const originalSlug = wizardData.module.slug;
       const uniqueSlug = await ensureUniqueSlug(originalSlug);
       
@@ -230,13 +290,13 @@ export function ContentCreationWizard({
           is_active: wizardData.module.is_active !== false,
           menu_section_key: wizardData.menuSectionKey,
           display_layout: wizardData.module.display_layout || "grid",
+          is_container: false,
         })
         .select()
         .single();
 
       if (error) throw error;
 
-      // Update local slug if changed
       setWizardData(prev => ({
         ...prev,
         module: { ...prev.module, slug: uniqueSlug }
@@ -244,13 +304,12 @@ export function ContentCreationWizard({
       
       setCreatedModuleId(newModule.id);
       
-      // Инвалидируем кэш чтобы модуль появился в UI сразу
       queryClient.invalidateQueries({ queryKey: ["sidebar-modules"] });
       queryClient.invalidateQueries({ queryKey: ["page-sections-tabs"] });
       queryClient.invalidateQueries({ queryKey: ["training-modules"] });
       
       toast.success("Модуль создан");
-      setStep(2);
+      setStep(3);
     } catch (error: any) {
       console.error("Error creating module:", error);
       toast.error(`Ошибка создания модуля: ${error.message}`);
@@ -259,10 +318,10 @@ export function ContentCreationWizard({
     }
   };
 
-  // Create lesson (step 2 -> 3) or skip
-  const handleCreateLesson = async (skip = false) => {
+  // Create lesson in existing module (module flow step 3 -> 4) or skip
+  const handleCreateLessonInModule = async (skip = false) => {
     if (skip || !wizardData.lesson.title) {
-      setStep(3);
+      setStep(4);
       return;
     }
 
@@ -280,7 +339,7 @@ export function ContentCreationWizard({
           title: wizardData.lesson.title,
           slug: wizardData.lesson.slug || generateLessonSlug(wizardData.lesson.title),
           description: wizardData.lesson.description || null,
-          content_type: "mixed", // Always mixed - content is in blocks
+          content_type: "mixed",
           is_active: true,
           sort_order: 0,
         })
@@ -291,7 +350,7 @@ export function ContentCreationWizard({
 
       setCreatedLessonId(newLesson.id);
       toast.success("Урок создан");
-      setStep(3);
+      setStep(4);
     } catch (error: any) {
       console.error("Error creating lesson:", error);
       toast.error(`Ошибка создания урока: ${error.message}`);
@@ -300,16 +359,59 @@ export function ContentCreationWizard({
     }
   };
 
-  // Save access and complete (step 3 -> 4)
+  // Create standalone lesson (lesson flow step 2 -> 3)
+  const handleCreateStandaloneLesson = async () => {
+    setIsCreating(true);
+    
+    try {
+      // Get or create container module for this section
+      const containerId = await getOrCreateContainerModule(wizardData.menuSectionKey);
+      setCreatedModuleId(containerId);
+
+      // Create lesson in container
+      const { data: newLesson, error } = await supabase
+        .from("training_lessons")
+        .insert({
+          module_id: containerId,
+          title: wizardData.lesson.title,
+          slug: wizardData.lesson.slug || generateLessonSlug(wizardData.lesson.title),
+          description: wizardData.lesson.description || null,
+          content_type: "mixed",
+          is_active: true,
+          sort_order: Date.now(), // Use timestamp for reverse chronological order
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setCreatedLessonId(newLesson.id);
+      
+      queryClient.invalidateQueries({ queryKey: ["container-lessons"] });
+      queryClient.invalidateQueries({ queryKey: ["sidebar-modules"] });
+      
+      toast.success("Урок создан");
+      setStep(3);
+    } catch (error: any) {
+      console.error("Error creating standalone lesson:", error);
+      toast.error(`Ошибка создания урока: ${error.message}`);
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  // Save access (access step for both flows)
   const handleSaveAccess = async () => {
-    if (!createdModuleId) return;
+    if (!createdModuleId) {
+      // For lesson flow, move to done even without module access
+      setStep(isLessonFlow ? 4 : 5);
+      return;
+    }
 
     setIsCreating(true);
     try {
-      // Remove existing access
       await supabase.from("module_access").delete().eq("module_id", createdModuleId);
 
-      // Add new access if any
       if (wizardData.tariffIds.length > 0) {
         const accessRecords = wizardData.tariffIds.map((tariffId) => ({
           module_id: createdModuleId,
@@ -321,7 +423,7 @@ export function ContentCreationWizard({
       }
 
       toast.success("Настройки доступа сохранены");
-      setStep(4);
+      setStep(isLessonFlow ? 4 : 5);
     } catch (error: any) {
       console.error("Error saving access:", error);
       toast.error(`Ошибка сохранения: ${error.message}`);
@@ -330,29 +432,37 @@ export function ContentCreationWizard({
     }
   };
 
-  // Handle next button
+  // Handle next button based on flow and step
   const handleNext = async () => {
-    switch (step) {
-      case 0:
-        setStep(1);
-        break;
-      case 1:
-        await handleCreateModule();
-        break;
-      case 2:
-        await handleCreateLesson();
-        break;
-      case 3:
-        await handleSaveAccess();
-        break;
-      case 4:
-        handleOpenChange(false);
-        onComplete?.({ moduleId: createdModuleId!, lessonId: createdLessonId || undefined });
-        break;
+    if (isLessonFlow) {
+      // Lesson flow: Section -> Type -> Lesson -> Access -> Done
+      switch (step) {
+        case 0: setStep(1); break;
+        case 1: setStep(2); break;
+        case 2: await handleCreateStandaloneLesson(); break;
+        case 3: await handleSaveAccess(); break;
+        case 4:
+          handleOpenChange(false);
+          onComplete?.({ moduleId: createdModuleId!, lessonId: createdLessonId || undefined });
+          break;
+      }
+    } else {
+      // Module flow: Section -> Type -> Module -> Lesson -> Access -> Done
+      switch (step) {
+        case 0: setStep(1); break;
+        case 1: setStep(2); break;
+        case 2: await handleCreateModule(); break;
+        case 3: await handleCreateLessonInModule(); break;
+        case 4: await handleSaveAccess(); break;
+        case 5:
+          handleOpenChange(false);
+          onComplete?.({ moduleId: createdModuleId!, lessonId: createdLessonId || undefined });
+          break;
+      }
     }
   };
 
-  // Navigation actions for step 4
+  // Navigation actions for final step
   const handleEditLesson = () => {
     if (createdModuleId && createdLessonId) {
       handleOpenChange(false);
@@ -373,6 +483,157 @@ export function ContentCreationWizard({
     }
   };
 
+  // Determine what step content to show
+  const renderStepContent = () => {
+    // Step 0: Section selection (both flows)
+    if (step === 0) {
+      return (
+        <ContentSectionSelector
+          value={wizardData.menuSectionKey}
+          onChange={handleSectionChange}
+        />
+      );
+    }
+
+    // Step 1: Content type selection (both flows)
+    if (step === 1) {
+      return (
+        <ContentTypeSelector
+          value={wizardData.contentType}
+          onChange={handleContentTypeChange}
+        />
+      );
+    }
+
+    if (isLessonFlow) {
+      // Lesson flow steps
+      if (step === 2) {
+        return (
+          <div className="space-y-4">
+            <LessonFormFieldsSimple
+              formData={wizardData.lesson}
+              onChange={handleLessonChange}
+            />
+            <Alert className="border-primary/30 bg-primary/5">
+              <Video className="h-4 w-4 text-primary" />
+              <AlertDescription className="ml-2">
+                Этот урок появится как отдельная карточка в разделе. Видео и контент добавляются в редакторе блоков.
+              </AlertDescription>
+            </Alert>
+          </div>
+        );
+      }
+      if (step === 3) {
+        return (
+          <CompactAccessSelector
+            selectedTariffIds={wizardData.tariffIds}
+            onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
+            products={productsWithTariffs || []}
+          />
+        );
+      }
+      if (step === 4) {
+        return (
+          <div className="space-y-4">
+            <Alert className="border-primary/30 bg-primary/5">
+              <CheckCircle2 className="h-4 w-4 text-primary" />
+              <AlertDescription className="ml-2">
+                <strong>Урок "{wizardData.lesson.title}"</strong> успешно создан
+              </AlertDescription>
+            </Alert>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Button variant="default" onClick={handleEditLesson} className="gap-2">
+                <FileText className="h-4 w-4" />
+                Редактировать урок
+              </Button>
+            </div>
+          </div>
+        );
+      }
+    } else {
+      // Module flow steps
+      if (step === 2) {
+        return (
+          <ModuleFormFields
+            formData={wizardData.module}
+            onChange={handleModuleChange}
+            showSectionSelector={false}
+            showActiveSwitch={false}
+            compact
+          />
+        );
+      }
+      if (step === 3) {
+        return (
+          <div className="space-y-4">
+            <LessonFormFieldsSimple
+              formData={wizardData.lesson}
+              onChange={handleLessonChange}
+            />
+            <Alert className="border-primary/30 bg-primary/5">
+              <BookOpen className="h-4 w-4 text-primary" />
+              <AlertDescription className="ml-2">
+                Видео, текст и другой контент добавляются в редакторе блоков после создания урока
+              </AlertDescription>
+            </Alert>
+          </div>
+        );
+      }
+      if (step === 4) {
+        return (
+          <CompactAccessSelector
+            selectedTariffIds={wizardData.tariffIds}
+            onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
+            products={productsWithTariffs || []}
+          />
+        );
+      }
+      if (step === 5) {
+        return (
+          <div className="space-y-4">
+            <Alert className="border-primary/30 bg-primary/5">
+              <CheckCircle2 className="h-4 w-4 text-primary" />
+              <AlertDescription className="ml-2">
+                <strong>Модуль "{wizardData.module.title}"</strong> успешно создан
+                {createdLessonId && (
+                  <>
+                    <br />
+                    <strong>Урок "{wizardData.lesson.title}"</strong> добавлен
+                  </>
+                )}
+              </AlertDescription>
+            </Alert>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              {createdLessonId && (
+                <Button variant="default" onClick={handleEditLesson} className="gap-2">
+                  <FileText className="h-4 w-4" />
+                  Редактировать урок
+                </Button>
+              )}
+              <Button variant="outline" onClick={handleAddAnotherLesson} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Добавить ещё урок
+              </Button>
+              <Button variant="outline" onClick={handleOpenModule} className="gap-2">
+                <ExternalLink className="h-4 w-4" />
+                Открыть модуль
+              </Button>
+            </div>
+          </div>
+        );
+      }
+    }
+
+    return null;
+  };
+
+  // Determine if we're on an optional lesson step (module flow step 3)
+  const isOptionalLessonStep = !isLessonFlow && step === 3;
+  const isFinalStep = step === maxStep;
+  const isAccessStep = isLessonFlow ? step === 3 : step === 4;
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-3xl w-[95vw] max-h-[90vh] flex flex-col p-0">
@@ -381,12 +642,12 @@ export function ContentCreationWizard({
             <Wand2 className="h-5 w-5 text-primary" />
             Мастер добавления контента
           </DialogTitle>
-          <DialogDescription>{STEP_HINTS[step]}</DialogDescription>
+          <DialogDescription>{hints[step]}</DialogDescription>
         </DialogHeader>
 
         {/* Progress indicator */}
         <div className="px-6 pb-2 shrink-0">
-          <WizardStepIndicator steps={STEPS} currentStep={step} />
+          <WizardStepIndicator steps={steps} currentStep={step} />
         </div>
 
         {/* Step content with scroll */}
@@ -402,91 +663,14 @@ export function ContentCreationWizard({
               </Alert>
             )}
 
-            {/* Step 0: Section selection */}
-            {step === 0 && (
-              <ContentSectionSelector
-                value={wizardData.menuSectionKey}
-                onChange={handleSectionChange}
-              />
-            )}
-
-            {/* Step 1: Module creation */}
-            {step === 1 && (
-              <ModuleFormFields
-                formData={wizardData.module}
-                onChange={handleModuleChange}
-                showSectionSelector={false}
-                showActiveSwitch={false}
-                compact
-              />
-            )}
-
-            {/* Step 2: Lesson creation (simplified) */}
-            {step === 2 && (
-              <div className="space-y-4">
-                <LessonFormFieldsSimple
-                  formData={wizardData.lesson}
-                  onChange={handleLessonChange}
-                />
-                <Alert className="border-primary/30 bg-primary/5">
-                  <BookOpen className="h-4 w-4 text-primary" />
-                  <AlertDescription className="ml-2">
-                    Видео, текст и другой контент добавляются в редакторе блоков после создания урока
-                  </AlertDescription>
-                </Alert>
-              </div>
-            )}
-
-            {/* Step 3: Access configuration */}
-            {step === 3 && (
-              <CompactAccessSelector
-                selectedTariffIds={wizardData.tariffIds}
-                onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
-                products={productsWithTariffs || []}
-              />
-            )}
-
-            {/* Step 4: Summary */}
-            {step === 4 && (
-              <div className="space-y-4">
-                <Alert className="border-primary/30 bg-primary/5">
-                  <CheckCircle2 className="h-4 w-4 text-primary" />
-                  <AlertDescription className="ml-2">
-                    <strong>Модуль "{wizardData.module.title}"</strong> успешно создан
-                    {createdLessonId && (
-                      <>
-                        <br />
-                        <strong>Урок "{wizardData.lesson.title}"</strong> добавлен
-                      </>
-                    )}
-                  </AlertDescription>
-                </Alert>
-
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {createdLessonId && (
-                    <Button variant="default" onClick={handleEditLesson} className="gap-2">
-                      <FileText className="h-4 w-4" />
-                      Редактировать урок
-                    </Button>
-                  )}
-                  <Button variant="outline" onClick={handleAddAnotherLesson} className="gap-2">
-                    <Plus className="h-4 w-4" />
-                    Добавить ещё урок
-                  </Button>
-                  <Button variant="outline" onClick={handleOpenModule} className="gap-2">
-                    <ExternalLink className="h-4 w-4" />
-                    Открыть модуль
-                  </Button>
-                </div>
-              </div>
-            )}
+            {renderStepContent()}
           </div>
         </ScrollArea>
 
         {/* Footer navigation */}
         <DialogFooter className="px-6 py-4 border-t shrink-0 flex-col sm:flex-row gap-2 sm:gap-0">
           <div className="flex gap-2 w-full sm:w-auto">
-            {step > 0 && step < 4 && (
+            {step > 0 && !isFinalStep && (
               <Button variant="ghost" onClick={() => setStep((s) => s - 1)} disabled={isCreating}>
                 <ArrowLeft className="h-4 w-4 mr-1" />
                 Назад
@@ -497,10 +681,10 @@ export function ContentCreationWizard({
           <div className="flex-1" />
 
           <div className="flex gap-2 w-full sm:w-auto">
-            {step === 2 && (
+            {isOptionalLessonStep && (
               <Button
                 variant="ghost"
-                onClick={() => handleCreateLesson(true)}
+                onClick={() => handleCreateLessonInModule(true)}
                 disabled={isCreating}
               >
                 <SkipForward className="h-4 w-4 mr-1" />
@@ -508,14 +692,14 @@ export function ContentCreationWizard({
               </Button>
             )}
 
-            {step < 4 && (
+            {!isFinalStep && (
               <Button onClick={handleNext} disabled={!canProceed || isCreating}>
                 {isCreating ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     Сохранение...
                   </>
-                ) : step === 3 ? (
+                ) : isAccessStep ? (
                   <>
                     Завершить
                     <CheckCircle2 className="h-4 w-4 ml-1" />
@@ -529,7 +713,7 @@ export function ContentCreationWizard({
               </Button>
             )}
 
-            {step === 4 && (
+            {isFinalStep && (
               <Button onClick={() => handleOpenChange(false)}>Закрыть</Button>
             )}
           </div>

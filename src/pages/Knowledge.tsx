@@ -8,7 +8,9 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePageSections } from "@/hooks/usePageSections";
 import { useSidebarModules } from "@/hooks/useSidebarModules";
+import { useContainerLessons } from "@/hooks/useContainerLessons";
 import { ModuleCard } from "@/components/training/ModuleCard";
+import { LessonCard } from "@/components/training/LessonCard";
 import { 
   Search, 
   MessageCircleQuestion, 
@@ -217,8 +219,11 @@ const Knowledge = () => {
   // Fetch tabs dynamically from database
   const { tabs, isLoading: tabsLoading } = usePageSections("knowledge");
   
-  // Fetch modules grouped by section
+  // Fetch modules grouped by section (regular modules, not containers)
   const { modulesBySection, isLoading: modulesLoading } = useSidebarModules();
+  
+  // Fetch lessons from container modules (standalone lessons)
+  const { lessonsBySection, isLoading: lessonsLoading } = useContainerLessons();
   
   // Set active tab to first tab from DB or fallback
   const [activeTab, setActiveTab] = useState<string>("");
@@ -231,7 +236,7 @@ const Knowledge = () => {
     return tabs[0]?.key || "knowledge-questions";
   }, [activeTab, tabs]);
 
-  const isLoading = tabsLoading || modulesLoading;
+  const isLoading = tabsLoading || modulesLoading || lessonsLoading;
 
   if (isLoading) {
     return (
@@ -283,8 +288,17 @@ const Knowledge = () => {
           
           {/* Dynamic Tab Content */}
           {tabs.map((tab) => {
-            const modules = modulesBySection[tab.key] || [];
+            // Regular modules (not containers)
+            const modules = (modulesBySection[tab.key] || []).filter(
+              (m: any) => !m.is_container
+            );
+            // Standalone lessons from container modules
+            const containerData = lessonsBySection[tab.key];
+            const standaloneLessons = containerData?.lessons || [];
+            const containerModuleSlug = containerData?.moduleSlug || "";
+            
             const MockContent = MOCK_CONTENT_MAP[tab.key];
+            const hasContent = modules.length > 0 || standaloneLessons.length > 0 || MockContent;
             
             return (
               <TabsContent key={tab.key} value={tab.key} className="mt-6 space-y-6">
@@ -307,11 +321,25 @@ const Knowledge = () => {
                   </div>
                 )}
 
-                {/* Dynamic Modules from training_modules */}
+                {/* Regular Modules (not containers) */}
                 {modules.length > 0 && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {modules.map((module) => (
-                      <ModuleCard key={module.id} module={module as any} />
+                    {modules.map((module: any) => (
+                      <ModuleCard key={module.id} module={module} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Standalone Lessons from container modules */}
+                {standaloneLessons.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {standaloneLessons.map((lesson, index) => (
+                      <LessonCard 
+                        key={lesson.id} 
+                        lesson={lesson} 
+                        moduleSlug={containerModuleSlug}
+                        episodeNumber={standaloneLessons.length - index}
+                      />
                     ))}
                   </div>
                 )}
@@ -321,8 +349,8 @@ const Knowledge = () => {
                   <MockContent searchQuery={searchQuery} />
                 )}
 
-                {/* Empty state if no modules and no mock content */}
-                {modules.length === 0 && !MockContent && (
+                {/* Empty state if no content at all */}
+                {!hasContent && (
                   <GlassCard className="text-center py-16">
                     <Folder className="h-16 w-16 text-muted-foreground/30 mx-auto mb-6" />
                     <h3 className="text-xl font-semibold text-foreground mb-2">

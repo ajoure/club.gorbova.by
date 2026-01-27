@@ -7415,6 +7415,7 @@ export type Database = {
           icon: string | null
           id: string
           is_active: boolean | null
+          is_container: boolean | null
           menu_section_key: string | null
           product_id: string | null
           slug: string
@@ -7431,6 +7432,7 @@ export type Database = {
           icon?: string | null
           id?: string
           is_active?: boolean | null
+          is_container?: boolean | null
           menu_section_key?: string | null
           product_id?: string | null
           slug: string
@@ -7447,6 +7449,7 @@ export type Database = {
           icon?: string | null
           id?: string
           is_active?: boolean | null
+          is_container?: boolean | null
           menu_section_key?: string | null
           product_id?: string | null
           slug?: string
