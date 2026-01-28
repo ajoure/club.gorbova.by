@@ -339,6 +339,7 @@ export function ContentCreationWizard({
           title: wizardData.lesson.title,
           slug: wizardData.lesson.slug || generateLessonSlug(wizardData.lesson.title),
           description: wizardData.lesson.description || null,
+          thumbnail_url: wizardData.lesson.thumbnail_url || null,
           content_type: "mixed",
           is_active: true,
           sort_order: 0,
@@ -376,6 +377,7 @@ export function ContentCreationWizard({
           title: wizardData.lesson.title,
           slug: wizardData.lesson.slug || generateLessonSlug(wizardData.lesson.title),
           description: wizardData.lesson.description || null,
+          thumbnail_url: wizardData.lesson.thumbnail_url || null,
           content_type: "mixed",
           is_active: true,
           sort_order: 0, // New lessons first, sorted by created_at DESC
