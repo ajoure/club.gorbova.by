@@ -48,11 +48,13 @@ export function useContainerLessons(): LessonsBySectionResult {
           thumbnail_url,
           duration_minutes,
           created_at,
+          published_at,
           sort_order,
           module_id
         `)
         .in("module_id", containerIds)
         .eq("is_active", true)
+        .order("published_at", { ascending: false, nullsFirst: false })
         .order("sort_order", { ascending: false })
         .order("created_at", { ascending: false });
 
@@ -92,6 +94,7 @@ export function useContainerLessons(): LessonsBySectionResult {
         cover_image: lesson.thumbnail_url,
         video_duration: lesson.duration_minutes ? lesson.duration_minutes * 60 : null,
         created_at: lesson.created_at,
+        published_at: lesson.published_at,
         sort_order: lesson.sort_order ?? 0,
         has_access: true, // TODO: Check access if needed
       });

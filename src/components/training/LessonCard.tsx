@@ -15,6 +15,7 @@ export interface LessonCardData {
   cover_image?: string | null;
   video_duration?: number | null;
   created_at?: string;
+  published_at?: string | null; // Use for display instead of created_at if available
   sort_order?: number;
   has_access?: boolean;
 }
@@ -45,8 +46,10 @@ export function LessonCard({
     navigate(`/library/${moduleSlug}/${lesson.slug}`);
   };
 
-  const formattedDate = lesson.created_at
-    ? format(new Date(lesson.created_at), "d MMM yyyy", { locale: ru })
+  // Prefer published_at over created_at for display
+  const displayDate = lesson.published_at || lesson.created_at;
+  const formattedDate = displayDate
+    ? format(new Date(displayDate), "d MMM yyyy", { locale: ru })
     : null;
 
   return (
@@ -77,10 +80,10 @@ export function LessonCard({
         
         <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent" />
         
-        {/* Play button */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="relative z-10 h-14 w-14 rounded-full bg-primary/90 flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
-            <Play className="h-6 w-6 text-primary-foreground ml-1" />
+        {/* Play button - smaller, appears on hover */}
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+          <div className="relative z-10 h-12 w-12 rounded-full bg-primary/90 flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
+            <Play className="h-5 w-5 text-primary-foreground ml-0.5" />
           </div>
         </div>
 

@@ -89,6 +89,7 @@ import AdminIlex from "./pages/admin/AdminIlex";
 import AdminMarketingInsights from "./pages/admin/AdminMarketingInsights";
 import AdminPaymentDiagnostics from "./pages/admin/AdminPaymentDiagnostics";
 import AdminTelegramDiagnostics from "./pages/admin/AdminTelegramDiagnostics";
+import AdminKbImport from "./pages/admin/AdminKbImport";
 
 import Money from "./pages/Money";
 import AI from "./pages/AI";
@@ -236,6 +237,7 @@ const App = () => (
               <Route path="/admin/editorial/sources" element={<Navigate to="/admin/editorial" replace />} />
               <Route path="/admin/ilex" element={<ProtectedRoute><AdminIlex /></ProtectedRoute>} />
               <Route path="/admin/marketing" element={<ProtectedRoute><AdminMarketingInsights /></ProtectedRoute>} />
+              <Route path="/admin/kb-import" element={<ProtectedRoute><AdminKbImport /></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
