@@ -14,7 +14,7 @@ import { LessonCard } from "@/components/training/LessonCard";
 import { 
   Search, 
   MessageCircleQuestion, 
-  Video,
+  Video as VideoIcon,
   Scale, 
   Play, 
   Clock, 
@@ -22,14 +22,14 @@ import {
   Calendar,
   BookOpen,
   Folder,
-  LucideIcon,
+  type LucideIcon,
 } from "lucide-react";
 
 // Icon mapping for dynamic icons
 const ICONS: Record<string, LucideIcon> = {
   MessageCircleQuestion,
   HelpCircle: MessageCircleQuestion,
-  Video,
+  Video: VideoIcon,
   Scale,
   BookOpen,
   Folder,
