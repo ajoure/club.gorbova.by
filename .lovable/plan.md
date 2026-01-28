@@ -1,88 +1,93 @@
 
+# План: Добавить кнопки генерации обложки в мастер создания уроков
 
-# План: Исправление проблемы перезагрузки при скролле на мобильных
+## Описание проблемы
 
-## Причина проблемы
-
-В `AdminLayout` контент скроллится внутри `<main className="overflow-y-auto">`, а не на уровне `window`. Компонент `PullToRefresh` проверяет `window.scrollY === 0`, которое **всегда равно 0**, потому что `window` не скроллится — скроллится внутренний контейнер.
-
-В результате **любой жест вниз** ошибочно воспринимается как pull-to-refresh и вызывает перезагрузку страницы.
+В мастере создания контента (`ContentCreationWizard`) при создании урока (как standalone, так и внутри модуля) отсутствуют:
+- Поле для превью изображения урока (thumbnail)
+- Кнопка генерации обложки AI (как в `ModuleFormFields`)
+- Кнопка загрузки изображения
 
 ## Решение
 
-Модифицировать `PullToRefresh` чтобы он отслеживал позицию скролла **ближайшего скроллируемого контейнера**, а не `window`.
+Расширить компонент `LessonFormFieldsSimple` или создать новый `LessonFormFieldsWithCover`, который включает:
 
-## Изменения в коде
+1. Все существующие поля (title, slug, description)
+2. Поле `thumbnail_url` для URL превью
+3. Кнопку загрузки файла
+4. Кнопку AI-генерации обложки через Edge Function `generate-cover`
 
-### Файл: `src/components/layout/PullToRefresh.tsx`
+## Изменения в файлах
 
-**Что изменится:**
+### 1. `src/components/admin/trainings/LessonFormFieldsSimple.tsx`
 
-1. Добавить `ref` на контейнер для получения позиции скролла
-2. Найти ближайший скроллируемый родитель при старте жеста
-3. Проверять `scrollTop` этого контейнера вместо `window.scrollY`
-
-```tsx
-// БЫЛО:
-if (window.scrollY === 0 && !refreshing) {
-  startY.current = e.touches[0].clientY;
-  isPulling.current = true;
-}
-
-// СТАНЕТ:
-const scrollContainer = findScrollableParent(containerRef.current);
-const scrollTop = scrollContainer 
-  ? scrollContainer.scrollTop 
-  : window.scrollY;
-
-if (scrollTop === 0 && !refreshing) {
-  startY.current = e.touches[0].clientY;
-  isPulling.current = true;
-  scrollContainerRef.current = scrollContainer;
+Добавить в интерфейс `LessonFormDataSimple`:
+```typescript
+export interface LessonFormDataSimple {
+  title: string;
+  slug: string;
+  description?: string;
+  thumbnail_url?: string;  // ДОБАВИТЬ
 }
 ```
 
-**Новая вспомогательная функция:**
+Добавить логику для:
+- Загрузки изображения в storage `training-assets`
+- Вызова Edge Function `generate-cover` с параметром `lessonId`
+- Отображения превью изображения
 
-```tsx
-function findScrollableParent(el: HTMLElement | null): HTMLElement | null {
-  while (el) {
-    const { overflowY } = window.getComputedStyle(el);
-    if (overflowY === 'auto' || overflowY === 'scroll') {
-      if (el.scrollHeight > el.clientHeight) {
-        return el;
-      }
-    }
-    el = el.parentElement;
-  }
-  return null;
-}
+Добавить UI:
+- Поле ввода URL / кнопка загрузки / кнопка AI
+
+### 2. `src/components/admin/trainings/ContentCreationWizard.tsx`
+
+Обновить создание урока, чтобы передавать `thumbnail_url`:
+
+```typescript
+// В handleCreateLessonInModule и handleCreateStandaloneLesson
+const { data: newLesson, error } = await supabase
+  .from("training_lessons")
+  .insert({
+    module_id: ...,
+    title: wizardData.lesson.title,
+    slug: wizardData.lesson.slug,
+    description: wizardData.lesson.description,
+    thumbnail_url: wizardData.lesson.thumbnail_url,  // ДОБАВИТЬ
+    ...
+  })
 ```
 
-**Также в `handleTouchMove`:**
+## UI результат
 
-```tsx
-// БЫЛО:
-if (window.scrollY > 0) {
+На шаге ввода данных урока появятся:
+- Поле "Превью урока" с input для URL
+- Кнопка 📤 (Upload) — загрузка файла
+- Кнопка ✨ AI — генерация обложки
 
-// СТАНЕТ:
-const scrollTop = scrollContainerRef.current 
-  ? scrollContainerRef.current.scrollTop 
-  : window.scrollY;
-if (scrollTop > 0) {
 ```
-
-## Результат
-
-| Ситуация | До исправления | После исправления |
-|----------|----------------|-------------------|
-| Скролл вниз внутри контейнера | ❌ Перезагрузка | ✅ Нормальный скролл |
-| Скролл вверх до упора + тянем вниз | ✅ Pull-to-refresh | ✅ Pull-to-refresh |
-| Скролл на странице без контейнера | ✅ Работает | ✅ Работает |
+┌─────────────────────────────────────────────────────┐
+│  Название урока       │  URL-адрес                  │
+│  [________________]   │  [____________________]     │
+├─────────────────────────────────────────────────────┤
+│  Краткое описание                                   │
+│  [______________________________________________]   │
+├─────────────────────────────────────────────────────┤
+│  Превью урока                                       │
+│  [https://...___________] [📤] [✨ AI]              │
+│                                                     │
+│  ┌──────────┐  (если есть изображение)              │
+│  │  preview │                                       │
+│  └──────────┘                                       │
+└─────────────────────────────────────────────────────┘
+```
 
 ## Файлы для изменения
 
 | Файл | Изменение |
 |------|-----------|
-| `src/components/layout/PullToRefresh.tsx` | Добавить определение скроллируемого родителя, проверять его `scrollTop` вместо `window.scrollY` |
+| `src/components/admin/trainings/LessonFormFieldsSimple.tsx` | Добавить thumbnail_url, кнопки загрузки и AI-генерации |
+| `src/components/admin/trainings/ContentCreationWizard.tsx` | Передавать thumbnail_url при создании урока |
 
+## Проверка
+
+После реализации сделаю скриншот мастера на шаге ввода данных урока, где будут видны кнопки генерации.
