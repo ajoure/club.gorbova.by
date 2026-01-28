@@ -2742,6 +2742,59 @@ export type Database = {
           },
         ]
       }
+      kb_questions: {
+        Row: {
+          answer_date: string
+          created_at: string
+          episode_number: number
+          full_question: string | null
+          id: string
+          kinescope_url: string | null
+          lesson_id: string
+          question_number: number | null
+          tags: string[] | null
+          timecode_seconds: number | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          answer_date: string
+          created_at?: string
+          episode_number: number
+          full_question?: string | null
+          id?: string
+          kinescope_url?: string | null
+          lesson_id: string
+          question_number?: number | null
+          tags?: string[] | null
+          timecode_seconds?: number | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          answer_date?: string
+          created_at?: string
+          episode_number?: number
+          full_question?: string | null
+          id?: string
+          kinescope_url?: string | null
+          lesson_id?: string
+          question_number?: number | null
+          tags?: string[] | null
+          timecode_seconds?: number | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "kb_questions_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "training_lessons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lesson_attachments: {
         Row: {
           created_at: string
@@ -7354,6 +7407,7 @@ export type Database = {
           id: string
           is_active: boolean | null
           module_id: string
+          published_at: string | null
           slug: string
           sort_order: number | null
           thumbnail_url: string | null
@@ -7371,6 +7425,7 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           module_id: string
+          published_at?: string | null
           slug: string
           sort_order?: number | null
           thumbnail_url?: string | null
@@ -7388,6 +7443,7 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           module_id?: string
+          published_at?: string | null
           slug?: string
           sort_order?: number | null
           thumbnail_url?: string | null

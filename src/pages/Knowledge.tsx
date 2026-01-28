@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { usePageSections } from "@/hooks/usePageSections";
 import { useSidebarModules } from "@/hooks/useSidebarModules";
 import { useContainerLessons } from "@/hooks/useContainerLessons";
+import { useKbQuestions, formatTimecode, buildKinescopeUrlWithTimecode } from "@/hooks/useKbQuestions";
 import { ModuleCard } from "@/components/training/ModuleCard";
 import { LessonCard } from "@/components/training/LessonCard";
 import { 
@@ -22,8 +24,12 @@ import {
   Calendar,
   BookOpen,
   Folder,
+  ChevronDown,
+  ExternalLink,
   type LucideIcon,
 } from "lucide-react";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
 
 // Icon mapping for dynamic icons
 const ICONS: Record<string, LucideIcon> = {
@@ -39,110 +45,107 @@ const getIcon = (iconName: string): LucideIcon => {
   return ICONS[iconName] || Folder;
 };
 
-// Mock данные для вопросов
-const mockQuestions = [
-  {
-    id: "1",
-    title: "Уплата налогов при УСН",
-    content: "Добрый день! У меня ИП на упрощёнке. Недавно выставила счёт клиенту из РФ. Подскажите, нужно ли мне платить НДС в этом случае?",
-    videoUrl: "#",
-    timecode: "14:20",
-    episodeNumber: 42,
-    createdAt: "2025-01-15"
-  },
-  {
-    id: "2", 
-    title: "Оформление командировки сотрудника",
-    content: "Планирую отправить сотрудника в командировку в Минск на 3 дня. Какие документы нужно оформить и как правильно рассчитать суточные?",
-    videoUrl: "#",
-    timecode: "8:45",
-    episodeNumber: 41,
-    createdAt: "2025-01-10"
-  },
-  {
-    id: "3",
-    title: "Расчёт отпускных при неполном году работы",
-    content: "Сотрудник проработал 7 месяцев и хочет взять отпуск. Как правильно рассчитать отпускные в этом случае? Есть ли какие-то особенности?",
-    videoUrl: "#",
-    timecode: "22:15",
-    episodeNumber: 40,
-    createdAt: "2025-01-05"
-  },
-  {
-    id: "4",
-    title: "Декретный отпуск для ИП",
-    content: "Я индивидуальный предприниматель. Скоро ухожу в декрет. Какие выплаты мне положены и как их оформить? Нужно ли приостанавливать деятельность?",
-    videoUrl: "#",
-    timecode: "18:30",
-    episodeNumber: 39,
-    createdAt: "2024-12-28"
-  },
-  {
-    id: "5",
-    title: "Договор с самозанятым из России",
-    content: "Хочу заключить договор с самозанятым из РФ на разработку сайта. Какие документы нужны? Как правильно оформить оплату?",
-    videoUrl: "#",
-    timecode: "11:05",
-    episodeNumber: 38,
-    createdAt: "2024-12-20"
-  }
-];
-
-// Mock данные для видеовыпусков удалены - используем только реальные данные из БД
-
-// Questions tab content component
+// Questions tab content component - now uses real data from kb_questions
 function QuestionsContent({ searchQuery }: { searchQuery: string }) {
-  const filteredQuestions = mockQuestions.filter(q => 
-    q.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    q.content.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const { data: questions, isLoading } = useKbQuestions({ searchQuery, limit: 200 });
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        {[1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-32 w-full" />
+        ))}
+      </div>
+    );
+  }
+
+  if (!questions || questions.length === 0) {
+    return (
+      <GlassCard className="text-center py-12">
+        <MessageCircleQuestion className="h-12 w-12 text-muted-foreground/50 mx-auto mb-4" />
+        <p className="text-muted-foreground">
+          {searchQuery ? "Вопросы не найдены" : "Вопросы ещё не добавлены"}
+        </p>
+      </GlassCard>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      {filteredQuestions.length === 0 ? (
-        <GlassCard className="text-center py-12">
-          <MessageCircleQuestion className="h-12 w-12 text-muted-foreground/50 mx-auto mb-4" />
-          <p className="text-muted-foreground">Вопросы не найдены</p>
-        </GlassCard>
-      ) : (
-        filteredQuestions.map((question) => (
-          <GlassCard key={question.id} hover className="space-y-4">
+      {questions.map((question) => {
+        const isExpanded = expandedIds.has(question.id);
+        const formattedDate = question.answer_date
+          ? format(new Date(question.answer_date), "d MMM yyyy", { locale: ru })
+          : null;
+        const videoUrl = buildKinescopeUrlWithTimecode(question.kinescope_url, question.timecode_seconds);
+
+        return (
+          <GlassCard key={question.id} className="space-y-3">
+            {/* Header */}
             <div className="flex items-start justify-between gap-4">
-              <h3 className="text-lg font-semibold text-foreground">
+              <h3 className="text-lg font-semibold text-foreground leading-tight">
                 {question.title}
               </h3>
               <Badge variant="outline" className="shrink-0 text-xs bg-primary/10 text-primary border-primary/20">
-                Выпуск #{question.episodeNumber}
+                Выпуск #{question.episode_number}
               </Badge>
             </div>
             
-            <p className="text-muted-foreground leading-relaxed italic">
-              "{question.content}"
-            </p>
+            {/* Expandable full question */}
+            {question.full_question && (
+              <Collapsible open={isExpanded} onOpenChange={() => toggleExpand(question.id)}>
+                <CollapsibleTrigger className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                  <ChevronDown className={`h-4 w-4 transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
+                  {isExpanded ? "Свернуть вопрос" : "Показать полный вопрос"}
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <p className="text-muted-foreground leading-relaxed italic mt-2 pl-5 border-l-2 border-primary/20">
+                    "{question.full_question}"
+                  </p>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
             
+            {/* Footer */}
             <div className="flex items-center justify-between pt-3 border-t border-border/30">
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="gap-2 text-primary hover:text-primary hover:bg-primary/10 rounded-xl"
+              <a 
+                href={videoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
               >
                 <Play className="h-4 w-4" />
                 Смотреть видеоответ
-              </Button>
+                <ExternalLink className="h-3 w-3" />
+              </a>
               <div className="flex items-center gap-3">
-                <span className="text-xs text-muted-foreground hidden sm:flex items-center gap-1">
-                  <Calendar className="h-3 w-3" />
-                  {question.createdAt}
-                </span>
-                <Badge variant="secondary" className="backdrop-blur-sm bg-secondary/50 gap-1">
-                  <Clock className="h-3 w-3" />
-                  {question.timecode}
-                </Badge>
+                {formattedDate && (
+                  <span className="text-xs text-muted-foreground hidden sm:flex items-center gap-1">
+                    <Calendar className="h-3 w-3" />
+                    {formattedDate}
+                  </span>
+                )}
+                {question.timecode_seconds !== null && (
+                  <Badge variant="secondary" className="backdrop-blur-sm bg-secondary/50 gap-1">
+                    <Clock className="h-3 w-3" />
+                    {formatTimecode(question.timecode_seconds)}
+                  </Badge>
+                )}
               </div>
             </div>
           </GlassCard>
-        ))
-      )}
+        );
+      })}
     </div>
   );
 }

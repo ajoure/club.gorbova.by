@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useTrainingLessons, TrainingLesson } from "@/hooks/useTrainingLessons";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
+import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,8 @@ import {
   Files,
   BookOpen,
   ExternalLink,
+  ListVideo,
+  Play,
 } from "lucide-react";
 
 const contentTypeConfig = {
@@ -82,6 +85,9 @@ export default function LibraryLesson() {
 
   // Fetch blocks for current lesson
   const { blocks, loading: blocksLoading } = useLessonBlocks(currentLesson?.id);
+
+  // Fetch questions for this lesson (if any - for video Q&A episodes)
+  const { data: lessonQuestions } = useLessonQuestions(currentLesson?.id);
 
   const handleToggleComplete = async () => {
     if (!currentLesson) return;
@@ -301,6 +307,46 @@ export default function LibraryLesson() {
                     </div>
                     <ExternalLink className="h-4 w-4 text-muted-foreground" />
                   </a>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Questions of this episode (for Q&A video lessons) */}
+        {lessonQuestions && lessonQuestions.length > 0 && (
+          <Card className="mb-6">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <ListVideo className="h-5 w-5" />
+                Вопросы этого выпуска ({lessonQuestions.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {lessonQuestions.map((q) => (
+                  <div
+                    key={q.id}
+                    className="flex items-center justify-between gap-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                  >
+                    <span className="text-sm flex-1">{q.title}</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="outline" className="text-xs">
+                        {formatTimecode(q.timecode_seconds)}
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2"
+                        onClick={() => q.timecode_seconds && window.open(
+                          `${q.kinescope_url}?t=${q.timecode_seconds}`,
+                          '_blank'
+                        )}
+                      >
+                        <Play className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
                 ))}
               </div>
             </CardContent>
