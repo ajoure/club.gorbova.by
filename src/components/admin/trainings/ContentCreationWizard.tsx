@@ -638,7 +638,7 @@ export function ContentCreationWizard({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-3xl w-[95vw] max-h-[90vh] flex flex-col p-0">
+      <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] flex flex-col p-0">
         <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Wand2 className="h-5 w-5 text-primary" />
@@ -648,7 +648,7 @@ export function ContentCreationWizard({
         </DialogHeader>
 
         {/* Progress indicator */}
-        <div className="px-6 pb-2 shrink-0">
+        <div className="px-6 pb-2 shrink-0 overflow-x-auto">
           <WizardStepIndicator steps={steps} currentStep={step} />
         </div>
 

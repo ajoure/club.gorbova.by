@@ -1,19 +1,24 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { LessonBlockEditor } from "@/components/admin/lesson-editor/LessonBlockEditor";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
+import { LessonThumbnailEditor } from "@/components/admin/trainings/LessonThumbnailEditor";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, BookOpen, Eye, Edit, RefreshCw } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ArrowLeft, BookOpen, Eye, Edit, RefreshCw, ImageIcon, ChevronDown } from "lucide-react";
+import { toast } from "sonner";
 
 export default function AdminLessonBlockEditor() {
   const { moduleId, lessonId } = useParams<{ moduleId: string; lessonId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [previewMode, setPreviewMode] = useState(false);
+  const [thumbnailOpen, setThumbnailOpen] = useState(false);
   
   // Fetch blocks for preview mode - with refetch capability
   const { blocks, loading: blocksLoading, refetch } = useLessonBlocks(lessonId);
@@ -56,6 +61,27 @@ export default function AdminLessonBlockEditor() {
     },
     enabled: !!lessonId,
   });
+
+  // Handle thumbnail change
+  const handleThumbnailChange = useCallback(async (url: string | null) => {
+    if (!lessonId) return;
+    
+    try {
+      const { error } = await supabase
+        .from("training_lessons")
+        .update({ thumbnail_url: url })
+        .eq("id", lessonId);
+      
+      if (error) throw error;
+      
+      // Invalidate cache to refresh lesson data
+      queryClient.invalidateQueries({ queryKey: ["training-lesson-admin", lessonId] });
+      toast.success("Обложка урока обновлена");
+    } catch (error: any) {
+      console.error("Error updating thumbnail:", error);
+      toast.error(`Ошибка сохранения: ${error.message}`);
+    }
+  }, [lessonId, queryClient]);
 
   if (moduleLoading || lessonLoading) {
     return (
@@ -136,6 +162,31 @@ export default function AdminLessonBlockEditor() {
             </Button>
           </div>
         </div>
+
+        {/* Thumbnail Editor Collapsible */}
+        <Collapsible open={thumbnailOpen} onOpenChange={setThumbnailOpen} className="mb-4">
+          <CollapsibleTrigger asChild>
+            <Button variant="outline" className="w-full justify-between">
+              <span className="flex items-center gap-2">
+                <ImageIcon className="h-4 w-4" />
+                Обложка урока
+                {lesson.thumbnail_url && (
+                  <span className="text-xs text-muted-foreground">(установлена)</span>
+                )}
+              </span>
+              <ChevronDown className={`h-4 w-4 transition-transform ${thumbnailOpen ? "rotate-180" : ""}`} />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-3 p-4 bg-card border rounded-lg">
+            <LessonThumbnailEditor
+              lessonId={lessonId!}
+              lessonTitle={lesson.title}
+              lessonDescription={lesson.description || undefined}
+              currentThumbnail={lesson.thumbnail_url}
+              onThumbnailChange={handleThumbnailChange}
+            />
+          </CollapsibleContent>
+        </Collapsible>
 
         {/* Block Editor or Preview */}
         <div className="bg-card border rounded-lg p-6">
