@@ -1105,6 +1105,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           product_id: deal.product_id,
           tariff_id: deal.tariff_id,
           status: deal.status,
+          created_at: deal.created_at,  // Pass deal created_at for date calculation
         }}
         tariff={tariff ? { access_days: tariff.access_days, name: tariff.name } : null}
         existingSubscription={subscription}

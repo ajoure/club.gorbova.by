@@ -26,6 +26,7 @@ Deno.serve(async (req) => {
     const { 
       orderId, 
       customAccessDays,
+      customAccessStartAt,  // NEW: optional custom start date
       extendFromCurrent = true,
       grantTelegram = true,
       grantGetcourse = true,
@@ -83,8 +84,21 @@ Deno.serve(async (req) => {
     const isClubProduct = productId === "11c9f1b8-0355-4753-bd74-40b42aa53616";
     const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
     
+    // Determine base start date:
+    // 1. If customAccessStartAt provided — use it
+    // 2. Otherwise use order.created_at (deal date)
+    // 3. Fallback to now if nothing available
+    let baseStartDate = now;
+    if (customAccessStartAt) {
+      baseStartDate = new Date(customAccessStartAt);
+      console.log(`Using custom access start date: ${customAccessStartAt}`);
+    } else if (order.created_at) {
+      baseStartDate = new Date(order.created_at);
+      console.log(`Using order created_at as base: ${order.created_at}`);
+    }
+    
     // Check for existing active subscription for this product to extend from
-    let accessStartAt = now;
+    let accessStartAt = baseStartDate;
     let existingProductSub = null;
     
     if (extendFromCurrent) {

@@ -673,6 +673,7 @@ Deno.serve(async (req) => {
               currency: item.currency || 'BYN',
               customer_email: orderCustomerEmail,
               reconcile_source: 'bepaid_auto',
+              created_at: paidAt,  // Use payment date, not now()
               purchase_snapshot: {
                 bepaid_uid: item.bepaid_uid,
                 tracking_id: item.tracking_id,

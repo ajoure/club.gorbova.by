@@ -2980,7 +2980,7 @@ async function createOrderFromWebhook(
   // Extract subscription ID from body
   const bepaidSubscriptionId = body.id || subscription?.id || null;
 
-  // Create order
+  // Create order with payment date as created_at
   const { data: order, error } = await supabase
     .from('orders_v2')
     .insert({
@@ -2998,6 +2998,7 @@ async function createOrderFromWebhook(
       bepaid_subscription_id: bepaidSubscriptionId,
       reconcile_source: 'webhook_orphan',
       paid_amount: amountBYN,
+      created_at: transaction.paid_at || now.toISOString(),  // Use payment date, not now()
       meta: {
         reconstructed_from_webhook: true,
         bepaid_uid: transaction.uid,

@@ -234,7 +234,7 @@ serve(async (req) => {
         const { data: ordNum } = await supabase.rpc('generate_order_number');
         const orderNumber = ordNum || `BF26-${Date.now().toString(36).toUpperCase()}`;
 
-        // Create order
+        // Create order with payment date as created_at
         const { data: newOrder, error: insertError } = await supabase
           .from('orders_v2')
           .insert({
@@ -249,6 +249,7 @@ serve(async (req) => {
             is_trial: false,
             product_id: productId,
             tariff_id: tariffId,
+            created_at: payment.paid_at,  // Use payment date, not now()
             meta: {
               source: 'admin-backfill-2026-orders',
               backfill_payment_id: payment.id,

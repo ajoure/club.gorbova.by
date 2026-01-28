@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { format, addDays, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
@@ -17,8 +17,15 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Calendar, Shield, AlertTriangle, CheckCircle, Clock } from "lucide-react";
+import { Calendar as CalendarIcon, Shield, AlertTriangle, CheckCircle, Clock } from "lucide-react";
 import { toast } from "sonner";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 
 interface GrantAccessFromDealDialogProps {
   open: boolean;
@@ -31,6 +38,7 @@ interface GrantAccessFromDealDialogProps {
     product_id: string;
     tariff_id: string | null;
     status: string;
+    created_at?: string;  // Deal creation date (should be payment date)
   };
   tariff?: { access_days: number; name: string } | null;
   existingSubscription?: { 
@@ -52,6 +60,7 @@ export function GrantAccessFromDealDialog({
 }: GrantAccessFromDealDialogProps) {
   const queryClient = useQueryClient();
   const [customDays, setCustomDays] = useState<number | null>(null);
+  const [customStartDate, setCustomStartDate] = useState<Date | null>(null);
   const [extendFromCurrent, setExtendFromCurrent] = useState(true);
   const [grantTelegram, setGrantTelegram] = useState(true);
   const [grantGetcourse, setGrantGetcourse] = useState(true);
@@ -76,12 +85,24 @@ export function GrantAccessFromDealDialog({
     enabled: open && !!deal.user_id && !!deal.product_id,
   });
 
+  // Set default start date from deal.created_at when dialog opens
+  useEffect(() => {
+    if (open && deal.created_at) {
+      setCustomStartDate(new Date(deal.created_at));
+    } else if (open) {
+      setCustomStartDate(new Date());
+    }
+  }, [open, deal.created_at]);
+
   // Calculate access period
   const accessDays = customDays ?? tariff?.access_days ?? 30;
   
   const calculation = useMemo(() => {
     const now = new Date();
     const activeSub = productSubscription || existingSubscription;
+    
+    // Base date: customStartDate or deal.created_at or now
+    const baseDate = customStartDate || (deal.created_at ? new Date(deal.created_at) : now);
     
     // Check if there's active access to extend from
     const hasActiveAccess = activeSub?.status === "active" && 
@@ -92,7 +113,7 @@ export function GrantAccessFromDealDialog({
     if (extendFromCurrent && hasActiveAccess && activeSub?.access_end_at) {
       startDate = new Date(activeSub.access_end_at);
     } else {
-      startDate = now;
+      startDate = baseDate;
     }
     
     const endDate = addDays(startDate, accessDays);
@@ -102,6 +123,9 @@ export function GrantAccessFromDealDialog({
       ? differenceInDays(new Date(activeSub.access_end_at), now)
       : 0;
     
+    // Check if start date is in the past
+    const isStartInPast = startDate < now;
+    
     return {
       startDate,
       endDate,
@@ -109,8 +133,9 @@ export function GrantAccessFromDealDialog({
       remainingDays,
       totalDays: accessDays + (extendFromCurrent ? remainingDays : 0),
       currentEndDate: activeSub?.access_end_at ? new Date(activeSub.access_end_at) : null,
+      isStartInPast,
     };
-  }, [accessDays, extendFromCurrent, productSubscription, existingSubscription]);
+  }, [accessDays, extendFromCurrent, productSubscription, existingSubscription, customStartDate, deal.created_at]);
 
   // Grant access mutation
   const grantAccessMutation = useMutation({
@@ -119,6 +144,7 @@ export function GrantAccessFromDealDialog({
         body: {
           orderId: deal.id,
           customAccessDays: customDays,
+          customAccessStartAt: customStartDate?.toISOString(),  // Pass custom start date
           extendFromCurrent,
           grantTelegram,
           grantGetcourse,
@@ -214,6 +240,40 @@ export function GrantAccessFromDealDialog({
 
           <Separator />
 
+          {/* Custom start date */}
+          <div className="space-y-2">
+            <Label>Дата начала доступа</Label>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    "w-full justify-start text-left font-normal",
+                    !customStartDate && "text-muted-foreground"
+                  )}
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {customStartDate ? format(customStartDate, "dd MMMM yyyy", { locale: ru }) : "Выберите дату"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={customStartDate || undefined}
+                  onSelect={(date) => setCustomStartDate(date || null)}
+                  locale={ru}
+                  initialFocus
+                  className="p-3 pointer-events-auto"
+                />
+              </PopoverContent>
+            </Popover>
+            {calculation.isStartInPast && (
+              <p className="text-xs text-amber-600">
+                ⚠️ Дата начала в прошлом — доступ будет выдан ретроактивно
+              </p>
+            )}
+          </div>
+
           {/* Custom days */}
           <div className="space-y-2">
             <Label htmlFor="customDays">Количество дней доступа</Label>
@@ -272,7 +332,7 @@ export function GrantAccessFromDealDialog({
           {/* Result preview */}
           <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 space-y-2">
             <div className="flex items-center gap-2 text-primary">
-              <Calendar className="w-4 h-4" />
+              <CalendarIcon className="w-4 h-4" />
               <span className="text-sm font-medium">Результат</span>
             </div>
             <div className="flex items-center justify-between text-sm">
