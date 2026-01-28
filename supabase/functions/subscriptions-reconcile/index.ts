@@ -198,10 +198,19 @@ serve(async (req) => {
     }
 
     // 3. Close access for subscriptions with expired access_end_at
+    // PATCH: Compare against start of TODAY in Minsk timezone (21:00 UTC yesterday = 00:00 Minsk today)
+    // This ensures access lasts until the end of the expiration day
+    const minskMidnightToday = new Date();
+    minskMidnightToday.setUTCHours(21, 0, 0, 0); // 21:00 UTC = 00:00 Minsk
+    if (minskMidnightToday > now) {
+      // If 21:00 UTC hasn't happened yet today, use yesterday's 21:00 UTC
+      minskMidnightToday.setDate(minskMidnightToday.getDate() - 1);
+    }
+    
     const { data: expiredAccess, error: accessError } = await supabase
       .from('subscriptions_v2')
       .select('id, user_id, product_id, access_end_at, status, grace_period_status')
-      .lt('access_end_at', now.toISOString())
+      .lt('access_end_at', minskMidnightToday.toISOString())
       .in('status', ['active', 'past_due']);
 
     if (accessError) {

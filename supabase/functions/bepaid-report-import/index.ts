@@ -453,9 +453,28 @@ Deno.serve(async (req) => {
               const paymentDateMatch = payment.paymentDate?.match(/(\d{4}-\d{2}-\d{2})/);
               const paymentDate = paymentDateMatch ? new Date(paymentDateMatch[1]) : new Date();
               
-              // Calculate subscription end date (payment date + 30 days)
-              const subscriptionEnd = new Date(paymentDate);
-              subscriptionEnd.setDate(subscriptionEnd.getDate() + 30);
+              // Calculate subscription end date - calendar month for club at 21:00 UTC (end of day Minsk)
+              const CLUB_PRODUCT_ID = "11c9f1b8-0355-4753-bd74-40b42aa53616";
+              let subscriptionEnd: Date;
+              if (productId === CLUB_PRODUCT_ID) {
+                subscriptionEnd = new Date(Date.UTC(
+                  paymentDate.getUTCFullYear(),
+                  paymentDate.getUTCMonth() + 1,
+                  paymentDate.getUTCDate(),
+                  21, 0, 0
+                ));
+                // Edge case: 31 Jan → 28/29 Feb
+                if (subscriptionEnd.getUTCDate() !== paymentDate.getUTCDate()) {
+                  subscriptionEnd = new Date(Date.UTC(
+                    paymentDate.getUTCFullYear(),
+                    paymentDate.getUTCMonth() + 2,
+                    0, 21, 0, 0
+                  ));
+                }
+              } else {
+                subscriptionEnd = new Date(paymentDate);
+                subscriptionEnd.setDate(subscriptionEnd.getDate() + 30);
+              }
 
               const { data: newOrder, error: orderError } = await supabase
                 .from('orders_v2')
@@ -562,9 +581,27 @@ Deno.serve(async (req) => {
             const paymentDateMatch = payment.paymentDate?.match(/(\d{4}-\d{2}-\d{2})/);
             const paymentDate = paymentDateMatch ? new Date(paymentDateMatch[1]) : new Date();
             
-            // Calculate subscription end date (payment date + 30 days)
-            const subscriptionEnd = new Date(paymentDate);
-            subscriptionEnd.setDate(subscriptionEnd.getDate() + 30);
+            // Calculate subscription end date - calendar month for club at 21:00 UTC (end of day Minsk)
+            const CLUB_PRODUCT_ID = "11c9f1b8-0355-4753-bd74-40b42aa53616";
+            let subscriptionEnd: Date;
+            if (productId === CLUB_PRODUCT_ID) {
+              subscriptionEnd = new Date(Date.UTC(
+                paymentDate.getUTCFullYear(),
+                paymentDate.getUTCMonth() + 1,
+                paymentDate.getUTCDate(),
+                21, 0, 0
+              ));
+              if (subscriptionEnd.getUTCDate() !== paymentDate.getUTCDate()) {
+                subscriptionEnd = new Date(Date.UTC(
+                  paymentDate.getUTCFullYear(),
+                  paymentDate.getUTCMonth() + 2,
+                  0, 21, 0, 0
+                ));
+              }
+            } else {
+              subscriptionEnd = new Date(paymentDate);
+              subscriptionEnd.setDate(subscriptionEnd.getDate() + 30);
+            }
 
             const { data: newProfile, error: profileError } = await supabase
               .from('profiles')

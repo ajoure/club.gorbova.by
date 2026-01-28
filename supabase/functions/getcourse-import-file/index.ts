@@ -241,8 +241,29 @@ Deno.serve(async (req) => {
         if (status === 'paid') {
           const accessStartAt = paidAt;
           const startDate = new Date(accessStartAt);
-          const endDate = new Date(startDate);
-          endDate.setDate(endDate.getDate() + 30);
+          
+          // Calendar month for club at 21:00 UTC (end of day Minsk)
+          const CLUB_PRODUCT_ID = "11c9f1b8-0355-4753-bd74-40b42aa53616";
+          let endDate: Date;
+          if (productId === CLUB_PRODUCT_ID) {
+            endDate = new Date(Date.UTC(
+              startDate.getUTCFullYear(),
+              startDate.getUTCMonth() + 1,
+              startDate.getUTCDate(),
+              21, 0, 0
+            ));
+            // Edge case: 31 Jan → 28/29 Feb
+            if (endDate.getUTCDate() !== startDate.getUTCDate()) {
+              endDate = new Date(Date.UTC(
+                startDate.getUTCFullYear(),
+                startDate.getUTCMonth() + 2,
+                0, 21, 0, 0
+              ));
+            }
+          } else {
+            endDate = new Date(startDate);
+            endDate.setDate(endDate.getDate() + 30);
+          }
 
           const now = new Date();
           const subStatus = endDate > now ? 'active' : 'expired';

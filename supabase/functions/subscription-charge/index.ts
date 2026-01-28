@@ -604,8 +604,8 @@ async function chargeSubscription(
   const currentMinute = nowInTz.getMinutes();
   const currentTotalMinutes = currentHour * 60 + currentMinute;
   
-  // Check if we're within ±15 minutes of any configured charge time
-  const WINDOW_TOLERANCE_MINUTES = 15;
+  // Check if we're within ±60 minutes of any configured charge time (extended for cron reliability)
+  const WINDOW_TOLERANCE_MINUTES = 60;
   let isInChargeWindow = false;
   
   for (const timeStr of chargeTimesLocal.slice(0, chargeAttemptsPerDay)) {
@@ -1040,9 +1040,34 @@ async function chargeSubscription(
         }
       ).catch((e) => console.warn(`Receipt fetch failed:`, e));
 
-      // Extend subscription
-      const newEndDate = new Date();
-      newEndDate.setDate(newEndDate.getDate() + (tariff.access_days || 30));
+      // Extend subscription - calendar month for club, days for others
+      const CLUB_PRODUCT_ID = "11c9f1b8-0355-4753-bd74-40b42aa53616";
+      const isClubProduct = subscription?.product_id === CLUB_PRODUCT_ID;
+      let newEndDate: Date;
+
+      if (isClubProduct) {
+        // Calendar month: 22.01 → 22.02 (same day next month)
+        const now = new Date();
+        newEndDate = new Date(Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth() + 1,
+          now.getUTCDate(),
+          21, 0, 0  // 21:00 UTC = 00:00 Minsk next day (end of day)
+        ));
+        
+        // Edge case: 31 Jan → 28/29 Feb (last day of month)
+        if (newEndDate.getUTCDate() !== now.getUTCDate()) {
+          newEndDate = new Date(Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth() + 2,
+            0,  // 0 = last day of previous month
+            21, 0, 0
+          ));
+        }
+      } else {
+        newEndDate = new Date();
+        newEndDate.setDate(newEndDate.getDate() + (tariff.access_days || 30));
+      }
 
       const nextChargeDate = new Date(newEndDate);
       nextChargeDate.setDate(nextChargeDate.getDate() - 3);

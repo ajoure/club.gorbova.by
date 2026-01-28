@@ -679,10 +679,29 @@ async function createSubscription(
       accessEndAt.setDate(accessEndAt.getDate() + 30);
     }
   } else {
-    // Fallback: +30 дней от оплаты
+    // Fallback: calendar month for club at 21:00 UTC (end of day Minsk)
+    const CLUB_PRODUCT_ID = "11c9f1b8-0355-4753-bd74-40b42aa53616";
     accessStartAt = new Date(deal.deal_payed_at || deal.deal_created_at);
-    accessEndAt = new Date(accessStartAt);
-    accessEndAt.setDate(accessEndAt.getDate() + 30);
+    
+    if (productId === CLUB_PRODUCT_ID) {
+      accessEndAt = new Date(Date.UTC(
+        accessStartAt.getUTCFullYear(),
+        accessStartAt.getUTCMonth() + 1,
+        accessStartAt.getUTCDate(),
+        21, 0, 0
+      ));
+      // Edge case: 31 Jan → 28/29 Feb
+      if (accessEndAt.getUTCDate() !== accessStartAt.getUTCDate()) {
+        accessEndAt = new Date(Date.UTC(
+          accessStartAt.getUTCFullYear(),
+          accessStartAt.getUTCMonth() + 2,
+          0, 21, 0, 0
+        ));
+      }
+    } else {
+      accessEndAt = new Date(accessStartAt);
+      accessEndAt.setDate(accessEndAt.getDate() + 30);
+    }
   }
   
   // Определяем статус: active если дата окончания >= сегодня
