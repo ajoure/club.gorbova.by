@@ -20,12 +20,27 @@ function isInsideEditableTarget(target: EventTarget | null) {
   return !!target.closest('input, textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"]');
 }
 
+function findScrollableParent(el: HTMLElement | null): HTMLElement | null {
+  while (el) {
+    const { overflowY } = window.getComputedStyle(el);
+    if (overflowY === 'auto' || overflowY === 'scroll') {
+      if (el.scrollHeight > el.clientHeight) {
+        return el;
+      }
+    }
+    el = el.parentElement;
+  }
+  return null;
+}
+
 export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
   const startY = useRef(0);
   const isPulling = useRef(false);
   const currentPullDistance = useRef(0);
+  const scrollContainerRef = useRef<HTMLElement | null>(null);
   const threshold = 60;
 
   const blurIfNeeded = useCallback((e: React.SyntheticEvent) => {
@@ -40,10 +55,17 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
       // If a text input is focused, don't start pull-to-refresh.
       if (isEditableElement(document.activeElement)) return;
 
-      // Check if we're at the top of the page
-      if (window.scrollY === 0 && !refreshing) {
+      // Find the scrollable container (could be a parent with overflow-y: auto/scroll)
+      const scrollContainer = findScrollableParent(containerRef.current);
+      const scrollTop = scrollContainer 
+        ? scrollContainer.scrollTop 
+        : window.scrollY;
+
+      // Check if we're at the top of the scrollable area
+      if (scrollTop === 0 && !refreshing) {
         startY.current = e.touches[0].clientY;
         isPulling.current = true;
+        scrollContainerRef.current = scrollContainer;
       }
     },
     [refreshing]
@@ -55,11 +77,17 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
       if (isEditableElement(document.activeElement)) return;
       if (!isPulling.current || refreshing) return;
 
+      // Check scroll position of the tracked container
+      const scrollTop = scrollContainerRef.current 
+        ? scrollContainerRef.current.scrollTop 
+        : window.scrollY;
+
       // Stop if user scrolled down
-      if (window.scrollY > 0) {
+      if (scrollTop > 0) {
         isPulling.current = false;
         setPullDistance(0);
         currentPullDistance.current = 0;
+        scrollContainerRef.current = null;
         return;
       }
 
@@ -81,6 +109,7 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
     if (!isPulling.current) return;
 
     isPulling.current = false;
+    scrollContainerRef.current = null;
 
     const shouldRefresh = currentPullDistance.current >= threshold;
     currentPullDistance.current = 0;
@@ -110,6 +139,7 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
 
   return (
     <div
+      ref={containerRef}
       className="flex-1 min-h-0 flex flex-col relative touch-pan-y"
       onPointerDownCapture={blurIfNeeded}
       onTouchStart={handleTouchStart}
@@ -150,4 +180,3 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
     </div>
   );
 }
-
