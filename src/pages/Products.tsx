@@ -1,9 +1,12 @@
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { ExternalLink, ArrowRight } from "lucide-react";
+import { ExternalLink, ArrowRight, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { useAuth } from "@/contexts/AuthContext";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 
 import productClubImage from "@/assets/product-club.png";
 import productCourseImage from "@/assets/product-course.png";
@@ -18,9 +21,11 @@ interface ProductCardProps {
   isExternal?: boolean;
   price?: string;
   image: string;
+  isClub?: boolean;
+  isPurchased?: boolean;
 }
 
-function ProductCard({ title, description, badge, badgeVariant = "secondary", link, isExternal, price, image }: ProductCardProps) {
+function ProductCard({ title, description, badge, badgeVariant = "secondary", link, isExternal, price, image, isClub, isPurchased }: ProductCardProps) {
   const navigate = useNavigate();
 
   const handleClick = () => {
@@ -52,14 +57,26 @@ function ProductCard({ title, description, badge, badgeVariant = "secondary", li
           alt={title}
           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
         />
-        {badge && (
-          <Badge 
-            variant={badgeVariant} 
-            className={`absolute top-3 right-3 ${getBadgeClasses()}`}
-          >
-            {badge}
-          </Badge>
-        )}
+        <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
+          {/* Purchased badge - only for club with active subscription */}
+          {isClub && isPurchased && (
+            <div className="bg-emerald-500/90 backdrop-blur-sm text-white px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1 shadow-md">
+              <Check className="h-3 w-3" />
+              Куплено
+            </div>
+          )}
+          {(!isClub || !isPurchased) && <div />}
+          
+          {/* Status badge */}
+          {badge && (
+            <Badge 
+              variant={badgeVariant} 
+              className={`${getBadgeClasses()}`}
+            >
+              {badge}
+            </Badge>
+          )}
+        </div>
       </div>
       
       <div className="p-6">
@@ -93,15 +110,38 @@ function ProductCard({ title, description, badge, badgeVariant = "secondary", li
 }
 
 export default function Products() {
+  const { user } = useAuth();
+  
+  // Check if user has active club subscription
+  const { data: hasClubAccess } = useQuery({
+    queryKey: ["club-access", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return false;
+      
+      const { data } = await supabase
+        .from("subscriptions_v2")
+        .select("id, status")
+        .eq("user_id", user.id)
+        .eq("product_id", "11c9f1b8-0355-4753-bd74-40b42aa53616")
+        .in("status", ["active", "trial"])
+        .maybeSingle();
+      
+      return !!data;
+    },
+    enabled: !!user?.id,
+  });
+
   const products = [
     {
       title: "Клуб «Буква Закона»",
       description: "База знаний, экспертная поддержка и закрытое сообщество профессионалов",
       badge: "Подписка",
-      link: "/",
-      isExternal: false,
+      link: "https://club.gorbova.by",
+      isExternal: true,
       price: "от 100 BYN/мес",
       image: productClubImage,
+      isClub: true,
+      isPurchased: hasClubAccess || false,
     },
     {
       title: "Курс «Ценный бухгалтер»",

@@ -43,6 +43,7 @@ interface Product {
   lessonCount?: number;
   completedCount?: number;
   duration?: string;
+  isClub?: boolean;
 }
 
 const products: Product[] = [
@@ -54,12 +55,12 @@ const products: Product[] = [
     badgeVariant: "default",
     price: "от 100 BYN/мес",
     image: productClubImage,
-    isPurchased: true,
+    isPurchased: false, // Will be determined dynamically
     purchaseLink: "https://club.gorbova.by",
-    courseSlug: "knowledge", // Клуб ведёт в базу знаний
-    lessonCount: 24,
-    completedCount: 18,
+    // No courseSlug - club is not a course
+    // No lessonCount - not applicable for subscription
     duration: "Подписка",
+    isClub: true, // Marker for special handling
   },
   {
     id: "2",
@@ -266,7 +267,8 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
           {/* Buttons */}
           {variant === "store" ? (
             <div className="flex items-center gap-2">
-              {product.isPurchased && product.courseSlug && (
+              {/* Don't show "Open Course" for club - it's not a course */}
+              {product.isPurchased && product.courseSlug && !product.isClub && (
                 <Button 
                   size="sm" 
                   onClick={handleOpenCourse}
@@ -278,23 +280,36 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
               )}
               <Button 
                 size="sm" 
-                variant={product.isPurchased ? "outline" : "default"}
+                variant={product.isPurchased && !product.isClub ? "outline" : "default"}
                 onClick={handleGoToSite}
-                className={product.isPurchased ? "" : "flex-1"}
+                className={product.isPurchased && !product.isClub ? "" : "flex-1"}
               >
                 На сайт
                 <ExternalLink className="ml-1.5 h-4 w-4" />
               </Button>
             </div>
           ) : (
-            <Button 
-              size="sm" 
-              onClick={handleOpenCourse}
-              className="w-full"
-            >
-              <Play className="h-4 w-4 mr-2" />
-              {progress > 0 ? "Продолжить" : "Начать обучение"}
-            </Button>
+            // For library view, club products shouldn't appear (no courseSlug)
+            // But if they do, just show "На сайт" button
+            product.isClub ? (
+              <Button 
+                size="sm" 
+                onClick={handleGoToSite}
+                className="w-full"
+              >
+                На сайт
+                <ExternalLink className="ml-1.5 h-4 w-4" />
+              </Button>
+            ) : (
+              <Button 
+                size="sm" 
+                onClick={handleOpenCourse}
+                className="w-full"
+              >
+                <Play className="h-4 w-4 mr-2" />
+                {progress > 0 ? "Продолжить" : "Начать обучение"}
+              </Button>
+            )
           )}
         </div>
       </div>
@@ -341,12 +356,39 @@ export default function Learning() {
     },
     enabled: !!user?.id,
   });
+
+  // Check if user has active club subscription
+  const { data: clubAccess } = useQuery({
+    queryKey: ["club-access", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return false;
+      
+      const { data } = await supabase
+        .from("subscriptions_v2")
+        .select("id, status")
+        .eq("user_id", user.id)
+        .eq("product_id", "11c9f1b8-0355-4753-bd74-40b42aa53616")
+        .in("status", ["active", "trial"])
+        .maybeSingle();
+      
+      return !!data;
+    },
+    enabled: !!user?.id,
+  });
   
   // Merge real module data with mock products
   const enrichedProducts = useMemo(() => products.map(product => {
     const matchingModule = modules.find(m => 
       m.slug === product.courseSlug || m.title.includes(product.title)
     );
+    
+    // Special handling for club product
+    if (product.isClub) {
+      return {
+        ...product,
+        isPurchased: clubAccess || false,
+      };
+    }
     
     // Special handling for buh-business product
     if (product.courseSlug === "buh-business") {
@@ -369,7 +411,7 @@ export default function Learning() {
       };
     }
     return product;
-  }), [modules, businessTrainingAccess]);
+  }), [modules, businessTrainingAccess, clubAccess]);
 
   // Filter modules by menu_section_key for each tab
   const libraryModules = modules.filter(m => 
