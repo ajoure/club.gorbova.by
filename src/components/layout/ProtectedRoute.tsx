@@ -15,8 +15,15 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const [isInitializing, setIsInitializing] = useState(true);
   
   useEffect(() => {
-    // Ждём 500ms перед тем как считать, что пользователь точно не авторизован
-    const timer = setTimeout(() => setIsInitializing(false), 500);
+    // Определяем мобильный Safari — там восстановление сессии занимает дольше
+    const isMobileSafari = /iPhone|iPad|iPod/.test(navigator.userAgent) && 
+                           /Safari/.test(navigator.userAgent) &&
+                           !/Chrome/.test(navigator.userAgent);
+    
+    // Для мобильного Safari даём 1200ms, для остальных 500ms
+    const delay = isMobileSafari ? 1200 : 500;
+    
+    const timer = setTimeout(() => setIsInitializing(false), delay);
     return () => clearTimeout(timer);
   }, []);
 
