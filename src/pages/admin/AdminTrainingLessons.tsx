@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useTrainingLessons, TrainingLesson, TrainingLessonFormData } from "@/hooks/useTrainingLessons";
+import { LessonThumbnailEditor } from "@/components/admin/trainings/LessonThumbnailEditor";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -132,6 +133,15 @@ const LessonFormContent = memo(function LessonFormContent({
         />
       </div>
 
+      {/* Thumbnail Editor */}
+      <LessonThumbnailEditor
+        lessonId={editingLesson?.id || "new"}
+        lessonTitle={formData.title}
+        lessonDescription={formData.description}
+        currentThumbnail={formData.thumbnail_url || null}
+        onThumbnailChange={(url) => onFormDataChange(prev => ({ ...prev, thumbnail_url: url || undefined }))}
+      />
+
       <Alert className="border-primary/30 bg-primary/5">
         <Blocks className="h-4 w-4 text-primary" />
         <AlertDescription className="ml-2">
@@ -198,6 +208,7 @@ export default function AdminTrainingLessons() {
       content_type: "article",
       video_url: "",
       audio_url: "",
+      thumbnail_url: "",
       duration_minutes: undefined,
       is_active: true,
     });
@@ -219,6 +230,7 @@ export default function AdminTrainingLessons() {
       content_type: lesson.content_type,
       video_url: lesson.video_url || "",
       audio_url: lesson.audio_url || "",
+      thumbnail_url: lesson.thumbnail_url || "",
       duration_minutes: lesson.duration_minutes || undefined,
       is_active: lesson.is_active,
     });
