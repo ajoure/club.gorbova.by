@@ -1,38 +1,88 @@
 
 
-# План: Исправление дат 59 сделок
+# План: Исправление проблемы перезагрузки при скролле на мобильных
 
-## Задача
-Обновить `created_at` у сделок в таблице `orders_v2`, чтобы дата соответствовала дате платежа (`paid_at`) из связанной записи в `payments_v2`.
+## Причина проблемы
 
-## Что будет сделано
+В `AdminLayout` контент скроллится внутри `<main className="overflow-y-auto">`, а не на уровне `window`. Компонент `PullToRefresh` проверяет `window.scrollY === 0`, которое **всегда равно 0**, потому что `window` не скроллится — скроллится внутренний контейнер.
 
-### SQL-миграция
+В результате **любой жест вниз** ошибочно воспринимается как pull-to-refresh и вызывает перезагрузку страницы.
 
-```sql
--- Исправить даты сделок, где created_at не совпадает с paid_at платежа
-UPDATE orders_v2 o
-SET 
-  created_at = p.paid_at,
-  updated_at = now(),
-  meta = COALESCE(o.meta, '{}'::jsonb) || jsonb_build_object(
-    '_date_fixed_at', now()::text,
-    '_old_created_at', o.created_at::text,
-    '_fixed_by', '7500084@gmail.com'
-  )
-FROM payments_v2 p
-WHERE p.order_id = o.id
-  AND p.paid_at IS NOT NULL
-  AND DATE(o.created_at) != DATE(p.paid_at);
+## Решение
+
+Модифицировать `PullToRefresh` чтобы он отслеживал позицию скролла **ближайшего скроллируемого контейнера**, а не `window`.
+
+## Изменения в коде
+
+### Файл: `src/components/layout/PullToRefresh.tsx`
+
+**Что изменится:**
+
+1. Добавить `ref` на контейнер для получения позиции скролла
+2. Найти ближайший скроллируемый родитель при старте жеста
+3. Проверять `scrollTop` этого контейнера вместо `window.scrollY`
+
+```tsx
+// БЫЛО:
+if (window.scrollY === 0 && !refreshing) {
+  startY.current = e.touches[0].clientY;
+  isPulling.current = true;
+}
+
+// СТАНЕТ:
+const scrollContainer = findScrollableParent(containerRef.current);
+const scrollTop = scrollContainer 
+  ? scrollContainer.scrollTop 
+  : window.scrollY;
+
+if (scrollTop === 0 && !refreshing) {
+  startY.current = e.touches[0].clientY;
+  isPulling.current = true;
+  scrollContainerRef.current = scrollContainer;
+}
 ```
 
-## Что НЕ будет затронуто
-- Подписки (`subscriptions_v2`) — даты доступа останутся без изменений
-- Права доступа (`entitlements`) — не изменяются
-- Платежи (`payments_v2`) — только читаем для получения правильной даты
+**Новая вспомогательная функция:**
+
+```tsx
+function findScrollableParent(el: HTMLElement | null): HTMLElement | null {
+  while (el) {
+    const { overflowY } = window.getComputedStyle(el);
+    if (overflowY === 'auto' || overflowY === 'scroll') {
+      if (el.scrollHeight > el.clientHeight) {
+        return el;
+      }
+    }
+    el = el.parentElement;
+  }
+  return null;
+}
+```
+
+**Также в `handleTouchMove`:**
+
+```tsx
+// БЫЛО:
+if (window.scrollY > 0) {
+
+// СТАНЕТ:
+const scrollTop = scrollContainerRef.current 
+  ? scrollContainerRef.current.scrollTop 
+  : window.scrollY;
+if (scrollTop > 0) {
+```
 
 ## Результат
-- 59 сделок получат правильную дату создания
-- Старая дата сохранится в `meta._old_created_at` для аудита
-- Фиксируется кто инициировал исправление
+
+| Ситуация | До исправления | После исправления |
+|----------|----------------|-------------------|
+| Скролл вниз внутри контейнера | ❌ Перезагрузка | ✅ Нормальный скролл |
+| Скролл вверх до упора + тянем вниз | ✅ Pull-to-refresh | ✅ Pull-to-refresh |
+| Скролл на странице без контейнера | ✅ Работает | ✅ Работает |
+
+## Файлы для изменения
+
+| Файл | Изменение |
+|------|-----------|
+| `src/components/layout/PullToRefresh.tsx` | Добавить определение скроллируемого родителя, проверять его `scrollTop` вместо `window.scrollY` |
 
