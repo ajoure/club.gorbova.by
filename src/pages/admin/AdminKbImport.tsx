@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 
 // CSV Header mapping: normalize Russian headers to internal field names
+// Uses partial matching to handle variations and broken headers
 const CSV_COLUMN_MAP: Record<string, string> = {
   "дата ответа": "answerDate",
   "номер выпуска": "episodeNumber",
@@ -46,11 +47,36 @@ const CSV_COLUMN_MAP: Record<string, string> = {
   "год": "year",
 };
 
+// Expected column order for fallback when headers are broken
+const COLUMN_ORDER = [
+  "answerDate",      // 0: Дата ответа
+  "episodeNumber",   // 1: Номер выпуска
+  "questionNumber",  // 2: Номер вопроса
+  "fullQuestion",    // 3: Вопрос ученика
+  "title",           // 4: Суть вопроса
+  "tags",            // 5: Теги
+  "getcourseUrl",    // 6: Ссылка на видео в геткурсе
+  "kinescopeUrl",    // 7: Ссылка на видео в кинескопе
+  "timecode",        // 8: Тайминг
+];
+
 /**
  * Normalize row keys using CSV_COLUMN_MAP (partial match)
+ * Falls back to column index order if headers are broken (contain extra semicolons)
  */
-function normalizeRowKeys(row: Record<string, any>): Record<string, any> {
+function normalizeRowKeys(row: Record<string, any>, headersBroken: boolean = false): Record<string, any> {
   const result: Record<string, any> = {};
+  
+  // If headers are broken, use column index order
+  if (headersBroken) {
+    const values = Object.values(row);
+    COLUMN_ORDER.forEach((field, idx) => {
+      if (idx < values.length) {
+        result[field] = values[idx];
+      }
+    });
+    return result;
+  }
   
   for (const [key, value] of Object.entries(row)) {
     const normalizedKey = key.toLowerCase().trim();
@@ -75,22 +101,68 @@ function normalizeRowKeys(row: Record<string, any>): Record<string, any> {
 }
 
 /**
+ * Detect if CSV headers are broken (contain embedded semicolons that weren't quoted)
+ */
+function detectBrokenHeaders(headers: string[]): boolean {
+  // If we have more than 9-10 headers, they're probably broken
+  // Expected: 9 columns (Дата, Номер выпуска, Номер вопроса, Вопрос ученика, Суть, Теги, Геткурс, Кинескоп, Тайминг)
+  if (headers.length > 12) {
+    console.warn("[detectBrokenHeaders] Too many headers:", headers.length);
+    return true;
+  }
+  
+  // Check if any header looks like a fragment (doesn't start with expected patterns)
+  const expectedStartPatterns = [
+    "дата", "номер", "вопрос", "суть", "теги", "ссылка", "тайминг", "год"
+  ];
+  
+  const fragmentHeaders = headers.filter(h => {
+    const lower = h.toLowerCase().trim();
+    return lower && !expectedStartPatterns.some(p => lower.startsWith(p));
+  });
+  
+  if (fragmentHeaders.length > 3) {
+    console.warn("[detectBrokenHeaders] Found fragment headers:", fragmentHeaders);
+    return true;
+  }
+  
+  return false;
+}
+
+/**
  * Read file with auto-detection of Windows-1251 encoding
+ * CRITICAL: Checks for valid Cyrillic text, not just garbage detection
  */
 async function readFileWithEncoding(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  
+  // Check for UTF-8 BOM
+  const hasUtf8Bom = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
+  
+  if (hasUtf8Bom) {
+    return new TextDecoder("utf-8").decode(buffer);
+  }
   
   // Try UTF-8 first
   let text = new TextDecoder("utf-8").decode(buffer);
   
-  // Check for encoding artifacts (replacement character or high bytes)
-  const hasBadChars = text.includes("�") || /[\ufffd]/.test(text);
-  const firstLine = text.split("\n")[0] || "";
-  const hasGarbage = /[\x80-\xff]{3,}/.test(firstLine) && !/[а-яА-ЯёЁ]/.test(firstLine);
+  // Check if we got valid Cyrillic characters (а-я, А-Я, ё, Ё)
+  // If UTF-8 produces replacement characters (U+FFFD) or no Cyrillic at all, try Windows-1251
+  const hasCyrillic = /[а-яА-ЯёЁ]/.test(text);
+  const hasReplacementChar = text.includes("\uFFFD") || text.includes("�");
   
-  if (hasBadChars || hasGarbage) {
+  // Log for debugging
+  console.log("[readFileWithEncoding] UTF-8 attempt:", { 
+    hasCyrillic, 
+    hasReplacementChar, 
+    firstChars: text.slice(0, 100) 
+  });
+  
+  if (!hasCyrillic || hasReplacementChar) {
     // Retry with Windows-1251 (common for Russian Excel exports)
     text = new TextDecoder("windows-1251").decode(buffer);
+    console.log("[readFileWithEncoding] Windows-1251 decoded:", text.slice(0, 100));
   }
   
   return text;
@@ -260,14 +332,29 @@ export default function AdminKbImport() {
       if (isCSV) {
         // CSV: read with encoding detection (Windows-1251 support)
         const text = await readFileWithEncoding(file);
-        const { rows: csvRows, errors: csvErrors } = parseCSVContent(text);
+        console.log("[AdminKbImport] CSV text first 500 chars:", text.slice(0, 500));
+        
+        const { rows: csvRows, headers, errors: csvErrors, delimiter } = parseCSVContent(text);
+        
+        console.log("[AdminKbImport] CSV parsed:", {
+          rowCount: csvRows.length,
+          headers,
+          delimiter,
+          firstRow: csvRows[0],
+          errors: csvErrors.slice(0, 5),
+        });
         
         if (csvErrors.length > 0) {
           console.warn("CSV parse warnings:", csvErrors);
         }
         
+        // Detect if headers are broken (embedded semicolons without quotes)
+        const headersBroken = detectBrokenHeaders(headers);
+        console.log("[AdminKbImport] Headers broken:", headersBroken);
+        
         // Normalize CSV headers to internal field names
-        rows = csvRows.map(normalizeRowKeys);
+        rows = csvRows.map(row => normalizeRowKeys(row, headersBroken));
+        console.log("[AdminKbImport] First normalized row:", rows[0]);
       } else {
         // XLSX: dynamic import to reduce bundle size
         const XLSX = await import("xlsx");
