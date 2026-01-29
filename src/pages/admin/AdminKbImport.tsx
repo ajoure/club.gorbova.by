@@ -37,15 +37,16 @@ import {
 const CSV_COLUMN_MAP: Record<string, string> = {
   "дата ответа": "answerDate",
   "номер выпуска": "episodeNumber",
-  "выпуск": "episodeNumber",           // NEW: short variant for БУКВА_ЗАКОНА file
+  "выпуск": "episodeNumber",
   "номер вопроса": "questionNumber",
-  "вопрос участника": "fullQuestion",   // NEW: long header for БУКВА_ЗАКОНА file
+  "вопрос участника": "fullQuestion",   // MUST be before "вопрос" (longest match first)
   "вопрос ученика": "fullQuestion",
+  "вопрос": "questionNumber",           // NEW: catch-all short variant (after longer patterns)
   "суть вопроса": "title",
   "теги": "tags",
   "ссылка на видео в геткурсе": "getcourseUrl",
   "ссылка на видео в кинескопе": "kinescopeUrl",
-  "тайминг старта": "timecode",         // NEW: variant for БУКВА_ЗАКОНА file
+  "тайминг старта": "timecode",
   "тайминг": "timecode",
   "время (секунды)": "timecodeSeconds",
   "год": "year",
@@ -187,12 +188,18 @@ function normalizeRowKeys(row: Record<string, any>, headersBroken: boolean = fal
     return result;
   }
   
+  // Sort patterns by length descending (longest match first)
+  // This ensures "вопрос участника" is matched before "вопрос"
+  const sortedPatterns = Object.entries(CSV_COLUMN_MAP).sort(
+    ([a], [b]) => b.length - a.length
+  );
+  
   for (const [key, value] of Object.entries(row)) {
     const normalizedKey = key.toLowerCase().trim();
     
-    // Try partial match from CSV_COLUMN_MAP
+    // Try partial match from sorted CSV_COLUMN_MAP (longest first)
     let matched = false;
-    for (const [pattern, field] of Object.entries(CSV_COLUMN_MAP)) {
+    for (const [pattern, field] of sortedPatterns) {
       if (normalizedKey.includes(pattern)) {
         result[field] = value;
         matched = true;
@@ -518,7 +525,12 @@ export default function AdminKbImport() {
         const buffer = await file.arrayBuffer();
         const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
+        const rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
+        
+        // CRITICAL: Apply normalizeRowKeys to XLSX rows (same as CSV)
+        // This maps headers like "Выпуск" → episodeNumber, "Вопрос" → questionNumber, etc.
+        rows = rawRows.map(row => normalizeRowKeys(row, false));
+        console.log("[AdminKbImport] XLSX normalized row sample:", rows[0]);
       }
 
       const parsed: ParsedRow[] = [];
