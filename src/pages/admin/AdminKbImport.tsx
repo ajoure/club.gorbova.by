@@ -44,10 +44,12 @@ const CSV_COLUMN_MAP: Record<string, string> = {
   "ссылка на видео в геткурсе": "getcourseUrl",
   "ссылка на видео в кинескопе": "kinescopeUrl",
   "тайминг": "timecode",
+  "время (секунды)": "timecodeSeconds", // NEW: Seconds column
   "год": "year",
 };
 
-// Expected column order for fallback when headers are broken
+// Expected column order for CSV (used with fixed column positions)
+// Based on user's CSV structure
 const COLUMN_ORDER = [
   "answerDate",      // 0: Дата ответа
   "episodeNumber",   // 1: Номер выпуска
@@ -58,7 +60,79 @@ const COLUMN_ORDER = [
   "getcourseUrl",    // 6: Ссылка на видео в геткурсе
   "kinescopeUrl",    // 7: Ссылка на видео в кинескопе
   "timecode",        // 8: Тайминг
+  "timecodeSeconds", // 9: Время (секунды) - NEW
+  "year",            // 10: Год
 ];
+
+// Windows-1251 → Unicode mapping for bytes 0x80-0xFF (Russian Cyrillic)
+const WIN1251_MAP: Record<number, string> = {
+  0x80: "\u0402", 0x81: "\u0403", 0x82: "\u201A", 0x83: "\u0453", 0x84: "\u201E", 0x85: "\u2026", 0x86: "\u2020", 0x87: "\u2021",
+  0x88: "\u20AC", 0x89: "\u2030", 0x8A: "\u0409", 0x8B: "\u2039", 0x8C: "\u040A", 0x8D: "\u040C", 0x8E: "\u040B", 0x8F: "\u040F",
+  0x90: "\u0452", 0x91: "\u2018", 0x92: "\u2019", 0x93: "\u201C", 0x94: "\u201D", 0x95: "\u2022", 0x96: "\u2013", 0x97: "\u2014",
+  0x98: "\u02DC", 0x99: "\u2122", 0x9A: "\u0459", 0x9B: "\u203A", 0x9C: "\u045A", 0x9D: "\u045C", 0x9E: "\u045B", 0x9F: "\u045F",
+  0xA0: "\u00A0", 0xA1: "\u040E", 0xA2: "\u045E", 0xA3: "\u0408", 0xA4: "\u00A4", 0xA5: "\u0490", 0xA6: "\u00A6", 0xA7: "\u00A7",
+  0xA8: "\u0401", 0xA9: "\u00A9", 0xAA: "\u0404", 0xAB: "\u00AB", 0xAC: "\u00AC", 0xAD: "\u00AD", 0xAE: "\u00AE", 0xAF: "\u0407",
+  0xB0: "\u00B0", 0xB1: "\u00B1", 0xB2: "\u0406", 0xB3: "\u0456", 0xB4: "\u0491", 0xB5: "\u00B5", 0xB6: "\u00B6", 0xB7: "\u00B7",
+  0xB8: "\u0451", 0xB9: "\u2116", 0xBA: "\u0454", 0xBB: "\u00BB", 0xBC: "\u0458", 0xBD: "\u0405", 0xBE: "\u0455", 0xBF: "\u0457",
+  // Russian А-Я (0xC0-0xDF)
+  0xC0: "А", 0xC1: "Б", 0xC2: "В", 0xC3: "Г", 0xC4: "Д", 0xC5: "Е", 0xC6: "Ж", 0xC7: "З",
+  0xC8: "И", 0xC9: "Й", 0xCA: "К", 0xCB: "Л", 0xCC: "М", 0xCD: "Н", 0xCE: "О", 0xCF: "П",
+  0xD0: "Р", 0xD1: "С", 0xD2: "Т", 0xD3: "У", 0xD4: "Ф", 0xD5: "Х", 0xD6: "Ц", 0xD7: "Ч",
+  0xD8: "Ш", 0xD9: "Щ", 0xDA: "Ъ", 0xDB: "Ы", 0xDC: "Ь", 0xDD: "Э", 0xDE: "Ю", 0xDF: "Я",
+  // Russian а-я (0xE0-0xFF)
+  0xE0: "а", 0xE1: "б", 0xE2: "в", 0xE3: "г", 0xE4: "д", 0xE5: "е", 0xE6: "ж", 0xE7: "з",
+  0xE8: "и", 0xE9: "й", 0xEA: "к", 0xEB: "л", 0xEC: "м", 0xED: "н", 0xEE: "о", 0xEF: "п",
+  0xF0: "р", 0xF1: "с", 0xF2: "т", 0xF3: "у", 0xF4: "ф", 0xF5: "х", 0xF6: "ц", 0xF7: "ч",
+  0xF8: "ш", 0xF9: "щ", 0xFA: "ъ", 0xFB: "ы", 0xFC: "ь", 0xFD: "э", 0xFE: "ю", 0xFF: "я",
+};
+
+/**
+ * Manual Windows-1251 decoder (bypasses buggy browser TextDecoder)
+ */
+function manualDecodeWin1251(bytes: Uint8Array): string {
+  let result = "";
+  for (let i = 0; i < bytes.length; i++) {
+    const byte = bytes[i];
+    if (byte < 0x80) {
+      result += String.fromCharCode(byte);
+    } else {
+      result += WIN1251_MAP[byte] || "?";
+    }
+  }
+  return result;
+}
+
+/**
+ * Check if a row is "garbage" (category headers, empty, etc.)
+ * Returns true if the row should be SKIPPED
+ */
+function isGarbageRow(row: Record<string, any>): boolean {
+  const values = Object.values(row);
+  
+  // All values are empty or whitespace
+  if (values.every(v => !String(v ?? "").trim())) {
+    return true;
+  }
+  
+  // Check first value for garbage patterns
+  const first = String(values[0] ?? "").trim().toUpperCase();
+  
+  // Category headers like "ВОПРОС ОТВЕТ", "Еженедельные эфиры"
+  const garbagePatterns = [
+    "ВОПРОС ОТВЕТ",
+    "ЕЖЕНЕДЕЛЬНЫЕ ЭФИРЫ",
+    "ВЕБИНАРЫ",
+    "РАЗНОЕ",
+    "ТЕМАТИЧЕСКИЕ УРОКИ",
+    "ДАТА ОТВЕТА", // Header row appearing mid-file
+  ];
+  
+  if (garbagePatterns.some(p => first.includes(p))) {
+    return true;
+  }
+  
+  return false;
+}
 
 /**
  * Normalize row keys using CSV_COLUMN_MAP (partial match)
@@ -131,7 +205,7 @@ function detectBrokenHeaders(headers: string[]): boolean {
 
 /**
  * Read file with auto-detection of Windows-1251 encoding
- * CRITICAL: Checks for valid Cyrillic text, not just garbage detection
+ * Uses manual decoder to bypass buggy browser TextDecoder implementations
  */
 async function readFileWithEncoding(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -141,31 +215,47 @@ async function readFileWithEncoding(file: File): Promise<string> {
   const hasUtf8Bom = bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
   
   if (hasUtf8Bom) {
+    console.log("[readFileWithEncoding] UTF-8 BOM detected");
     return new TextDecoder("utf-8").decode(buffer);
   }
   
   // Try UTF-8 first
-  let text = new TextDecoder("utf-8").decode(buffer);
+  const utf8Text = new TextDecoder("utf-8").decode(buffer);
   
   // Check if we got valid Cyrillic characters (а-я, А-Я, ё, Ё)
-  // If UTF-8 produces replacement characters (U+FFFD) or no Cyrillic at all, try Windows-1251
-  const hasCyrillic = /[а-яА-ЯёЁ]/.test(text);
-  const hasReplacementChar = text.includes("\uFFFD") || text.includes("�");
+  const hasCyrillic = /[а-яА-ЯёЁ]/.test(utf8Text);
+  const hasReplacementChar = utf8Text.includes("\uFFFD");
   
-  // Log for debugging
   console.log("[readFileWithEncoding] UTF-8 attempt:", { 
     hasCyrillic, 
     hasReplacementChar, 
-    firstChars: text.slice(0, 100) 
+    firstChars: utf8Text.slice(0, 100) 
   });
   
-  if (!hasCyrillic || hasReplacementChar) {
-    // Retry with Windows-1251 (common for Russian Excel exports)
-    text = new TextDecoder("windows-1251").decode(buffer);
-    console.log("[readFileWithEncoding] Windows-1251 decoded:", text.slice(0, 100));
+  // If UTF-8 is valid with Cyrillic and no replacement chars - use it
+  if (hasCyrillic && !hasReplacementChar) {
+    return utf8Text;
   }
   
-  return text;
+  // Check for high bytes (0xC0-0xFF) typical of Windows-1251 Russian text
+  const hasHighBytes = bytes.slice(0, 500).some(b => b >= 0xC0 && b <= 0xFF);
+  
+  if (hasHighBytes) {
+    // Use manual decoder to avoid browser bugs
+    const manualText = manualDecodeWin1251(bytes);
+    console.log("[readFileWithEncoding] Manual Win1251 decoded:", manualText.slice(0, 100));
+    
+    // Verify we got proper Cyrillic
+    if (/[А-Яа-яЁё]{3,}/.test(manualText)) {
+      return manualText;
+    }
+  }
+  
+  // Fallback to browser's TextDecoder for windows-1251
+  const win1251Text = new TextDecoder("windows-1251").decode(buffer);
+  console.log("[readFileWithEncoding] Browser Win1251 decoded:", win1251Text.slice(0, 100));
+  
+  return win1251Text;
 }
 
 // Container module ID for knowledge-videos (from page_sections)
@@ -252,13 +342,21 @@ export default function AdminKbImport() {
 
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set());
 
-  // PATCH-5: Strict episode number parsing
+  // PATCH-5: Strict episode number parsing (handles damaged text like "‚ыпуск Ь74")
   const parseEpisodeNumber = (value: string | number): number => {
     const str = String(value ?? "").trim();
     if (!str) return 0;
 
-    // Format "Выпуск №74" or "Выпуск 74"
-    const m = str.match(/выпуск\s*№?\s*(\d+)/i);
+    // Format "Выпуск №74", "Выпуск 74", or damaged "‚ыпуск Ь74"
+    // Look for any word ending with "ыпуск" followed by optional № and digits
+    let m = str.match(/ыпуск\s*[№Ь#]?\s*(\d+)/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      return n > 0 && n <= MAX_EPISODE_NUMBER ? n : 0;
+    }
+
+    // Try matching "Выпуск" or "выпуск" specifically
+    m = str.match(/выпуск\s*№?\s*(\d+)/i);
     if (m) {
       const n = parseInt(m[1], 10);
       return n > 0 && n <= MAX_EPISODE_NUMBER ? n : 0;
@@ -267,6 +365,13 @@ export default function AdminKbImport() {
     // Pure number 1-200
     if (/^\d+$/.test(str)) {
       const n = parseInt(str, 10);
+      return n > 0 && n <= MAX_EPISODE_NUMBER ? n : 0;
+    }
+
+    // Last resort: find any number in the string
+    m = str.match(/(\d+)/);
+    if (m) {
+      const n = parseInt(m[1], 10);
       return n > 0 && n <= MAX_EPISODE_NUMBER ? n : 0;
     }
 
@@ -282,13 +387,17 @@ export default function AdminKbImport() {
       .filter(Boolean);
   };
 
-  // PATCH-3: Parse date from DD.MM.YY, DD.MM.YYYY, ISO, or Excel serial
-  const parseDate = (value: string | number | Date | null | undefined): string => {
+  // PATCH-3: Parse date from DD.MM.YY, DD.MM.YYYY, DD.MM (use year column), ISO, or Excel serial
+  const parseDate = (value: string | number | Date | null | undefined, yearFallback?: number): string => {
     if (value === null || value === undefined || value === "") return "";
 
     // Date object (if XLSX returns Date)
     if (value instanceof Date && !isNaN(value.getTime())) {
-      return value.toISOString().slice(0, 10);
+      // Use local date components to avoid UTC shift
+      const y = value.getFullYear();
+      const m = String(value.getMonth() + 1).padStart(2, "0");
+      const d = String(value.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
     }
 
     // Excel serial (number or 5-digit string)
@@ -304,10 +413,18 @@ export default function AdminKbImport() {
     }
 
     // DD.MM.YY / DD.MM.YYYY
-    const m = asString.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+    let m = asString.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
     if (m) {
       const [, d, mo, y] = m;
       const yyyy = y.length === 2 ? `20${y}` : y;
+      return `${yyyy}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    }
+
+    // DD.MM (no year - use yearFallback or current year)
+    m = asString.match(/^(\d{1,2})\.(\d{1,2})$/);
+    if (m) {
+      const [, d, mo] = m;
+      const yyyy = yearFallback || new Date().getFullYear();
       return `${yyyy}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`;
     }
 
@@ -320,6 +437,9 @@ export default function AdminKbImport() {
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Reset input to allow re-uploading same file
+    e.currentTarget.value = "";
 
     setState((s) => ({ ...s, file, parsing: true, parsed: false, parsedRows: [], episodes: [], validationErrors: [] }));
 
@@ -366,14 +486,25 @@ export default function AdminKbImport() {
 
       const parsed: ParsedRow[] = [];
       const allErrors: ValidationError[] = [];
+      let skippedGarbage = 0;
 
       rows.forEach((row, idx) => {
         const rowIndex = idx + 2; // Excel/CSV rows start at 1, header is row 1
+        
+        // SKIP garbage rows (category headers, empty rows)
+        if (isGarbageRow(row)) {
+          skippedGarbage++;
+          return; // Skip this row entirely
+        }
+        
         const rowErrors: ValidationError[] = [];
+
+        // Get year first for date parsing
+        const year = parseInt(String(row.year ?? row["Год"] ?? row[""] ?? "2024"), 10) || 2024;
 
         // Use normalized keys for CSV, original keys for XLSX
         const answerDateRaw = row.answerDate ?? row["Дата ответа"];
-        const answerDate = parseDate(answerDateRaw);
+        const answerDate = parseDate(answerDateRaw, year); // Pass year for DD.MM format
         const episodeRaw = row.episodeNumber ?? row["Номер выпуска"] ?? "";
         const episodeNumber = parseEpisodeNumber(episodeRaw);
         const questionNumber = row.questionNumber ?? row["Номер вопроса"];
@@ -383,11 +514,22 @@ export default function AdminKbImport() {
         const tagsRaw = String(row.tags ?? row["Теги (для поиска, ставим самостоятельно)"] ?? "");
         const getcourseUrl = String(row.getcourseUrl ?? row["Ссылка на видео в геткурсе"] ?? "").trim();
         const kinescopeUrl = String(row.kinescopeUrl ?? row["Ссылка на видео в кинескопе"] ?? "").trim();
+        
+        // PRIORITY: Use "Время (секунды)" column if available, else parse timecode string
+        const secondsRaw = row.timecodeSeconds ?? row["Время (секунды)"];
         const timecodeRaw = row.timecode ?? row["Тайминг (час:мин:сек начала видео с этим вопросом)"];
-        const year = parseInt(String(row.year ?? row["Год"] ?? row[""] ?? "2024"), 10) || 2024;
-
-        // PATCH-2: Parse timecode (supports Excel numeric time and HH:MM:SS strings)
-        const timecodeSeconds = parseTimecode(timecodeRaw);
+        
+        // Try seconds column first (numeric), fallback to parseTimecode
+        let timecodeSeconds: number | null = null;
+        if (secondsRaw !== undefined && secondsRaw !== null && secondsRaw !== "") {
+          const sec = parseInt(String(secondsRaw), 10);
+          if (!isNaN(sec) && sec >= 0) {
+            timecodeSeconds = sec;
+          }
+        }
+        if (timecodeSeconds === null) {
+          timecodeSeconds = parseTimecode(timecodeRaw);
+        }
 
         // Collect values for error export
         const errorValues = {
@@ -395,7 +537,7 @@ export default function AdminKbImport() {
           episodeNumber: String(episodeRaw ?? ""),
           title: title.slice(0, 50),
           kinescopeUrl: kinescopeUrl.slice(0, 50),
-          timecode: String(timecodeRaw ?? ""),
+          timecode: String(secondsRaw ?? timecodeRaw ?? ""),
         };
 
         // Validation with typed errors
@@ -450,6 +592,11 @@ export default function AdminKbImport() {
 
         allErrors.push(...rowErrors);
       });
+
+      // Log garbage rows skipped
+      if (skippedGarbage > 0) {
+        console.log(`[AdminKbImport] Skipped ${skippedGarbage} garbage rows`);
+      }
 
       // PATCH-4: Group by episode_number (not URL)
       const episodeMap = new Map<number, GroupedEpisode>();

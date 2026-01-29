@@ -132,7 +132,8 @@ export function formatTimecode(seconds: number | null): string {
 /**
  * Parse timecode to seconds
  * Supports formats:
- * - String: "14:20", "1:01:36", "01:14:20"
+ * - String: "14:20" (mm:ss), "1:01:36" (h:mm:ss), "01:14:20" (hh:mm:ss)
+ * - String: "33:55:00" (mm:ss:00 - common export artifact, treat as mm:ss)
  * - Number (Excel time): 0.11319 (fraction of day), 2.0638 (decimal hours)
  */
 export function parseTimecode(
@@ -160,7 +161,21 @@ export function parseTimecode(
   const parts = cleaned.split(":").map((p) => parseInt(p, 10));
   if (parts.some((n) => Number.isNaN(n))) return null;
 
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  // Format: HH:MM:SS or MM:SS:00 (trailing :00 is garbage)
+  if (parts.length === 3) {
+    // If last part is 00 and first part > 23 -> treat as mm:ss:garbage
+    if (parts[2] === 0 && parts[0] >= 24) {
+      return parts[0] * 60 + parts[1];
+    }
+    // If first part > 23 -> probably mm:ss:garbage
+    if (parts[0] > 23) {
+      return parts[0] * 60 + parts[1];
+    }
+    // Standard HH:MM:SS
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  
+  // Format: MM:SS
   if (parts.length === 2) return parts[0] * 60 + parts[1];
 
   return null;
