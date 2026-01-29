@@ -497,6 +497,29 @@ export default function AdminKbImport() {
         });
 
         if (blockError) console.warn("Block creation failed:", blockError);
+
+        // PATCH-D: Generate AI cover for new lessons
+        try {
+          const { data: coverData, error: coverError } = await supabase.functions.invoke("generate-cover", {
+            body: {
+              title,
+              description: description || `Выпуск ${episode.episodeNumber}`,
+              moduleId,
+            },
+          });
+
+          if (coverData?.url && !coverError) {
+            await supabase
+              .from("training_lessons")
+              .update({ thumbnail_url: coverData.url })
+              .eq("id", lessonId);
+          } else if (coverError) {
+            console.warn("Cover generation error:", coverError);
+          }
+        } catch (coverErr) {
+          console.warn("Cover generation failed:", coverErr);
+          // Don't block import on cover generation failure
+        }
       }
 
       // 2. Upsert questions with PATCH-6: preserve existing timecode_seconds if new is null

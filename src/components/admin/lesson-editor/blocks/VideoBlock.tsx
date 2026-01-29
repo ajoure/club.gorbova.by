@@ -8,6 +8,8 @@ interface VideoBlockProps {
   content: VideoContent;
   onChange: (content: VideoContent) => void;
   isEditing?: boolean;
+  /** Optional timecode in seconds for seeking (used in view mode) */
+  timecodeSeconds?: number | null;
 }
 
 function detectVideoProvider(url: string): VideoContent['provider'] {
@@ -17,28 +19,45 @@ function detectVideoProvider(url: string): VideoContent['provider'] {
   return 'other';
 }
 
-function getEmbedUrl(url: string, provider: VideoContent['provider']): string {
+function getEmbedUrl(url: string, provider: VideoContent['provider'], timecodeSeconds?: number | null): string {
   if (!url) return '';
+  
+  let baseUrl = '';
   
   switch (provider) {
     case 'youtube': {
       const videoId = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^?&]+)/)?.[1];
-      return videoId ? `https://www.youtube.com/embed/${videoId}` : url;
+      baseUrl = videoId ? `https://www.youtube.com/embed/${videoId}` : url;
+      // YouTube uses start= for embed
+      if (timecodeSeconds && timecodeSeconds > 0) {
+        baseUrl += `?start=${Math.floor(timecodeSeconds)}&autoplay=1`;
+      }
+      return baseUrl;
     }
     case 'vimeo': {
       const videoId = url.match(/vimeo\.com\/(\d+)/)?.[1];
-      return videoId ? `https://player.vimeo.com/video/${videoId}` : url;
+      baseUrl = videoId ? `https://player.vimeo.com/video/${videoId}` : url;
+      // Vimeo uses #t= format
+      if (timecodeSeconds && timecodeSeconds > 0) {
+        baseUrl += `#t=${Math.floor(timecodeSeconds)}s`;
+      }
+      return baseUrl;
     }
     case 'kinescope': {
-      const videoId = url.match(/kinescope\.io\/([a-zA-Z0-9]+)/)?.[1];
-      return videoId ? `https://kinescope.io/embed/${videoId}` : url;
+      const videoId = url.match(/kinescope\.io\/(?:embed\/)?([a-zA-Z0-9]+)/)?.[1];
+      baseUrl = videoId ? `https://kinescope.io/embed/${videoId}` : url;
+      // Kinescope uses ?t= for timecode
+      if (timecodeSeconds && timecodeSeconds > 0) {
+        baseUrl += `?t=${Math.floor(timecodeSeconds)}`;
+      }
+      return baseUrl;
     }
     default:
       return url;
   }
 }
 
-export function VideoBlock({ content, onChange, isEditing = true }: VideoBlockProps) {
+export function VideoBlock({ content, onChange, isEditing = true, timecodeSeconds }: VideoBlockProps) {
   const [localUrl, setLocalUrl] = useState(content.url || "");
   const [localTitle, setLocalTitle] = useState(content.title || "");
   
@@ -51,7 +70,7 @@ export function VideoBlock({ content, onChange, isEditing = true }: VideoBlockPr
     onChange({ ...content, title: localTitle });
   };
 
-  const embedUrl = getEmbedUrl(content.url || "", content.provider);
+  const embedUrl = getEmbedUrl(content.url || "", content.provider, isEditing ? null : timecodeSeconds);
 
   if (!isEditing) {
     if (!content.url) {
