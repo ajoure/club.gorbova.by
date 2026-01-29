@@ -146,33 +146,42 @@ export default function AdminKbImport() {
       .filter(Boolean);
   };
 
-  // PATCH-3: Parse date from DD.MM.YY, DD.MM.YYYY, ISO, or Excel serial
+  // PATCH-3: Parse date WITHOUT UTC shift - use local components
   const parseDate = (value: string | number | Date | null | undefined): string => {
     if (value === null || value === undefined || value === "") return "";
 
-    // Date object (if XLSX returns Date)
-    if (value instanceof Date && !isNaN(value.getTime())) {
-      return value.toISOString().slice(0, 10);
+    // Date object from XLSX (cellDates: true)
+    // Use LOCAL components, NOT toISOString() which shifts to UTC
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      const y = value.getFullYear();
+      const m = String(value.getMonth() + 1).padStart(2, "0");
+      const d = String(value.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
     }
 
-    // Excel serial (number or 5-digit string)
     const asString = String(value).trim();
+
+    // Excel serial (number or 5-digit string)
     if (typeof value === "number" || /^\d{5}$/.test(asString)) {
       const serial = typeof value === "number" ? value : parseInt(asString, 10);
       if (!Number.isFinite(serial) || serial <= 0) return "";
 
       // 1899-12-30 (Excel 1900 system with leap bug compensation)
+      // Use UTC for serial and format with UTC components
       const excelEpoch = new Date(Date.UTC(1899, 11, 30));
-      const date = new Date(excelEpoch.getTime() + serial * 86400000);
-      return date.toISOString().slice(0, 10);
+      const dt = new Date(excelEpoch.getTime() + serial * 86400000);
+      const y = dt.getUTCFullYear();
+      const m = String(dt.getUTCMonth() + 1).padStart(2, "0");
+      const d = String(dt.getUTCDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
     }
 
     // DD.MM.YY / DD.MM.YYYY
-    const m = asString.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
-    if (m) {
-      const [, d, mo, y] = m;
-      const yyyy = y.length === 2 ? `20${y}` : y;
-      return `${yyyy}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    const match = asString.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+    if (match) {
+      const [, dd, mm, yy] = match;
+      const yyyy = yy.length === 2 ? `20${yy}` : yy;
+      return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
     }
 
     // ISO format
@@ -376,7 +385,7 @@ export default function AdminKbImport() {
     return groups;
   }, [state.validationErrors]);
 
-  // PATCH-7: Get critical errors for a specific episode
+  // PATCH-7 + PATCH-12: Get critical errors for a specific episode
   const getCriticalErrorsForEpisode = useCallback((ep: GroupedEpisode): string[] => {
     const critical: string[] = [];
     if (!ep.kinescopeUrl) critical.push("Нет ссылки Kinescope");
@@ -384,6 +393,10 @@ export default function AdminKbImport() {
 
     const emptyTitles = ep.questions.filter((q) => !q.title).length;
     if (emptyTitles > 0) critical.push(`${emptyTitles} вопросов без заголовка`);
+
+    // PATCH-12: Block if no valid questions at all
+    const validCount = ep.questions.filter((q) => q.title).length;
+    if (validCount === 0) critical.push("Нет валидных вопросов");
 
     return critical;
   }, []);
@@ -486,9 +499,25 @@ export default function AdminKbImport() {
         if (blockError) console.warn("Block creation failed:", blockError);
       }
 
-      // 2. Upsert questions
+      // 2. Upsert questions with PATCH-6: preserve existing timecode_seconds if new is null
       for (const q of episode.questions) {
         if (!q.title) continue; // Skip questions without title
+
+        // PATCH-6: Don't overwrite existing timecode_seconds with null
+        let finalTimecodeSeconds = q.timecodeSeconds;
+
+        if (finalTimecodeSeconds === null) {
+          const { data: existing } = await supabase
+            .from("kb_questions")
+            .select("timecode_seconds")
+            .eq("lesson_id", lessonId)
+            .eq("question_number", q.questionNumber)
+            .maybeSingle();
+
+          if (existing?.timecode_seconds !== null && existing?.timecode_seconds !== undefined) {
+            finalTimecodeSeconds = existing.timecode_seconds;
+          }
+        }
 
         const { error: qError } = await supabase.from("kb_questions").upsert(
           {
@@ -499,7 +528,7 @@ export default function AdminKbImport() {
             full_question: q.fullQuestion || null,
             tags: q.tags.length > 0 ? q.tags : null,
             kinescope_url: q.kinescopeUrl,
-            timecode_seconds: q.timecodeSeconds,
+            timecode_seconds: finalTimecodeSeconds ?? null,
             answer_date: q.answerDate || episode.answerDate,
           },
           {
