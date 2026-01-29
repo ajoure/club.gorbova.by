@@ -43,7 +43,8 @@ function getEmbedUrl(url: string, provider: VideoContent['provider'], timecode?:
       const videoId = url.match(/kinescope\.io\/([a-zA-Z0-9]+)/)?.[1];
       let embedUrl = videoId ? `https://kinescope.io/embed/${videoId}` : url;
       if (timecode && timecode > 0) {
-        embedUrl += `?t=${Math.floor(timecode)}`;
+        // Autoplay when seeking to a specific timecode
+        embedUrl += `?t=${Math.floor(timecode)}&autoplay=1`;
       }
       return embedUrl;
     }
