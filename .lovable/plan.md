@@ -1,136 +1,93 @@
 
-# План исправления: Build-ошибка TypeScript + Бесконечная перезагрузка на мобильном
+Контекст и что вижу по проекту сейчас
+- Вы подтверждаете: на мобильном в Preview внутри редактора начинается самопроизвольная бесконечная перезагрузка; раньше (до security-патча) работало.
+- В коде сейчас App.tsx импортирует ВСЕ страницы и админ-страницы “жадно” (eager import). Это значит: всё, что подключено где угодно (включая тяжёлые импорты для Excel-импортов), попадает в стартовый JS-бандл.
+- После security-патча добавился ExcelJS через src/utils/excelParser.ts (там сейчас стоит прямой import ExcelJS from 'exceljs'), а это значительно утяжеляет стартовый бандл.
+- На мобильных Safari/Chrome типичный симптом “слишком тяжёлого старта/памяти” — вкладка/iframe самопроизвольно перезагружается, и это выглядит как “вечная перезагрузка”.
+- Дополнительно: ProtectedRoute сейчас содержит window.location.reload() при обнаружении сессии (пусть и ограничено sessionStorage). Если перезагрузка вызвана крашем/давлением по памяти, sessionStorage может обнуляться (или вкладка может стартовать заново), и логика reload может усиливать цикл.
 
-## Проблемы обнаружены
+Цель патча
+1) Убрать первопричину самопроизвольных перезагрузок на мобильном (уменьшить стартовый бандл/память).
+2) Убрать любые “ручные reload” из auth-защиты, чтобы даже при нестабильном окружении не было искусственного цикла.
+3) Дать доказательства выполнения: воспроизведение + скриншоты из Preview (и при необходимости — логи/пруфы по сетевым запросам).
 
-### Проблема 1: Ошибки сборки TypeScript в AdminKbImport.tsx
-Тип поля `timecode` в интерфейсе `ParsedRow` указан как `string | number`, но ExcelJS возвращает также `Date` объекты. Это несовместимость типов на строках 221 и 286.
+Предполагаемая первопричина (почему стало хуже именно после security-патча)
+- ExcelJS подтянулся в общий стартовый бандл из-за:
+  - App.tsx импортирует AdminKbImport и другие импорты статически
+  - эти страницы импортируют excelParser
+  - excelParser импортирует exceljs статически
+=> В результате exceljs грузится всегда, даже на /admin/communication, где Excel не нужен.
 
-**Текущий код (строка 60):**
-```typescript
-interface ParsedRow {
-  ...
-  timecode: string | number;  // ❌ Не включает Date
-  ...
-}
-```
+План исправления (минимальные точечные изменения)
+A) Сделать ExcelJS ленивым (главный фикс производительности)
+Файлы: src/utils/excelParser.ts
+1) Убрать статический runtime-import:
+   - заменить `import ExcelJS from 'exceljs'` на динамический `await import('exceljs')` внутри функций, которые реально парсят/создают xlsx.
+2) Оставить типизацию через type-only импорт, чтобы TypeScript не ругался, но runtime-бандл не утяжелялся:
+   - `import type * as ExcelJSTypes from 'exceljs'`
+3) Внутри parseExcelFile / createExcelWorkbook / parseWorksheet:
+   - подгружать ExcelJS только при вызове:
+     - `const ExcelJS = (await import('exceljs')).default;`
+4) Проверить, что публичный API excelParser не меняется (add-only/совместимость):
+   - сигнатуры функций те же
+   - поведение по .xls остаётся: явная ошибка “.xls не поддерживается, сохраните как .xlsx”
 
-**Проблемные строки:**
-- Строка 221: `const episodeNumber = parseEpisodeNumber(episodeRaw);` — передача `Date` в функцию, ожидающую `string | number`
-- Строка 286: `timecode: timecodeRaw` — присвоение `Date` в поле типа `string | number`
+Ожидаемый результат A:
+- exceljs уйдёт в отдельный chunk и не будет загружаться на старте /admin/communication
+- снижение памяти/времени выполнения на мобильном
+- самопроизвольные перезагрузки должны прекратиться или стать значительно реже (обычно исчезают полностью)
 
-### Проблема 2: Бесконечная перезагрузка на мобильном Safari
-В `ProtectedRoute.tsx` (строки 34-45) есть логика retry, которая при определённых условиях вызывает `window.location.reload()`:
+B) Убрать window.location.reload из ProtectedRoute (фикс “усилителя цикла”)
+Файлы: src/components/layout/ProtectedRoute.tsx, опционально src/contexts/AuthContext.tsx
+1) ProtectedRoute:
+   - удалить ветку, которая делает window.location.reload() при найденной session
+   - вместо этого:
+     - показывать loader, пока AuthContext реально не завершит первичную проверку сессии
+     - если user всё ещё null после окончания первичной проверки — редирект на /auth
+2) AuthContext (точечная корректировка инициализации, чтобы ProtectedRoute не делал “костыли”):
+   - сейчас onAuthStateChange ставит loading=false сразу, а getSession завершается позже; на мобильных это может приводить к промежуточным состояниям
+   - добавить флаг “initialSessionChecked” (через ref), чтобы:
+     - loading становился false только после завершения первичного getSession
+     - onAuthStateChange продолжал обновлять user/session, но не снимал loading преждевременно в самом начале
 
-```typescript
-if (!loading && !isInitializing && !user && retryCount < 2) {
-  supabase.auth.getSession().then(({ data: { session } }) => {
-    if (session) {
-      window.location.reload();  // ❌ ЦИКЛ!
-    }
-  });
-  setRetryCount(prev => prev + 1);
-}
-```
+Ожидаемый результат B:
+- никакой код не будет инициировать “жёсткую перезагрузку” страницы во время восстановления сессии
+- даже если устройство/браузер нестабилен, мы не будем сами запускать цикл reload
 
-**Причина цикла:** На мобильном Safari задержка 1500ms недостаточна. Если сессия восстанавливается после этого таймаута, `retryCount` сбрасывается при каждой перезагрузке, и цикл повторяется бесконечно.
+C) (Опционально) “Предохранитель” от случайных перезагрузок из PullToRefresh в админке
+Почему опционально: это, вероятно, не первопричина “само по себе”, но это реальный источник reload на мобиле (AdminLayout использует <PullToRefresh> без onRefresh, и тогда жест приводит к window.location.reload()).
+Файлы: src/components/layout/PullToRefresh.tsx, src/components/layout/AdminLayout.tsx
+Вариант минимальной безопасности (без рефакторов данных):
+1) В PullToRefresh при отсутствии onRefresh:
+   - не делать reload с первого раза
+   - показывать подсказку “Потяните ещё раз, чтобы обновить”
+   - reload выполнять только если второй pull случился в пределах N секунд
+Это соответствует вашим правилам “все кнопки действий должны быть безопасны от случайного клика” (аналогично для жеста).
 
----
+Ожидаемый результат C:
+- даже если пользователь случайно “дёрнет” экран вверху, проект не будет постоянно перезагружаться
 
-## Исправления
+Проверка и доказательства (обязательная часть DoD)
+После внедрения фикса (в execute-режиме) я сделаю и приложу:
+1) Скриншоты из Preview под админ-аккаунтом:
+   - /admin/communication на мобильном размере (iPhone-like) — страница открыта и не перезагружается
+   - /dashboard или любой другой раздел — тоже стабильно
+   - скрин консоли без критических ошибок (если появятся — фиксируем отдельно)
+2) Технические пруфы:
+   - подтверждение, что exceljs не загружается на /admin/communication до первого обращения к импортам (по сетевым запросам в девтулз/логах)
+3) Diff-summary:
+   - какие файлы изменены и зачем (строго по списку A/B/C без “лишних улучшений”)
 
-### 1. Исправление типов в AdminKbImport.tsx
+Риски и как минимизируем
+- Риск: изменения в AuthContext могут затронуть UX логина.
+  - Минимизация: меняем только порядок “когда loading=false”, не меняем бизнес-логику ролей и signIn/signUp.
+- Риск: динамический import ExcelJS может поменять timing на страницах импорта.
+  - Минимизация: показываем Loader в диалогах импорта при парсинге (у вас он уже есть), и это поведение будет корректным.
 
-**Файл:** `src/pages/admin/AdminKbImport.tsx`
+Порядок выполнения (важно)
+1) A (lazy-load ExcelJS) — как самый вероятный корень проблемы “самопроизвольной перезагрузки”
+2) B (убрать reload из ProtectedRoute + корректная инициализация AuthContext)
+3) C (опциональный предохранитель PullToRefresh) — если вы подтвердите, что жесты/скролл тоже часто провоцируют перезагрузку
 
-**Изменение интерфейса ParsedRow (строка 60):**
-```typescript
-timecode: string | number | Date;  // ✅ Добавляем Date
-```
-
-Это соответствует тому, что ExcelJS может возвращать объект `Date` для ячеек с датами/временем.
-
-### 2. Исправление бесконечной перезагрузки в ProtectedRoute.tsx
-
-**Файл:** `src/components/layout/ProtectedRoute.tsx`
-
-**Проблема:** `retryCount` сбрасывается при каждой перезагрузке страницы, т.к. это состояние React. Нужно использовать `sessionStorage` для персистентности между перезагрузками.
-
-**Новая логика (строки 16-45):**
-```typescript
-export function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { user, loading } = useAuth();
-  const location = useLocation();
-  
-  const [isInitializing, setIsInitializing] = useState(true);
-  
-  // Защита от бесконечного цикла перезагрузок
-  const RELOAD_KEY = 'protected_route_reload_count';
-  const MAX_RELOADS = 2;
-  
-  useEffect(() => {
-    const isMobileSafari = /iPhone|iPad|iPod/.test(navigator.userAgent) && 
-                           /Safari/.test(navigator.userAgent) &&
-                           !/Chrome/.test(navigator.userAgent);
-    
-    // Увеличиваем задержку для мобильного Safari до 2500ms
-    const delay = isMobileSafari ? 2500 : 800;
-    
-    const timer = setTimeout(() => setIsInitializing(false), delay);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Улучшенная retry-логика с защитой от цикла
-  useEffect(() => {
-    if (!loading && !isInitializing && !user) {
-      const reloadCount = parseInt(sessionStorage.getItem(RELOAD_KEY) || '0', 10);
-      
-      if (reloadCount < MAX_RELOADS) {
-        supabase.auth.getSession().then(({ data: { session } }) => {
-          if (session) {
-            sessionStorage.setItem(RELOAD_KEY, String(reloadCount + 1));
-            window.location.reload();
-          }
-        });
-      }
-      // Если MAX_RELOADS достигнут — просто редиректим на /auth
-    }
-  }, [loading, isInitializing, user]);
-
-  // Очищаем счётчик при успешной авторизации
-  useEffect(() => {
-    if (user) {
-      sessionStorage.removeItem(RELOAD_KEY);
-    }
-  }, [user]);
-
-  // ... остальной код без изменений
-}
-```
-
----
-
-## Итог изменений
-
-| Файл | Изменение |
-|------|-----------|
-| `src/pages/admin/AdminKbImport.tsx` | Тип `timecode` расширен до `string \| number \| Date` |
-| `src/components/layout/ProtectedRoute.tsx` | Защита от цикла через `sessionStorage`, увеличена задержка для мобильного Safari |
-
-## Ожидаемый результат
-
-- Build-ошибки TypeScript исправлены
-- Мобильный Safari: максимум 2 перезагрузки, после чего редирект на `/auth`
-- Задержка для мобильного Safari увеличена с 1500ms до 2500ms для более надёжного восстановления сессии
-
----
-
-## Техническая секция
-
-### Почему sessionStorage, а не localStorage?
-
-`sessionStorage` очищается при закрытии вкладки, что предотвращает накопление счётчика между сессиями. Это безопаснее для UX — пользователь может просто перезапустить браузер для сброса.
-
-### Почему увеличена задержка?
-
-Согласно Memory `auth/session-and-route-restoration-mobile`, мобильный Safari требует больше времени для восстановления сессии из-за особенностей работы с IndexedDB и cookie. 2500ms даёт больше запаса.
+Если нужно “срочно вернуть работоспособность” прямо сейчас
+- Быстрый аварийный вариант: откатиться через History к сообщению до миграции ExcelJS, чтобы мгновенно вернуть мобильную стабильность, а потом сделать исправления аккуратно и точечно (с доказательствами).
