@@ -1,292 +1,229 @@
-План: Исправление импорта видеоответов (PATCH 1–12)
-
-0) Факт из CSV ошибок (корень проблемы)
-
-При XLSX.read(..., { cellDates: true }) библиотека превращает и даты, и таймкоды в Date:
-	•	answerDate: Fri Jan 19 2024 00:00:00 GMT+0100...
-	•	timecode: Sat Dec 30 1899 01:03:00 GMT+0124... (таймкод как “время суток” от базы 1899)
-
-Значит, парсер обязан поддерживать Date и для дат, и для таймкодов — иначе получаем 00:00 и “видео с начала”.
-
-⸻
-
-PATCH-1: buildKinescopeUrlWithTimecode — оставить как есть ✅
-
-Файл: src/hooks/useKbQuestions.ts
-Функция должна:
-	•	убирать /embed/
-	•	убирать существующий t=
-	•	добавлять ?t=<seconds> (share-url формат)
-
-⸻
-
-PATCH-2: parseTimecode — добавить поддержку Date
-
-Файл: src/hooks/useKbQuestions.ts
-
-Цель: если таймкод пришёл Date (1899-12-30 HH:MM:SS), извлечь время и вернуть секунды.
-
-export function parseTimecode(
-  timecode: string | number | Date | undefined | null
-): number | null {
-  if (timecode === null || timecode === undefined) return null;
-
-  // XLSX cellDates: true -> Date (1899-12-30 HH:MM:SS)
-  if (timecode instanceof Date && !Number.isNaN(timecode.getTime())) {
-    // используем UTC-компоненты, чтобы не ловить странные TZ (типа GMT+0124)
-    const h = timecode.getUTCHours();
-    const m = timecode.getUTCMinutes();
-    const s = timecode.getUTCSeconds();
-    const total = h * 3600 + m * 60 + s;
-    return total > 0 ? total : null;
-  }
-
-  // number (Excel time fraction / decimal hours / seconds) — текущая логика
-  if (typeof timecode === "number") {
-    if (!Number.isFinite(timecode) || timecode <= 0) return null;
-    if (timecode < 1) return Math.round(timecode * 86400);
-    if (timecode <= 24) return Math.round(timecode * 3600);
-    return Math.round(timecode);
-  }
-
-  // string mm:ss / hh:mm:ss — текущая логика
-  const cleaned = String(timecode).trim();
-  if (!cleaned) return null;
-
-  const parts = cleaned.split(":").map((p) => parseInt(p, 10));
-  if (parts.some((n) => Number.isNaN(n))) return null;
-
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  return null;
-}
 
 
-⸻
+# План: Финальные исправления импорта видеоответов
 
-PATCH-3: parseDate — убрать UTC-сдвиг, date-only без потери дня
+## Диагностика корневых проблем
 
-Файл: src/pages/admin/AdminKbImport.tsx
+### Проблема 1: Таймкод открывает последнюю секунду видео
+На скриншоте видно URL: `kinescope.io/kkD3FMZcEeyWEmDvsinCDJ?t=16620`
 
-Цель: получить YYYY-MM-DD корректно:
-	•	Date из XLSX → локальные компоненты, без toISOString()
-	•	Excel serial → считать в UTC и форматировать UTC-компонентами
+- `16620` секунд = 4 часа 37 минут
+- Видео длится ~1:06:45 (4005 секунд)
+- Таймкод превышает длительность → Kinescope прыгает в конец
 
-const parseDate = (value: string | number | Date | null | undefined): string => {
-  if (value === null || value === undefined || value === "") return "";
+**Причина**: Excel хранит таймкоды вроде `04:37:00` (4 минуты 37 секунд) как Date объект. Текущий `parseTimecode` извлекает время через `getUTCHours()`, получая `4 * 3600 + 37 * 60 = 16620` секунд. Но реальный таймкод — это **4:37** (4 минуты 37 секунд = 277 секунд).
 
-  // Date object from XLSX (cellDates:true)
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const y = value.getFullYear();
-    const m = String(value.getMonth() + 1).padStart(2, "0");
-    const d = String(value.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }
+**Решение**: Добавить эвристику — если полученные секунды превышают разумную длительность видео (~3 часов = 10800 сек), и "часы" < 60 — скорее всего это MM:SS, не HH:MM:SS. Тогда пересчитываем: `h * 60 + m` секунд.
 
-  const asString = String(value).trim();
+### Проблема 2: Дата в формате YYYY-MM-DD
+На скриншоте `2024-01-08` вместо `08.01.2024`.
 
-  // Excel serial
-  if (typeof value === "number" || /^\d{5}$/.test(asString)) {
-    const serial = typeof value === "number" ? value : parseInt(asString, 10);
-    if (!Number.isFinite(serial) || serial <= 0) return "";
+**Причина**: В `LibraryLesson.tsx` строка 344 нет форматирования даты:
+```tsx
+<div className="mb-4 text-sm text-muted-foreground">{episode.answerDate}</div>
+```
 
-    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
-    const dt = new Date(excelEpoch.getTime() + serial * 86400000);
+**Решение**: Использовать `format(parseISO(date), "dd.MM.yyyy")` как в других местах.
 
-    const y = dt.getUTCFullYear();
-    const m = String(dt.getUTCMonth() + 1).padStart(2, "0");
-    const d = String(dt.getUTCDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }
+### Проблема 3: AI-обложки не генерируются
+На скриншоте карточка выпуска без обложки (пустой placeholder).
 
-  // DD.MM.YY / DD.MM.YYYY
-  const m = asString.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
-  if (m) {
-    const [, dd, mm, yy] = m;
-    const yyyy = yy.length === 2 ? `20${yy}` : yy;
-    return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
-  }
+**Причина**: При импорте урока `thumbnail_url` не заполняется. Edge Function `generate-cover` не вызывается.
 
-  // ISO
-  if (/^\d{4}-\d{2}-\d{2}/.test(asString)) return asString.slice(0, 10);
+**Решение**: При создании нового урока вызывать `generate-cover` или ставить дефолтную обложку.
 
-  return "";
-};
+### Проблема 4: Клик по вопросу открывает внешнюю вкладку
+Пользователь хочет, чтобы видео на странице выпуска перематывалось по клику на вопрос, без ухода на kinescope.io.
 
-
-⸻
-
-PATCH-4: Группировка по episode_number — оставить как есть ✅
-
-Файл: src/pages/admin/AdminKbImport.tsx
-Группировка только Map<number, GroupedEpisode>.
-
-⸻
-
-PATCH-5: Строгий parseEpisodeNumber — оставить как есть ✅
-
-Ограничение диапазона (например MAX_EPISODE_NUMBER = 200) обязательно.
-
-⸻
-
-PATCH-6: Сохранение timecode_seconds без потери при повторном импорте
-
-Файл: src/pages/admin/AdminKbImport.tsx → importEpisode() → upsert kb_questions
-
-Цель: не затирать существующее timecode_seconds, если новый импорт дал null.
-
-Алгоритм:
-	1.	finalTimecodeSeconds = q.timecodeSeconds
-	2.	Если finalTimecodeSeconds === null:
-	•	прочитать существующую запись (lesson_id, question_number)
-	•	если в ней timecode_seconds NOT NULL → оставить его
-
-let finalTimecodeSeconds = q.timecodeSeconds;
-
-if (finalTimecodeSeconds === null) {
-  const { data: existing } = await supabase
-    .from("kb_questions")
-    .select("timecode_seconds")
-    .eq("lesson_id", lessonId)
-    .eq("question_number", q.questionNumber)
-    .maybeSingle();
-
-  if (existing?.timecode_seconds !== null && existing?.timecode_seconds !== undefined) {
-    finalTimecodeSeconds = existing.timecode_seconds;
-  }
-}
-
-await supabase.from("kb_questions").upsert(
-  {
-    lesson_id: lessonId,
-    episode_number: episode.episodeNumber,
-    question_number: q.questionNumber,
-    title: q.title,
-    full_question: q.fullQuestion || null,
-    tags: q.tags.length ? q.tags : null,
-    kinescope_url: q.kinescopeUrl,
-    timecode_seconds: finalTimecodeSeconds ?? null,
-    answer_date: q.answerDate || episode.answerDate,
-  },
-  { onConflict: "lesson_id,question_number" }
-);
-
-
-⸻
-
-PATCH-7: Клик по вопросу — всегда открывать нормализованный URL с t=
-
-Файл: src/pages/LibraryLesson.tsx
-
-Заменить текущий window.open(\${q.kinescope_url}?t=…`)` на:
-
-import { buildKinescopeUrlWithTimecode } from "@/hooks/useKbQuestions";
-
+**Причина**: В `LibraryLesson.tsx` строки 341-344:
+```tsx
 onClick={() => {
-  if (!q.timecode_seconds) return;
   const url = buildKinescopeUrlWithTimecode(q.kinescope_url, q.timecode_seconds);
   if (url !== "#") window.open(url, "_blank");
 }}
+```
 
+**Решение**: Вместо `window.open` — обновлять URL embed-плеера на странице, добавляя `?t=seconds` или используя postMessage API Kinescope.
 
-⸻
+### Проблема 5: Описание урока обрезается
+На скриншоте видно, что описание выпуска обрезается ("Самозанятый и закупка товаров собственного производства, налог на недвижимость по зарядкам для электромобилей, шины из командировки в учете, курсовые разницы по стройке.").
 
-PATCH-8: “Просмотр ответа” — тоже через buildKinescopeUrlWithTimecode
+**Причина**: CSS ограничивает высоту или применяется `line-clamp`.
 
-Файл: там, где формируется переход “просмотр ответа” (кнопка/ссылка).
+**Решение**: Убрать ограничение высоты для описания на странице урока.
 
-Правило одно: никаких ручных ?t=, только buildKinescopeUrlWithTimecode().
+---
 
-⸻
+## Файлы для изменения
 
-PATCH-9: Обложки/превью — выключить «позорную» генерацию текста, поставить безопасный источник
+| Файл | Изменения |
+|------|-----------|
+| `src/hooks/useKbQuestions.ts` | PATCH: parseTimecode — автокоррекция MM:SS при больших значениях |
+| `src/pages/LibraryLesson.tsx` | PATCH: формат даты DD.MM.YYYY, внутренний seek вместо external link, убрать clamp описания |
+| `src/pages/admin/AdminKbImport.tsx` | PATCH: генерация AI-обложки при импорте |
+| `src/components/admin/lesson-editor/blocks/VideoBlock.tsx` | PATCH: поддержка изменения URL с таймкодом для seek |
 
-Файл: src/pages/admin/AdminKbImport.tsx
+---
 
-Цель: после импорта превью не пустое, и без кривого русского текста.
+## Технические детали реализации
 
-Правило:
-	•	НЕ вызывать генерацию обложки, которая рисует текст с ошибками.
-	•	Делать так:
-	•	если у урока нет thumbnail_url → ставить дефолтную статичную обложку проекта (asset/URL в конфиге)
-	•	(опционально позже) заменить на thumbnail из Kinescope по API, но это отдельный интеграционный PATCH
+### PATCH A: Автокоррекция таймкодов MM:SS
 
-const DEFAULT_THUMBNAIL_URL = "/assets/lesson-default-cover.png";
+**Файл**: `src/hooks/useKbQuestions.ts` → `parseTimecode`
 
-await supabase
-  .from("training_lessons")
-  .update({ thumbnail_url: DEFAULT_THUMBNAIL_URL })
-  .eq("id", lessonId);
+Добавить эвристику после извлечения времени из Date:
 
+```typescript
+// После: const total = h * 3600 + m * 60 + s;
 
-⸻
-
-PATCH-10: Описания — только справочник + детерминированный fallback (без “AI-генерации”)
-
-Файл: src/pages/admin/AdminKbImport.tsx
+// Эвристика: если total > 10800 (3 часа) и h < 60 
+// — вероятно, формат MM:SS, а не HH:MM:SS
+if (total > 10800 && h < 60 && s === 0) {
+  // Интерпретируем как MM:SS
+  const corrected = h * 60 + m;
+  return corrected > 0 ? corrected : null;
+}
+```
 
 Логика:
-	•	если EPISODE_SUMMARIES[episodeNumber] есть → использовать
-	•	иначе fallback из первых 3–6 тем вопросов (чистка, без ошибок)
+- `04:37:00` → Date → h=4, m=37, s=0
+- total = 4*3600 + 37*60 = 16620 (больше 3 часов)
+- h=4 < 60, s=0 → это MM:SS
+- Возвращаем 4*60 + 37 = 277 секунд
 
-const fallbackDescription = episode.questions
-  .filter(q => q.title)
-  .slice(0, 6)
-  .map(q => q.title.trim().replace(/\s+/g, " ").replace(/[?!.;,]+$/g, ""))
-  .join(", ");
+### PATCH B: Формат даты на странице урока
 
+**Файл**: `src/pages/LibraryLesson.tsx`
 
-⸻
+1. Импортировать:
+```typescript
+import { format, parseISO } from "date-fns";
+```
 
-PATCH-11: UI-формат даты строго DD.MM.YYYY
+2. В блоке video content (где отображается дата эпизода), форматировать:
+```tsx
+{currentLesson.published_at && (
+  <div className="text-sm text-muted-foreground mb-4">
+    {format(parseISO(currentLesson.published_at), "dd.MM.yyyy")}
+  </div>
+)}
+```
 
-Файлы:
-	•	src/components/training/LessonCard.tsx
-	•	src/pages/Knowledge.tsx
+### PATCH C: Внутренний seek по таймкоду
 
-Правило:
-	•	хранение: YYYY-MM-DD в БД
-	•	показ: dd.MM.yyyy (например через date-fns + parseISO)
+**Файл**: `src/pages/LibraryLesson.tsx`
 
-⸻
+Вместо `window.open` — перезагружать iframe с новым URL:
 
-PATCH-12: STOP-предохранители — усиление Test Run
+1. Добавить state для текущего URL видео:
+```typescript
+const [videoUrl, setVideoUrl] = useState<string | null>(null);
+```
 
-Файл: src/pages/admin/AdminKbImport.tsx
+2. Инициализировать из blocks:
+```typescript
+useEffect(() => {
+  const videoBlock = blocks.find(b => b.block_type === 'video');
+  if (videoBlock) {
+    const content = videoBlock.content as { url?: string };
+    if (content.url) setVideoUrl(content.url);
+  }
+}, [blocks]);
+```
 
-Дополнить: блокировать Test Run, если нет валидных вопросов:
+3. При клике на вопрос — обновлять URL:
+```tsx
+onClick={() => {
+  if (q.timecode_seconds && videoUrl) {
+    const newUrl = buildKinescopeUrlWithTimecode(videoUrl, q.timecode_seconds);
+    setVideoUrl(newUrl);
+    // Scroll to video
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+}}
+```
 
-const validCount = episode.questions.filter(q => q.title).length;
-if (validCount === 0) critical.push("Нет валидных вопросов");
+4. Передать `videoUrl` в VideoBlock или использовать key для перезагрузки iframe:
+```tsx
+<VideoBlock 
+  key={videoUrl} // Force re-render on URL change
+  content={{ url: videoUrl || '', provider: 'kinescope' }} 
+  onChange={() => {}} 
+  isEditing={false} 
+/>
+```
 
+### PATCH D: Генерация AI-обложки при импорте
 
-⸻
+**Файл**: `src/pages/admin/AdminKbImport.tsx` → `importEpisode()`
 
-Файлы для изменения (итог)
+После создания нового урока (когда `!existing`):
 
-Файл	Патчи
-src/hooks/useKbQuestions.ts	2
-src/pages/admin/AdminKbImport.tsx	3, 6, 9, 10, 12
-src/pages/LibraryLesson.tsx	7, 8
-src/components/training/LessonCard.tsx	11
-src/pages/Knowledge.tsx	11
+```typescript
+if (!existing) {
+  // ... создание урока
+  
+  // Генерация AI-обложки
+  try {
+    const { data: coverData, error: coverError } = await supabase.functions.invoke("generate-cover", {
+      body: { 
+        title, 
+        description: description || `Выпуск ${episode.episodeNumber}`, 
+        moduleId 
+      },
+    });
+    
+    if (coverData?.url && !coverError) {
+      await supabase
+        .from("training_lessons")
+        .update({ thumbnail_url: coverData.url })
+        .eq("id", lessonId);
+    }
+  } catch (err) {
+    console.warn("Cover generation failed:", err);
+    // Не блокируем импорт при ошибке генерации обложки
+  }
+}
+```
 
+### PATCH E: Убрать ограничение описания
 
-⸻
+**Файл**: `src/pages/LibraryLesson.tsx`
 
-DoD (Definition of Done)
-	1.	74 выпуска (не 86)
-	2.	Таймкоды в вопросах: не 00:00, а реальные mm:ss / hh:mm:ss
-	3.	Даты без сдвига: 07.01.2024 (не “вчера/завтра”)
-	4.	Клик по вопросу открывает видео с нужного таймкода (URL содержит ?t=)
-	5.	Формат даты в UI: DD.MM.YYYY
-	6.	Превью урока не пустое и без кривого текста (дефолтная обложка)
+В секции описания урока (строка ~182):
+```tsx
+{currentLesson.description && (
+  <p className="text-muted-foreground mt-2">
+    {currentLesson.description}
+  </p>
+)}
+```
 
-SQL-пруфы
+Убедиться, что нет `line-clamp-*` или `truncate` классов.
 
-SELECT COUNT(DISTINCT episode_number) FROM kb_questions; -- 74
+---
 
-SELECT episode_number, COUNT(*), MIN(timecode_seconds), MAX(timecode_seconds)
-FROM kb_questions
-WHERE episode_number = 74
-GROUP BY episode_number;
+## DoD (Definition of Done)
+
+1. **Таймкоды корректные**: `04:37:00` → 277 секунд (4 мин 37 сек)
+2. **Видео стартует с правильного места**: не с конца
+3. **Дата**: `08.01.2024` (не `2024-01-08`)
+4. **Клик по вопросу**: video на странице перематывается, не открывается внешняя вкладка
+5. **AI-обложки**: генерируются при импорте новых выпусков
+6. **Описание**: не обрезается, отображается полностью
+
+### SQL-пруфы после фикса:
+```sql
+SELECT episode_number, timecode_seconds 
+FROM kb_questions 
+WHERE episode_number = 74 
+ORDER BY timecode_seconds 
+LIMIT 5;
+-- Ожидание: значения < 10000 секунд (< 3 часов)
+```
+
+### Визуальная проверка:
+- Страница выпуска №74: дата `08.01.2024`
+- Клик по вопросу: видео перематывается, страница не уходит
+- Обложки выпусков не пустые
+
