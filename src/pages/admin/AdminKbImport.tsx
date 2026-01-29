@@ -730,9 +730,10 @@ export default function AdminKbImport() {
         .sort((a, b) => b.episodeNumber - a.episodeNumber)
         .map((ep) => ({
           ...ep,
-          // Priority: EPISODE_SUMMARIES > file shortDescription > generated from titles
-          description: EPISODE_SUMMARIES[ep.episodeNumber] || 
-            ep.shortDescription || 
+          // Priority: file shortDescription > file fullDescription > EPISODE_SUMMARIES > fallback
+          description: ep.shortDescription || 
+            ep.fullDescription ||
+            EPISODE_SUMMARIES[ep.episodeNumber] || 
             getEpisodeSummary(ep.episodeNumber, ep.questions.map((q) => q.title)),
           errors: ep.questions.flatMap((q) => q.errors),
         }));
@@ -833,10 +834,11 @@ export default function AdminKbImport() {
   ): Promise<{ success: boolean; lessonId?: string; error?: string }> => {
     const slug = `episode-${episode.episodeNumber}`;
     const title = `Выпуск №${episode.episodeNumber}`;
-    // Use file descriptions if available, prioritizing EPISODE_SUMMARIES
-    const description = state.usePredefinedSummaries
-      ? EPISODE_SUMMARIES[episode.episodeNumber] || episode.shortDescription || episode.description
-      : episode.shortDescription || episode.description;
+    // Use file descriptions if available (file > EPISODE_SUMMARIES > fallback)
+    const description = episode.shortDescription || 
+      episode.fullDescription ||
+      (state.usePredefinedSummaries ? EPISODE_SUMMARIES[episode.episodeNumber] : null) ||
+      episode.description;
 
     try {
       // 1. Check if lesson exists
@@ -1134,9 +1136,12 @@ export default function AdminKbImport() {
     const totalQuestions = state.parsedRows.length;
     const totalEpisodes = state.episodes.length;
     const withErrors = state.episodes.filter((e) => e.errors.length > 0).length;
-    const predefinedCount = state.episodes.filter((e) => EPISODE_SUMMARIES[e.episodeNumber]).length;
+    // Count episodes that have ANY description (from file or predefined)
+    const withDescriptionCount = state.episodes.filter(
+      (e) => e.shortDescription || e.fullDescription || EPISODE_SUMMARIES[e.episodeNumber]
+    ).length;
 
-    return { totalQuestions, totalEpisodes, withErrors, predefinedCount };
+    return { totalQuestions, totalEpisodes, withErrors, withDescriptionCount };
   }, [state.episodes, state.parsedRows]);
 
   return (
@@ -1200,7 +1205,7 @@ export default function AdminKbImport() {
                     <Label htmlFor="summaries" className="flex-1">
                       Использовать справочник описаний
                       <p className="text-xs text-muted-foreground font-normal">
-                        {stats.predefinedCount} из {stats.totalEpisodes} выпусков
+                        {stats.withDescriptionCount} из {stats.totalEpisodes} выпусков с описаниями
                       </p>
                     </Label>
                     <Switch
@@ -1315,7 +1320,7 @@ export default function AdminKbImport() {
                 </Card>
                 <Card>
                   <CardContent className="pt-4">
-                    <div className="text-2xl font-bold text-green-600">{stats.predefinedCount}</div>
+                    <div className="text-2xl font-bold text-green-600">{stats.withDescriptionCount}</div>
                     <p className="text-xs text-muted-foreground">С описаниями</p>
                   </CardContent>
                 </Card>
