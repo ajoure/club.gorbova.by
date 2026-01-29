@@ -20,7 +20,7 @@ const routeLabels: Record<string, string> = {
   "/audits/mns-response": "Сервис ответов МНС",
   "/audits/mns-history": "История документов",
   "/self-development": "Саморазвитие",
-  "/library": "База знаний",
+  "/library": "Библиотека курсов",
   "/library/buh-business": "Бухгалтерия как бизнес",
   "/docs": "Документация",
   "/help": "Помощь",
