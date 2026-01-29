@@ -152,6 +152,7 @@ const App = () => (
               <Route path="/consultation" element={<LazyRoute><Consultation /></LazyRoute>} />
               <Route path="/course-accountant" element={<LazyRoute><CourseAccountant /></LazyRoute>} />
               <Route path="/business-training" element={<LazyRoute><BusinessTraining /></LazyRoute>} />
+              <Route path="/club" element={<Landing />} />
               
               {/* Protected routes */}
               <Route path="/products" element={<ProtectedRoute><LazyRoute><Learning /></LazyRoute></ProtectedRoute>} />

@@ -155,9 +155,9 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
     : 0;
 
   const handleGoToSite = () => {
-    // Club: full page navigation to landing (not SPA, not _blank)
+    // Club: SPA navigation for logged-in users, external for guests
     if (product.isClub) {
-      window.location.assign("https://club.gorbova.by/");
+      navigate("/club");
       return;
     }
     
