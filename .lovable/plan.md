@@ -1,179 +1,140 @@
 
+# План: Исправления навигации, хлебных крошек и импорта KB
 
-# План: Исправления для импорта и отображения Базы знаний
+## Выявленные проблемы (из скриншотов и запроса)
 
-## Выявленные проблемы
-
-| # | Проблема | Где происходит |
-|---|----------|----------------|
-| 1 | Клик на вопрос открывает **внешний сайт Kinescope** вместо навигации внутри платформы | `Knowledge.tsx` строки 121-130 |
-| 2 | Дата в видео отображается как `2026-01-28` вместо `28.01.2026` | `VideoBlock.tsx` (поле `content.title`), `LessonCard.tsx` (формат даты) |
-| 3 | AI генерирует картинки **с текстом** (нечитаемым) | `generate-cover/index.ts` — промпт |
-| 4 | Сортировка не хронологическая (от новых к старым) | `useContainerLessons.ts`, `useKbQuestions.ts` |
-| 5 | Описание урока берётся неправильно | `AdminKbImport.tsx` — нужно использовать поля из файла |
+| # | Проблема | Источник |
+|---|----------|----------|
+| 1 | На странице урока при клике на вопрос видео НЕ запускается автоматически — только переходит к таймкоду | `LibraryLesson.tsx` + `VideoBlock.tsx` |
+| 2 | Из раздела "База знаний → Вопросы" кнопка "Смотреть видеоответ" открывает Kinescope вместо внутренней навигации | Код `Knowledge.tsx` не обновился — нужно перепроверить |
+| 3 | Хлебные крошки: "Библиотека курсов" → "episode-100" вместо "База знаний" → "Выпуск №100" | `DashboardBreadcrumbs.tsx` строка 23, `LibraryLesson.tsx` строка 160 |
+| 4 | Импорт: "100 выпусков, но с описаниями 74" — приоритет EPISODE_SUMMARIES над файлом | `AdminKbImport.tsx` строки 733-738 |
+| 5 | Все тексты должны быть на русском языке — никаких "episode-100" | Slug хранится как `episode-100`, но title должен отображаться как "Выпуск №100" |
 
 ---
 
 ## Решения
 
-### 1. Вопросы открываются внутри платформы (не Kinescope)
+### 1. Автозапуск видео при клике на вопрос (Play)
 
-**Файл: `src/pages/Knowledge.tsx`**
+**Проблема**: При нажатии на Play около вопроса, видео переходит к таймкоду, но НЕ запускается автоматически.
 
-Сейчас:
-```tsx
-<a 
-  href={videoUrl}
-  target="_blank"
-  rel="noopener noreferrer"
-  ...
->
-  <Play className="h-4 w-4" />
-  Смотреть видеоответ
-  <ExternalLink className="h-3 w-3" />
-</a>
-```
+**Файл: `src/components/admin/lesson-editor/blocks/VideoBlock.tsx`**
 
-Нужно заменить на навигацию внутри платформы через `useNavigate`:
-- Получить `lesson.slug` и `lesson.module.slug` из вопроса (уже есть в запросе)
-- При клике: `navigate(`/library/${moduleSlug}/${lessonSlug}?t=${timecode}`)`
-- Убрать иконку `ExternalLink`, заменить на внутреннюю навигацию
+Добавить параметр `&autoplay=1` к URL embed для Kinescope при наличии таймкода:
 
-```tsx
-import { useNavigate } from "react-router-dom";
-
-// В QuestionsContent:
-const navigate = useNavigate();
-
-// При клике на вопрос:
-const handleQuestionClick = (question: KbQuestion) => {
-  const moduleSlug = question.lesson?.module?.slug;
-  const lessonSlug = question.lesson?.slug;
-  
-  if (moduleSlug && lessonSlug) {
-    navigate(`/library/${moduleSlug}/${lessonSlug}`, { 
-      state: { seekTo: question.timecode_seconds } 
-    });
-  }
-};
-```
-
-### 2. Формат даты `dd.MM.yyyy` вместо `YYYY-MM-DD`
-
-**Файл: `src/components/training/LessonCard.tsx`**
-
-Изменить формат даты:
-```tsx
-// БЫЛО:
-const formattedDate = displayDate
-  ? format(new Date(displayDate), "d MMM yyyy", { locale: ru })
-  : null;
-
-// СТАНЕТ:
-const formattedDate = displayDate
-  ? format(new Date(displayDate), "dd.MM.yyyy")
-  : null;
-```
-
-**Файл: `src/pages/admin/AdminKbImport.tsx`**
-
-При создании video block, поле `title` сохраняет дату в правильном формате:
-```tsx
-// БЫЛО (строка 894):
-content: {
-  url: episode.kinescopeUrl,
-  title: episode.answerDate,  // ISO формат "2026-01-28"
-  provider: "kinescope",
-}
-
-// СТАНЕТ:
-content: {
-  url: episode.kinescopeUrl,
-  title: episode.answerDate 
-    ? format(new Date(episode.answerDate), "dd.MM.yyyy") 
-    : null,
-  provider: "kinescope",
-}
-```
-
-Добавить импорт `format` из `date-fns`.
-
-**Файл: `src/pages/Knowledge.tsx`**
-
-Изменить формат даты вопросов:
-```tsx
-// БЫЛО (строка 88):
-const formattedDate = question.answer_date
-  ? format(new Date(question.answer_date), "d MMM yyyy", { locale: ru })
-  : null;
-
-// СТАНЕТ:
-const formattedDate = question.answer_date
-  ? format(new Date(question.answer_date), "dd.MM.yyyy")
-  : null;
-```
-
-### 3. AI обложки без текста
-
-**Файл: `supabase/functions/generate-cover/index.ts`**
-
-Обновить промпт, убрать текст и сделать акцент на смысловых изображениях:
 ```typescript
-const prompt = `Create a professional cover image for an educational video lesson about accounting and law.
-
-Topics: "${title}"
-${description ? `Details: ${description}` : ""}
-
-CRITICAL REQUIREMENTS:
-- NO TEXT whatsoever - absolutely no letters, numbers, words, or any written content on the image
-- NO logos, NO watermarks, NO captions
-- Only meaningful visual imagery that represents the topic
-- Use symbolic icons and illustrations: documents, calculators, coins, charts, scales of justice, buildings, computers, folders, contracts, stamps, etc.
-- Professional business illustration style
-- Clean, modern aesthetic with soft gradients
-- Light, professional color palette (blues, teals, soft purples, whites)
-- 16:9 aspect ratio (1200x630 pixels)
-- High quality, sharp imagery
-
-The image should convey the topic through visual symbols only, without any text.`;
+case 'kinescope': {
+  const videoId = url.match(/kinescope\.io\/([a-zA-Z0-9]+)/)?.[1];
+  let embedUrl = videoId ? `https://kinescope.io/embed/${videoId}` : url;
+  if (timecode && timecode > 0) {
+    embedUrl += `?t=${Math.floor(timecode)}&autoplay=1`;  // Добавить autoplay=1
+  }
+  return embedUrl;
+}
 ```
 
-### 4. Хронологическая сортировка (от новых к старым)
+**Файл: `src/pages/LibraryLesson.tsx`**
 
-**Файл: `src/hooks/useContainerLessons.ts`**
+Также добавить key для принудительного ремаунта iframe при смене timecode:
 
-Уже правильно сортирует по `published_at DESC` (строки 57-59). Проверить, что `published_at` заполняется при импорте.
+```tsx
+<LessonBlockRenderer 
+  key={`blocks-${activeTimecode ?? 'init'}`}  // Ремаунт при смене таймкода
+  blocks={blocks} 
+  lessonId={currentLesson?.id} 
+  activeTimecode={activeTimecode}
+/>
+```
 
-**Файл: `src/hooks/useKbQuestions.ts`**
+### 2. Кнопка "Смотреть видеоответ" из Базы знаний
 
-Уже правильно сортирует по `answer_date DESC` (строка 59). Проверить порядок в UI.
+**Файл: `src/pages/Knowledge.tsx`**
+
+Код уже использует `navigate()` внутрь платформы (строки 63-72). Проблема может быть в том, что `hasInternalLink` = false для некоторых вопросов.
+
+Проверить условие — возможно lesson/module данные не загружаются корректно. Добавить fallback:
+
+```tsx
+// Если lesson данные не загружены, попробовать получить из другого источника
+const hasInternalLink = question.lesson?.slug && question.lesson?.module?.slug;
+
+// Убедиться что navigate работает только при наличии данных
+if (!hasInternalLink) {
+  console.warn(`Question ${question.id} missing lesson/module data`);
+}
+```
+
+### 3. Хлебные крошки на русском языке
+
+**Файл: `src/components/layout/DashboardBreadcrumbs.tsx`**
+
+Изменить строку 23:
+```typescript
+"/library": "База знаний",  // БЫЛО: "Библиотека курсов"
+```
+
+**Файл: `src/pages/LibraryLesson.tsx`**
+
+Хлебная крошка для урока (`currentLesson.title`) уже отображается корректно как "Выпуск №100" (если title в БД = "Выпуск №100").
+
+Проблема: скриншот показывает `episode-100` — это slug, а не title!
+
+Проверить строку 160:
+```tsx
+<span className="text-foreground">{currentLesson.title}</span>  // Должен быть title, не slug
+```
+
+Если проблема в том, что title = slug, нужно исправить импорт.
+
+### 4. Описания из файла вместо EPISODE_SUMMARIES
 
 **Файл: `src/pages/admin/AdminKbImport.tsx`**
 
-Сортировка эпизодов уже правильная (строка 729):
-```tsx
-.sort((a, b) => b.episodeNumber - a.episodeNumber)
+Текущий приоритет (строки 733-738):
+```typescript
+description: EPISODE_SUMMARIES[ep.episodeNumber] || 
+  ep.shortDescription || 
+  getEpisodeSummary(...)
 ```
 
-При импорте вопросов добавить сортировку по `question_number ASC` для правильного порядка внутри эпизода.
+**Изменить приоритет — файл важнее справочника:**
 
-### 5. Описания уроков из файла
+```typescript
+// Priority: file shortDescription > file fullDescription > EPISODE_SUMMARIES > fallback
+description: ep.shortDescription || 
+  ep.fullDescription ||
+  EPISODE_SUMMARIES[ep.episodeNumber] || 
+  getEpisodeSummary(ep.episodeNumber, ep.questions.map((q) => q.title)),
+```
 
-**Файл: `src/pages/admin/AdminKbImport.tsx`**
-
-Сейчас при импорте:
-- `shortDescription` = из "Кратко: ..." (колонка "Суть вопроса")
-- `fullDescription` = из "Описание выпуска (подробно): ..." (колонка "Вопрос участника")
-
-Изменить логику использования описаний:
-```tsx
-// При создании урока:
+И в `importEpisode()` (строки 837-839):
+```typescript
 const description = episode.shortDescription || 
-  EPISODE_SUMMARIES[episode.episodeNumber] || 
-  getEpisodeSummary(episode.episodeNumber, episode.questions.map(q => q.title));
+  episode.fullDescription ||
+  (state.usePredefinedSummaries ? EPISODE_SUMMARIES[episode.episodeNumber] : null) ||
+  episode.description;
+```
 
-// Для AI обложки использовать полное описание:
-const coverDescription = episode.fullDescription || episode.shortDescription || description;
+### 5. Счётчик "с описаниями" в UI
+
+**Файл: `src/pages/admin/AdminKbImport.tsx`**
+
+Текущий счётчик (строка 1137):
+```typescript
+const predefinedCount = state.episodes.filter((e) => EPISODE_SUMMARIES[e.episodeNumber]).length;
+```
+
+Изменить на:
+```typescript
+const withDescriptionCount = state.episodes.filter(
+  (e) => e.shortDescription || e.fullDescription || EPISODE_SUMMARIES[e.episodeNumber]
+).length;
+```
+
+И обновить UI для отображения:
+```tsx
+{withDescriptionCount} из {stats.totalEpisodes} выпусков с описаниями
 ```
 
 ---
@@ -182,19 +143,87 @@ const coverDescription = episode.fullDescription || episode.shortDescription || 
 
 | Файл | Изменения |
 |------|-----------|
-| `src/pages/Knowledge.tsx` | Заменить внешнюю ссылку на `navigate()` внутри платформы, формат даты |
-| `src/components/training/LessonCard.tsx` | Формат даты `dd.MM.yyyy` |
-| `src/pages/admin/AdminKbImport.tsx` | Формат даты в video block, импорт `format` |
-| `supabase/functions/generate-cover/index.ts` | Обновить промпт без текста |
+| `src/components/admin/lesson-editor/blocks/VideoBlock.tsx` | Добавить `&autoplay=1` к Kinescope embed URL |
+| `src/pages/LibraryLesson.tsx` | Убедиться что отображается title, не slug |
+| `src/components/layout/DashboardBreadcrumbs.tsx` | `/library` → "База знаний" |
+| `src/pages/admin/AdminKbImport.tsx` | Приоритет описаний: файл > справочник; счётчик "с описаниями" |
+| `src/pages/Knowledge.tsx` | Убедиться что внутренняя навигация работает |
+
+---
+
+## Технические детали
+
+### VideoBlock.tsx — автозапуск видео
+
+```typescript
+// Строки 42-48 — функция getEmbedUrl
+case 'kinescope': {
+  const videoId = url.match(/kinescope\.io\/([a-zA-Z0-9]+)/)?.[1];
+  let embedUrl = videoId ? `https://kinescope.io/embed/${videoId}` : url;
+  if (timecode && timecode > 0) {
+    // Добавить autoplay=1 для автозапуска при наличии таймкода
+    embedUrl += `?t=${Math.floor(timecode)}&autoplay=1`;
+  }
+  return embedUrl;
+}
+```
+
+### DashboardBreadcrumbs.tsx — русские названия
+
+```typescript
+// Строка 23
+"/library": "База знаний",  // БЫЛО: "Библиотека курсов"
+```
+
+### AdminKbImport.tsx — приоритет описаний
+
+```typescript
+// Строки 733-738 — при парсинге
+.map((ep) => ({
+  ...ep,
+  // NEW Priority: file > справочник > fallback
+  description: ep.shortDescription || 
+    ep.fullDescription ||
+    EPISODE_SUMMARIES[ep.episodeNumber] || 
+    getEpisodeSummary(ep.episodeNumber, ep.questions.map((q) => q.title)),
+  errors: ep.questions.flatMap((q) => q.errors),
+}));
+
+// Строки 837-839 — при импорте
+const description = episode.shortDescription || 
+  episode.fullDescription ||
+  (state.usePredefinedSummaries ? EPISODE_SUMMARIES[episode.episodeNumber] : null) ||
+  episode.description;
+```
+
+### AdminKbImport.tsx — счётчик описаний
+
+```typescript
+// Строка 1137 — изменить predefinedCount на withDescriptionCount
+const withDescriptionCount = state.episodes.filter(
+  (e) => e.shortDescription || e.fullDescription || EPISODE_SUMMARIES[e.episodeNumber]
+).length;
+
+// И в UI (около строки 1203):
+{withDescriptionCount} из {stats.totalEpisodes} выпусков с описаниями
+```
+
+---
+
+## Ожидаемый результат
+
+1. При клике на Play у вопроса — видео автоматически переходит к таймкоду И запускается
+2. Кнопка "Смотреть видеоответ" ведёт внутрь платформы (не на Kinescope)
+3. Хлебные крошки: "База знаний" → "Выпуск №100" (всё на русском)
+4. Импорт показывает "100 выпусков с описаниями" (берёт из файла)
+5. Никаких английских названий типа "episode-100" в UI
 
 ---
 
 ## DoD (обязательно)
 
-1. ✅ Клик на вопрос → навигация внутри платформы (не внешний сайт)
-2. ✅ Дата отображается как `28.01.2026` (не `2026-01-28`)
-3. ✅ AI обложки без текста — только иконки и символы
-4. ✅ Сортировка: новые выпуски вверху
-5. ✅ Описания берутся из файла ("Суть вопроса" = краткое, "Вопрос участника" = полное)
-6. Скриншоты: страница вопроса внутри платформы, карточка с датой, обложка без текста
-
+1. Открыть страницу урока, нажать Play на вопросе — видео запустится автоматически
+2. Открыть "База знаний → Вопросы", нажать "Смотреть видеоответ" — остаться внутри платформы
+3. Проверить хлебные крошки: "База знаний > Выпуск №100"
+4. Открыть `/admin/kb-import`, загрузить файл — видеть "100 из 100 выпусков с описаниями"
+5. Скриншоты: хлебные крошки, автозапуск видео, страница импорта
