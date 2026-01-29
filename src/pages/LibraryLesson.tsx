@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useTrainingLessons, TrainingLesson } from "@/hooks/useTrainingLessons";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
-import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
+import { useLessonQuestions, formatTimecode, buildKinescopeUrlWithTimecode } from "@/hooks/useKbQuestions";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -338,10 +338,11 @@ export default function LibraryLesson() {
                         variant="ghost"
                         size="sm"
                         className="h-8 px-2"
-                        onClick={() => q.timecode_seconds && window.open(
-                          `${q.kinescope_url}?t=${q.timecode_seconds}`,
-                          '_blank'
-                        )}
+                        onClick={() => {
+                          // PATCH-7 & 8: Use buildKinescopeUrlWithTimecode for proper URL
+                          const url = buildKinescopeUrlWithTimecode(q.kinescope_url, q.timecode_seconds);
+                          if (url !== "#") window.open(url, "_blank");
+                        }}
                       >
                         <Play className="h-3 w-3" />
                       </Button>
