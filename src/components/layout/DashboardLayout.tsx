@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useConsent } from "@/hooks/useConsent";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
@@ -16,6 +17,10 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { loading } = useAuth();
   const { needsConsentUpdate, isLoading: consentLoading } = useConsent();
+  const location = useLocation();
+  
+  // Hide global breadcrumbs on /library routes (they have their own custom breadcrumbs)
+  const hideGlobalBreadcrumbs = location.pathname.startsWith("/library");
 
   if (loading || consentLoading) {
     return (
@@ -54,7 +59,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             }}
           >
             <SidebarTrigger className="mr-3 md:mr-4 h-9 w-9" />
-            <DashboardBreadcrumbs />
+            {!hideGlobalBreadcrumbs && <DashboardBreadcrumbs />}
             <div className="flex-1" />
           </header>
           <PullToRefresh>

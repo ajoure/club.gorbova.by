@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useId, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { VideoContent } from "@/hooks/useLessonBlocks";
-import { Video, ExternalLink } from "lucide-react";
+import { Video, ExternalLink, AlertCircle } from "lucide-react";
+import { useKinescopePlayer, extractKinescopeVideoId } from "@/hooks/useKinescopePlayer";
 
 interface VideoBlockProps {
   content: VideoContent;
@@ -10,6 +11,8 @@ interface VideoBlockProps {
   isEditing?: boolean;
   /** Active timecode in seconds for seeking (optional) */
   activeTimecode?: number | null;
+  /** Nonce to force autoplay when timecode changes from user action */
+  autoplayNonce?: number;
 }
 
 function detectVideoProvider(url: string): VideoContent['provider'] {
@@ -27,7 +30,7 @@ function getEmbedUrl(url: string, provider: VideoContent['provider'], timecode?:
       const videoId = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^?&]+)/)?.[1];
       let embedUrl = videoId ? `https://www.youtube.com/embed/${videoId}` : url;
       if (timecode && timecode > 0) {
-        embedUrl += `?start=${Math.floor(timecode)}`;
+        embedUrl += `?start=${Math.floor(timecode)}&autoplay=1`;
       }
       return embedUrl;
     }
@@ -35,15 +38,16 @@ function getEmbedUrl(url: string, provider: VideoContent['provider'], timecode?:
       const videoId = url.match(/vimeo\.com\/(\d+)/)?.[1];
       let embedUrl = videoId ? `https://player.vimeo.com/video/${videoId}` : url;
       if (timecode && timecode > 0) {
-        embedUrl += `#t=${Math.floor(timecode)}s`;
+        embedUrl += `?autoplay=1#t=${Math.floor(timecode)}s`;
       }
       return embedUrl;
     }
     case 'kinescope': {
-      const videoId = url.match(/kinescope\.io\/([a-zA-Z0-9]+)/)?.[1];
+      // For Kinescope, we'll use the API player for controlled playback
+      // This is just a fallback URL if API fails
+      const videoId = extractKinescopeVideoId(url);
       let embedUrl = videoId ? `https://kinescope.io/embed/${videoId}` : url;
       if (timecode && timecode > 0) {
-        // Autoplay when seeking to a specific timecode
         embedUrl += `?t=${Math.floor(timecode)}&autoplay=1`;
       }
       return embedUrl;
@@ -53,9 +57,15 @@ function getEmbedUrl(url: string, provider: VideoContent['provider'], timecode?:
   }
 }
 
-export function VideoBlock({ content, onChange, isEditing = true, activeTimecode }: VideoBlockProps) {
+export function VideoBlock({ content, onChange, isEditing = true, activeTimecode, autoplayNonce }: VideoBlockProps) {
   const [localUrl, setLocalUrl] = useState(content.url || "");
   const [localTitle, setLocalTitle] = useState(content.title || "");
+  const [useApiPlayer, setUseApiPlayer] = useState(true);
+  const [apiError, setApiError] = useState(false);
+  
+  // Unique container ID for Kinescope player
+  const uniqueId = useId();
+  const containerId = `kinescope-player-${uniqueId.replace(/:/g, '-')}`;
   
   const handleUrlBlur = () => {
     const provider = detectVideoProvider(localUrl);
@@ -66,7 +76,24 @@ export function VideoBlock({ content, onChange, isEditing = true, activeTimecode
     onChange({ ...content, title: localTitle });
   };
 
-  // Use activeTimecode when provided for viewing mode, otherwise no timecode
+  // Extract video ID for Kinescope
+  const kinescopeVideoId = content.provider === 'kinescope' ? extractKinescopeVideoId(content.url || "") : null;
+  
+  // Use Kinescope API player for controlled playback
+  const { seekAndPlay } = useKinescopePlayer({
+    videoId: kinescopeVideoId || "",
+    containerId,
+    autoplayTimecode: activeTimecode,
+    onReady: () => {
+      setApiError(false);
+    },
+    onError: () => {
+      setApiError(true);
+      setUseApiPlayer(false);
+    },
+  });
+
+  // Fallback embed URL for non-API mode
   const embedUrl = getEmbedUrl(content.url || "", content.provider, isEditing ? undefined : activeTimecode);
 
   if (!isEditing) {
@@ -78,6 +105,22 @@ export function VideoBlock({ content, onChange, isEditing = true, activeTimecode
       );
     }
     
+    // Use Kinescope API player for controlled seek+autoplay
+    if (content.provider === 'kinescope' && kinescopeVideoId && useApiPlayer && !apiError) {
+      return (
+        <div className="space-y-2">
+          {content.title && (
+            <p className="text-sm font-medium text-muted-foreground">{content.title}</p>
+          )}
+          <div 
+            id={containerId}
+            className="relative aspect-video rounded-lg overflow-hidden bg-black"
+          />
+        </div>
+      );
+    }
+    
+    // Fallback to regular iframe
     return (
       <div className="space-y-2">
         {content.title && (
@@ -85,6 +128,7 @@ export function VideoBlock({ content, onChange, isEditing = true, activeTimecode
         )}
         <div className="relative aspect-video rounded-lg overflow-hidden bg-black">
           <iframe
+            key={embedUrl} // Force remount when URL changes (for autoplay)
             src={embedUrl}
             className="absolute inset-0 w-full h-full"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"

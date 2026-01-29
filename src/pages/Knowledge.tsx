@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -59,14 +60,25 @@ function QuestionsContent({ searchQuery }: { searchQuery: string }) {
     });
   };
 
-  // Navigate to video lesson with timecode
+  // Navigate to video lesson with timecode - STRICTLY internal navigation
   const handleWatchVideo = (question: typeof questions[0]) => {
     const moduleSlug = question.lesson?.module?.slug;
     const lessonSlug = question.lesson?.slug;
     
     if (moduleSlug && lessonSlug) {
+      // Internal navigation to lesson page with seekTo state
       navigate(`/library/${moduleSlug}/${lessonSlug}`, { 
         state: { seekTo: question.timecode_seconds } 
+      });
+    } else {
+      // No external links! Show message instead
+      console.warn("[Knowledge] Question missing lesson/module data:", question.id, {
+        lessonSlug,
+        moduleSlug,
+        lessonId: question.lesson_id
+      });
+      toast.error("Видеоответ пока не привязан к уроку", {
+        description: "Обратитесь к администратору для настройки связи"
       });
     }
   };

@@ -1,8 +1,11 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Play, Clock, Calendar, Lock, Video } from "lucide-react";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Play, Clock, Calendar, Lock, Video, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 
@@ -32,6 +35,9 @@ function formatDuration(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
+// Minimum character count before showing expand option
+const DESCRIPTION_TRUNCATE_THRESHOLD = 80;
+
 export function LessonCard({ 
   lesson, 
   moduleSlug, 
@@ -40,6 +46,7 @@ export function LessonCard({
 }: LessonCardProps) {
   const navigate = useNavigate();
   const hasAccess = lesson.has_access !== false;
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
 
   const handleClick = () => {
     navigate(`/library/${moduleSlug}/${lesson.slug}`);
@@ -50,6 +57,16 @@ export function LessonCard({
   const formattedDate = displayDate
     ? format(new Date(displayDate), "dd.MM.yyyy")
     : null;
+
+  // Check if description is long enough to need expand/hover
+  const description = lesson.description || "";
+  const isDescriptionLong = description.length > DESCRIPTION_TRUNCATE_THRESHOLD;
+
+  // Toggle description expansion (for mobile)
+  const handleExpandClick = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Don't navigate to lesson
+    setIsDescriptionExpanded(!isDescriptionExpanded);
+  };
 
   return (
     <GlassCard
@@ -122,15 +139,76 @@ export function LessonCard({
           {lesson.title}
         </h3>
 
-        {lesson.description && (
-          <p className="text-sm text-muted-foreground leading-relaxed mb-3 line-clamp-2">
-            {lesson.description}
-          </p>
+        {/* Description with expand/hover functionality */}
+        {description && (
+          <>
+            {/* Desktop: HoverCard for long descriptions */}
+            <div className="hidden md:block">
+              {isDescriptionLong ? (
+                <HoverCard openDelay={300} closeDelay={100}>
+                  <HoverCardTrigger asChild>
+                    <p className="text-sm text-muted-foreground leading-relaxed mb-3 line-clamp-2 cursor-help hover:text-foreground/70 transition-colors">
+                      {description}
+                    </p>
+                  </HoverCardTrigger>
+                  <HoverCardContent 
+                    side="top" 
+                    align="start" 
+                    className="w-80 max-w-[90vw] p-4 bg-popover/95 backdrop-blur-md"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">
+                      {description}
+                    </p>
+                  </HoverCardContent>
+                </HoverCard>
+              ) : (
+                <p className="text-sm text-muted-foreground leading-relaxed mb-3 line-clamp-2">
+                  {description}
+                </p>
+              )}
+            </div>
+
+            {/* Mobile/Tablet: Collapsible for long descriptions */}
+            <div className="md:hidden">
+              {isDescriptionLong ? (
+                <Collapsible open={isDescriptionExpanded} onOpenChange={setIsDescriptionExpanded}>
+                  <p className={cn(
+                    "text-sm text-muted-foreground leading-relaxed transition-all",
+                    !isDescriptionExpanded && "line-clamp-2"
+                  )}>
+                    {description}
+                  </p>
+                  <CollapsibleContent className="overflow-hidden">
+                    {/* Content is shown in the p above when expanded */}
+                  </CollapsibleContent>
+                  <CollapsibleTrigger asChild>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-8 px-2 mt-1 text-xs text-primary hover:text-primary/80 -ml-2"
+                      onClick={handleExpandClick}
+                    >
+                      <ChevronDown className={cn(
+                        "h-3 w-3 mr-1 transition-transform",
+                        isDescriptionExpanded && "rotate-180"
+                      )} />
+                      {isDescriptionExpanded ? "Свернуть" : "Показать полностью"}
+                    </Button>
+                  </CollapsibleTrigger>
+                </Collapsible>
+              ) : (
+                <p className="text-sm text-muted-foreground leading-relaxed mb-3">
+                  {description}
+                </p>
+              )}
+            </div>
+          </>
         )}
 
         {/* Meta info */}
         {formattedDate && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-2">
             <Calendar className="h-3.5 w-3.5" />
             {formattedDate}
           </div>

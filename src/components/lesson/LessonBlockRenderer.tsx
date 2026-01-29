@@ -30,9 +30,11 @@ interface LessonBlockRendererProps {
   lessonId?: string;
   /** Active timecode in seconds for video seeking (optional) */
   activeTimecode?: number | null;
+  /** Nonce to force autoplay when timecode changes from user action */
+  autoplayNonce?: number;
 }
 
-export function LessonBlockRenderer({ blocks, lessonId, activeTimecode }: LessonBlockRendererProps) {
+export function LessonBlockRenderer({ blocks, lessonId, activeTimecode, autoplayNonce }: LessonBlockRendererProps) {
   const { progress, saveBlockResponse, resetBlockProgress } = useUserProgress(lessonId || '');
 
   if (!blocks || blocks.length === 0) {
@@ -75,7 +77,7 @@ export function LessonBlockRenderer({ blocks, lessonId, activeTimecode }: Lesson
       case 'text':
         return <TextBlock content={block.content as any} onChange={noop} isEditing={false} />;
       case 'video':
-        return <VideoBlock content={block.content as any} onChange={noop} isEditing={false} activeTimecode={activeTimecode} />;
+        return <VideoBlock content={block.content as any} onChange={noop} isEditing={false} activeTimecode={activeTimecode} autoplayNonce={autoplayNonce} />;
       case 'audio':
         return <AudioBlock content={block.content as any} onChange={noop} isEditing={false} />;
       case 'image':

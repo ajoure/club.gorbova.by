@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useParams, useNavigate, Link, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -59,9 +59,25 @@ const getMenuSectionLabel = (key: string | null): string =>
 export default function LibraryLesson() {
   const { moduleSlug, lessonSlug } = useParams<{ moduleSlug: string; lessonSlug: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   
   // State for internal timecode seeking (instead of opening external links)
   const [activeTimecode, setActiveTimecode] = useState<number | null>(null);
+  // Nonce to force autoplay when timecode changes from user action
+  const [autoplayNonce, setAutoplayNonce] = useState<number>(0);
+  
+  // Handle seekTo from navigation state (from Knowledge page questions)
+  useEffect(() => {
+    const state = location.state as { seekTo?: number } | null;
+    if (state?.seekTo != null && state.seekTo > 0) {
+      setActiveTimecode(state.seekTo);
+      setAutoplayNonce(Date.now());
+      // Clear the state so it doesn't re-trigger on navigation
+      window.history.replaceState({}, document.title);
+      // Scroll to top to show video
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [location.state]);
 
   // Fetch module info
   const { data: module, isLoading: moduleLoading } = useQuery({
@@ -209,10 +225,11 @@ export default function LibraryLesson() {
           <Card className="mb-6">
             <CardContent className="py-6">
               <LessonBlockRenderer 
-                key={`blocks-${activeTimecode ?? 0}`} 
+                key={`blocks-${autoplayNonce || activeTimecode || 0}`} 
                 blocks={blocks} 
                 lessonId={currentLesson?.id} 
                 activeTimecode={activeTimecode}
+                autoplayNonce={autoplayNonce}
               />
             </CardContent>
           </Card>
@@ -349,9 +366,10 @@ export default function LibraryLesson() {
                         className="h-8 px-2"
                         onClick={() => {
                           if (q.timecode_seconds) {
-                            // Internal seek: scroll to top and update timecode state
+                            // Internal seek: scroll to top, update timecode and trigger autoplay
                             window.scrollTo({ top: 0, behavior: 'smooth' });
                             setActiveTimecode(q.timecode_seconds);
+                            setAutoplayNonce(Date.now());
                           }
                         }}
                       >
