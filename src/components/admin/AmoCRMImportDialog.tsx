@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import * as XLSX from "xlsx";
+// XLSX is imported dynamically to reduce bundle size
 import FuzzyMatchDialog from "./FuzzyMatchDialog";
 import ImportRollbackDialog from "./ImportRollbackDialog";
 
@@ -288,6 +288,8 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     setSkippedInvalidTelegram(0);
 
     try {
+      // Dynamic import of xlsx to reduce bundle size
+      const XLSX = await import("xlsx");
       const buffer = await selectedFile.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
       

@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import { useBepaidStatementImport } from "@/hooks/useBepaidStatement";
 import { toast } from "@/hooks/use-toast";
-import * as XLSX from 'xlsx';
 import { parseISO, parse, isValid } from "date-fns";
 import { Json } from "@/integrations/supabase/types";
 
@@ -82,6 +81,8 @@ interface ParsedRow {
   [key: string]: unknown;
 }
 
+// Parse Excel date - works with Date objects, numbers (Excel serial), or strings
+// Note: For Excel serial dates, we use a simple conversion since XLSX.SSF is loaded dynamically
 function parseExcelDate(value: unknown): string | null {
   if (!value) return null;
   
@@ -93,12 +94,17 @@ function parseExcelDate(value: unknown): string | null {
     return null;
   }
   
-  // Excel serial date number
+  // Excel serial date number - simple conversion without XLSX.SSF
+  // Excel dates are days since 1900-01-01 (with a bug for 1900 leap year)
   if (typeof value === 'number') {
-    const excelDate = XLSX.SSF.parse_date_code(value);
-    if (excelDate) {
-      return new Date(excelDate.y, excelDate.m - 1, excelDate.d, excelDate.H || 0, excelDate.M || 0, excelDate.S || 0).toISOString();
+    // Excel epoch is 1899-12-30 (accounting for the leap year bug)
+    const excelEpoch = new Date(1899, 11, 30);
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const date = new Date(excelEpoch.getTime() + value * msPerDay);
+    if (!isNaN(date.getTime())) {
+      return date.toISOString();
     }
+    return null;
   }
   
   // String date
@@ -167,6 +173,8 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
     setImportResult(null);
     
     try {
+      // Dynamic import of xlsx library to reduce bundle size
+      const XLSX = await import('xlsx');
       const buffer = await selectedFile.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
       

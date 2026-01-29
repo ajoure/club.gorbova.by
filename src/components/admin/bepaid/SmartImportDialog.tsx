@@ -21,7 +21,7 @@ import { useBepaidMappings, useBepaidQueueActions } from "@/hooks/useBepaidMappi
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import * as XLSX from "xlsx";
+// XLSX is imported dynamically to reduce bundle size
 import { transliterateToCyrillic } from "@/utils/transliteration";
 import { cn } from "@/lib/utils";
 import { 
@@ -127,46 +127,7 @@ interface DetectedSheet {
   hasUid: boolean;
 }
 
-function detectSheetsByName(workbook: XLSX.WorkBook): DetectedSheet[] {
-  const detected: DetectedSheet[] = [];
-  
-  for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '', raw: false });
-    const hasUid = rows.length > 0 && ('UID' in rows[0] || 'uid' in rows[0]);
-    const nameLower = sheetName.toLowerCase();
-    
-    let type: DetectedSheet['type'] = 'unknown';
-    
-    // Detect by sheet name
-    if (nameLower.includes('отчет') || nameLower.includes('report') || nameLower.includes('summary')) {
-      type = 'report';
-    } else if (nameLower.includes('карточ') || nameLower.includes('card')) {
-      type = 'cards';
-    } else if (nameLower.includes('ерип') || nameLower.includes('erip')) {
-      type = 'erip';
-    } else if (nameLower.includes('мемориальн') || nameLower.includes('memo')) {
-      type = 'memo';
-    } else if (hasUid) {
-      // Try to detect by content columns
-      const firstRow = rows[0] || {};
-      if (firstRow['Номер операции ЕРИП'] || firstRow['Расчетный агент'] || firstRow['Код услуги']) {
-        type = 'erip';
-      } else if (firstRow['Карта'] || firstRow['Card'] || firstRow['Владелец карты']) {
-        type = 'cards';
-      }
-    }
-    
-    detected.push({
-      name: sheetName,
-      type,
-      rowCount: rows.length,
-      hasUid,
-    });
-  }
-  
-  return detected;
-}
+// detectSheetsByName moved inline to support dynamic XLSX import
 
 // Parse bePaid CSV/Excel row using improved parser
 // CRITICAL: Normalizes ERIP transactions to payment_erip for proper classification
@@ -391,11 +352,39 @@ export default function SmartImportDialog({ open, onOpenChange, onSuccess }: Sma
           console.log(`CSV parsed: ${parseResult.rows.length} rows from ${selectedFile.name}, delimiter: "${parseResult.delimiter}"`);
         } else {
           // Excel file processing - detect sheets by NAME, not by index
+          // Dynamic import of xlsx to reduce bundle size
+          const XLSX = await import("xlsx");
           const buffer = await selectedFile.arrayBuffer();
           const workbook = XLSX.read(buffer, { type: 'array' });
           
-          // Detect all sheets and their types
-          const sheets = detectSheetsByName(workbook);
+          // Inline detectSheetsByName function
+          const detected: DetectedSheet[] = [];
+          for (const sheetName of workbook.SheetNames) {
+            const sheet = workbook.Sheets[sheetName];
+            const rows = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: '', raw: false });
+            const hasUid = rows.length > 0 && ('UID' in rows[0] || 'uid' in rows[0]);
+            const nameLower = sheetName.toLowerCase();
+            
+            let type: DetectedSheet['type'] = 'unknown';
+            if (nameLower.includes('отчет') || nameLower.includes('report') || nameLower.includes('summary')) {
+              type = 'report';
+            } else if (nameLower.includes('карточ') || nameLower.includes('card')) {
+              type = 'cards';
+            } else if (nameLower.includes('ерип') || nameLower.includes('erip')) {
+              type = 'erip';
+            } else if (nameLower.includes('мемориальн') || nameLower.includes('memo')) {
+              type = 'memo';
+            } else if (hasUid) {
+              const firstRow = rows[0] || {};
+              if (firstRow['Номер операции ЕРИП'] || firstRow['Расчетный агент'] || firstRow['Код услуги']) {
+                type = 'erip';
+              } else if (firstRow['Карта'] || firstRow['Card'] || firstRow['Владелец карты']) {
+                type = 'cards';
+              }
+            }
+            detected.push({ name: sheetName, type, rowCount: rows.length, hasUid });
+          }
+          const sheets = detected;
           setDetectedSheets(sheets);
           console.log('Detected sheets:', sheets);
           

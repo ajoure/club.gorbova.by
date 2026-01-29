@@ -14,7 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { parseTimecode, formatTimecode } from "@/hooks/useKbQuestions";
 import { EPISODE_SUMMARIES, getEpisodeSummary } from "@/lib/episode-summaries";
-import * as XLSX from "xlsx";
+// XLSX is imported dynamically to reduce bundle size
 import {
   Upload,
   FileSpreadsheet,
@@ -188,6 +188,8 @@ export default function AdminKbImport() {
     setState((s) => ({ ...s, file, parsing: true, parsed: false, parsedRows: [], episodes: [], validationErrors: [] }));
 
     try {
+      // Dynamic import of xlsx to reduce bundle size
+      const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];

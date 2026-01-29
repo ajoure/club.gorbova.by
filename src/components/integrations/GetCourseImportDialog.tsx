@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Download, Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, X } from "lucide-react";
 import { toast } from "sonner";
-import * as XLSX from "xlsx";
+// XLSX is imported dynamically to reduce bundle size
 
 interface GetCourseImportDialogProps {
   open: boolean;
@@ -78,6 +78,8 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
 
   // Парсинг Excel файла
   const parseExcelFile = async (file: File): Promise<ParsedDeal[]> => {
+    // Dynamic import of xlsx to reduce bundle size
+    const XLSX = await import("xlsx");
     const data = await file.arrayBuffer();
     const workbook = XLSX.read(data, { type: "array" });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -194,7 +196,7 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
   };
 
   // Скачать шаблон
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
     const headers = [
       "ID заказа",
       "Email",
@@ -211,6 +213,8 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
       ["123456", "example@mail.ru", "+375291234567", "Иванов Иван", "Клуб: full", "250", "Завершен", "01.01.2025", "01.01.2025"],
     ];
 
+    // Dynamic import of xlsx to reduce bundle size
+    const XLSX = await import("xlsx");
     const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleData]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Шаблон");

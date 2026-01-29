@@ -36,8 +36,8 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
       // Попробуем ещё раз получить сессию
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session) {
-          // Сессия найдена — перезагрузим страницу для корректной инициализации
-          window.location.reload();
+          // Session found on retry - don't reload, let AuthContext sync naturally
+          console.log("Session found on retry, waiting for AuthContext sync");
         }
       });
       setRetryCount(prev => prev + 1);

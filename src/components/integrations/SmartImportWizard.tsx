@@ -16,7 +16,7 @@ import {
   Check, X, Loader2, AlertCircle, Brain, Save, RefreshCw,
   ChevronDown, ChevronRight, Info, Users, ShoppingCart, Filter
 } from "lucide-react";
-import * as XLSX from "xlsx";
+// XLSX is imported dynamically to reduce bundle size
 import { supabase } from "@/integrations/supabase/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -178,33 +178,24 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
 
   // Parse Excel file
   const parseFile = useCallback(async (file: File) => {
-    return new Promise<{ headers: string[]; rows: ParsedRow[] }>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = e.target?.result;
-          const workbook = XLSX.read(data, { type: "binary" });
-          const sheetName = workbook.SheetNames[0];
-          const sheet = workbook.Sheets[sheetName];
-          const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as unknown[][];
-          
-          const headers = (jsonData[0] || []).map(h => String(h || ""));
-          const rows: ParsedRow[] = jsonData.slice(1).map((row) => {
-            const obj: ParsedRow = {};
-            headers.forEach((h, i) => {
-              obj[h] = (row as unknown[])[i];
-            });
-            return obj;
-          });
-          
-          resolve({ headers, rows });
-        } catch (err) {
-          reject(err);
-        }
-      };
-      reader.onerror = reject;
-      reader.readAsBinaryString(file);
+    // Dynamic import of xlsx to reduce bundle size
+    const XLSX = await import("xlsx");
+    const data = await file.arrayBuffer();
+    const workbook = XLSX.read(data, { type: "array" });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as unknown[][];
+    
+    const headers = (jsonData[0] || []).map(h => String(h || ""));
+    const rows: ParsedRow[] = jsonData.slice(1).map((row) => {
+      const obj: ParsedRow = {};
+      headers.forEach((h, i) => {
+        obj[h] = (row as unknown[])[i];
+      });
+      return obj;
     });
+    
+    return { headers, rows };
   }, []);
 
   // Handle file upload

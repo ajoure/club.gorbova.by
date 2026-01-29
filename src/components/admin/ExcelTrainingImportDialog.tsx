@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import * as XLSX from "xlsx";
+// XLSX is imported dynamically to reduce bundle size
 import {
   Dialog,
   DialogContent,
@@ -139,6 +139,8 @@ export function ExcelTrainingImportDialog({
 
   const handleFileUpload = async (file: File) => {
     try {
+      // Dynamic import of xlsx to reduce bundle size
+      const XLSX = await import("xlsx");
       const data = await file.arrayBuffer();
       const workbook = XLSX.read(data);
       const sheetName = workbook.SheetNames[0];

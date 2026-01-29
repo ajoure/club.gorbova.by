@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -9,93 +10,108 @@ import { ImpersonationBar } from "@/components/layout/ImpersonationBar";
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { GlobalPaymentHandler } from "@/components/payment/GlobalPaymentHandler";
+import { Loader2 } from "lucide-react";
+
+// Critical pages - loaded immediately (first screen)
 import Landing from "./pages/Landing";
 import { DomainHomePage } from "./components/layout/DomainRouter";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
-import Accountant from "./pages/Accountant";
-import Business from "./pages/Business";
-import Audits from "./pages/Audits";
-import SelfDevelopment from "./pages/SelfDevelopment";
-import EisenhowerMatrix from "./pages/tools/EisenhowerMatrix";
-import BalanceWheel from "./pages/tools/BalanceWheel";
-import Quests from "./pages/self-development/Quests";
-import QuestLessons from "./pages/self-development/QuestLessons";
-import QuestLesson from "./pages/self-development/QuestLesson";
-import HabitTracker from "./pages/self-development/HabitTracker";
-import OrderPayment from "./pages/OrderPayment";
-import Offer from "./pages/Offer";
-import Privacy from "./pages/Privacy";
-import Consent from "./pages/Consent";
-import Contacts from "./pages/Contacts";
 import NotFound from "./pages/NotFound";
-import { AdminLayout } from "./components/layout/AdminLayout";
-import AdminContacts from "./pages/admin/AdminContacts";
-import AdminDeals from "./pages/admin/AdminDeals";
-import AdminRoles from "./pages/admin/AdminRoles";
-import AdminAudit from "./pages/admin/AdminAudit";
-import AdminEntitlements from "./pages/admin/AdminEntitlements";
-import AdminContent from "./pages/admin/AdminContent";
-import AdminDuplicates from "./pages/admin/AdminDuplicates";
-import AdminIntegrations from "./pages/admin/AdminIntegrations";
-import TelegramClubMembers from "./pages/admin/TelegramClubMembers";
-import TelegramInvites from "./pages/admin/TelegramInvites";
-import ProductClubMappings from "./pages/admin/ProductClubMappings";
-import TelegramChatAnalytics from "./pages/admin/TelegramChatAnalytics";
-import AdminFieldRegistry from "./pages/admin/AdminFieldRegistry";
-import AdminProductsV2 from "./pages/admin/AdminProductsV2";
-import AdminProductDetailV2 from "./pages/admin/AdminProductDetailV2";
-import AdminOrdersV2 from "./pages/admin/AdminOrdersV2";
 
-import AdminPaymentsPage from "./pages/admin/AdminPayments";
-import AdminPaymentsHub from "./pages/admin/AdminPaymentsHub";
-import AdminSubscriptionsV2 from "./pages/admin/AdminSubscriptionsV2";
-import AdminSystemAudit from "./pages/admin/AdminSystemAudit";
-import MnsResponseService from "./pages/audits/MnsResponseService";
-import MnsDocumentHistory from "./pages/audits/MnsDocumentHistory";
-import Purchases from "./pages/Purchases";
-import Pay from "./pages/Pay";
-import Documentation from "./pages/Documentation";
-import Help from "./pages/Help";
-import ProfileSettings from "./pages/settings/Profile";
-import PaymentMethodsSettings from "./pages/settings/PaymentMethods";
-import ConsentsSettings from "./pages/settings/Consents";
-import LegalDetailsSettings from "./pages/settings/LegalDetails";
-// AdminInstallments removed - functionality merged into Payments Hub
-import AdminConsents from "./pages/admin/AdminConsents";
-import AdminPreregistrations from "./pages/admin/AdminPreregistrations";
-import AdminInbox from "./pages/admin/AdminInbox";
-import Learning from "./pages/Learning";
-import AdminExecutors from "./pages/admin/AdminExecutors";
-import AdminDocumentTemplates from "./pages/admin/AdminDocumentTemplates";
-import Consultation from "./pages/Consultation";
-import CourseAccountant from "./pages/CourseAccountant";
-import AdminBroadcasts from "./pages/admin/AdminBroadcasts";
-import Library from "./pages/Library";
-import LibraryModule from "./pages/LibraryModule";
-import LibraryLesson from "./pages/LibraryLesson";
-import AdminTrainingModules from "./pages/admin/AdminTrainingModules";
-import AdminTrainingLessons from "./pages/admin/AdminTrainingLessons";
-import AdminLessonBlockEditor from "./pages/admin/AdminLessonBlockEditor";
-// AdminBepaidSync and AdminRefundsV2 removed - all functionality in /admin/payments
-import AdminBepaidArchiveImport from "./pages/admin/AdminBepaidArchiveImport";
-import Support from "./pages/Support";
-import SupportTicket from "./pages/SupportTicket";
-import AdminSupport from "./pages/admin/AdminSupport";
-import AdminNews from "./pages/admin/AdminNews";
-import AdminCommunication from "./pages/admin/AdminCommunication";
-import AdminEditorial from "./pages/admin/AdminEditorial";
-import AdminIlex from "./pages/admin/AdminIlex";
-import AdminMarketingInsights from "./pages/admin/AdminMarketingInsights";
-import AdminPaymentDiagnostics from "./pages/admin/AdminPaymentDiagnostics";
-import AdminTelegramDiagnostics from "./pages/admin/AdminTelegramDiagnostics";
-import AdminKbImport from "./pages/admin/AdminKbImport";
+// Lazy-loaded pages - code splitting for bundle optimization
+const Accountant = lazy(() => import("./pages/Accountant"));
+const Business = lazy(() => import("./pages/Business"));
+const Audits = lazy(() => import("./pages/Audits"));
+const SelfDevelopment = lazy(() => import("./pages/SelfDevelopment"));
+const EisenhowerMatrix = lazy(() => import("./pages/tools/EisenhowerMatrix"));
+const BalanceWheel = lazy(() => import("./pages/tools/BalanceWheel"));
+const Quests = lazy(() => import("./pages/self-development/Quests"));
+const QuestLessons = lazy(() => import("./pages/self-development/QuestLessons"));
+const QuestLesson = lazy(() => import("./pages/self-development/QuestLesson"));
+const HabitTracker = lazy(() => import("./pages/self-development/HabitTracker"));
+const OrderPayment = lazy(() => import("./pages/OrderPayment"));
+const Offer = lazy(() => import("./pages/Offer"));
+const Privacy = lazy(() => import("./pages/Privacy"));
+const Consent = lazy(() => import("./pages/Consent"));
+const Contacts = lazy(() => import("./pages/Contacts"));
+const MnsResponseService = lazy(() => import("./pages/audits/MnsResponseService"));
+const MnsDocumentHistory = lazy(() => import("./pages/audits/MnsDocumentHistory"));
+const Purchases = lazy(() => import("./pages/Purchases"));
+const Pay = lazy(() => import("./pages/Pay"));
+const Documentation = lazy(() => import("./pages/Documentation"));
+const Help = lazy(() => import("./pages/Help"));
+const ProfileSettings = lazy(() => import("./pages/settings/Profile"));
+const PaymentMethodsSettings = lazy(() => import("./pages/settings/PaymentMethods"));
+const ConsentsSettings = lazy(() => import("./pages/settings/Consents"));
+const LegalDetailsSettings = lazy(() => import("./pages/settings/LegalDetails"));
+const Learning = lazy(() => import("./pages/Learning"));
+const Consultation = lazy(() => import("./pages/Consultation"));
+const CourseAccountant = lazy(() => import("./pages/CourseAccountant"));
+const Library = lazy(() => import("./pages/Library"));
+const LibraryModule = lazy(() => import("./pages/LibraryModule"));
+const LibraryLesson = lazy(() => import("./pages/LibraryLesson"));
+const Support = lazy(() => import("./pages/Support"));
+const SupportTicket = lazy(() => import("./pages/SupportTicket"));
+const Money = lazy(() => import("./pages/Money"));
+const AI = lazy(() => import("./pages/AI"));
+const Knowledge = lazy(() => import("./pages/Knowledge"));
+const BusinessTraining = lazy(() => import("./pages/BusinessTraining"));
+const BusinessTrainingContent = lazy(() => import("./pages/BusinessTrainingContent"));
 
-import Money from "./pages/Money";
-import AI from "./pages/AI";
-import Knowledge from "./pages/Knowledge";
-import BusinessTraining from "./pages/BusinessTraining";
-import BusinessTrainingContent from "./pages/BusinessTrainingContent";
+// Admin pages - lazy loaded (heavy components)
+const AdminLayout = lazy(() => import("./components/layout/AdminLayout").then(m => ({ default: m.AdminLayout })));
+const AdminContacts = lazy(() => import("./pages/admin/AdminContacts"));
+const AdminDeals = lazy(() => import("./pages/admin/AdminDeals"));
+const AdminRoles = lazy(() => import("./pages/admin/AdminRoles"));
+const AdminAudit = lazy(() => import("./pages/admin/AdminAudit"));
+const AdminEntitlements = lazy(() => import("./pages/admin/AdminEntitlements"));
+const AdminContent = lazy(() => import("./pages/admin/AdminContent"));
+const AdminDuplicates = lazy(() => import("./pages/admin/AdminDuplicates"));
+const AdminIntegrations = lazy(() => import("./pages/admin/AdminIntegrations"));
+const TelegramClubMembers = lazy(() => import("./pages/admin/TelegramClubMembers"));
+const TelegramInvites = lazy(() => import("./pages/admin/TelegramInvites"));
+const ProductClubMappings = lazy(() => import("./pages/admin/ProductClubMappings"));
+const TelegramChatAnalytics = lazy(() => import("./pages/admin/TelegramChatAnalytics"));
+const AdminFieldRegistry = lazy(() => import("./pages/admin/AdminFieldRegistry"));
+const AdminProductsV2 = lazy(() => import("./pages/admin/AdminProductsV2"));
+const AdminProductDetailV2 = lazy(() => import("./pages/admin/AdminProductDetailV2"));
+const AdminOrdersV2 = lazy(() => import("./pages/admin/AdminOrdersV2"));
+const AdminPaymentsPage = lazy(() => import("./pages/admin/AdminPayments"));
+const AdminPaymentsHub = lazy(() => import("./pages/admin/AdminPaymentsHub"));
+const AdminSubscriptionsV2 = lazy(() => import("./pages/admin/AdminSubscriptionsV2"));
+const AdminSystemAudit = lazy(() => import("./pages/admin/AdminSystemAudit"));
+const AdminConsents = lazy(() => import("./pages/admin/AdminConsents"));
+const AdminPreregistrations = lazy(() => import("./pages/admin/AdminPreregistrations"));
+const AdminInbox = lazy(() => import("./pages/admin/AdminInbox"));
+const AdminExecutors = lazy(() => import("./pages/admin/AdminExecutors"));
+const AdminDocumentTemplates = lazy(() => import("./pages/admin/AdminDocumentTemplates"));
+const AdminBroadcasts = lazy(() => import("./pages/admin/AdminBroadcasts"));
+const AdminTrainingModules = lazy(() => import("./pages/admin/AdminTrainingModules"));
+const AdminTrainingLessons = lazy(() => import("./pages/admin/AdminTrainingLessons"));
+const AdminLessonBlockEditor = lazy(() => import("./pages/admin/AdminLessonBlockEditor"));
+const AdminBepaidArchiveImport = lazy(() => import("./pages/admin/AdminBepaidArchiveImport"));
+const AdminSupport = lazy(() => import("./pages/admin/AdminSupport"));
+const AdminNews = lazy(() => import("./pages/admin/AdminNews"));
+const AdminCommunication = lazy(() => import("./pages/admin/AdminCommunication"));
+const AdminEditorial = lazy(() => import("./pages/admin/AdminEditorial"));
+const AdminIlex = lazy(() => import("./pages/admin/AdminIlex"));
+const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingInsights"));
+const AdminPaymentDiagnostics = lazy(() => import("./pages/admin/AdminPaymentDiagnostics"));
+const AdminTelegramDiagnostics = lazy(() => import("./pages/admin/AdminTelegramDiagnostics"));
+const AdminKbImport = lazy(() => import("./pages/admin/AdminKbImport"));
+
+// Page loader component for Suspense fallback
+const PageLoader = () => (
+  <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-background">
+    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+  </div>
+);
+
+// Wrapper for lazy routes with Suspense
+const LazyRoute = ({ children }: { children: React.ReactNode }) => (
+  <Suspense fallback={<PageLoader />}>{children}</Suspense>
+);
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -126,118 +142,118 @@ const App = () => (
               <Route path="/" element={<DomainHomePage />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/pricing" element={<Navigate to="/#pricing" replace />} />
-              <Route path="/order-payment" element={<OrderPayment />} />
-              <Route path="/offer" element={<Offer />} />
-              <Route path="/pay" element={<Pay />} />
-              <Route path="/privacy" element={<Privacy />} />
-              <Route path="/consent" element={<Consent />} />
-              <Route path="/contacts" element={<Contacts />} />
-              <Route path="/help" element={<Help />} />
-              <Route path="/consultation" element={<Consultation />} />
-              <Route path="/course-accountant" element={<CourseAccountant />} />
-              <Route path="/business-training" element={<BusinessTraining />} />
+              <Route path="/order-payment" element={<LazyRoute><OrderPayment /></LazyRoute>} />
+              <Route path="/offer" element={<LazyRoute><Offer /></LazyRoute>} />
+              <Route path="/pay" element={<LazyRoute><Pay /></LazyRoute>} />
+              <Route path="/privacy" element={<LazyRoute><Privacy /></LazyRoute>} />
+              <Route path="/consent" element={<LazyRoute><Consent /></LazyRoute>} />
+              <Route path="/contacts" element={<LazyRoute><Contacts /></LazyRoute>} />
+              <Route path="/help" element={<LazyRoute><Help /></LazyRoute>} />
+              <Route path="/consultation" element={<LazyRoute><Consultation /></LazyRoute>} />
+              <Route path="/course-accountant" element={<LazyRoute><CourseAccountant /></LazyRoute>} />
+              <Route path="/business-training" element={<LazyRoute><BusinessTraining /></LazyRoute>} />
               
               {/* Protected routes */}
-              <Route path="/products" element={<ProtectedRoute><Learning /></ProtectedRoute>} />
+              <Route path="/products" element={<ProtectedRoute><LazyRoute><Learning /></LazyRoute></ProtectedRoute>} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-              <Route path="/money" element={<ProtectedRoute><Money /></ProtectedRoute>} />
-              <Route path="/ai" element={<ProtectedRoute><AI /></ProtectedRoute>} />
-              <Route path="/knowledge" element={<ProtectedRoute><Knowledge /></ProtectedRoute>} />
-              <Route path="/purchases" element={<ProtectedRoute><Purchases /></ProtectedRoute>} />
-              <Route path="/accountant" element={<ProtectedRoute><Accountant /></ProtectedRoute>} />
-              <Route path="/business" element={<ProtectedRoute><Business /></ProtectedRoute>} />
-              <Route path="/audits" element={<ProtectedRoute><Audits /></ProtectedRoute>} />
-              <Route path="/audits/mns-response" element={<ProtectedRoute><MnsResponseService /></ProtectedRoute>} />
-              <Route path="/audits/mns-history" element={<ProtectedRoute><MnsDocumentHistory /></ProtectedRoute>} />
-              <Route path="/self-development" element={<ProtectedRoute><SelfDevelopment /></ProtectedRoute>} />
-              <Route path="/self-development/quests" element={<ProtectedRoute><Quests /></ProtectedRoute>} />
-              <Route path="/self-development/quests/:questSlug" element={<ProtectedRoute><QuestLessons /></ProtectedRoute>} />
-              <Route path="/self-development/quests/:questSlug/:lessonSlug" element={<ProtectedRoute><QuestLesson /></ProtectedRoute>} />
-              <Route path="/self-development/habits" element={<ProtectedRoute><HabitTracker /></ProtectedRoute>} />
-              <Route path="/self-development/balance-wheel" element={<ProtectedRoute><BalanceWheel /></ProtectedRoute>} />
+              <Route path="/money" element={<ProtectedRoute><LazyRoute><Money /></LazyRoute></ProtectedRoute>} />
+              <Route path="/ai" element={<ProtectedRoute><LazyRoute><AI /></LazyRoute></ProtectedRoute>} />
+              <Route path="/knowledge" element={<ProtectedRoute><LazyRoute><Knowledge /></LazyRoute></ProtectedRoute>} />
+              <Route path="/purchases" element={<ProtectedRoute><LazyRoute><Purchases /></LazyRoute></ProtectedRoute>} />
+              <Route path="/accountant" element={<ProtectedRoute><LazyRoute><Accountant /></LazyRoute></ProtectedRoute>} />
+              <Route path="/business" element={<ProtectedRoute><LazyRoute><Business /></LazyRoute></ProtectedRoute>} />
+              <Route path="/audits" element={<ProtectedRoute><LazyRoute><Audits /></LazyRoute></ProtectedRoute>} />
+              <Route path="/audits/mns-response" element={<ProtectedRoute><LazyRoute><MnsResponseService /></LazyRoute></ProtectedRoute>} />
+              <Route path="/audits/mns-history" element={<ProtectedRoute><LazyRoute><MnsDocumentHistory /></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development" element={<ProtectedRoute><LazyRoute><SelfDevelopment /></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development/quests" element={<ProtectedRoute><LazyRoute><Quests /></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development/quests/:questSlug" element={<ProtectedRoute><LazyRoute><QuestLessons /></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development/quests/:questSlug/:lessonSlug" element={<ProtectedRoute><LazyRoute><QuestLesson /></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development/habits" element={<ProtectedRoute><LazyRoute><HabitTracker /></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development/balance-wheel" element={<ProtectedRoute><LazyRoute><BalanceWheel /></LazyRoute></ProtectedRoute>} />
               <Route path="/tools" element={<Navigate to="/tools/eisenhower" replace />} />
-              <Route path="/tools/eisenhower" element={<ProtectedRoute><EisenhowerMatrix /></ProtectedRoute>} />
+              <Route path="/tools/eisenhower" element={<ProtectedRoute><LazyRoute><EisenhowerMatrix /></LazyRoute></ProtectedRoute>} />
               <Route path="/tools/balance-wheel" element={<Navigate to="/self-development/balance-wheel" replace />} />
-              <Route path="/support" element={<ProtectedRoute><Support /></ProtectedRoute>} />
-              <Route path="/support/:ticketId" element={<ProtectedRoute><SupportTicket /></ProtectedRoute>} />
-              <Route path="/docs" element={<ProtectedRoute><Documentation /></ProtectedRoute>} />
-              <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
-              <Route path="/library/buh-business" element={<ProtectedRoute><BusinessTrainingContent /></ProtectedRoute>} />
-              <Route path="/library/:moduleSlug" element={<ProtectedRoute><LibraryModule /></ProtectedRoute>} />
-              <Route path="/library/:moduleSlug/:lessonSlug" element={<ProtectedRoute><LibraryLesson /></ProtectedRoute>} />
+              <Route path="/support" element={<ProtectedRoute><LazyRoute><Support /></LazyRoute></ProtectedRoute>} />
+              <Route path="/support/:ticketId" element={<ProtectedRoute><LazyRoute><SupportTicket /></LazyRoute></ProtectedRoute>} />
+              <Route path="/docs" element={<ProtectedRoute><LazyRoute><Documentation /></LazyRoute></ProtectedRoute>} />
+              <Route path="/library" element={<ProtectedRoute><LazyRoute><Library /></LazyRoute></ProtectedRoute>} />
+              <Route path="/library/buh-business" element={<ProtectedRoute><LazyRoute><BusinessTrainingContent /></LazyRoute></ProtectedRoute>} />
+              <Route path="/library/:moduleSlug" element={<ProtectedRoute><LazyRoute><LibraryModule /></LazyRoute></ProtectedRoute>} />
+              <Route path="/library/:moduleSlug/:lessonSlug" element={<ProtectedRoute><LazyRoute><LibraryLesson /></LazyRoute></ProtectedRoute>} />
               
               {/* Settings routes */}
               <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
-              <Route path="/settings/profile" element={<ProtectedRoute><ProfileSettings /></ProtectedRoute>} />
-              <Route path="/settings/payment-methods" element={<ProtectedRoute><PaymentMethodsSettings /></ProtectedRoute>} />
-              <Route path="/settings/legal-details" element={<ProtectedRoute><LegalDetailsSettings /></ProtectedRoute>} />
-              <Route path="/settings/consents" element={<ProtectedRoute><ConsentsSettings /></ProtectedRoute>} />
+              <Route path="/settings/profile" element={<ProtectedRoute><LazyRoute><ProfileSettings /></LazyRoute></ProtectedRoute>} />
+              <Route path="/settings/payment-methods" element={<ProtectedRoute><LazyRoute><PaymentMethodsSettings /></LazyRoute></ProtectedRoute>} />
+              <Route path="/settings/legal-details" element={<ProtectedRoute><LazyRoute><LegalDetailsSettings /></LazyRoute></ProtectedRoute>} />
+              <Route path="/settings/consents" element={<ProtectedRoute><LazyRoute><ConsentsSettings /></LazyRoute></ProtectedRoute>} />
               <Route path="/settings/subscriptions" element={<Navigate to="/purchases" replace />} />
               
               {/* Admin routes - CRM */}
               <Route path="/admin" element={<Navigate to="/admin/deals" replace />} />
-              <Route path="/admin/inbox" element={<ProtectedRoute><AdminInbox /></ProtectedRoute>} />
-              <Route path="/admin/communication" element={<ProtectedRoute><AdminCommunication /></ProtectedRoute>} />
-              <Route path="/admin/broadcasts" element={<ProtectedRoute><AdminBroadcasts /></ProtectedRoute>} />
-              <Route path="/admin/contacts" element={<ProtectedRoute><AdminLayout><AdminContacts /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/contacts/duplicates" element={<ProtectedRoute><AdminLayout><AdminDuplicates /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/deals" element={<ProtectedRoute><AdminLayout><AdminDeals /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/inbox" element={<ProtectedRoute><LazyRoute><AdminInbox /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/communication" element={<ProtectedRoute><LazyRoute><AdminCommunication /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/broadcasts" element={<ProtectedRoute><LazyRoute><AdminBroadcasts /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/contacts" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminContacts /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/contacts/duplicates" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminDuplicates /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/deals" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminDeals /></AdminLayout></LazyRoute></ProtectedRoute>} />
               
               {/* Admin routes - Service */}
-              <Route path="/admin/roles" element={<ProtectedRoute><AdminLayout><AdminRoles /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/audit" element={<ProtectedRoute><AdminLayout><AdminAudit /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/content" element={<ProtectedRoute><AdminLayout><AdminContent /></AdminLayout></ProtectedRoute>} />
+              <Route path="/admin/roles" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminRoles /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/audit" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminAudit /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/content" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminContent /></AdminLayout></LazyRoute></ProtectedRoute>} />
               
               {/* Integrations routes */}
               <Route path="/admin/integrations" element={<Navigate to="/admin/integrations/crm" replace />} />
-              <Route path="/admin/integrations/crm" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/integrations/payments" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/integrations/email" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/integrations/telegram" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/integrations/other" element={<ProtectedRoute><AdminLayout><AdminIntegrations /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/integrations/telegram/clubs/:clubId/members" element={<ProtectedRoute><TelegramClubMembers /></ProtectedRoute>} />
-              <Route path="/admin/integrations/telegram/invites" element={<ProtectedRoute><TelegramInvites /></ProtectedRoute>} />
-              <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><ProductClubMappings /></ProtectedRoute>} />
-              <Route path="/admin/integrations/telegram/analytics" element={<ProtectedRoute><AdminLayout><TelegramChatAnalytics /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/telegram-diagnostics" element={<ProtectedRoute><AdminLayout><AdminTelegramDiagnostics /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/fields" element={<ProtectedRoute><AdminFieldRegistry /></ProtectedRoute>} />
-              <Route path="/admin/system/audit" element={<ProtectedRoute><AdminSystemAudit /></ProtectedRoute>} />
+              <Route path="/admin/integrations/crm" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminIntegrations /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/integrations/payments" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminIntegrations /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/integrations/email" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminIntegrations /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/integrations/telegram" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminIntegrations /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/integrations/other" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminIntegrations /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/integrations/telegram/clubs/:clubId/members" element={<ProtectedRoute><LazyRoute><TelegramClubMembers /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/integrations/telegram/invites" element={<ProtectedRoute><LazyRoute><TelegramInvites /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/integrations/telegram/product-mappings" element={<ProtectedRoute><LazyRoute><ProductClubMappings /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/integrations/telegram/analytics" element={<ProtectedRoute><LazyRoute><AdminLayout><TelegramChatAnalytics /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/telegram-diagnostics" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminTelegramDiagnostics /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/fields" element={<ProtectedRoute><LazyRoute><AdminFieldRegistry /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/system/audit" element={<ProtectedRoute><LazyRoute><AdminSystemAudit /></LazyRoute></ProtectedRoute>} />
               
               {/* Admin routes - V2 (Products, Orders, Payments, Subscriptions) */}
-              <Route path="/admin/products-v2" element={<ProtectedRoute><AdminProductsV2 /></ProtectedRoute>} />
-              <Route path="/admin/products-v2/:productId" element={<ProtectedRoute><AdminProductDetailV2 /></ProtectedRoute>} />
-              <Route path="/admin/orders-v2" element={<ProtectedRoute><AdminOrdersV2 /></ProtectedRoute>} />
+              <Route path="/admin/products-v2" element={<ProtectedRoute><LazyRoute><AdminProductsV2 /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/products-v2/:productId" element={<ProtectedRoute><LazyRoute><AdminProductDetailV2 /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/orders-v2" element={<ProtectedRoute><LazyRoute><AdminOrdersV2 /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments-v2" element={<Navigate to="/admin/payments" replace />} />
-              <Route path="/admin/subscriptions-v2" element={<ProtectedRoute><AdminSubscriptionsV2 /></ProtectedRoute>} />
-              <Route path="/admin/consents" element={<ProtectedRoute><AdminLayout><AdminConsents /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/entitlements" element={<ProtectedRoute><AdminLayout><AdminEntitlements /></AdminLayout></ProtectedRoute>} />
-              <Route path="/admin/executors" element={<ProtectedRoute><AdminExecutors /></ProtectedRoute>} />
-              <Route path="/admin/document-templates" element={<ProtectedRoute><AdminDocumentTemplates /></ProtectedRoute>} />
-              <Route path="/admin/training-modules" element={<ProtectedRoute><AdminTrainingModules /></ProtectedRoute>} />
-              <Route path="/admin/training-modules/:moduleId/lessons" element={<ProtectedRoute><AdminTrainingLessons /></ProtectedRoute>} />
-              <Route path="/admin/training-lessons/:moduleId/edit/:lessonId" element={<ProtectedRoute><AdminLessonBlockEditor /></ProtectedRoute>} />
+              <Route path="/admin/subscriptions-v2" element={<ProtectedRoute><LazyRoute><AdminSubscriptionsV2 /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/consents" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminConsents /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/entitlements" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminEntitlements /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/executors" element={<ProtectedRoute><LazyRoute><AdminExecutors /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/document-templates" element={<ProtectedRoute><LazyRoute><AdminDocumentTemplates /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/training-modules" element={<ProtectedRoute><LazyRoute><AdminTrainingModules /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/training-modules/:moduleId/lessons" element={<ProtectedRoute><LazyRoute><AdminTrainingLessons /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/training-lessons/:moduleId/edit/:lessonId" element={<ProtectedRoute><LazyRoute><AdminLessonBlockEditor /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/bepaid-sync" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/refunds-v2" element={<Navigate to="/admin/payments" replace />} />
               {/* Payments Hub routes */}
-              <Route path="/admin/payments" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
+              <Route path="/admin/payments" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               {/* Route removed: /admin/payments/installments - tab deleted */}
-              <Route path="/admin/payments/preorders" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
-              <Route path="/admin/payments/diagnostics" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
-              <Route path="/admin/payments/auto-renewals" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
-              <Route path="/admin/payments/statement" element={<ProtectedRoute><AdminPaymentsHub /></ProtectedRoute>} />
+              <Route path="/admin/payments/preorders" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/payments/diagnostics" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/payments/auto-renewals" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/payments/statement" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               {/* Legacy redirects */}
               <Route path="/admin/installments" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/preregistrations" element={<Navigate to="/admin/payments/preorders" replace />} />
-              <Route path="/admin/bepaid-archive-import" element={<ProtectedRoute><AdminBepaidArchiveImport /></ProtectedRoute>} />
-              <Route path="/admin/support" element={<ProtectedRoute><AdminSupport /></ProtectedRoute>} />
-              <Route path="/admin/news" element={<ProtectedRoute><AdminNews /></ProtectedRoute>} />
+              <Route path="/admin/bepaid-archive-import" element={<ProtectedRoute><LazyRoute><AdminBepaidArchiveImport /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/support" element={<ProtectedRoute><LazyRoute><AdminSupport /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/news" element={<ProtectedRoute><LazyRoute><AdminNews /></LazyRoute></ProtectedRoute>} />
               
               {/* Admin routes - Editorial */}
-              <Route path="/admin/editorial" element={<ProtectedRoute><AdminEditorial /></ProtectedRoute>} />
+              <Route path="/admin/editorial" element={<ProtectedRoute><LazyRoute><AdminEditorial /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/editorial/sources" element={<Navigate to="/admin/editorial" replace />} />
-              <Route path="/admin/ilex" element={<ProtectedRoute><AdminIlex /></ProtectedRoute>} />
-              <Route path="/admin/marketing" element={<ProtectedRoute><AdminMarketingInsights /></ProtectedRoute>} />
-              <Route path="/admin/kb-import" element={<ProtectedRoute><AdminKbImport /></ProtectedRoute>} />
+              <Route path="/admin/ilex" element={<ProtectedRoute><LazyRoute><AdminIlex /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/marketing" element={<ProtectedRoute><LazyRoute><AdminMarketingInsights /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/kb-import" element={<ProtectedRoute><LazyRoute><AdminKbImport /></LazyRoute></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />

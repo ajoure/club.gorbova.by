@@ -18,7 +18,7 @@ import { useBepaidMappings, useBepaidQueueActions } from "@/hooks/useBepaidMappi
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import * as XLSX from "xlsx";
+// XLSX is imported dynamically to reduce bundle size
 import { transliterateToCyrillic } from "@/utils/transliteration";
 
 interface BepaidImportDialogProps {
@@ -335,6 +335,8 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
         // Page 2: Card transactions (detailed)
         // Page 3: ERIP transactions (detailed)
         // Page 4: Memorial orders (aggregated - skip)
+        // Dynamic import of xlsx to reduce bundle size
+        const XLSX = await import("xlsx");
         const buffer = await selectedFile.arrayBuffer();
         const workbook = XLSX.read(buffer, { type: 'array' });
         
