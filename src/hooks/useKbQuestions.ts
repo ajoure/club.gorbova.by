@@ -136,19 +136,9 @@ export function formatTimecode(seconds: number | null): string {
  * - Number (Excel time): 0.11319 (fraction of day), 2.0638 (decimal hours)
  */
 export function parseTimecode(
-  timecode: string | number | Date | undefined | null
+  timecode: string | number | undefined | null
 ): number | null {
   if (timecode === null || timecode === undefined) return null;
-
-  // PATCH-2: XLSX cellDates: true -> Date (1899-12-30 HH:MM:SS)
-  // Use UTC components to avoid strange TZ offsets (like GMT+0124)
-  if (timecode instanceof Date && !Number.isNaN(timecode.getTime())) {
-    const h = timecode.getUTCHours();
-    const m = timecode.getUTCMinutes();
-    const s = timecode.getUTCSeconds();
-    const total = h * 3600 + m * 60 + s;
-    return total > 0 ? total : null;
-  }
 
   // Excel numeric formats
   if (typeof timecode === "number") {

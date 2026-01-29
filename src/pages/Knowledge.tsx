@@ -84,9 +84,8 @@ function QuestionsContent({ searchQuery }: { searchQuery: string }) {
     <div className="space-y-4">
       {questions.map((question) => {
         const isExpanded = expandedIds.has(question.id);
-        // PATCH-11: Format as DD.MM.YYYY
         const formattedDate = question.answer_date
-          ? format(new Date(question.answer_date), "dd.MM.yyyy")
+          ? format(new Date(question.answer_date), "d MMM yyyy", { locale: ru })
           : null;
         const videoUrl = buildKinescopeUrlWithTimecode(question.kinescope_url, question.timecode_seconds);
 

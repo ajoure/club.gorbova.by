@@ -47,10 +47,9 @@ export function LessonCard({
   };
 
   // Prefer published_at over created_at for display
-  // PATCH-11: Format as DD.MM.YYYY
   const displayDate = lesson.published_at || lesson.created_at;
   const formattedDate = displayDate
-    ? format(new Date(displayDate), "dd.MM.yyyy")
+    ? format(new Date(displayDate), "d MMM yyyy", { locale: ru })
     : null;
 
   return (
