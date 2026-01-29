@@ -28,7 +28,6 @@ export interface TrainingLesson {
   sort_order: number;
   duration_minutes: number | null;
   is_active: boolean;
-  published_at: string | null;
   created_at: string;
   updated_at: string;
   // Computed fields

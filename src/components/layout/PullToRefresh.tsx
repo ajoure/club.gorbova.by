@@ -33,14 +33,9 @@ function findScrollableParent(el: HTMLElement | null): HTMLElement | null {
   return null;
 }
 
-// Safety: require confirmation for reload (prevent accidental refresh loops)
-const RELOAD_CONFIRM_KEY = 'pull_to_refresh_confirm';
-const RELOAD_CONFIRM_TIMEOUT = 3000; // 3 seconds to confirm
-
 export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
-  const [showConfirmHint, setShowConfirmHint] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const startY = useRef(0);
   const isPulling = useRef(false);
@@ -121,46 +116,22 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
 
     if (!shouldRefresh) {
       setPullDistance(0);
-      setShowConfirmHint(false);
       return;
     }
 
-    // If custom onRefresh handler is provided, use it directly
-    if (onRefresh) {
-      setRefreshing(true);
-      setPullDistance(threshold / 2);
-      setShowConfirmHint(false);
-
-      Promise.resolve(onRefresh()).finally(() => {
-        setRefreshing(false);
-        setPullDistance(0);
-      });
-      return;
-    }
-
-    // Safety mechanism for reload: require confirmation within timeout
-    const lastConfirm = sessionStorage.getItem(RELOAD_CONFIRM_KEY);
-    const now = Date.now();
-    
-    if (lastConfirm && (now - parseInt(lastConfirm, 10)) < RELOAD_CONFIRM_TIMEOUT) {
-      // Confirmed - do the reload
-      sessionStorage.removeItem(RELOAD_CONFIRM_KEY);
-      setShowConfirmHint(false);
+    // IMPORTANT: reload must happen synchronously after the gesture on mobile
+    if (!onRefresh) {
       window.location.reload();
       return;
     }
 
-    // First pull - show hint and wait for confirmation
-    sessionStorage.setItem(RELOAD_CONFIRM_KEY, String(now));
-    setShowConfirmHint(true);
-    setPullDistance(0);
-    
-    // Clear hint after timeout
-    setTimeout(() => {
-      setShowConfirmHint(false);
-      sessionStorage.removeItem(RELOAD_CONFIRM_KEY);
-    }, RELOAD_CONFIRM_TIMEOUT);
-    
+    setRefreshing(true);
+    setPullDistance(threshold / 2);
+
+    Promise.resolve(onRefresh()).finally(() => {
+      setRefreshing(false);
+      setPullDistance(0);
+    });
   }, [onRefresh]);
 
   const indicatorOpacity = Math.min(pullDistance / threshold, 1);
@@ -175,13 +146,6 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Confirmation hint */}
-      {showConfirmHint && (
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-50 bg-muted/90 backdrop-blur-sm text-muted-foreground text-sm px-3 py-1.5 rounded-full shadow-lg animate-in fade-in slide-in-from-top-2 duration-200">
-          Потяните ещё раз для обновления
-        </div>
-      )}
-      
       {/* Pull indicator */}
       {pullDistance > 0 && (
         <div

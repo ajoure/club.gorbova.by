@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Download, Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, X } from "lucide-react";
 import { toast } from "sonner";
-import { parseExcelFile, isLegacyExcelFormat, createExcelWorkbook, downloadExcelBuffer } from "@/utils/excelParser";
+import * as XLSX from "xlsx";
 
 interface GetCourseImportDialogProps {
   open: boolean;
@@ -77,15 +77,11 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
   };
 
   // Парсинг Excel файла
-  const parseExcelFileLocal = async (file: File): Promise<ParsedDeal[]> => {
-    // Check for legacy .xls format
-    if (isLegacyExcelFormat(file)) {
-      throw new Error('Формат .xls не поддерживается. Сохраните файл в формате .xlsx и загрузите снова.');
-    }
-
-    const workbook = await parseExcelFile(file);
-    const sheetName = workbook.sheetNames[0];
-    const rows = workbook.sheets[sheetName].rows;
+  const parseExcelFile = async (file: File): Promise<ParsedDeal[]> => {
+    const data = await file.arrayBuffer();
+    const workbook = XLSX.read(data, { type: "array" });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet);
 
     console.log("[Excel Parse] Total rows:", rows.length);
     console.log("[Excel Parse] Sample row:", rows[0]);
@@ -93,23 +89,23 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
     const deals: ParsedDeal[] = [];
 
     for (const row of rows) {
-      const status = String(row["статус"] || "");
+      const status = row["Статус"] || "";
       
       // Фильтруем только завершённые/активные/оплаченные
       if (!VALID_STATUSES.includes(status)) {
         continue;
       }
 
-      const id = row["id заказа"] || row["id"] || "";
-      const email = String(row["email"] || row["e-mail"] || "").toLowerCase().trim();
-      const phone = String(row["телефон"] || "");
-      const fullName = String(row["пользователь"] || "");
-      const offerName = String(row["состав заказа"] || row["предложение"] || "");
-      const createdAt = String(row["дата создания"] || "");
-      const paidAt = String(row["дата оплаты"] || "");
+      const id = row["ID заказа"] || row["id"] || "";
+      const email = (row["Email"] || row["E-mail"] || "").toLowerCase().trim();
+      const phone = row["Телефон"] || "";
+      const fullName = row["Пользователь"] || "";
+      const offerName = row["Состав заказа"] || row["Предложение"] || "";
+      const createdAt = row["Дата создания"] || "";
+      const paidAt = row["Дата оплаты"] || "";
       
       // Парсим стоимость
-      const costRaw = row["стоимость, byn"] || row["стоимость"] || row["сумма"] || "0";
+      const costRaw = row["Стоимость, BYN"] || row["Стоимость"] || row["Сумма"] || "0";
       const cost = parseFloat(String(costRaw).replace(/[^\d.,]/g, "").replace(",", ".")) || 0;
 
       // Разделяем ФИО
@@ -126,7 +122,7 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
       }
 
       deals.push({
-        id: String(id),
+        id,
         email,
         phone,
         firstName,
@@ -151,7 +147,7 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
     setImportResult(null);
     
     try {
-      const deals = await parseExcelFileLocal(file);
+      const deals = await parseExcelFile(file);
       setParsedDeals(deals);
       
       if (deals.length === 0) {
@@ -161,7 +157,7 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
       }
     } catch (error) {
       console.error("Error parsing file:", error);
-      toast.error(error instanceof Error ? error.message : "Ошибка при чтении файла");
+      toast.error("Ошибка при чтении файла");
       setUploadedFile(null);
       setParsedDeals([]);
     }
@@ -183,12 +179,10 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
     setIsDragging(false);
     
     const file = e.dataTransfer.files[0];
-    if (file && (file.name.endsWith(".xlsx") || file.name.endsWith(".csv"))) {
+    if (file && (file.name.endsWith(".xlsx") || file.name.endsWith(".xls") || file.name.endsWith(".csv"))) {
       handleFileUpload(file);
-    } else if (file && file.name.endsWith(".xls")) {
-      toast.error("Формат .xls не поддерживается. Сохраните файл в формате .xlsx");
     } else {
-      toast.error("Поддерживаются только файлы Excel (.xlsx) или CSV");
+      toast.error("Поддерживаются только файлы Excel (.xlsx, .xls) или CSV");
     }
   }, []);
 
@@ -200,7 +194,7 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
   };
 
   // Скачать шаблон
-  const downloadTemplate = async () => {
+  const downloadTemplate = () => {
     const headers = [
       "ID заказа",
       "Email",
@@ -217,17 +211,10 @@ export function GetCourseImportDialog({ open, onOpenChange, instanceId }: GetCou
       ["123456", "example@mail.ru", "+375291234567", "Иванов Иван", "Клуб: full", "250", "Завершен", "01.01.2025", "01.01.2025"],
     ];
 
-    try {
-      const buffer = await createExcelWorkbook([{
-        name: "Шаблон",
-        headers,
-        rows: sampleData,
-      }]);
-      downloadExcelBuffer(buffer, "getcourse_import_template.xlsx");
-    } catch (error) {
-      console.error("Error creating template:", error);
-      toast.error("Ошибка создания шаблона");
-    }
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleData]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Шаблон");
+    XLSX.writeFile(wb, "getcourse_import_template.xlsx");
   };
 
   // Import mutation

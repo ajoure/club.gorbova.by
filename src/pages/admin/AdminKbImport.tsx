@@ -14,7 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { parseTimecode, formatTimecode } from "@/hooks/useKbQuestions";
 import { EPISODE_SUMMARIES, getEpisodeSummary } from "@/lib/episode-summaries";
-import { parseExcelFile, isLegacyExcelFormat } from "@/utils/excelParser";
+import * as XLSX from "xlsx";
 import {
   Upload,
   FileSpreadsheet,
@@ -57,7 +57,7 @@ interface ParsedRow {
   tags: string[];
   getcourseUrl: string;
   kinescopeUrl: string;
-  timecode: string | number; // Normalized from Date if needed
+  timecode: string | number;
   timecodeSeconds: number | null;
   year: number;
   errors: ValidationError[];
@@ -117,9 +117,8 @@ export default function AdminKbImport() {
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set());
 
   // PATCH-5: Strict episode number parsing
-  const parseEpisodeNumber = (value: string | number | Date): number => {
-    // Handle Date objects from Excel
-    const str = String(value instanceof Date ? '' : (value ?? '')).trim();
+  const parseEpisodeNumber = (value: string | number): number => {
+    const str = String(value ?? "").trim();
     if (!str) return 0;
 
     // Format "Выпуск №74" or "Выпуск 74"
@@ -198,16 +197,10 @@ export default function AdminKbImport() {
     setState((s) => ({ ...s, file, parsing: true, parsed: false, parsedRows: [], episodes: [], validationErrors: [] }));
 
     try {
-      // Check for legacy .xls format
-      if (isLegacyExcelFormat(file)) {
-        toast.error('Формат .xls не поддерживается. Сохраните файл в формате .xlsx');
-        setState((s) => ({ ...s, parsing: false }));
-        return;
-      }
-
-      const workbook = await parseExcelFile(file);
-      const sheetName = workbook.sheetNames[0];
-      const rows = workbook.sheets[sheetName].rows as Record<string, string | number | Date | null>[];
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
 
       const parsed: ParsedRow[] = [];
       const allErrors: ValidationError[] = [];
@@ -226,15 +219,11 @@ export default function AdminKbImport() {
         const tagsRaw = String(row["Теги (для поиска, ставим самостоятельно)"] || "");
         const getcourseUrl = String(row["Ссылка на видео в геткурсе"] || "").trim();
         const kinescopeUrl = String(row["Ссылка на видео в кинескопе"] || "").trim();
-        const timecodeRawValue = row["Тайминг (час:мин:сек начала видео с этим вопросом)"];
-        // Normalize Date objects to string for consistency
-        const timecodeRaw: string | number = timecodeRawValue instanceof Date 
-          ? timecodeRawValue.toISOString() 
-          : (timecodeRawValue as string | number);
+        const timecodeRaw = row["Тайминг (час:мин:сек начала видео с этим вопросом)"];
         const year = parseInt(String(row[""] || row["Год"] || "2024"), 10) || 2024;
 
         // PATCH-2: Parse timecode (supports Excel numeric time)
-        const timecodeSeconds = parseTimecode(timecodeRawValue);
+        const timecodeSeconds = parseTimecode(timecodeRaw);
 
         // Collect values for error export
         const errorValues = {
@@ -508,29 +497,6 @@ export default function AdminKbImport() {
         });
 
         if (blockError) console.warn("Block creation failed:", blockError);
-
-        // PATCH-D: Generate AI cover for new lessons
-        try {
-          const { data: coverData, error: coverError } = await supabase.functions.invoke("generate-cover", {
-            body: {
-              title,
-              description: description || `Выпуск ${episode.episodeNumber}`,
-              moduleId,
-            },
-          });
-
-          if (coverData?.url && !coverError) {
-            await supabase
-              .from("training_lessons")
-              .update({ thumbnail_url: coverData.url })
-              .eq("id", lessonId);
-          } else if (coverError) {
-            console.warn("Cover generation error:", coverError);
-          }
-        } catch (coverErr) {
-          console.warn("Cover generation failed:", coverErr);
-          // Don't block import on cover generation failure
-        }
       }
 
       // 2. Upsert questions with PATCH-6: preserve existing timecode_seconds if new is null

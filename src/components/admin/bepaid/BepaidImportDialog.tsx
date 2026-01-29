@@ -18,7 +18,7 @@ import { useBepaidMappings, useBepaidQueueActions } from "@/hooks/useBepaidMappi
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { parseExcelFile, isLegacyExcelFormat } from "@/utils/excelParser";
+import * as XLSX from "xlsx";
 import { transliterateToCyrillic } from "@/utils/transliteration";
 
 interface BepaidImportDialogProps {
@@ -330,41 +330,40 @@ export default function BepaidImportDialog({ open, onOpenChange, onSuccess }: Be
             return row;
           });
       } else {
-        // Parse Excel - bePaid exports have multiple sheets
-        // Check for legacy .xls format
-        if (isLegacyExcelFormat(selectedFile)) {
-          toast.error('Формат .xls не поддерживается. Сохраните файл в формате .xlsx');
-          return;
-        }
-
-        const workbook = await parseExcelFile(selectedFile);
+        // Parse Excel - bePaid exports have multiple sheets:
+        // Page 1: Summary
+        // Page 2: Card transactions (detailed)
+        // Page 3: ERIP transactions (detailed)
+        // Page 4: Memorial orders (aggregated - skip)
+        const buffer = await selectedFile.arrayBuffer();
+        const workbook = XLSX.read(buffer, { type: 'array' });
         
-        console.log("Excel sheets:", workbook.sheetNames);
+        console.log("Excel sheets:", workbook.SheetNames);
         
         // Parse card transactions from Page 2 (index 1)
         let cardRows: Record<string, string>[] = [];
-        if (workbook.sheetNames.length > 1) {
-          const cardSheet = workbook.sheets[workbook.sheetNames[1]];
-          cardRows = cardSheet.rows as Record<string, string>[];
+        if (workbook.SheetNames.length > 1) {
+          const cardSheet = workbook.Sheets[workbook.SheetNames[1]];
+          cardRows = XLSX.utils.sheet_to_json<Record<string, string>>(cardSheet, { defval: '', raw: false });
           
           // Validate it has UID column
-          if (cardRows.length > 0 && !('uid' in cardRows[0])) {
+          if (cardRows.length > 0 && !('UID' in cardRows[0])) {
             cardRows = [];
           }
         }
         
         // Parse ERIP transactions from Page 3 (index 2) if exists
         let eripRows: Record<string, string>[] = [];
-        if (workbook.sheetNames.length > 2) {
-          const eripSheet = workbook.sheets[workbook.sheetNames[2]];
-          const rawEripRows = eripSheet.rows as Record<string, string>[];
+        if (workbook.SheetNames.length > 2) {
+          const eripSheet = workbook.Sheets[workbook.SheetNames[2]];
+          const rawEripRows = XLSX.utils.sheet_to_json<Record<string, string>>(eripSheet, { defval: '', raw: false });
           
           // Validate it has UID column (ERIP sheet has same structure)
-          if (rawEripRows.length > 0 && 'uid' in rawEripRows[0]) {
+          if (rawEripRows.length > 0 && 'UID' in rawEripRows[0]) {
             // Mark ERIP transactions with payment_method
             eripRows = rawEripRows.map(row => ({
               ...row,
-              'способ оплаты': 'erip', // Override payment method for ERIP
+              'Способ оплаты': 'erip', // Override payment method for ERIP
               '_source': 'erip'
             }));
             console.log("ERIP transactions found:", eripRows.length);

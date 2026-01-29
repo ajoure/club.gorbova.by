@@ -28,11 +28,9 @@ import { QuizHotspotBlock } from "@/components/admin/lesson-editor/blocks/QuizHo
 interface LessonBlockRendererProps {
   blocks: LessonBlock[];
   lessonId?: string;
-  /** Optional timecode for video seek (in seconds) */
-  timecodeSeconds?: number | null;
 }
 
-export function LessonBlockRenderer({ blocks, lessonId, timecodeSeconds }: LessonBlockRendererProps) {
+export function LessonBlockRenderer({ blocks, lessonId }: LessonBlockRendererProps) {
   const { progress, saveBlockResponse, resetBlockProgress } = useUserProgress(lessonId || '');
 
   if (!blocks || blocks.length === 0) {
@@ -75,7 +73,7 @@ export function LessonBlockRenderer({ blocks, lessonId, timecodeSeconds }: Lesso
       case 'text':
         return <TextBlock content={block.content as any} onChange={noop} isEditing={false} />;
       case 'video':
-        return <VideoBlock content={block.content as any} onChange={noop} isEditing={false} timecodeSeconds={timecodeSeconds} />;
+        return <VideoBlock content={block.content as any} onChange={noop} isEditing={false} />;
       case 'audio':
         return <AudioBlock content={block.content as any} onChange={noop} isEditing={false} />;
       case 'image':

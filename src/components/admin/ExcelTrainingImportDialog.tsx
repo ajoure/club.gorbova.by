@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { parseExcelFile, isLegacyExcelFormat } from "@/utils/excelParser";
+import * as XLSX from "xlsx";
 import {
   Dialog,
   DialogContent,
@@ -139,16 +139,11 @@ export function ExcelTrainingImportDialog({
 
   const handleFileUpload = async (file: File) => {
     try {
-      // Check for legacy .xls format
-      if (isLegacyExcelFormat(file)) {
-        toast.error('Формат .xls не поддерживается. Сохраните файл в формате .xlsx');
-        return;
-      }
-
-      const workbook = await parseExcelFile(file);
-      const sheetName = workbook.sheetNames[0];
-      const sheet = workbook.sheets[sheetName];
-      const jsonData = sheet.rawRows as string[][];
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as string[][];
       
       if (jsonData.length < 2) {
         toast.error("Файл пустой или содержит только заголовки");

@@ -1,12 +1,10 @@
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useTrainingLessons, TrainingLesson } from "@/hooks/useTrainingLessons";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
-import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
-import { format, parseISO } from "date-fns";
+import { useLessonQuestions, formatTimecode, buildKinescopeUrlWithTimecode } from "@/hooks/useKbQuestions";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -90,23 +88,6 @@ export default function LibraryLesson() {
 
   // Fetch questions for this lesson (if any - for video Q&A episodes)
   const { data: lessonQuestions } = useLessonQuestions(currentLesson?.id);
-
-  // PATCH-C: State for video URL with timecode for internal seek
-  const [activeVideoUrl, setActiveVideoUrl] = useState<string | null>(null);
-  const [activeTimecode, setActiveTimecode] = useState<number | null>(null);
-
-  // Initialize video URL from blocks
-  useEffect(() => {
-    if (blocks.length > 0) {
-      const videoBlock = blocks.find(b => b.block_type === 'video');
-      if (videoBlock) {
-        const content = videoBlock.content as { url?: string };
-        if (content.url) {
-          setActiveVideoUrl(content.url);
-        }
-      }
-    }
-  }, [blocks]);
 
   const handleToggleComplete = async () => {
     if (!currentLesson) return;
@@ -198,13 +179,7 @@ export default function LibraryLesson() {
             </div>
             <h1 className="text-2xl font-bold">{currentLesson.title}</h1>
             {currentLesson.description && (
-              <p className="text-muted-foreground mt-2 whitespace-pre-wrap">{currentLesson.description}</p>
-            )}
-            {/* PATCH-B: Format date as DD.MM.YYYY */}
-            {currentLesson.published_at && (
-              <p className="text-sm text-muted-foreground mt-2">
-                Дата эфира: {format(parseISO(currentLesson.published_at), "dd.MM.yyyy")}
-              </p>
+              <p className="text-muted-foreground mt-2">{currentLesson.description}</p>
             )}
           </div>
           <Button
@@ -227,15 +202,9 @@ export default function LibraryLesson() {
 
         {/* Block-based Content (if blocks exist) */}
         {blocks.length > 0 ? (
-          <Card className="mb-6" id="video-container">
+          <Card className="mb-6">
             <CardContent className="py-6">
-              {/* PATCH-C: key forces iframe re-render when timecode changes */}
-              <LessonBlockRenderer 
-                key={activeTimecode ?? 'no-timecode'} 
-                blocks={blocks} 
-                lessonId={currentLesson?.id}
-                timecodeSeconds={activeTimecode}
-              />
+              <LessonBlockRenderer blocks={blocks} lessonId={currentLesson?.id} />
             </CardContent>
           </Card>
         ) : (
@@ -370,12 +339,9 @@ export default function LibraryLesson() {
                         size="sm"
                         className="h-8 px-2"
                         onClick={() => {
-                          // PATCH-C: Internal seek - update video URL with timecode
-                          if (q.timecode_seconds !== null && activeVideoUrl) {
-                            setActiveTimecode(q.timecode_seconds);
-                            // Scroll to video
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                          }
+                          // PATCH-7 & 8: Use buildKinescopeUrlWithTimecode for proper URL
+                          const url = buildKinescopeUrlWithTimecode(q.kinescope_url, q.timecode_seconds);
+                          if (url !== "#") window.open(url, "_blank");
                         }}
                       >
                         <Play className="h-3 w-3" />

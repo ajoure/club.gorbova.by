@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { parseExcelFile, isLegacyExcelFormat } from "@/utils/excelParser";
+import * as XLSX from "xlsx";
 import FuzzyMatchDialog from "./FuzzyMatchDialog";
 import ImportRollbackDialog from "./ImportRollbackDialog";
 
@@ -288,15 +288,12 @@ export default function AmoCRMImportDialog({ open, onOpenChange, onSuccess }: Am
     setSkippedInvalidTelegram(0);
 
     try {
-      // Check for legacy .xls format
-      if (isLegacyExcelFormat(selectedFile)) {
-        toast.error('Формат .xls не поддерживается. Сохраните файл в формате .xlsx');
-        return;
-      }
-
-      const workbook = await parseExcelFile(selectedFile);
-      const sheetName = workbook.sheetNames[0];
-      const rows = workbook.sheets[sheetName].rows;
+      const buffer = await selectedFile.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
       console.log("amoCRM Excel parsed:", { sheetName, rowCount: rows.length, columns: rows[0] ? Object.keys(rows[0]) : [] });
 

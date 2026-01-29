@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import { useBepaidStatementImport } from "@/hooks/useBepaidStatement";
 import { toast } from "@/hooks/use-toast";
-import { parseExcelFile, isLegacyExcelFormat, parseExcelSerialDate } from "@/utils/excelParser";
+import * as XLSX from 'xlsx';
 import { parseISO, parse, isValid } from "date-fns";
 import { Json } from "@/integrations/supabase/types";
 
@@ -82,10 +82,10 @@ interface ParsedRow {
   [key: string]: unknown;
 }
 
-function parseDateValue(value: unknown): string | null {
+function parseExcelDate(value: unknown): string | null {
   if (!value) return null;
   
-  // Handle Date objects (ExcelJS returns Date objects)
+  // Handle Date objects (xlsx with cellDates: true returns Date objects)
   if (value instanceof Date) {
     if (!isNaN(value.getTime())) {
       return value.toISOString();
@@ -95,9 +95,9 @@ function parseDateValue(value: unknown): string | null {
   
   // Excel serial date number
   if (typeof value === 'number') {
-    const date = parseExcelSerialDate(value);
-    if (!isNaN(date.getTime())) {
-      return date.toISOString();
+    const excelDate = XLSX.SSF.parse_date_code(value);
+    if (excelDate) {
+      return new Date(excelDate.y, excelDate.m - 1, excelDate.d, excelDate.H || 0, excelDate.M || 0, excelDate.S || 0).toISOString();
     }
   }
   
@@ -167,22 +167,16 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
     setImportResult(null);
     
     try {
-      // Check for legacy .xls format
-      if (isLegacyExcelFormat(selectedFile)) {
-        setParseStatus('error');
-        setParseError('Формат .xls не поддерживается. Сохраните файл в формате .xlsx и загрузите снова.');
-        return;
-      }
-
-      const workbook = await parseExcelFile(selectedFile);
+      const buffer = await selectedFile.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
       
       // Find transaction sheets
-      const cardSheet = workbook.sheetNames.find(name => 
+      const cardSheet = workbook.SheetNames.find(name => 
         name.toLowerCase().includes('карточн') || 
         name.toLowerCase().includes('card') ||
         name.toLowerCase().includes('транзакци')
       );
-      const eripSheet = workbook.sheetNames.find(name => 
+      const eripSheet = workbook.SheetNames.find(name => 
         name.toLowerCase().includes('ерип') || 
         name.toLowerCase().includes('erip')
       );
@@ -191,14 +185,14 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
       
       if (sheetsToProcess.length === 0) {
         // Fallback to first sheet if no match
-        sheetsToProcess.push(workbook.sheetNames[0]);
+        sheetsToProcess.push(workbook.SheetNames[0]);
       }
       
       const allRows: ParsedRow[] = [];
       
       for (const sheetName of sheetsToProcess) {
-        const sheet = workbook.sheets[sheetName];
-        const jsonData = sheet.rawRows;
+        const sheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as unknown[][];
         
         if (jsonData.length < 2) continue;
         
@@ -245,7 +239,7 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
             
             // Handle different field types
             if (DATE_FIELDS.includes(dbField)) {
-              rowObj[dbField] = parseDateValue(value);
+              rowObj[dbField] = parseExcelDate(value);
             } else if (NUMBER_FIELDS.includes(dbField)) {
               rowObj[dbField] = parseNumber(value);
             } else {

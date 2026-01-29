@@ -16,7 +16,7 @@ import {
   Check, X, Loader2, AlertCircle, Brain, Save, RefreshCw,
   ChevronDown, ChevronRight, Info, Users, ShoppingCart, Filter
 } from "lucide-react";
-import { parseExcelFile, isLegacyExcelFormat } from "@/utils/excelParser";
+import * as XLSX from "xlsx";
 import { supabase } from "@/integrations/supabase/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -178,25 +178,33 @@ export function SmartImportWizard({ open, onOpenChange, instanceId }: SmartImpor
 
   // Parse Excel file
   const parseFile = useCallback(async (file: File) => {
-    // Check for legacy .xls format
-    if (isLegacyExcelFormat(file)) {
-      throw new Error('Формат .xls не поддерживается. Сохраните файл в формате .xlsx и загрузите снова.');
-    }
-
-    const workbook = await parseExcelFile(file);
-    const sheetName = workbook.sheetNames[0];
-    const sheet = workbook.sheets[sheetName];
-    
-    const headers = sheet.headers.map(h => String(h || ""));
-    const rows: ParsedRow[] = sheet.rawRows.slice(1).map((row) => {
-      const obj: ParsedRow = {};
-      headers.forEach((h, i) => {
-        obj[h] = (row as unknown[])[i];
-      });
-      return obj;
+    return new Promise<{ headers: string[]; rows: ParsedRow[] }>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = e.target?.result;
+          const workbook = XLSX.read(data, { type: "binary" });
+          const sheetName = workbook.SheetNames[0];
+          const sheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as unknown[][];
+          
+          const headers = (jsonData[0] || []).map(h => String(h || ""));
+          const rows: ParsedRow[] = jsonData.slice(1).map((row) => {
+            const obj: ParsedRow = {};
+            headers.forEach((h, i) => {
+              obj[h] = (row as unknown[])[i];
+            });
+            return obj;
+          });
+          
+          resolve({ headers, rows });
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsBinaryString(file);
     });
-    
-    return { headers, rows };
   }, []);
 
   // Handle file upload
