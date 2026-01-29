@@ -1,229 +1,196 @@
 
-# План: Исправления навигации, хлебных крошек и импорта KB
+Цели (что должно получиться)
+1) В “База знаний → Вопросы” кнопка «Смотреть видеоответ» всегда ведёт ВНУТРИ платформы на страницу видеоответа (без новых окон и без перехода на внешний сайт).
+2) На странице видеоответа при выборе вопроса (Play) видео:
+   - переходит к указанному таймингу,
+   - и запускается сразу (без “замерло, нажмите Play ещё раз”).
+3) Хлебные крошки:
+   - без дублей (одна линия),
+   - полностью на русском,
+   - без технических slug’ов типа “episode-100”, “container-…”, “Library…”.
+4) В карточках выпусков (превью видео/выпусков) краткое описание отображается аккуратно, но полный текст доступен красиво:
+   - desktop: по наведению (tooltip/hover-card) или по клику,
+   - mobile/tablet: через “Развернуть” (без ховера), удобно пальцем.
+5) По итогам — проверка и скрины (доказательства) по ключевым сценариям + быстрый smoke по кнопкам/полям, чтобы ничего не сломалось.
 
-## Выявленные проблемы (из скриншотов и запроса)
+Что уже выяснено по коду (причины текущих проблем)
+A) Дубли хлебных крошек
+- В шапке DashboardLayout всегда рендерится <DashboardBreadcrumbs />.
+- При этом LibraryLesson.tsx и LibraryModule.tsx рендерят свои “внутренние” хлебные крошки прямо в контенте.
+⇒ Поэтому на странице урока видны сразу две линии хлебных крошек (как на вашем скрине).
 
-| # | Проблема | Источник |
-|---|----------|----------|
-| 1 | На странице урока при клике на вопрос видео НЕ запускается автоматически — только переходит к таймкоду | `LibraryLesson.tsx` + `VideoBlock.tsx` |
-| 2 | Из раздела "База знаний → Вопросы" кнопка "Смотреть видеоответ" открывает Kinescope вместо внутренней навигации | Код `Knowledge.tsx` не обновился — нужно перепроверить |
-| 3 | Хлебные крошки: "Библиотека курсов" → "episode-100" вместо "База знаний" → "Выпуск №100" | `DashboardBreadcrumbs.tsx` строка 23, `LibraryLesson.tsx` строка 160 |
-| 4 | Импорт: "100 выпусков, но с описаниями 74" — приоритет EPISODE_SUMMARIES над файлом | `AdminKbImport.tsx` строки 733-738 |
-| 5 | Все тексты должны быть на русском языке — никаких "episode-100" | Slug хранится как `episode-100`, но title должен отображаться как "Выпуск №100" |
+B) “Смотреть видеоответ” уходит на Kinescope (у вас)
+- В текущем коде src/pages/Knowledge.tsx кнопка уже сделана как <button> + navigate() (не <a target="_blank">).
+- Значит, либо:
+  1) на опубликованной версии ещё старый код (не опубликовано/кэш),
+  2) либо где-то ещё есть второй список вопросов (другая страница/компонент) с внешней ссылкой,
+  3) либо в момент клика не хватает данных lesson/module, и где-то включается fallback на внешнюю ссылку (мы добавим “безопасный” fallback: НЕ открывать внешнее, а показывать понятное сообщение).
 
----
+C) Автозапуск по таймкоду не срабатывает
+- Сейчас мы добавили в embed URL параметр autoplay=1, но браузеры часто блокируют autoplay со звуком.
+- Для надёжного запуска нужен “управляемый плеер”: Kinescope IFrame API (seekTo + play) + (при необходимости) mute перед play, чтобы пройти ограничения браузера.
 
-## Решения
+D) На странице урока нет обработки navigate state seekTo
+- В текущем src/pages/LibraryLesson.tsx активный таймкод меняется только при клике на Play в списке вопросов на этой странице.
+- Но когда пользователь приходит из /knowledge по navigate(..., { state: { seekTo } }), этот seekTo сейчас не считывается (в файле нет useLocation и эффекта).
+⇒ В результате переход “на нужный тайминг” может не применяться/применяться нестабильно.
 
-### 1. Автозапуск видео при клике на вопрос (Play)
+E) Полный текст “краткого описания” в превью
+- В LessonCard описание ограничено line-clamp-2 (обрезается).
+⇒ Нужно оставить аккуратный вид, но дать доступ к полному тексту через hover/expand, адаптируя под mobile/tablet.
 
-**Проблема**: При нажатии на Play около вопроса, видео переходит к таймкоду, но НЕ запускается автоматически.
+План изменений (точечно, без рефакторинга “ради красоты”)
 
-**Файл: `src/components/admin/lesson-editor/blocks/VideoBlock.tsx`**
+1) Исправить автозапуск видео по таймкоду (надёжно)
+Файлы:
+- src/components/admin/lesson-editor/blocks/VideoBlock.tsx
+- (при необходимости) src/pages/LibraryLesson.tsx
 
-Добавить параметр `&autoplay=1` к URL embed для Kinescope при наличии таймкода:
+1.1. Добавить “режим управляемого плеера” для Kinescope в просмотре (isEditing=false)
+- Для provider === 'kinescope' вместо “голого iframe src=…” подключить Kinescope IFrame API:
+  - загрузка скрипта: https://player.kinescope.io/latest/iframe.player.js (один раз, с кэшированием promise),
+  - создание плеера через playerFactory.create(...) в контейнере,
+  - хранение instance в ref,
+  - при изменении activeTimecode:
+    - await player.seekTo(seconds)
+    - (опционально) await player.mute()  (чтобы autoplay не блокировался)
+    - await player.play()
 
-```typescript
-case 'kinescope': {
-  const videoId = url.match(/kinescope\.io\/([a-zA-Z0-9]+)/)?.[1];
-  let embedUrl = videoId ? `https://kinescope.io/embed/${videoId}` : url;
-  if (timecode && timecode > 0) {
-    embedUrl += `?t=${Math.floor(timecode)}&autoplay=1`;  // Добавить autoplay=1
-  }
-  return embedUrl;
-}
-```
+Почему так:
+- Параметр autoplay=1 в URL может блокироваться политикой браузера.
+- Прямой вызов play() через API в ответ на “пользовательское действие” и/или с mute даёт предсказуемый старт.
 
-**Файл: `src/pages/LibraryLesson.tsx`**
+1.2. Сохранить безопасный fallback
+- Если API не загрузилось/ошибка создания — оставить текущий iframe embedUrl (как резервный вариант), чтобы видео всё равно показывалось.
 
-Также добавить key для принудительного ремаунта iframe при смене timecode:
+1.3. На странице урока: добавить обработку “пришёл из списка вопросов → сразу seek+play”
+Файл:
+- src/pages/LibraryLesson.tsx
 
-```tsx
-<LessonBlockRenderer 
-  key={`blocks-${activeTimecode ?? 'init'}`}  // Ремаунт при смене таймкода
-  blocks={blocks} 
-  lessonId={currentLesson?.id} 
-  activeTimecode={activeTimecode}
-/>
-```
+Сделать:
+- подключить useLocation()
+- при монтировании/изменении location.state:
+  - если state.seekTo — setActiveTimecode(seekTo) + “флаг автозапуска” (например autoplayNonce = Date.now()).
+- передать autoplayNonce в LessonBlockRenderer → VideoBlock, чтобы VideoBlock понимал “это запуск по клику/переходу, надо стартовать”.
 
-### 2. Кнопка "Смотреть видеоответ" из Базы знаний
+Также:
+- когда пользователь выбирает вопрос на самой странице урока (кнопка Play рядом с вопросом), вместе с setActiveTimecode выставлять autoplayNonce, чтобы запуск был гарантирован.
 
-**Файл: `src/pages/Knowledge.tsx`**
+2) Полностью убрать внешние переходы на Kinescope из “База знаний → Вопросы”
+Файл:
+- src/pages/Knowledge.tsx
 
-Код уже использует `navigate()` внутрь платформы (строки 63-72). Проблема может быть в том, что `hasInternalLink` = false для некоторых вопросов.
+2.1. Жёстко запретить внешний fallback
+- Сейчас уже есть navigate(`/library/${moduleSlug}/${lessonSlug}`, { state: { seekTo } }).
+- Добавить поведение, если не хватает moduleSlug/lessonSlug:
+  - не открывать внешнюю ссылку,
+  - показать toast “Видеоответ пока не привязан к уроку” (и лог в console.warn для диагностики данных).
 
-Проверить условие — возможно lesson/module данные не загружаются корректно. Добавить fallback:
+2.2. Диагностика, чтобы поймать причину “почему у вас всё равно открывается Kinescope”
+- Временно (пока не подтвердим фикс) добавить console.warn с данными вопроса при отсутствии lesson/module.
+- После подтверждения можно убрать (или оставить только минимально).
 
-```tsx
-// Если lesson данные не загружены, попробовать получить из другого источника
-const hasInternalLink = question.lesson?.slug && question.lesson?.module?.slug;
+2.3. Проверить, что в проекте нет других мест, где кнопка “Смотреть видеоответ” реализована через <a target="_blank">
+- По поиску сейчас явных совпадений в src нет, но мы дополнительно проверим места использования kinescope_url / buildKinescopeUrlWithTimecode и UI “вопросов” вне Knowledge.tsx.
 
-// Убедиться что navigate работает только при наличии данных
-if (!hasInternalLink) {
-  console.warn(`Question ${question.id} missing lesson/module data`);
-}
-```
+3) Убрать дубли хлебных крошек и привести всё к русскому
+Файлы:
+- src/components/layout/DashboardLayout.tsx
+- src/components/layout/DashboardBreadcrumbs.tsx
+- src/pages/LibraryLesson.tsx
+- src/pages/LibraryModule.tsx
 
-### 3. Хлебные крошки на русском языке
+3.1. Убрать “вторую линию” хлебных крошек
+Вариант, который минимально ломает и даёт правильный русский путь “База знаний → …”:
+- Оставляем “внутренние” хлебные крошки в LibraryLesson/LibraryModule (они уже правильно показывают “База знаний → Выпуск №100” через title).
+- В DashboardLayout скрываем <DashboardBreadcrumbs /> на маршрутах /library/* (и при необходимости /library) — чтобы в шапке не было второй линии.
 
-**Файл: `src/components/layout/DashboardBreadcrumbs.tsx`**
+Почему так:
+- DashboardBreadcrumbs сейчас не умеет красиво переводить slug’и “episode-100” в “Выпуск №100” без отдельной логики (и без лишнего рефакторинга).
+- Внутренние крошки в LibraryLesson уже корректные и русские, их проще оставить.
 
-Изменить строку 23:
-```typescript
-"/library": "База знаний",  // БЫЛО: "Библиотека курсов"
-```
+3.2. Русификация заголовков для /knowledge
+- В DashboardBreadcrumbs обновить routeLabels для “/knowledge”, чтобы в шапке (на страницах, где шапка-crumb включена) было “База знаний”, а не “Знания”.
 
-**Файл: `src/pages/LibraryLesson.tsx`**
+3.3. Проверка, что нигде не показывается “episode-100” как текст
+- В LibraryLesson уже выводится currentLesson.title (должно быть “Выпуск №100”).
+- Если в БД title оказался равен slug’у у каких-то уроков (редкий кейс) — в таком случае потребуется точечная правка импорта/данных (но сначала проверим реальными SELECT и UI).
 
-Хлебная крошка для урока (`currentLesson.title`) уже отображается корректно как "Выпуск №100" (если title в БД = "Выпуск №100").
+4) Полный текст краткого описания в превью (красиво, удобно на mobile/tablet)
+Файл:
+- src/components/training/LessonCard.tsx
+(при необходимости) UI-компоненты hover-card / collapsible уже есть.
 
-Проблема: скриншот показывает `episode-100` — это slug, а не title!
+4.1. Desktop: HoverCard на описании
+- Если lesson.description длиннее N символов:
+  - оставить line-clamp-2,
+  - по наведению показывать HoverCard с полным текстом (ширина адаптивная, max-w, переносы строк).
 
-Проверить строку 160:
-```tsx
-<span className="text-foreground">{currentLesson.title}</span>  // Должен быть title, не slug
-```
+4.2. Mobile/Tablet: “Показать полностью” внутри карточки
+- Так как hover на мобильных не работает:
+  - добавить кнопку “Показать полностью / Свернуть” (44px touch target),
+  - по клику разворачивать текст прямо в карточке (Collapsible),
+  - обязательно stopPropagation(), чтобы клик по кнопке не уводил в урок.
 
-Если проблема в том, что title = slug, нужно исправить импорт.
+4.3. Визуальная аккуратность
+- Не раздувать карточки по умолчанию: только по явному действию пользователя.
+- Сохранить текущий стиль GlassCard/градиенты.
 
-### 4. Описания из файла вместо EPISODE_SUMMARIES
+5) Проверки, тестирование и “пруфы” (скриншоты)
+Важно: после внедрения я сделаю проверку именно в интерфейсе (не “теория”), и в финальном отчёте приложу скриншоты.
 
-**Файл: `src/pages/admin/AdminKbImport.tsx`**
+5.1. Чек-лист ручного E2E (минимум)
+A) /knowledge → вкладка “Вопросы”
+- Нажать “Смотреть видеоответ”:
+  - не открывается новая вкладка,
+  - маршрут меняется на /library/...,
+  - на странице урока видео стартует на нужном таймкоде.
 
-Текущий приоритет (строки 733-738):
-```typescript
-description: EPISODE_SUMMARIES[ep.episodeNumber] || 
-  ep.shortDescription || 
-  getEpisodeSummary(...)
-```
+B) /library/.../episode-100 (страница урока)
+- Убедиться, что хлебные крошки ОДНИ (нет дубля в шапке + в контенте).
+- Убедиться, что все пункты на русском (“База знаний → Выпуск №100”).
+- В блоке “Вопросы этого выпуска” нажать Play:
+  - видео переходит к таймкоду,
+  - видео реально начинает играть (без повторного клика по Play в плеере).
 
-**Изменить приоритет — файл важнее справочника:**
+C) Превью карточек выпусков (видеответов)
+- Проверить раскрытие полного описания:
+  - desktop: hover-card,
+  - mobile/tablet: кнопка развернуть (и что она не уводит в урок).
 
-```typescript
-// Priority: file shortDescription > file fullDescription > EPISODE_SUMMARIES > fallback
-description: ep.shortDescription || 
-  ep.fullDescription ||
-  EPISODE_SUMMARIES[ep.episodeNumber] || 
-  getEpisodeSummary(ep.episodeNumber, ep.questions.map((q) => q.title)),
-```
+D) Регрессия UI
+- Проверить основные “выпадающие” элементы и поля на затронутых страницах:
+  - Tabs на /knowledge,
+  - поиск,
+  - кнопки “К списку”, навигация prev/next, “Отметить как пройденный” на уроке,
+  - sidebar toggle.
 
-И в `importEpisode()` (строки 837-839):
-```typescript
-const description = episode.shortDescription || 
-  episode.fullDescription ||
-  (state.usePredefinedSummaries ? EPISODE_SUMMARIES[episode.episodeNumber] : null) ||
-  episode.description;
-```
+5.2. Скриншоты (что именно приложим)
+- /knowledge “Вопросы” до клика (видна кнопка “Смотреть видеоответ”).
+- После клика: страница /library/... с видимыми русскими хлебными крошками (одна линия).
+- Момент автозапуска: видно, что плеер “играет” (по UI плеера/индикатору) и таймкод соответствует.
+- Превью карточки: hover-card (desktop) и разворот (mobile).
+- Консоль без ошибок на ключевом сценарии (если будут — приложим и исправим).
 
-### 5. Счётчик "с описаниями" в UI
+Технические детали реализации (чтобы без сюрпризов)
+- Для Kinescope IFrame API используем официальную документацию (player.kinescope.io/latest/iframe.player.js).
+- Не добавляем новых зависимостей (add-only подход): всё можно сделать через загрузку скрипта и типизацию “как any” локально.
+- Не меняем доступы/безопасность, только UI/клиентскую навигацию/воспроизведение.
+- Все клики, которые не должны уводить со страницы, обязательно с stopPropagation.
 
-**Файл: `src/pages/admin/AdminKbImport.tsx`**
+Ожидаемые затронутые файлы (минимально)
+- src/components/admin/lesson-editor/blocks/VideoBlock.tsx
+- src/pages/LibraryLesson.tsx
+- src/pages/Knowledge.tsx
+- src/components/layout/DashboardLayout.tsx
+- src/components/layout/DashboardBreadcrumbs.tsx
+- src/components/training/LessonCard.tsx
 
-Текущий счётчик (строка 1137):
-```typescript
-const predefinedCount = state.episodes.filter((e) => EPISODE_SUMMARIES[e.episodeNumber]).length;
-```
-
-Изменить на:
-```typescript
-const withDescriptionCount = state.episodes.filter(
-  (e) => e.shortDescription || e.fullDescription || EPISODE_SUMMARIES[e.episodeNumber]
-).length;
-```
-
-И обновить UI для отображения:
-```tsx
-{withDescriptionCount} из {stats.totalEpisodes} выпусков с описаниями
-```
-
----
-
-## Файлы для изменения
-
-| Файл | Изменения |
-|------|-----------|
-| `src/components/admin/lesson-editor/blocks/VideoBlock.tsx` | Добавить `&autoplay=1` к Kinescope embed URL |
-| `src/pages/LibraryLesson.tsx` | Убедиться что отображается title, не slug |
-| `src/components/layout/DashboardBreadcrumbs.tsx` | `/library` → "База знаний" |
-| `src/pages/admin/AdminKbImport.tsx` | Приоритет описаний: файл > справочник; счётчик "с описаниями" |
-| `src/pages/Knowledge.tsx` | Убедиться что внутренняя навигация работает |
-
----
-
-## Технические детали
-
-### VideoBlock.tsx — автозапуск видео
-
-```typescript
-// Строки 42-48 — функция getEmbedUrl
-case 'kinescope': {
-  const videoId = url.match(/kinescope\.io\/([a-zA-Z0-9]+)/)?.[1];
-  let embedUrl = videoId ? `https://kinescope.io/embed/${videoId}` : url;
-  if (timecode && timecode > 0) {
-    // Добавить autoplay=1 для автозапуска при наличии таймкода
-    embedUrl += `?t=${Math.floor(timecode)}&autoplay=1`;
-  }
-  return embedUrl;
-}
-```
-
-### DashboardBreadcrumbs.tsx — русские названия
-
-```typescript
-// Строка 23
-"/library": "База знаний",  // БЫЛО: "Библиотека курсов"
-```
-
-### AdminKbImport.tsx — приоритет описаний
-
-```typescript
-// Строки 733-738 — при парсинге
-.map((ep) => ({
-  ...ep,
-  // NEW Priority: file > справочник > fallback
-  description: ep.shortDescription || 
-    ep.fullDescription ||
-    EPISODE_SUMMARIES[ep.episodeNumber] || 
-    getEpisodeSummary(ep.episodeNumber, ep.questions.map((q) => q.title)),
-  errors: ep.questions.flatMap((q) => q.errors),
-}));
-
-// Строки 837-839 — при импорте
-const description = episode.shortDescription || 
-  episode.fullDescription ||
-  (state.usePredefinedSummaries ? EPISODE_SUMMARIES[episode.episodeNumber] : null) ||
-  episode.description;
-```
-
-### AdminKbImport.tsx — счётчик описаний
-
-```typescript
-// Строка 1137 — изменить predefinedCount на withDescriptionCount
-const withDescriptionCount = state.episodes.filter(
-  (e) => e.shortDescription || e.fullDescription || EPISODE_SUMMARIES[e.episodeNumber]
-).length;
-
-// И в UI (около строки 1203):
-{withDescriptionCount} из {stats.totalEpisodes} выпусков с описаниями
-```
-
----
-
-## Ожидаемый результат
-
-1. При клике на Play у вопроса — видео автоматически переходит к таймкоду И запускается
-2. Кнопка "Смотреть видеоответ" ведёт внутрь платформы (не на Kinescope)
-3. Хлебные крошки: "База знаний" → "Выпуск №100" (всё на русском)
-4. Импорт показывает "100 выпусков с описаниями" (берёт из файла)
-5. Никаких английских названий типа "episode-100" в UI
-
----
-
-## DoD (обязательно)
-
-1. Открыть страницу урока, нажать Play на вопросе — видео запустится автоматически
-2. Открыть "База знаний → Вопросы", нажать "Смотреть видеоответ" — остаться внутри платформы
-3. Проверить хлебные крошки: "База знаний > Выпуск №100"
-4. Открыть `/admin/kb-import`, загрузить файл — видеть "100 из 100 выпусков с описаниями"
-5. Скриншоты: хлебные крошки, автозапуск видео, страница импорта
+Критерии приёмки (DoD)
+1) “Смотреть видеоответ” из /knowledge не открывает внешний сайт и не открывает новую вкладку.
+2) При переходе из вопроса видео:
+   - перематывается к таймкоду,
+   - и запускается автоматически (без повторного нажатия Play в плеере).
+3) Хлебные крошки не дублируются и полностью русские; нет “episode-100” в UI.
+4) Полный текст краткого описания доступен удобно на desktop и mobile/tablet.
+5) Финальный отчёт: реальные скриншоты ключевых сценариев + короткий diff-summary по файлам.
