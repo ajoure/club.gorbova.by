@@ -57,7 +57,7 @@ interface ParsedRow {
   tags: string[];
   getcourseUrl: string;
   kinescopeUrl: string;
-  timecode: string | number;
+  timecode: string | number; // Normalized from Date if needed
   timecodeSeconds: number | null;
   year: number;
   errors: ValidationError[];
@@ -117,8 +117,9 @@ export default function AdminKbImport() {
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set());
 
   // PATCH-5: Strict episode number parsing
-  const parseEpisodeNumber = (value: string | number): number => {
-    const str = String(value ?? "").trim();
+  const parseEpisodeNumber = (value: string | number | Date): number => {
+    // Handle Date objects from Excel
+    const str = String(value instanceof Date ? '' : (value ?? '')).trim();
     if (!str) return 0;
 
     // Format "Выпуск №74" or "Выпуск 74"
@@ -225,11 +226,15 @@ export default function AdminKbImport() {
         const tagsRaw = String(row["Теги (для поиска, ставим самостоятельно)"] || "");
         const getcourseUrl = String(row["Ссылка на видео в геткурсе"] || "").trim();
         const kinescopeUrl = String(row["Ссылка на видео в кинескопе"] || "").trim();
-        const timecodeRaw = row["Тайминг (час:мин:сек начала видео с этим вопросом)"];
+        const timecodeRawValue = row["Тайминг (час:мин:сек начала видео с этим вопросом)"];
+        // Normalize Date objects to string for consistency
+        const timecodeRaw: string | number = timecodeRawValue instanceof Date 
+          ? timecodeRawValue.toISOString() 
+          : (timecodeRawValue as string | number);
         const year = parseInt(String(row[""] || row["Год"] || "2024"), 10) || 2024;
 
         // PATCH-2: Parse timecode (supports Excel numeric time)
-        const timecodeSeconds = parseTimecode(timecodeRaw);
+        const timecodeSeconds = parseTimecode(timecodeRawValue);
 
         // Collect values for error export
         const errorValues = {

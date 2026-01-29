@@ -9,13 +9,16 @@ interface ProtectedRouteProps {
   children: ReactNode;
 }
 
+// Защита от бесконечного цикла перезагрузок
+const RELOAD_KEY = 'protected_route_reload_count';
+const MAX_RELOADS = 2;
+
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { user, loading } = useAuth();
   const location = useLocation();
   
   // Дополнительная задержка для HMR — даём время Supabase восстановить сессию
   const [isInitializing, setIsInitializing] = useState(true);
-  const [retryCount, setRetryCount] = useState(0);
   
   useEffect(() => {
     // Определяем мобильный Safari — там восстановление сессии занимает дольше
@@ -23,26 +26,38 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
                            /Safari/.test(navigator.userAgent) &&
                            !/Chrome/.test(navigator.userAgent);
     
-    // Для мобильного Safari даём 1500ms, для остальных 600ms
-    const delay = isMobileSafari ? 1500 : 600;
+    // Для мобильного Safari даём 2500ms, для остальных 800ms
+    const delay = isMobileSafari ? 2500 : 800;
     
     const timer = setTimeout(() => setIsInitializing(false), delay);
     return () => clearTimeout(timer);
   }, []);
 
-  // Повторная проверка сессии если пользователь не найден после инициализации
+  // Улучшенная retry-логика с защитой от бесконечного цикла через sessionStorage
   useEffect(() => {
-    if (!loading && !isInitializing && !user && retryCount < 2) {
-      // Попробуем ещё раз получить сессию
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session) {
-          // Сессия найдена — перезагрузим страницу для корректной инициализации
-          window.location.reload();
-        }
-      });
-      setRetryCount(prev => prev + 1);
+    if (!loading && !isInitializing && !user) {
+      const reloadCount = parseInt(sessionStorage.getItem(RELOAD_KEY) || '0', 10);
+      
+      if (reloadCount < MAX_RELOADS) {
+        // Попробуем ещё раз получить сессию
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (session) {
+            // Сессия найдена — инкрементируем счётчик и перезагружаем
+            sessionStorage.setItem(RELOAD_KEY, String(reloadCount + 1));
+            window.location.reload();
+          }
+        });
+      }
+      // Если MAX_RELOADS достигнут — просто редиректим на /auth (ниже)
     }
-  }, [loading, isInitializing, user, retryCount]);
+  }, [loading, isInitializing, user]);
+
+  // Очищаем счётчик при успешной авторизации
+  useEffect(() => {
+    if (user) {
+      sessionStorage.removeItem(RELOAD_KEY);
+    }
+  }, [user]);
 
   // Сохраняем текущий маршрут при каждом изменении (если авторизован)
   useEffect(() => {
