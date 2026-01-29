@@ -155,6 +155,12 @@ function ProductCard({ product, variant, onSwitchToLibrary }: ProductCardProps) 
     : 0;
 
   const handleGoToSite = () => {
+    // Club: full page navigation to landing (not SPA, not _blank)
+    if (product.isClub) {
+      window.location.assign("https://club.gorbova.by/");
+      return;
+    }
+    
     if (product.purchaseLink.startsWith("http")) {
       window.open(product.purchaseLink, "_blank");
     } else {

@@ -29,6 +29,12 @@ function ProductCard({ title, description, badge, badgeVariant = "secondary", li
   const navigate = useNavigate();
 
   const handleClick = () => {
+    // Club: full page navigation to landing (not SPA, not _blank)
+    if (isClub) {
+      window.location.assign("https://club.gorbova.by/");
+      return;
+    }
+    
     if (isExternal) {
       window.open(link, "_blank");
     } else {
