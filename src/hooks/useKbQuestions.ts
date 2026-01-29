@@ -147,6 +147,17 @@ export function parseTimecode(
     const m = timecode.getUTCMinutes();
     const s = timecode.getUTCSeconds();
     const total = h * 3600 + m * 60 + s;
+    
+    // PATCH-A: Auto-correct MM:SS format misinterpreted as HH:MM:SS
+    // If total > 3 hours AND hours < 60 AND seconds = 0 → likely MM:SS, not HH:MM:SS
+    // Example: Excel shows 04:37 as 04:37:00 → Date(h=4, m=37, s=0)
+    // Current: 4*3600 + 37*60 = 16620 sec (wrong, video is ~1 hour)
+    // Corrected: 4*60 + 37 = 277 sec (correct, 4 min 37 sec)
+    if (total > 10800 && h < 60 && s === 0) {
+      const corrected = h * 60 + m;
+      return corrected > 0 ? corrected : null;
+    }
+    
     return total > 0 ? total : null;
   }
 
