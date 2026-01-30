@@ -1,4 +1,4 @@
-import { useState, useId, useCallback } from "react";
+import { useState, useId, useCallback, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,51 @@ interface VideoBlockProps {
   autoplayNonce?: number;
   /** Callback when seek was successfully applied */
   onSeekApplied?: (seconds: number, nonce: number) => void;
+}
+
+/**
+ * Inject CSS for Kinescope player sizing into <head>
+ * This avoids React DOM reconciliation issues with inline <style> tags
+ */
+function useKinescopeStyles(containerId: string, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled || !containerId) return;
+
+    const styleId = `kinescope-styles-${containerId}`;
+    
+    // Check if already exists
+    if (document.getElementById(styleId)) return;
+
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      #${containerId} {
+        width: 100% !important;
+        height: 100% !important;
+      }
+      #${containerId} > div {
+        width: 100% !important;
+        height: 100% !important;
+        position: absolute !important;
+        inset: 0 !important;
+      }
+      #${containerId} iframe {
+        width: 100% !important;
+        height: 100% !important;
+        position: absolute !important;
+        inset: 0 !important;
+        display: block !important;
+      }
+    `;
+    document.head.appendChild(style);
+
+    return () => {
+      const existing = document.getElementById(styleId);
+      if (existing) {
+        existing.remove();
+      }
+    };
+  }, [containerId, enabled]);
 }
 
 function detectVideoProvider(url: string): VideoContent['provider'] {
@@ -113,6 +158,10 @@ export function VideoBlock({
   // Fallback embed URL for non-API mode
   const embedUrl = getEmbedUrl(content.url || "", content.provider, isEditing ? undefined : activeTimecode);
 
+  // Inject CSS into <head> for Kinescope player (avoids React DOM conflicts)
+  const isKinescopeApiMode = content.provider === 'kinescope' && kinescopeVideoId && useApiPlayer && !apiError;
+  useKinescopeStyles(containerId, isKinescopeApiMode && !isEditing);
+
   if (!isEditing) {
     if (!content.url) {
       return (
@@ -123,10 +172,7 @@ export function VideoBlock({
     }
     
     // Use Kinescope API player for controlled seek+autoplay
-    if (content.provider === 'kinescope' && kinescopeVideoId && useApiPlayer && !apiError) {
-      // CSS selector-safe ID (no colons)
-      const cssId = containerId;
-      
+    if (isKinescopeApiMode) {
       return (
         <div className="space-y-2">
           {content.title && (
@@ -139,26 +185,6 @@ export function VideoBlock({
               id={containerId}
               className="absolute inset-0"
             />
-            {/* Per-instance CSS to force player sizing with !important */}
-            <style>{`
-              #${cssId} {
-                width: 100% !important;
-                height: 100% !important;
-              }
-              #${cssId} > div {
-                width: 100% !important;
-                height: 100% !important;
-                position: absolute !important;
-                inset: 0 !important;
-              }
-              #${cssId} iframe {
-                width: 100% !important;
-                height: 100% !important;
-                position: absolute !important;
-                inset: 0 !important;
-                display: block !important;
-              }
-            `}</style>
             {/* Autoplay blocked banner */}
             {autoplayBlocked && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-lg z-10">
