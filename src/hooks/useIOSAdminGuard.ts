@@ -1,5 +1,5 @@
-import { useEffect, ReactNode, createElement, Fragment } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { ReactNode, createElement, Fragment } from "react";
+import { useLocation, Navigate } from "react-router-dom";
 import { overwriteLastRoute } from "./useLastRoute";
 
 /**
@@ -34,41 +34,17 @@ function hasLovablePreviewFlag(): boolean {
 }
 
 /**
- * Global guard: on iOS Safari in iframe (lovable.dev preview)
- * immediately redirect from /admin/* to /dashboard
- * 
- * This prevents:
- * - Auto-loading heavy admin pages causing memory crash
- * - lovable.dev editor crashes due to iOS memory limits
- * 
- * Must be called INSIDE BrowserRouter but BEFORE Routes
+ * SYNC check: returns true if we should block admin route on iOS
+ * Call this in component body (not in useEffect) for immediate redirect
  */
-export function useIOSAdminGuard(): void {
-  const location = useLocation();
-  const navigate = useNavigate();
+export function shouldBlockIOSAdmin(pathname: string): boolean {
+  if (typeof window === 'undefined') return false;
+  if (!isIOSSafari()) return false;
   
-  useEffect(() => {
-    // Guard conditions:
-    // 1. iOS Safari
-    // 2. Page is in iframe (lovable.dev preview) OR has preview flag
-    // 3. Current route is /admin/*
-    
-    if (!isIOSSafari()) return;
-    
-    const inPreviewContext = isInIframe() || hasLovablePreviewFlag();
-    if (!inPreviewContext) return;
-    
-    if (!location.pathname.startsWith('/admin')) return;
-    
-    console.info('[iOS Admin Guard] Detected iOS Safari in lovable.dev preview at admin route:', location.pathname);
-    console.info('[iOS Admin Guard] Redirecting to /dashboard to prevent memory crash');
-    
-    // Overwrite lastRoute so we don't keep trying to restore admin
-    overwriteLastRoute('/dashboard');
-    
-    // Immediate redirect to lighter page
-    navigate('/dashboard', { replace: true });
-  }, [location.pathname, navigate]);
+  const inPreview = isInIframe() || hasLovablePreviewFlag();
+  if (!inPreview) return false;
+  
+  return pathname.startsWith('/admin');
 }
 
 interface IOSAdminGuardProps {
@@ -76,10 +52,19 @@ interface IOSAdminGuardProps {
 }
 
 /**
- * Component wrapper for the guard
- * Use this at the top level inside BrowserRouter
+ * Component wrapper for the guard - SYNCHRONOUS version
+ * Returns Navigate immediately if iOS + iframe + admin route
+ * This prevents React Router from even starting to match/load admin routes
  */
 export function IOSAdminGuard({ children }: IOSAdminGuardProps): JSX.Element {
-  useIOSAdminGuard();
+  const location = useLocation();
+  
+  // SYNC check - runs BEFORE Routes are rendered
+  if (shouldBlockIOSAdmin(location.pathname)) {
+    console.info('[iOS Admin Guard] SYNC block at:', location.pathname);
+    overwriteLastRoute('/dashboard');
+    return createElement(Navigate, { to: '/dashboard', replace: true });
+  }
+  
   return createElement(Fragment, null, children);
 }
