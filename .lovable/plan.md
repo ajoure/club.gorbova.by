@@ -1,264 +1,206 @@
 
-# План: Усовершенствование фильтров контактов и сделок с Glassmorphism дизайном
+# План: Исправление системы доступа к обучающим модулям
 
-## Обзор
+## Обзор проблемы
 
-Добавляем фильтрацию по купленным продуктам и тарифам в Контактах и Сделках, обновляем дизайн фильтров с glassmorphism стилем для максимальной прозрачности и лёгкости.
+Система доступа к контенту не работает корректно:
+1. Пользователи с купленными тарифами (FULL/BUSINESS) не видят контент
+2. Не показывается плашка о необходимости подписки для пользователей без доступа
+3. В настройках модуля выбор тарифов отображается, но может не сохраняться/загружаться корректно
 
----
+## Диагностика
 
-## Текущая архитектура
+Проверка базы данных показала, что данные корректны:
+- Модуль "Уроки без модулей" привязан к тарифам FULL и BUSINESS в таблице `module_access`
+- Есть пользователи с активными подписками на эти тарифы
 
-### Контакты (`AdminContacts.tsx`)
-- **Фильтры:** status_account, has_deals, has_telegram, is_duplicate
-- **Пресеты:** Все, Без аккаунта, С покупками, Дубли, Архив
-- **Компонент:** `QuickFilters` + `CONTACT_FILTER_FIELDS`
-
-### Сделки (`AdminDeals.tsx`)
-- **Фильтры:** order_number, email, phone, status, product_id, reconcile_source, final_price, is_trial
-- **Уже есть:** product_id filter с динамическими опциями из БД
-- **Компонент:** `QuickFilters` + `DEAL_FILTER_FIELDS`
-
-### Данные для фильтрации
-```text
-subscriptions_v2 → tariff_id → tariffs → product_id → products_v2
-orders_v2 → product_id / tariff_id
-```
+Проблема в коде — логика определения `has_access` содержит ошибки.
 
 ---
 
-## План изменений
+## Обнаруженные баги
 
-### 1. Добавить фильтр по продуктам/тарифам в Контакты
+### Баг 1: Некорректное определение доступа в `useSidebarModules.ts`
 
-**Файл:** `src/pages/admin/AdminContacts.tsx`
+**Файл:** `src/hooks/useSidebarModules.ts`, строки 75-88
 
-Добавляем новые поля фильтрации:
+**Проблема:** Сложный запрос с `NOT IN` для определения "бесплатных" модулей не работает надёжно из-за конструкции с вложенным await.
 
+**Текущий код:**
 ```tsx
-// Новые поля для CONTACT_FILTER_FIELDS
-{ 
-  key: "purchased_product", 
-  label: "Купленный продукт", 
-  type: "select",
-  options: products?.map(p => ({ value: p.id, label: p.name })) || []
-},
-{ 
-  key: "purchased_tariff", 
-  label: "Тариф покупки", 
-  type: "select",
-  options: tariffs?.map(t => ({ value: t.id, label: `${t.product_name}: ${t.name}` })) || []
-},
-{ 
-  key: "active_subscription", 
-  label: "Активная подписка", 
-  type: "select",
-  options: products?.map(p => ({ value: p.id, label: p.name })) || []
-}
+// Сложная конструкция с вложенным await внутри строки
+.not("id", "in", `(${Array.from(
+  new Set((await supabase.from("module_access").select("module_id")).data?.map(...))
+).join(",") || "00000000-0000-0000-0000-000000000000"})`);
 ```
 
-**Необходимые данные:**
-- Fetch products и tariffs (уже есть в `AdminDeals`, переиспользуем)
-- Fetch user purchase history (orders_v2 по user_id)
-- Fetch active subscriptions (subscriptions_v2 по user_id)
+**Решение:** Переписать логику определения доступа:
+1. Получить все записи module_access один раз
+2. Модуль "бесплатный" если у него НЕТ записей в module_access
+3. Модуль доступен если:
+   - Пользователь админ
+   - Модуль бесплатный (нет записей в module_access)
+   - tariff_id пользователя есть в module_access для этого модуля
 
-**Логика фильтрации в `getContactFieldValue`:**
-```tsx
-case "purchased_product":
-  return contactPurchases.get(contact.user_id)?.productIds || [];
-case "purchased_tariff":
-  return contactPurchases.get(contact.user_id)?.tariffIds || [];
-case "active_subscription":
-  return contactSubscriptions.get(contact.user_id)?.productIds || [];
-```
+### Баг 2: Не передаются названия тарифов в плашку
 
-### 2. Добавить фильтр по тарифам в Сделки
+**Файл:** `src/pages/Knowledge.tsx`, строка 334
 
-**Файл:** `src/pages/admin/AdminDeals.tsx`
+**Проблема:** Передаётся пустой массив `accessibleTariffs={[]}`.
 
-```tsx
-// Добавить в DEAL_FILTER_FIELDS
-{ 
-  key: "tariff_id", 
-  label: "Тариф", 
-  type: "select",
-  options: tariffs?.map(t => ({ value: t.id, label: t.name })) || []
-}
-```
+**Решение:** Собрать названия тарифов из ограниченных модулей и передать их в плашку.
 
-Fetch tariffs по аналогии с products:
-```tsx
-const { data: tariffs } = useQuery({
-  queryKey: ["tariffs-filter"],
-  queryFn: async () => {
-    const { data } = await supabase
-      .from("tariffs")
-      .select("id, name, product_id, products_v2(name)")
-      .order("name");
-    return data || [];
-  },
-});
-```
+### Баг 3: Плашка показывается только если ВСЁ ограничено
 
-### 3. Glassmorphism дизайн для QuickFilters
+**Файл:** `src/pages/Knowledge.tsx`, строка 333
 
-**Файл:** `src/components/admin/QuickFilters.tsx`
+**Проблема:** Условие `hasRestrictedContent && !hasAccessibleContent` — плашка не показывается если есть хотя бы один доступный модуль.
 
-Обновляем UI с glassmorphism стилем:
+**Решение:** Показывать плашку если `hasRestrictedContent` и пользователь не админ.
 
-```tsx
-// Новый контейнер с glass-эффектом
-<div className="flex items-center gap-3 flex-wrap p-3 rounded-2xl 
-  bg-background/40 backdrop-blur-xl border border-white/20 
-  shadow-[0_4px_30px_rgba(0,0,0,0.1)]">
-  
-  {/* Preset tabs с прозрачностью */}
-  <div className="flex items-center gap-1 p-1 rounded-xl 
-    bg-white/30 backdrop-blur-sm border border-white/20">
-    {presets.map(preset => (
-      <button
-        className={cn(
-          "px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200",
-          isActive 
-            ? "bg-white/60 shadow-sm text-foreground" 
-            : "text-muted-foreground hover:text-foreground hover:bg-white/20"
-        )}
-      >
-        {preset.label}
-        {preset.count > 0 && (
-          <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full 
-            bg-primary/20 text-primary backdrop-blur-sm">
-            {preset.count}
-          </span>
-        )}
-      </button>
-    ))}
-  </div>
-  
-  {/* Filter dropdown с glass-стилем */}
-  <DropdownMenuContent className="w-64 p-2 
-    bg-white/80 backdrop-blur-xl border border-white/30 
-    shadow-[0_8px_32px_rgba(0,0,0,0.12)] rounded-xl">
-    ...
-  </DropdownMenuContent>
-  
-  {/* Active filter badges с glass */}
-  <Badge className="gap-1 px-3 py-1 rounded-full 
-    bg-white/40 backdrop-blur-sm border border-white/30 
-    text-foreground hover:bg-destructive/10 hover:border-destructive/30">
-    {getFilterLabel(filter)}
-    <X className="h-3 w-3 opacity-60" />
-  </Badge>
-</div>
-```
+### Баг 4: Некорректная загрузка tariff_ids при редактировании модуля
 
-### 4. Обновить GlassCard для большей прозрачности
+**Файл:** `src/pages/admin/AdminTrainingModules.tsx`, строки 469-471
 
-**Файл:** `src/components/ui/GlassCard.tsx`
+**Проблема:** Условие проверки `formData.tariff_ids?.length === 0` не срабатывает при повторном открытии диалога, так как массив не сбрасывается.
 
-```tsx
-style={{
-  background: "linear-gradient(135deg, hsl(var(--card) / 0.6), hsl(var(--card) / 0.3))",
-  backdropFilter: "blur(24px)",
-  WebkitBackdropFilter: "blur(24px)", // Safari support
-  ...style,
-}}
-```
-
-### 5. Создать GlassFilterPanel компонент
-
-**Новый файл:** `src/components/admin/GlassFilterPanel.tsx`
-
-Переиспользуемый компонент для фильтров в glassmorphism стиле:
-
-```tsx
-interface GlassFilterPanelProps {
-  children: React.ReactNode;
-  className?: string;
-}
-
-export function GlassFilterPanel({ children, className }: GlassFilterPanelProps) {
-  return (
-    <div className={cn(
-      "p-3 rounded-2xl",
-      "bg-white/30 dark:bg-slate-900/30",
-      "backdrop-blur-xl",
-      "border border-white/20 dark:border-white/10",
-      "shadow-[0_4px_24px_rgba(0,0,0,0.06)]",
-      className
-    )}>
-      {children}
-    </div>
-  );
-}
-```
+**Решение:** Использовать `useEffect` для загрузки tariff_ids вместо условия в теле компонента.
 
 ---
 
-## Структура запросов данных
+## План исправлений
 
-### Для контактов (новые запросы)
+### Шаг 1: Переписать логику доступа в `useSidebarModules.ts`
+
 ```tsx
-// 1. Все оплаченные заказы с product/tariff
-const { data: purchaseData } = useQuery({
-  queryKey: ["contact-purchases"],
-  queryFn: async () => {
-    const { data } = await supabase
-      .from("orders_v2")
-      .select("user_id, product_id, tariff_id")
-      .eq("status", "paid");
-    
-    // Group by user_id
-    const map = new Map();
-    data?.forEach(o => {
-      if (!o.user_id) return;
-      const existing = map.get(o.user_id) || { productIds: new Set(), tariffIds: new Set() };
-      if (o.product_id) existing.productIds.add(o.product_id);
-      if (o.tariff_id) existing.tariffIds.add(o.tariff_id);
-      map.set(o.user_id, existing);
-    });
-    return map;
+export function useSidebarModules() {
+  const { user } = useAuth();
+  const { isAdmin } = usePermissions();
+  const isAdminUser = isAdmin();
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["sidebar-modules", user?.id, isAdminUser],
+    queryFn: async () => {
+      // 1. Get all active modules
+      const { data: modulesData, error } = await supabase
+        .from("training_modules")
+        .select("id, title, slug, menu_section_key, icon, sort_order, is_container")
+        .eq("is_active", true)
+        .order("sort_order");
+
+      if (error) throw error;
+
+      // 2. Get ALL module_access records
+      const { data: allAccess } = await supabase
+        .from("module_access")
+        .select("module_id, tariff_id");
+
+      // Group by module_id
+      const accessByModule: Record<string, string[]> = {};
+      allAccess?.forEach(a => {
+        if (!accessByModule[a.module_id]) {
+          accessByModule[a.module_id] = [];
+        }
+        accessByModule[a.module_id].push(a.tariff_id);
+      });
+
+      // 3. Get user's active tariffs if logged in
+      let userTariffIds: string[] = [];
+      if (user) {
+        const { data: subs } = await supabase
+          .from("subscriptions_v2")
+          .select("tariff_id")
+          .eq("user_id", user.id)
+          .in("status", ["active", "trial"]);
+        userTariffIds = subs?.map(s => s.tariff_id).filter(Boolean) || [];
+      }
+
+      // 4. Determine access for each module
+      return modulesData?.map(m => {
+        const moduleTariffs = accessByModule[m.id] || [];
+        
+        // Access logic:
+        // - Admins always have access
+        // - If no tariffs defined (empty array) → public module
+        // - Otherwise check if user has any of the required tariffs
+        const hasAccess = isAdminUser || 
+          moduleTariffs.length === 0 || 
+          moduleTariffs.some(tid => userTariffIds.includes(tid));
+
+        return { ...m, has_access: hasAccess };
+      }) || [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // ... rest of hook
+}
+```
+
+### Шаг 2: Исправить плашку в `Knowledge.tsx`
+
+```tsx
+{/* Показывать плашку если есть ограниченный контент */}
+{hasRestrictedContent && (
+  <RestrictedAccessBanner 
+    accessibleTariffs={restrictedModules
+      .flatMap((m: any) => m.accessible_tariffs || [])
+      .filter((v, i, a) => v && a.indexOf(v) === i)
+    } 
+  />
+)}
+```
+
+### Шаг 3: Исправить загрузку tariff_ids в `AdminTrainingModules.tsx`
+
+Заменить проблемный код:
+```tsx
+// УДАЛИТЬ (строки 469-471):
+if (moduleAccess && editingModule && formData.tariff_ids?.length === 0 && moduleAccess.length > 0) {
+  setFormData(prev => ({ ...prev, tariff_ids: moduleAccess }));
+}
+```
+
+На `useEffect`:
+```tsx
+// В функцию openEditDialog добавить reset tariff_ids:
+const openEditDialog = useCallback((module: TrainingModule) => {
+  setEditingModule(module);
+  setFormData({
+    // ... other fields
+    tariff_ids: [], // Reset - будет загружено из moduleAccess
+  });
+}, []);
+
+// Добавить useEffect для синхронизации
+useEffect(() => {
+  if (moduleAccess && editingModule) {
+    setFormData(prev => ({ ...prev, tariff_ids: moduleAccess }));
   }
-});
-
-// 2. Активные подписки
-const { data: subscriptionData } = useQuery({
-  queryKey: ["contact-subscriptions"],
-  queryFn: async () => {
-    const { data } = await supabase
-      .from("subscriptions_v2")
-      .select("user_id, tariff_id, tariffs(product_id)")
-      .in("status", ["active", "trial"]);
-    
-    // Group by user_id
-    const map = new Map();
-    data?.forEach(s => {
-      if (!s.user_id) return;
-      const existing = map.get(s.user_id) || { tariffIds: new Set(), productIds: new Set() };
-      if (s.tariff_id) existing.tariffIds.add(s.tariff_id);
-      if (s.tariffs?.product_id) existing.productIds.add(s.tariffs.product_id);
-      map.set(s.user_id, existing);
-    });
-    return map;
-  }
-});
+}, [moduleAccess, editingModule?.id]);
 ```
 
----
+### Шаг 4: Добавить accessible_tariffs в useSidebarModules
 
-## Визуальный дизайн
+Дополнить возвращаемые данные названиями тарифов:
 
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│  ╭──────────────────────────────────────────────────────────╮  │
-│  │ 🔘 Все  │ Без аккаунта 6 │ С покупками 197 │ + Фильтр  │ ←─ Glass tabs
-│  ╰──────────────────────────────────────────────────────────╯  │
-│                                                                 │
-│  ╭─────────────╮  ╭─────────────╮  ╭─────────────╮             │
-│  │ Продукт: 🏷 │  │ Тариф: ⨉   │  │ Подписка: ⨉│             │ ←─ Active badges
-│  ╰─────────────╯  ╰─────────────╯  ╰─────────────╯             │
-└─────────────────────────────────────────────────────────────────┘
-         ↑ frosted glass background, subtle shadow
+```tsx
+// В query добавить загрузку названий тарифов
+const { data: tariffsData } = await supabase
+  .from("tariffs")
+  .select("id, name");
+
+const tariffNames: Record<string, string> = {};
+tariffsData?.forEach(t => {
+  tariffNames[t.id] = t.name;
+});
+
+// В маппинге модулей добавить:
+return {
+  ...m,
+  has_access: hasAccess,
+  accessible_tariffs: moduleTariffs.map(tid => tariffNames[tid]).filter(Boolean),
+};
 ```
 
 ---
@@ -267,18 +209,38 @@ const { data: subscriptionData } = useQuery({
 
 | Файл | Изменение |
 |------|-----------|
-| `src/pages/admin/AdminContacts.tsx` | + фильтры по продуктам/тарифам, queries |
-| `src/pages/admin/AdminDeals.tsx` | + фильтр по тарифам |
-| `src/components/admin/QuickFilters.tsx` | Glassmorphism дизайн |
-| `src/components/ui/GlassCard.tsx` | Увеличить прозрачность |
-| `src/components/admin/GlassFilterPanel.tsx` | Новый компонент (опционально) |
+| `src/hooks/useSidebarModules.ts` | Переписать логику определения доступа, добавить accessible_tariffs |
+| `src/pages/Knowledge.tsx` | Исправить показ плашки и передачу тарифов |
+| `src/pages/admin/AdminTrainingModules.tsx` | Исправить загрузку tariff_ids при редактировании |
+
+---
+
+## Техническая справка
+
+### Логика доступа (приоритет)
+
+```text
+1. Администраторы (super_admin, admin) → ПОЛНЫЙ ДОСТУП
+2. Модуль без записей в module_access → ПУБЛИЧНЫЙ (доступ всем)
+3. Модуль с записями в module_access → проверка tariff_id пользователя
+```
+
+### Структура данных
+
+```text
+training_modules ←→ module_access ←→ tariffs
+                     (m:n связь)
+
+subscriptions_v2 → tariff_id → проверка доступа
+```
 
 ---
 
 ## Ожидаемый результат
 
-- ✅ Контакты можно фильтровать по купленным продуктам и тарифам
-- ✅ Контакты можно фильтровать по активным подпискам
-- ✅ Сделки можно фильтровать по тарифам (в дополнение к продуктам)
-- ✅ Фильтры выглядят легко и прозрачно (glassmorphism)
-- ✅ UI соответствует iOS-like дизайн-системе проекта
+После исправлений:
+- ✅ Пользователи с FULL/BUSINESS тарифами видят контент
+- ✅ Пользователи с CHAT тарифом видят плашку с CTA
+- ✅ В плашке отображаются названия требуемых тарифов
+- ✅ Админы видят весь контент
+- ✅ Настройки доступа в карточке модуля работают корректно
