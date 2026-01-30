@@ -329,9 +329,14 @@ const Knowledge = () => {
                   </div>
                 )}
 
-                {/* Restricted access banner - show when there are modules without access */}
-                {hasRestrictedContent && !hasAccessibleContent && (
-                  <RestrictedAccessBanner accessibleTariffs={[]} />
+                {/* Restricted access banner - show when there are restricted modules (regardless of accessible content) */}
+                {hasRestrictedContent && (
+                  <RestrictedAccessBanner 
+                    accessibleTariffs={restrictedModules
+                      .flatMap((m: any) => m.accessible_tariffs || [])
+                      .filter((v: string, i: number, a: string[]) => v && a.indexOf(v) === i)
+                    } 
+                  />
                 )}
 
                 {/* Accessible Modules (not containers) */}

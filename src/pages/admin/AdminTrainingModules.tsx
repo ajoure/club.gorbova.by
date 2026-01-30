@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useTrainingModules, TrainingModule, TrainingModuleFormData } from "@/hooks/useTrainingModules";
@@ -465,10 +465,12 @@ export default function AdminTrainingModules() {
     });
   }, []);
 
-  // Update tariff_ids when moduleAccess loads
-  if (moduleAccess && editingModule && formData.tariff_ids?.length === 0 && moduleAccess.length > 0) {
-    setFormData(prev => ({ ...prev, tariff_ids: moduleAccess }));
-  }
+  // Sync tariff_ids when moduleAccess loads for the editing module
+  useEffect(() => {
+    if (moduleAccess && editingModule) {
+      setFormData(prev => ({ ...prev, tariff_ids: moduleAccess }));
+    }
+  }, [moduleAccess, editingModule?.id]);
 
   const handleCreate = async () => {
     if (!formData.title || !formData.slug) return;

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { useMemo } from "react";
 
 export interface SidebarModule {
@@ -12,6 +13,7 @@ export interface SidebarModule {
   sort_order: number;
   is_container?: boolean;
   has_access?: boolean;
+  accessible_tariffs?: string[];
 }
 
 interface ModulesBySection {
@@ -22,14 +24,21 @@ interface ModulesBySection {
  * Fetches active training modules grouped by their menu_section_key
  * for dynamic sidebar navigation. Maps child keys to parent keys
  * so modules appear in the correct sidebar sections.
+ * 
+ * Access logic:
+ * 1. Admins (super_admin, admin) → FULL ACCESS
+ * 2. Modules without entries in module_access → PUBLIC (everyone)
+ * 3. Modules with entries in module_access → check user's tariff_id
  */
 export function useSidebarModules() {
   const { user } = useAuth();
+  const { isAdmin } = usePermissions();
+  const isAdminUser = isAdmin();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["sidebar-modules", user?.id],
+    queryKey: ["sidebar-modules", user?.id, isAdminUser],
     queryFn: async () => {
-      // Get active modules with their access info
+      // 1. Get all active modules
       const { data: modulesData, error: modulesError } = await supabase
         .from("training_modules")
         .select(`
@@ -46,47 +55,54 @@ export function useSidebarModules() {
 
       if (modulesError) throw modulesError;
 
-      // Note: We group by exact menu_section_key (no mapping)
-      // Modules appear inside page tabs, not in sidebar dropdown
+      // 2. Get ALL module_access records with tariff names
+      const { data: allAccess } = await supabase
+        .from("module_access")
+        .select("module_id, tariff_id, tariffs(name)");
 
-      // If user is logged in, check access
-      let accessibleModuleIds = new Set<string>();
+      // Group access by module_id with tariff IDs and names
+      const accessByModule: Record<string, { tariffIds: string[]; tariffNames: string[] }> = {};
+      allAccess?.forEach(a => {
+        if (!accessByModule[a.module_id]) {
+          accessByModule[a.module_id] = { tariffIds: [], tariffNames: [] };
+        }
+        accessByModule[a.module_id].tariffIds.push(a.tariff_id);
+        const tariffName = (a.tariffs as any)?.name;
+        if (tariffName) {
+          accessByModule[a.module_id].tariffNames.push(tariffName);
+        }
+      });
+
+      // 3. Get user's active tariff IDs if logged in
+      let userTariffIds: string[] = [];
       if (user) {
-        // Get user's accessible tariff IDs via subscriptions
         const { data: subs } = await supabase
           .from("subscriptions_v2")
           .select("tariff_id")
           .eq("user_id", user.id)
           .in("status", ["active", "trial"]);
 
-        const activeTariffIds = subs?.map(s => s.tariff_id).filter(Boolean) || [];
-
-        if (activeTariffIds.length > 0) {
-          // Get modules accessible via these tariffs
-          const { data: accessData } = await supabase
-            .from("module_access")
-            .select("module_id")
-            .in("tariff_id", activeTariffIds);
-
-          accessibleModuleIds = new Set(accessData?.map(a => a.module_id) || []);
-        }
-
-        // Also check modules without access restrictions (free modules)
-        const { data: freeModules } = await supabase
-          .from("training_modules")
-          .select("id")
-          .eq("is_active", true)
-          .not("id", "in", `(${Array.from(
-            new Set((await supabase.from("module_access").select("module_id")).data?.map(a => a.module_id) || [])
-          ).join(",") || "00000000-0000-0000-0000-000000000000"})`);
-
-        freeModules?.forEach(m => accessibleModuleIds.add(m.id));
+        userTariffIds = subs?.map(s => s.tariff_id).filter(Boolean) || [];
       }
 
-      const modules = modulesData?.map(m => ({
-        ...m,
-        has_access: !user || accessibleModuleIds.has(m.id),
-      })) || [];
+      // 4. Determine access for each module
+      const modules = modulesData?.map(m => {
+        const moduleAccess = accessByModule[m.id] || { tariffIds: [], tariffNames: [] };
+        
+        // Access logic:
+        // - Admins always have access
+        // - If no tariffs defined (empty array) → public module
+        // - Otherwise check if user has any of the required tariffs
+        const hasAccess = isAdminUser || 
+          moduleAccess.tariffIds.length === 0 || 
+          moduleAccess.tariffIds.some(tid => userTariffIds.includes(tid));
+
+        return {
+          ...m,
+          has_access: hasAccess,
+          accessible_tariffs: moduleAccess.tariffNames,
+        };
+      }) || [];
 
       return modules;
     },

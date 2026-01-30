@@ -147,7 +147,7 @@ export function useTrainingModules() {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, isAdminUser]);
 
   useEffect(() => {
     fetchModules();
