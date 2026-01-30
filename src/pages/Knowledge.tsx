@@ -221,7 +221,7 @@ const Knowledge = () => {
   const { modulesBySection, isLoading: modulesLoading } = useSidebarModules();
   
   // Fetch lessons from container modules (standalone lessons)
-  const { lessonsBySection, isLoading: lessonsLoading } = useContainerLessons();
+  const { lessonsBySection, restrictedTariffs: containerRestrictedTariffs, isLoading: lessonsLoading } = useContainerLessons();
   
   // Set active tab to first tab from DB or fallback
   const [activeTab, setActiveTab] = useState<string>("");
@@ -295,17 +295,24 @@ const Knowledge = () => {
             // Restricted modules (user has no access)
             const restrictedModules = allModules.filter((m: any) => !m.has_access);
             
-            // Collect tariff names from restricted modules for the banner
-            // We'll need to fetch this separately - for now show generic message
-            const hasRestrictedContent = restrictedModules.length > 0;
-            
             // Standalone lessons from container modules
             const containerData = lessonsBySection[tab.key];
             const standaloneLessons = containerData?.lessons || [];
             const containerModuleSlug = containerData?.moduleSlug || "";
             
+            // Check if any container lessons have no access
+            const hasRestrictedContainerLessons = standaloneLessons.some((l: any) => l.has_access === false);
+            
+            // Combine tariff names from restricted modules and containers
+            const allRestrictedTariffs = [
+              ...restrictedModules.flatMap((m: any) => m.accessible_tariffs || []),
+              ...containerRestrictedTariffs
+            ].filter((v: string, i: number, a: string[]) => v && a.indexOf(v) === i);
+            
+            const hasRestrictedContent = restrictedModules.length > 0 || hasRestrictedContainerLessons;
+            
             const MockContent = MOCK_CONTENT_MAP[tab.key];
-            const hasAccessibleContent = accessibleModules.length > 0 || standaloneLessons.length > 0 || MockContent;
+            const hasAccessibleContent = accessibleModules.length > 0 || standaloneLessons.some((l: any) => l.has_access !== false) || MockContent;
             const hasSomeContent = allModules.length > 0 || standaloneLessons.length > 0 || MockContent;
             
             return (
@@ -332,10 +339,7 @@ const Knowledge = () => {
                 {/* Restricted access banner - show when there are restricted modules (regardless of accessible content) */}
                 {hasRestrictedContent && (
                   <RestrictedAccessBanner 
-                    accessibleTariffs={restrictedModules
-                      .flatMap((m: any) => m.accessible_tariffs || [])
-                      .filter((v: string, i: number, a: string[]) => v && a.indexOf(v) === i)
-                    } 
+                    accessibleTariffs={allRestrictedTariffs} 
                   />
                 )}
 

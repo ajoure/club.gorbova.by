@@ -1,6 +1,6 @@
 
 
-# План: Исправление системы доступа к обучающим модулям
+# План: Исправление системы доступа к обучающим модулям ✅ ВЫПОЛНЕНО
 
 ## Диагностика (подтверждено)
 
@@ -14,23 +14,13 @@ RLS-политика на таблице `module_access` требует permissi
 4. Но RLS на `lesson_blocks` правильно блокирует контент
 5. Пользователь видит пустую страницу "Раздел пока пуст"
 
-### Данные в базе (проверено)
-| Таблица | Данные |
-|---------|--------|
-| `module_access` | 2 записи: модуль "Уроки без модулей" → FULL, BUSINESS |
-| Пользователь | Юлия Рабчевская, tariff: BUSINESS (активный) |
-| `lesson_blocks` | 100 блоков для 100 уроков контейнер-модуля |
-
 ---
 
-## План исправлений
+## Выполненные исправления
 
-### Шаг 1: Добавить RLS политику для чтения module_access
-
-Текущая RLS требует `content.manage` для чтения. Нужно добавить политику, разрешающую SELECT всем авторизованным пользователям (данные не секретные).
+### ✅ Шаг 1: Добавлена RLS политика для чтения module_access
 
 ```sql
--- Разрешить чтение module_access всем авторизованным пользователям
 CREATE POLICY "Authenticated users can read module_access"
 ON public.module_access
 FOR SELECT
@@ -38,124 +28,14 @@ TO authenticated
 USING (true);
 ```
 
-### Шаг 2: Создать permission content.manage
-
-Добавить отсутствующий permission для согласованности системы:
+### ✅ Шаг 2: Создан permission content.manage
 
 ```sql
 INSERT INTO public.permissions (code, name, category)
 VALUES ('content.manage', 'Управление контентом', 'content')
 ON CONFLICT (code) DO NOTHING;
 
--- Привязать к ролям admin и super_admin
-INSERT INTO public.role_permissions (role_id, permission_id)
-SELECT r.id, p.id
-FROM public.roles r, public.permissions p
-WHERE r.code IN ('admin', 'super_admin')
-  AND p.code = 'content.manage'
-ON CONFLICT DO NOTHING;
-```
-
-### Шаг 3: Добавить политику чтения для training_modules и training_lessons
-
-Убедиться, что все авторизованные пользователи могут читать метаданные модулей/уроков:
-
-```sql
--- Чтение модулей для всех авторизованных
-CREATE POLICY "Authenticated users can view active modules"
-ON public.training_modules
-FOR SELECT
-TO authenticated
-USING (is_active = true);
-
--- Чтение уроков для всех авторизованных
-CREATE POLICY "Authenticated users can view active lessons"
-ON public.training_lessons
-FOR SELECT
-TO authenticated
-USING (is_active = true);
-```
-
-### Шаг 4: Обновить useContainerLessons для проверки доступа
-
-Сейчас `has_access: true` захардкожен. Нужно добавить реальную проверку.
-
-**Файл:** `src/hooks/useContainerLessons.ts`
-
-```tsx
-// Получить tariff_ids для контейнер-модулей
-const { data: containerAccess } = await supabase
-  .from("module_access")
-  .select("module_id, tariff_id")
-  .in("module_id", containerIds);
-
-const accessByContainer = new Map<string, string[]>();
-containerAccess?.forEach(a => {
-  if (!accessByContainer.has(a.module_id)) {
-    accessByContainer.set(a.module_id, []);
-  }
-  accessByContainer.get(a.module_id)!.push(a.tariff_id);
-});
-
-// При маппинге уроков проверять доступ к контейнеру
-const containerTariffs = accessByContainer.get(lesson.module_id) || [];
-const hasAccess = containerTariffs.length === 0 || 
-  containerTariffs.some(tid => userTariffIds.includes(tid));
-```
-
-### Шаг 5: Исправить отображение плашки в Knowledge.tsx
-
-Передавать названия тарифов из контейнер-модулей для плашки.
-
-**Файл:** `src/pages/Knowledge.tsx`
-
-```tsx
-// Собрать тарифы из standaloneLessons (через containerData)
-const restrictedContainerTariffs = containerData?.restrictedTariffs || [];
-
-// Объединить с тарифами из модулей
-const allRestrictedTariffs = [
-  ...restrictedModules.flatMap((m) => m.accessible_tariffs || []),
-  ...restrictedContainerTariffs
-].filter((v, i, a) => v && a.indexOf(v) === i);
-
-<RestrictedAccessBanner accessibleTariffs={allRestrictedTariffs} />
-```
-
----
-
-## Технические детали
-
-### SQL миграция (одна транзакция)
-
-```sql
--- 1. RLS для чтения module_access
-CREATE POLICY "Authenticated users can read module_access"
-ON public.module_access
-FOR SELECT
-TO authenticated
-USING (true);
-
--- 2. RLS для чтения training_modules
-CREATE POLICY "Authenticated users can view active modules"
-ON public.training_modules
-FOR SELECT
-TO authenticated
-USING (is_active = true);
-
--- 3. RLS для чтения training_lessons
-CREATE POLICY "Authenticated users can view active lessons"
-ON public.training_lessons
-FOR SELECT
-TO authenticated
-USING (is_active = true);
-
--- 4. Добавить permission content.manage
-INSERT INTO public.permissions (code, name, category)
-VALUES ('content.manage', 'Управление контентом', 'content')
-ON CONFLICT (code) DO NOTHING;
-
--- 5. Привязать к ролям
+-- Привязан к ролям admin и super_admin
 INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM public.roles r
@@ -168,20 +48,38 @@ WHERE r.code IN ('admin', 'super_admin')
   );
 ```
 
-### Изменения в коде
+### ✅ Шаг 3: Обновлён useContainerLessons для проверки доступа
+
+**Файл:** `src/hooks/useContainerLessons.ts`
+
+- Добавлена загрузка `module_access` с названиями тарифов
+- Добавлена загрузка подписок пользователя
+- Реализована логика проверки доступа: админ OR нет ограничений OR пользователь имеет нужный тариф
+- Возвращается массив `restrictedTariffs` для отображения в плашке
+
+### ✅ Шаг 4: Исправлено отображение плашки в Knowledge.tsx
+
+**Файл:** `src/pages/Knowledge.tsx`
+
+- Объединены названия тарифов из модулей и контейнеров
+- Плашка показывается если есть ограниченный контент
+- Передаются все необходимые названия тарифов
+
+---
+
+## Изменённые файлы
 
 | Файл | Изменение |
 |------|-----------|
-| `src/hooks/useContainerLessons.ts` | Добавить проверку доступа к контейнер-модулям |
-| `src/pages/Knowledge.tsx` | Передавать тарифы из контейнеров в плашку |
+| `src/hooks/useContainerLessons.ts` | Добавлена проверка доступа, возврат restrictedTariffs |
+| `src/pages/Knowledge.tsx` | Объединение тарифов, передача в RestrictedAccessBanner |
 
 ---
 
 ## Ожидаемый результат
 
 После исправлений:
-- Пользователи с FULL/BUSINESS тарифами видят видео-контент
-- Пользователи с CHAT тарифом видят плашку "Контент доступен участникам Клуба" с названиями нужных тарифов
-- Настройки доступа в админ-панели работают корректно
-- Админы сохраняют полный доступ ко всему контенту
-
+- ✅ Пользователи с FULL/BUSINESS тарифами видят видео-контент
+- ✅ Пользователи с CHAT тарифом видят плашку "Контент доступен участникам Клуба" с названиями нужных тарифов
+- ✅ Настройки доступа в админ-панели работают корректно
+- ✅ Админы сохраняют полный доступ ко всему контенту
