@@ -11,7 +11,7 @@
 import { toast } from "sonner";
 
 // Build marker для диагностики версии
-export const BUILD_MARKER = "build: 2026-01-30T01:00 patch-KB-fix-v3";
+export const BUILD_MARKER = "build: 2026-01-30T16:30 iOS-lastRoute-guard-v4";
 
 // Log build marker at startup
 console.info(`[App] ${BUILD_MARKER}`);
