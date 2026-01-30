@@ -3,6 +3,74 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- Ultra-early iOS Safari guard - MUST be in <head> before any resources -->
+    <script>
+      (function () {
+        try {
+          var ua = navigator.userAgent || '';
+          var isIOS = /iP(hone|ad|od)/.test(ua);
+          var isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
+
+          // Skip if not iOS Safari
+          if (!isIOS || !isSafari) return;
+
+          // Detect editor context: iframe OR query flags OR referrer from lovable.dev
+          var inIframe = false;
+          try { inIframe = window.self !== window.top; } catch (e) { inIframe = true; }
+
+          var qs = window.location.search || '';
+          var hasFlag = qs.indexOf('forceHideBadge') > -1 || 
+                        qs.indexOf('lovable') > -1 || 
+                        qs.indexOf('preview') > -1;
+
+          var ref = document.referrer || '';
+          var hasRef = ref.indexOf('lovable.dev') > -1;
+
+          var isEditorContext = inIframe || hasFlag || hasRef;
+
+          // Only block in lovable.dev editor context on iOS Safari
+          if (isEditorContext) {
+            // Stop all pending resource loads immediately
+            try { window.stop(); } catch (e) {}
+
+            var openUrl = 'https://gorbova.lovable.app';
+            var diagText = 'iframe=' + inIframe + ', flag=' + hasFlag + ', ref=' + hasRef;
+
+            document.open();
+            document.write(
+              '<!doctype html><html><head>' +
+              '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+              '<title>Мобильный режим</title>' +
+              '<style>*{box-sizing:border-box}</style>' +
+              '</head><body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f8fafc;margin:0;padding:20px;text-align:center;">' +
+              '<div style="max-width:320px;">' +
+              '<div style="font-size:48px;margin-bottom:16px;">📱</div>' +
+              '<h2 style="color:#1e293b;margin:0 0 8px;font-size:20px;">Мобильный режим</h2>' +
+              '<p style="color:#64748b;margin:0 0 20px;line-height:1.5;font-size:14px;">' +
+              'Предпросмотр в редакторе lovable.dev на iOS перегружает Safari.<br>Откройте сайт в отдельной вкладке.' +
+              '</p>' +
+              '<a href="' + openUrl + '" target="_blank" rel="noopener noreferrer" ' +
+              'style="display:inline-block;padding:14px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:12px;font-weight:600;font-size:15px;box-shadow:0 4px 14px rgba(59,130,246,0.4);">' +
+              'Открыть сайт →</a>' +
+              '<p style="color:#94a3b8;margin:16px 0 0;font-size:12px;">Desktop preview работает как обычно.</p>' +
+              '<p style="color:#cbd5e1;margin:8px 0 0;font-size:10px;">' + diagText + '</p>' +
+              '</div></body></html>'
+            );
+            document.close();
+
+            // Hard stop - prevent any further script execution
+            throw new Error('[iOS Stub] lovable.dev preview blocked');
+          }
+        } catch (e) {
+          // If our throw - expected; otherwise fail-open (let app load)
+          if (e.message && e.message.indexOf('[iOS Stub]') > -1) {
+            // Intentional stop - do nothing more
+          }
+        }
+      })();
+    </script>
+
     <title>Клуб Катерины Горбовой — сообщество для бухгалтеров и безопасного развития бизнеса</title>
     <meta name="description" content="Присоединяйтесь к сообществу для бухгалтеров и предпринимателей. Научитесь понимать законодательство, защищать бизнес от проверок и увеличивать доход в 2–3 раза. 600+ видео-разборов и поддержка коллег." />
     <meta name="author" content="Катерина Горбова" />
@@ -42,57 +110,6 @@
   </head>
 
   <body>
-    <!-- Ultra-early iOS Safari guard - STUB MODE for lovable.dev preview -->
-    <script>
-      (function () {
-        try {
-          var ua = navigator.userAgent || '';
-          var isIOS = /iP(hone|ad|od)/.test(ua);
-          var isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
-
-          var inIframe = false;
-          try { inIframe = window.self !== window.top; } catch (e) { inIframe = true; }
-
-          var qs = window.location.search || '';
-          var isPreview = inIframe || 
-            qs.indexOf('forceHideBadge') > -1 || 
-            qs.indexOf('lovable') > -1 || 
-            qs.indexOf('preview') > -1;
-
-          // Block ENTIRE app load on iOS Safari in lovable.dev preview
-          if (isIOS && isSafari && isPreview) {
-            var openUrl = 'https://gorbova.lovable.app';
-            document.open();
-            document.write(
-              '<!doctype html><html><head>' +
-              '<meta name="viewport" content="width=device-width, initial-scale=1">' +
-              '<title>Мобильный режим</title>' +
-              '<style>*{box-sizing:border-box}</style>' +
-              '</head><body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f8fafc;margin:0;padding:20px;text-align:center;">' +
-              '<div style="max-width:320px;">' +
-              '<div style="font-size:48px;margin-bottom:16px;">📱</div>' +
-              '<h2 style="color:#1e293b;margin:0 0 8px;font-size:20px;">Мобильный режим</h2>' +
-              '<p style="color:#64748b;margin:0 0 20px;line-height:1.5;font-size:14px;">' +
-              'Предпросмотр в редакторе lovable.dev на iOS перегружает Safari.<br>Откройте сайт в отдельной вкладке.' +
-              '</p>' +
-              '<a href="' + openUrl + '" target="_blank" rel="noopener noreferrer" ' +
-              'style="display:inline-block;padding:14px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:12px;font-weight:600;font-size:15px;box-shadow:0 4px 14px rgba(59,130,246,0.4);">' +
-              'Открыть сайт →</a>' +
-              '<p style="color:#94a3b8;margin:16px 0 0;font-size:12px;">Desktop preview работает как обычно.</p>' +
-              '</div></body></html>'
-            );
-            document.close();
-            throw new Error('[iOS Stub] lovable.dev preview blocked - showing static stub');
-          }
-        } catch (e) {
-          // If our throw - good; otherwise fail-open
-          if (e.message && e.message.indexOf('[iOS Stub]') > -1) {
-            console.warn(e.message);
-          }
-        }
-      })();
-    </script>
-
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
