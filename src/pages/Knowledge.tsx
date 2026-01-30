@@ -47,7 +47,13 @@ const getIcon = (iconName: string): LucideIcon => {
 };
 
 // Questions tab content component - now uses real data from kb_questions
-function QuestionsContent({ searchQuery }: { searchQuery: string }) {
+interface QuestionsContentProps {
+  searchQuery: string;
+  hasAccess: boolean;
+  restrictedTariffs: string[];
+}
+
+function QuestionsContent({ searchQuery, hasAccess, restrictedTariffs }: QuestionsContentProps) {
   const { data: questions, isLoading } = useKbQuestions({ searchQuery, limit: 200 });
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
@@ -88,8 +94,15 @@ function QuestionsContent({ searchQuery }: { searchQuery: string }) {
   }
 
   return (
-    <div className="space-y-4">
-      {questions.map((question) => {
+    <div className="space-y-6">
+      {/* Плашка ограниченного доступа */}
+      {!hasAccess && restrictedTariffs.length > 0 && (
+        <RestrictedAccessBanner accessibleTariffs={restrictedTariffs} />
+      )}
+
+      {/* Список вопросов */}
+      <div className="space-y-4">
+        {questions.map((question) => {
         const isExpanded = expandedIds.has(question.id);
         const formattedDate = question.answer_date
           ? format(new Date(question.answer_date), "dd.MM.yyyy")
@@ -153,6 +166,7 @@ function QuestionsContent({ searchQuery }: { searchQuery: string }) {
           </GlassCard>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -367,9 +381,35 @@ const Knowledge = () => {
                 )}
 
                 {/* Mock content (preserved for backwards compatibility) */}
-                {MockContent && (
-                  <MockContent searchQuery={searchQuery} />
-                )}
+                {MockContent && (() => {
+                  // Для вкладки "Вопросы" вычисляем доступ на основе контейнера knowledge-videos
+                  if (tab.key === "knowledge-questions") {
+                    const videoContainerData = lessonsBySection["knowledge-videos"];
+                    let questionsHasAccess = true;
+                    let questionsRestrictedTariffs: string[] = [];
+                    
+                    if (videoContainerData?.lessons?.length) {
+                      questionsHasAccess = videoContainerData.lessons.some(
+                        (l: any) => l.has_access === true
+                      );
+                      
+                      if (!questionsHasAccess) {
+                        questionsRestrictedTariffs = containerRestrictedTariffs;
+                      }
+                    }
+                    
+                    return (
+                      <QuestionsContent
+                        searchQuery={searchQuery}
+                        hasAccess={questionsHasAccess}
+                        restrictedTariffs={questionsRestrictedTariffs}
+                      />
+                    );
+                  }
+                  
+                  // Для остальных вкладок с MockContent (например, laws)
+                  return <MockContent searchQuery={searchQuery} />;
+                })()}
 
                 {/* Empty state - only if NO content exists at all (not just access issues) */}
                 {!hasSomeContent && (
