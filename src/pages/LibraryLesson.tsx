@@ -321,23 +321,6 @@ export default function LibraryLesson() {
           </>
         )}
 
-        {/* Описание выпуска — под видео, полный текст */}
-        {currentLesson.description && (
-          <Card className="mb-6">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Описание выпуска
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-foreground whitespace-pre-wrap leading-relaxed">
-                {currentLesson.description}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
         {/* Attachments */}
         {currentLesson.attachments && currentLesson.attachments.length > 0 && (
           <Card className="mb-6">
