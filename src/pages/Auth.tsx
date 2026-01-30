@@ -11,7 +11,7 @@ import { Loader2, Mail, Lock, User, ArrowRight, ArrowLeft, Check, X } from "luci
 import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 import logoImage from "@/assets/logo.png";
-import { getLastRoute, clearLastRoute } from "@/hooks/useLastRoute";
+import { getLastRoute, clearLastRoute, shouldIgnoreLastRouteOnIOS, overwriteLastRoute } from "@/hooks/useLastRoute";
 
 const CURRENT_POLICY_VERSION = "v2026-01-07";
 
@@ -132,6 +132,13 @@ export default function Auth() {
       // Сначала проверяем redirectTo из URL
       const urlRedirect = searchParams.get("redirectTo");
       if (urlRedirect) {
+        // iOS Safari guard: don't restore heavy routes from URL either
+        if (shouldIgnoreLastRouteOnIOS(urlRedirect)) {
+          console.info('[Auth] Ignoring heavy redirectTo on iOS Safari:', urlRedirect);
+          overwriteLastRoute('/dashboard');
+          navigate('/dashboard');
+          return;
+        }
         navigate(urlRedirect);
         return;
       }
@@ -139,6 +146,13 @@ export default function Auth() {
       // Затем проверяем сохранённый маршрут
       const lastRoute = getLastRoute();
       if (lastRoute && lastRoute !== '/dashboard' && lastRoute !== '/') {
+        // iOS Safari guard: don't restore heavy routes (second line of defense)
+        if (shouldIgnoreLastRouteOnIOS(lastRoute)) {
+          console.info('[Auth] Ignoring heavy lastRoute on iOS Safari:', lastRoute);
+          overwriteLastRoute('/dashboard');
+          navigate('/dashboard');
+          return;
+        }
         clearLastRoute();
         navigate(lastRoute);
         return;
