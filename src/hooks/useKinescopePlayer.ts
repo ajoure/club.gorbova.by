@@ -214,8 +214,11 @@ export function useKinescopePlayer({
      * Called multiple times to counteract Kinescope's late style changes
      */
     const forceFill = () => {
+      // Guard: exit early if unmounted or container detached from DOM
+      if (!isMounted) return;
+      
       const containerEl = document.getElementById(containerId);
-      if (!containerEl) return;
+      if (!containerEl || !containerEl.isConnected) return;
 
       // Force container itself
       containerEl.style.setProperty('width', '100%', 'important');
@@ -263,10 +266,12 @@ export function useKinescopePlayer({
           throw new Error("Kinescope IframePlayer not available");
         }
 
-        // Clear container
+        // Safe DOM cleanup - remove children one by one to avoid React reconciliation conflicts
         const container = document.getElementById(containerId);
         if (container) {
-          container.innerHTML = "";
+          while (container.firstChild) {
+            container.removeChild(container.firstChild);
+          }
         }
 
         // Create player
@@ -290,10 +295,19 @@ export function useKinescopePlayer({
         requestAnimationFrame(forceFill);
         
         // Force fill after delay (Kinescope sometimes changes styles later)
-        // Use isMounted guard to prevent DOM operations after unmount
-        setTimeout(() => { if (isMounted) forceFill(); }, 100);
-        setTimeout(() => { if (isMounted) forceFill(); }, 300);
-        setTimeout(() => { if (isMounted) forceFill(); }, 500);
+        // Use RAF + isMounted guard to sync with browser render cycle and prevent DOM operations after unmount
+        const scheduleDelayedFill = (delay: number) => {
+          setTimeout(() => {
+            if (isMounted) {
+              requestAnimationFrame(() => {
+                if (isMounted) forceFill();
+              });
+            }
+          }, delay);
+        };
+        scheduleDelayedFill(100);
+        scheduleDelayedFill(300);
+        scheduleDelayedFill(500);
         
         // Setup MutationObserver to catch any late style changes by Kinescope
         const containerEl = document.getElementById(containerId);
@@ -335,10 +349,8 @@ export function useKinescopePlayer({
     initPlayer();
 
     return () => {
-      isMounted = false;
-      isReadyRef.current = false;
-      
-      // Cleanup observer
+      // FIRST: Disconnect observer to stop any pending callbacks BEFORE marking unmounted
+      // This prevents race condition where observer fires between isMounted=false and disconnect()
       if (observer) {
         observer.disconnect();
         observer = null;
@@ -350,6 +362,11 @@ export function useKinescopePlayer({
         rafId = null;
       }
       
+      // THEN: Mark as unmounted (after observer is disconnected)
+      isMounted = false;
+      isReadyRef.current = false;
+      
+      // Finally: Destroy player
       if (player) {
         try {
           player.destroy();
