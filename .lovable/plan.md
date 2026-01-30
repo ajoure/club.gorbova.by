@@ -1,253 +1,144 @@
-# План v8: Ультра-ранний iOS Guard + Диагностика
+# Финальный анализ и рекомендации: Краш lovable.dev на iOS Safari
 
-## Анализ текущего состояния
+## Диагноз
 
-Guard v7 реализован корректно:
-- Синхронная проверка в теле компонента (не useEffect)
-- Стоит ВНУТРИ BrowserRouter, ВЫШЕ Routes
-- Возвращает <Navigate /> немедленно
+**Проблема почти наверняка НЕ в маршруте /admin и не в “позднем guard”.** Если на iPhone в lovable.dev вы видите лендинг (`/` или `/club`), значит:
+- ultra-early guard (index.html) и/или sync-guard действительно меняют маршрут,
+- но **краш происходит всё равно**, то есть триггер — не конкретный URL, а **общая память/нагрузка** в связке: lovable.dev editor (чат+monaco+ws+hmr) + iframe preview.
 
-**Но проблема остаётся.** Это означает одно из трёх:
+**При этом Excel остаётся вероятным усилителем проблемы.**
+Даже при dynamic import, xlsx может:
+- подтягиваться косвенно (barrel exports, side-effects, prefetch),
+- или вызывать рост памяти при работе/горячей перезагрузке,
+- что делает lovable.dev на iOS ещё менее стабильным.
 
-1) Guard не успевает отработать — краш/перезагрузка происходит ДО первого рендера IOSAdminGuard (или ДО выполнения main.tsx)
-2) Тяжесть не в /admin, а в другом автосценарии (например, Excel runtime/парсер подтягивается косвенно или выполняется ещё до UI)
-3) lovable.dev editor на iOS Safari сам по себе на грани лимита памяти, и любое “лишнее” в превью вызывает перезагрузку
-
-Чтобы получить детерминированный ответ и убрать автокраш — добавляем **3 уровня защиты ДО React**, плюс **жёсткую диагностику** и **hard-stop для Excel в iOS preview**.
-
----
-
-## Технические изменения
-
-### 0) STOP-принципы (обязательные)
-- Add-only: не ломать существующие фичи, только предохранители/логи.
-- Все guards включаются ТОЛЬКО для iOS Safari + preview/iframe.
-- Никаких новых тяжёлых зависимостей.
-- DoD принимается только по факту: iPhone lovable.dev перестал перезагружаться.
+Итого: **на iOS Safari внутри lovable.dev редактора гарантировать стабильность “полного preview приложения” практически нереально**. Нужен либо “процессный” обход (десктоп), либо “технический” обход (ультра-лёгкая заглушка в iframe на iOS).
 
 ---
 
-### 1) Ультра-ранний guard в index.html (до загрузки React)
+## Технические факты (что уже сделано и что это означает)
 
-Файл: `index.html` (или `public/index.html` — фактический путь в проекте)
+- Admin pages lazy-loaded ✅
+- iOS guards на 3 уровнях (index.html → App module scope → sync Navigate) ✅
+- XLSX динамический импорт + hard-stop в iOS preview ✅ (если реально стоит во всех местах)
+- Падает именно lovable.dev editor на iOS ❗
 
-Добавить inline-скрипт ПЕРЕД загрузкой main.tsx / bundle:
+**Вывод:** проблема системная — лимит памяти iOS Safari/WebKit + тяжёлый editor lovable.dev + iframe preview.
+
+---
+
+## Что можно сделать дальше
+
+### Вариант 1: Принять ограничение (рекомендуемый)
+**Правило процесса:**
+- lovable.dev редактор — только десктоп/ноут.
+- На iPhone:
+  - открывать опубликованный сайт напрямую,
+  - или открывать preview-ссылку вне редактора (если есть отдельный preview URL), но не внутри editor.
+
+**DoD:** вы перестаёте ловить “перезагрузка/повторно возникла проблема” при работе с телефона, потому что не используете редактор на iOS.
+
+---
+
+### Вариант 2: Ультра-лёгкий режим для iOS iframe в lovable.dev (рабочий workaround)
+Сделать так, чтобы **в iframe lovable.dev на iOS не грузилось React-приложение вообще**.
+Вместо этого — статическая HTML-заглушка с кнопкой “Открыть сайт” (или “Открыть preview”).
+
+Это единственный способ гарантированно:
+- снизить потребление памяти,
+- убрать краш editor’а,
+- сохранить возможность “быстро открыть” сайт из телефона.
+
+---
+
+## Реализация варианта 2 (если нужен) — уточнённый план
+
+### 1) index.html: блокировать загрузку приложения в iOS preview и показывать заглушку
+Файл: `index.html` (или фактический html entry вашего проекта)
+
+Заменить логику редиректа на “render stub + stop execution”.
+Важно: **не трогать прод**, только iOS + iframe/preview.
 
 ```html
 <script>
-  // Ultra-early iOS Safari guard - runs BEFORE React loads
-  (function () {
+  (function() {
     try {
       var ua = navigator.userAgent || '';
       var isIOS = /iP(hone|ad|od)/.test(ua);
       var isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
 
       var inIframe = false;
-      try { inIframe = window.self !== window.top; } catch (e) { inIframe = true; }
+      try { inIframe = window.self !== window.top; } catch(e) { inIframe = true; }
 
-      // lovable preview markers (keep both)
-      var hasPreviewFlag =
-        (window.location.search || '').indexOf('forceHideBadge') > -1 ||
-        (window.location.search || '').indexOf('lovable') > -1 ||
-        (window.location.search || '').indexOf('preview') > -1;
+      var qs = window.location.search || '';
+      var isPreview = inIframe || qs.indexOf('forceHideBadge') > -1 || qs.indexOf('lovable') > -1 || qs.indexOf('preview') > -1;
 
-      var isPreview = inIframe || hasPreviewFlag;
+      // Only block inside lovable preview on iOS Safari
+      if (isIOS && isSafari && isPreview) {
+        var openUrl = 'https://gorbova.lovable.app'; // можно заменить на https://club.gorbova.by/knowledge или на конкретный preview URL
+        document.open();
+        document.write(
+          '<!doctype html><html><head>' +
+          '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+          '<title>Preview ограничен на iOS</title>' +
+          '</head><body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f5f5;margin:0;padding:20px;text-align:center;">' +
+          '<div style="max-width:320px;">' +
+          '<div style="font-size:48px;margin-bottom:12px;">📱</div>' +
+          '<h2 style="color:#111;margin:0 0 8px;">Мобильный режим</h2>' +
+          '<p style="color:#555;margin:0 0 16px;line-height:1.4;">' +
+          'Предпросмотр внутри редактора lovable.dev на iOS перегружает Safari.<br>Откройте сайт в отдельной вкладке.' +
+          '</p>' +
+          '<a href="' + openUrl + '" target="_blank" rel="noopener noreferrer" ' +
+          'style="display:inline-block;padding:12px 18px;background:#2563eb;color:#fff;text-decoration:none;border-radius:10px;font-weight:600;">' +
+          'Открыть сайт →</a>' +
+          '<p style="color:#888;margin:14px 0 0;font-size:12px;">Desktop preview работает как обычно.</p>' +
+          '</div></body></html>'
+        );
+        document.close();
 
-      // Block ONLY heavy routes (start with /admin, can extend later)
-      var path = window.location.pathname || '';
-      var isAdmin = path.indexOf('/admin') === 0;
-
-      if (isIOS && isSafari && isPreview && isAdmin) {
-        console.warn('[iOS Ultra-Early Guard] Blocking admin route BEFORE React:', path);
-        // hard redirect before any JS bundles allocate memory
-        window.history.replaceState(null, '', '/dashboard');
-        window.location.replace('/dashboard');
+        // стоп: не грузить бандл
+        throw new Error('iOS Safari lovable preview blocked (stub mode)');
       }
     } catch (e) {
-      // fail-open: do nothing if guard crashes
+      // если это наш throw — ок; если другое — fail-open не нужен, но пусть остаётся
     }
   })();
 </script>
 
-DoD-1:
-	•	На iPhone lovable.dev при открытии проекта с URL /admin/* — URL мгновенно становится /dashboard ещё до React.
+DoD-1: на iPhone внутри lovable.dev вместо краша всегда показывается заглушка.
+
+2) Указать правильную ссылку в кнопке
+	•	Если цель — База знаний: https://club.gorbova.by/knowledge
+	•	Если цель — весь сайт: https://club.gorbova.by/
+	•	Если нужен именно lovable published: https://gorbova.lovable.app
+
+DoD-2: кнопка открывает нужную публичную страницу.
+
+3) Ничего не менять для desktop
+
+Условие заглушки — только iOS Safari + preview/iframe.
+
+DoD-3: на десктопе lovable.dev preview работает как раньше.
 
 ⸻
 
-2) Диагностика на самом старте main.tsx (понять, доходит ли выполнение до React)
-
-Файл: src/main.tsx
-
-Добавить первые строки САМЫМ ВЕРХОМ (до createRoot/React render):
-
-console.info('[Main] Starting React app');
-console.info('[Main] build marker:', (window as any).__BUILD_MARKER__ || 'no-global-marker');
-console.info('[Main] pathname:', window.location.pathname);
-console.info('[Main] search:', window.location.search);
-console.info('[Main] userAgent:', navigator.userAgent);
-console.info('[Main] inIframe:', (() => { try { return window.self !== window.top; } catch { return true; } })());
-
-DoD-2:
-	•	В консоли iPhone видно [Main] Starting React app (если не видно — значит краш ДО React и важнее index.html guard / тяжелый bundle).
+Риски и последствия
+	•	Вариант 1: нет изменений в коде, но на iPhone нельзя пользоваться lovable.dev редактором — только сайт.
+	•	Вариант 2: вы сознательно выключаете iframe-preview в lovable.dev на iPhone, зато editor перестаёт падать.
 
 ⸻
 
-3) Emergency guard в module scope (App.tsx) + расширение блокировки
+Рекомендация
 
-Файл: src/App.tsx
-
-Добавить emergency guard на уровне module evaluation time (самый верх файла, до export):
-
-(function emergencyIOSGuard() {
-  if (typeof window === 'undefined') return;
-
-  const ua = navigator.userAgent || '';
-  const isIOS = /iP(hone|ad|od)/.test(ua);
-  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
-
-  let inIframe = false;
-  try { inIframe = window.self !== window.top; } catch { inIframe = true; }
-
-  const qs = window.location.search || '';
-  const isPreview = inIframe || qs.includes('forceHideBadge') || qs.includes('lovable') || qs.includes('preview');
-
-  const path = window.location.pathname || '';
-  const shouldBlock =
-    isIOS &&
-    isSafari &&
-    isPreview &&
-    (
-      path.startsWith('/admin')
-      // расширяем список при необходимости:
-      // || path.startsWith('/admin/kb-import')
-      // || path.startsWith('/admin/broadcasts')
-    );
-
-  if (shouldBlock) {
-    console.warn('[App Emergency Guard] Blocking heavy route at module load:', path);
-    window.history.replaceState(null, '', '/dashboard');
-    // НЕ location.replace здесь — пусть React Router/guard v7 уже рендерит dashboard,
-    // а index.html guard берёт на себя самый ранний redirect.
-  }
-})();
-
-DoD-3:
-	•	Даже если index.html guard не сработал (например, из-за структуры сборки), в логах видно [App Emergency Guard] ... и путь становится /dashboard до матчинг Routes.
+Выбираем Вариант 2 как “техническое закрытие вопроса”, потому что он даёт гарантируемый результат: editor на iOS перестаёт крашиться.
+А для работы/проверки контента на телефоне используем публичный сайт (club.gorbova.by / gorbova.lovable.app).
 
 ⸻
 
-4) HARD STOP для Excel в iOS preview (чтобы подтвердить/устранить регресс)
-
-Ключевая гипотеза: регресс связан с Excel — он попадает в ранний runtime через barrel export / side-effect import / prefetch и убивает память iOS.
-
-Файл (новый): src/lib/iosPreviewHardStops.ts
-
-export function isIOSSafari(): boolean {
-  const ua = navigator.userAgent || '';
-  const isIOS = /iP(hone|ad|od)/.test(ua);
-  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
-  return isIOS && isSafari;
-}
-
-export function isInPreviewContext(): boolean {
-  let inIframe = false;
-  try { inIframe = window.self !== window.top; } catch { inIframe = true; }
-  const qs = window.location.search || '';
-  return inIframe || qs.includes('forceHideBadge') || qs.includes('lovable') || qs.includes('preview');
-}
-
-/**
- * Hard stop for XLSX import on iOS Safari in lovable preview.
- * Must be called right before dynamic import('xlsx').
- */
-export function assertExcelAllowedOrThrow(): void {
-  if (typeof window === 'undefined') return;
-  if (isIOSSafari() && isInPreviewContext()) {
-    throw new Error('Excel disabled in iOS lovable preview (hard stop)');
-  }
-}
-
-Затем во ВСЕХ местах, где есть await import('xlsx'), добавить проверку прямо перед импортом:
-
-assertExcelAllowedOrThrow();
-const XLSX = await import('xlsx');
-
-И обработать ошибку:
-	•	показать toast: “Excel-импорт недоступен в preview на iOS. Откройте с компьютера.”
-	•	и НЕ продолжать парсинг.
-
-DoD-4:
-	•	На iPhone lovable.dev любые кнопки/страницы импорта не приводят к крашу; вместо этого — понятный toast.
-	•	На десктопе Excel работает как раньше.
-
-⸻
-
-5) BUILD_MARKER (верификация, что реально на новой сборке)
-
-Файл: src/lib/externalLinkKillSwitch.ts
-
-export const BUILD_MARKER = "build: 2026-01-30T20:30 ios-ultra-early-guard-v8";
-
-Дополнительно (чтобы main.tsx мог прочитать):
-В любом раннем месте (например, в src/main.tsx после логов):
-
-(window as any).__BUILD_MARKER__ = "ios-ultra-early-guard-v8";
-
-DoD-5:
-	•	В консоли iPhone видно build marker v8.
-
-⸻
-
-Цепочка защиты (3 уровня + Excel hard stop)
-
-Уровень	Где	Когда срабатывает	Что предотвращает
-1) Ultra-early	index.html	ДО загрузки JS	автозагрузка /admin в preview
-2) Emergency	App.tsx (module scope)	При оценке модуля	ранний матчинг/ленивая подгрузка
-3) Sync guard	IOSAdminGuard v7	До Routes render	защита на уровне Router
-4) Excel hard stop	перед import(‘xlsx’)	до загрузки XLSX	iOS memory crash из-за XLSX
-
-
-⸻
-
-Изменяемые файлы
-
-Файл	Изменение
-index.html	Inline ultra-early guard
-src/main.tsx	Стартовые диагностические логи + глобальный build marker
-src/App.tsx	Emergency guard module scope
-Новый: src/lib/iosPreviewHardStops.ts	isIOSSafari/isPreview + assertExcelAllowedOrThrow
-src/pages/admin/AdminKbImport.tsx и все XLSX места	вызвать assertExcelAllowedOrThrow перед import(‘xlsx’)
-src/lib/externalLinkKillSwitch.ts	BUILD_MARKER v8
-
-
-⸻
-
-Критерии готовности (DoD)
-	1.	На iPhone в lovable.dev: вкладка НЕ падает/не перезагружается при открытии проекта
-	2.	При URL /admin/* происходит мгновенный уход на /dashboard (в т.ч. до React)
-	3.	В консоли iPhone видны:
-	•	[iOS Ultra-Early Guard] ... (если стартовали с /admin)
-	•	[Main] Starting React app (если дошли до React)
-	•	[App Emergency Guard] ... (если сработал module-scope)
-	4.	BUILD_MARKER = ios-ultra-early-guard-v8
-	5.	Excel-импорт в iOS preview НЕ крашит: вместо этого toast “Excel недоступен в preview на iOS”
-	6.	Desktop не сломан: админка/импорт Excel работает как раньше
-
-⸻
-
-Альтернатива (если v8 не поможет)
-
-Если после v8 всё равно происходит перезагрузка ДО появления [Main] Starting React app, значит:
-	•	lovable.dev editor на iOS Safari сам по себе превышает лимит памяти,
-	•	и наша страница не успевает даже стартовать.
-
-Тогда единственный рабочий процесс:
-	•	не использовать lovable.dev editor на iPhone,
-	•	открывать либо с десктопа, либо прямой preview URL (без редактора), если он доступен в вашем окружении.
-
-⸻
-
-Риски
-	•	Inline-скрипт в index.html минимальный и изолирован; работает только на iOS Safari + preview.
-	•	Excel hard stop влияет только на lovable preview на iOS; production/desktop не затрагивает.
+Критерии готовности (если реализуем Вариант 2)
+	1.	На iPhone в lovable.dev редактор НЕ падает
+	2.	В iframe показывается лёгкая заглушка с кнопкой
+	3.	Кнопка открывает нужный публичный URL в новой вкладке
+	4.	Desktop поведение не изменено
+	5.	Опубликованный сайт работает как раньше
 
