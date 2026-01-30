@@ -81,7 +81,6 @@ export function useTrainingModules() {
 
       // Fetch user subscriptions if logged in
       let userTariffIds: string[] = [];
-      let hasClubEntitlement = false;
       if (user) {
         const { data: subsData } = await supabase
           .from("subscriptions_v2")
@@ -90,17 +89,6 @@ export function useTrainingModules() {
           .eq("status", "active");
         
         userTariffIds = subsData?.map(s => s.tariff_id) || [];
-
-        // Also check entitlements for club access
-        const { data: entData } = await supabase
-          .from("entitlements")
-          .select("id")
-          .eq("user_id", user.id)
-          .eq("product_code", "club")
-          .eq("status", "active")
-          .limit(1);
-        
-        hasClubEntitlement = (entData?.length ?? 0) > 0;
       }
 
       // Fetch user progress
@@ -124,9 +112,10 @@ export function useTrainingModules() {
         const lessonCount = lessonsData?.filter(l => l.module_id === mod.id).length || 0;
         const moduleAccess = accessData?.filter(a => a.module_id === mod.id) || [];
         const accessibleTariffs = moduleAccess.map(a => (a.tariffs as any)?.name || "");
-        // Администраторы и пользователи с club entitlement имеют доступ ко всему контенту
+        
+        // СТРОГО: Админы имеют полный доступ, остальные — только по настройкам модуля (module_access)
+        // Если moduleAccess пустой — модуль публичный. Иначе — проверяем tariff_id пользователя.
         const hasAccess = isAdminUser || 
-          hasClubEntitlement ||
           moduleAccess.length === 0 || 
           moduleAccess.some(a => userTariffIds.includes(a.tariff_id));
 
