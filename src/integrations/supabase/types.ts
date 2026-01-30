@@ -530,6 +530,63 @@ export type Database = {
         }
         Relationships: []
       }
+      broadcast_templates: {
+        Row: {
+          button_text: string | null
+          button_url: string | null
+          channel: string
+          created_at: string | null
+          created_by: string | null
+          email_body_html: string | null
+          email_subject: string | null
+          failed_count: number | null
+          id: string
+          message_text: string | null
+          name: string
+          scheduled_for: string | null
+          sent_at: string | null
+          sent_count: number | null
+          status: string
+          updated_at: string | null
+        }
+        Insert: {
+          button_text?: string | null
+          button_url?: string | null
+          channel?: string
+          created_at?: string | null
+          created_by?: string | null
+          email_body_html?: string | null
+          email_subject?: string | null
+          failed_count?: number | null
+          id?: string
+          message_text?: string | null
+          name: string
+          scheduled_for?: string | null
+          sent_at?: string | null
+          sent_count?: number | null
+          status?: string
+          updated_at?: string | null
+        }
+        Update: {
+          button_text?: string | null
+          button_url?: string | null
+          channel?: string
+          created_at?: string | null
+          created_by?: string | null
+          email_body_html?: string | null
+          email_subject?: string | null
+          failed_count?: number | null
+          id?: string
+          message_text?: string | null
+          name?: string
+          scheduled_for?: string | null
+          sent_at?: string | null
+          sent_count?: number | null
+          status?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       card_profile_links: {
         Row: {
           card_brand: string | null

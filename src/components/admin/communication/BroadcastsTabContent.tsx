@@ -54,6 +54,7 @@ import {
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
 
 interface BroadcastFilters {
   hasActiveSubscription: boolean;
@@ -88,6 +89,7 @@ interface MediaFile {
 
 export function BroadcastsTabContent() {
   const queryClient = useQueryClient();
+  const [mainTab, setMainTab] = useState<"templates" | "quick">("templates");
   const [activeTab, setActiveTab] = useState<"telegram" | "email">("telegram");
   const [message, setMessage] = useState("");
   const [emailSubject, setEmailSubject] = useState("");
@@ -349,6 +351,18 @@ export function BroadcastsTabContent() {
 
   return (
     <div className="container max-w-6xl py-6 space-y-6 overflow-auto h-full">
+      {/* Main Tabs: Templates vs Quick Send */}
+      <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "templates" | "quick")}>
+        <TabsList>
+          <TabsTrigger value="templates">📋 Шаблоны</TabsTrigger>
+          <TabsTrigger value="quick">⚡ Быстрая рассылка</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="templates" className="mt-6">
+          <BroadcastTemplatesSection />
+        </TabsContent>
+
+        <TabsContent value="quick" className="mt-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-6">
@@ -872,6 +886,8 @@ export function BroadcastsTabContent() {
           </Card>
         </div>
       </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
