@@ -1,193 +1,116 @@
 
-Контекст и ключевая гипотеза
-- По вашему скрину видно старые тексты (“Библиотека курсов”, “episode-100” в верхних крошках). В текущем коде (Test/Preview) уже стоит:
-  - DashboardLayout: скрывать глобальные крошки на /library* (location.pathname.startsWith("/library"))
-  - DashboardBreadcrumbs: /library = “База знаний”
-  - Knowledge.tsx: “Смотреть видеоответ” — это <button> + navigate(), без target="_blank"
-- Значит у вас сейчас проверяется либо:
-  1) опубликованная версия (custom domain / live) без “Publish → Update” после патча, либо
-  2) где-то действительно есть второй источник внешнего перехода/крошек (другая страница/компонент), но вы его видите в live, а не в preview.
+# План: Исправить размер видео Kinescope на странице урока
 
-Чтобы прекратить “сделали, но не видно” — сначала добавляем детерминированную диагностику (kill-switch + “маркер сборки”), затем правим 3 проблемных узла: внешний переход на Kinescope, автозапуск, дубли крошек. Плюс — фикс распознавания описаний в импорте (чтобы было 100/100).
+## Проблема
+На скриншоте видно, что видеоплеер Kinescope отображается очень маленьким в центре контейнера вместо того, чтобы занимать полную ширину.
 
---------------------------------------------------------------------
-0) Быстрый диагноз “почему не применилось” (обязательный слой)
-Цель: однозначно увидеть, какой код реально выполняется у пользователя (Preview vs Live), и кто именно открывает kinescope.io.
+## Причина
+Kinescope IFrame API создаёт iframe внутри контейнера с размерами `width: "100%", height: "100%"`. Но:
+1. Контейнер `<div id={containerId}>` имеет только `aspect-video`, без явной ширины
+2. Когда iframe создаётся через API, он не понимает "100% от чего"
+3. Плеер отображается с минимальными размерами по умолчанию
 
-0.1. “Маркер сборки” (минимально, add-only)
-- Добавить в приложение однозначный маркер версии (например, строка вида “build: 2026-01-29T23:xx patch-XX”) одновременно:
-  - console.info при старте,
-  - небольшой бейдж в админке (/admin/kb-import) внизу страницы.
-Почему так:
-- Если вы открываете live, а не preview, этот маркер не изменится без Publish → Update. Это сразу снимет спор “ничего не изменилось”.
+## Решение
+Добавить явные стили для контейнера и iframe внутри него:
 
-0.2. External Link Kill Switch (для kinescope.io)
-- Добавить глобальный перехват:
-  - document.addEventListener('click', capture) → если клик по <a href> ведёт на kinescope.io (или любой внешний домен по настройке), preventDefault + toast “Внешний переход запрещён” + console.trace() + вывод location.pathname.
-  - monkey-patch window.open → если URL содержит kinescope.io → блокировать, toast + console.trace().
-- Для диагностики добавить data-атрибуты на кнопки “Смотреть видеоответ” (data-action="goToVideoAnswer") — чтобы в логах было видно источник клика даже без stack.
-DoD 0:
-- После клика “Смотреть видеоответ” kill-switch либо:
-  - НЕ срабатывает (значит всё внутри), либо
-  - Срабатывает и в консоли видно trace/route и конкретное место.
+### Файл: `src/components/admin/lesson-editor/blocks/VideoBlock.tsx`
 
---------------------------------------------------------------------
-1) “Смотреть видеоответ” — единый обработчик и запрет внешних fallback’ов
-1.1. Вынести единый обработчик goToVideoAnswer(question)
-- Создать небольшой hook/утилиту, который:
-  - принимает navigate,
-  - извлекает moduleSlug/lessonSlug (question.lesson.module.slug, question.lesson.slug),
-  - делает только navigate(`/library/${moduleSlug}/${lessonSlug}`, { state: { seekTo, autoplay: true, nonce } })
-  - если данных нет — НИКАКИХ внешних ссылок, только toast + console.warn с деталями (question.id, lesson_id, kinescope_url, route).
-- В Knowledge.tsx заменить текущий handleWatchVideo на goToVideoAnswer().
+1. **Контейнер плеера**: добавить `w-full` для полной ширины
+2. **Стили для iframe внутри контейнера**: через CSS selector или inline styles убедиться, что iframe растягивается на весь контейнер
 
-1.2. “Поиск и замена” всех потенциальных мест открытия Kinescope
-- По проекту найти и убрать именно из пользовательского сценария “вопросы → видеоответ” любые:
-  - <a href="https://kinescope.io/...">,
-  - target="_blank" на kinescope,
-  - window.open(...kinescope...),
-  - использование buildKinescopeUrlWithTimecode в UI.
-Важно:
-- Не трогаем другие внешние ссылки (чеки, телеграм, файлы) — только сценарий “вопросы KB”.
+Изменения в строках 132-136:
+```tsx
+<div 
+  id={containerId}
+  className="aspect-video rounded-lg overflow-hidden bg-black w-full"
+  style={{ minHeight: '360px' }}
+/>
+```
 
-DoD 1:
-- Kill-switch не фиксирует ни одного открытия kinescope.io при клике “Смотреть видеоответ” в разделе вопросов.
-- Маршрут меняется на /library/:module/:lesson внутри приложения.
+И добавить глобальный CSS или inline для iframe внутри контейнера Kinescope:
+```css
+[id^="kinescope-player"] iframe {
+  width: 100% !important;
+  height: 100% !important;
+}
+```
 
---------------------------------------------------------------------
-2) Автозапуск по таймкоду: детерминированно, без “замёрзло — нажми Play”
-Проблема в текущем коде:
-- LibraryLesson очищает history state сразу (window.history.replaceState({}, document.title)) ещё до того, как плеер гарантированно применил seek+play.
-- useKinescopePlayer использует метод seekTo(), который может не совпадать с реальным API (в документации часто используется setCurrentTime). Ошибка ловится, но UI молчит, и пользователь видит “замерший” плеер.
+### Альтернативный подход (более надёжный)
+В хуке `useKinescopePlayer.ts` после создания плеера найти iframe внутри контейнера и установить ему стили явно:
 
-2.1. Ввести модель “pending seek request” (ref + nonce)
-В LibraryLesson:
-- Завести ref pendingSeekRef = { seconds, nonce, source, consumed: false }
-- При переходе из /knowledge:
-  - НЕ просто setActiveTimecode,
-  - а записать pendingSeekRef (seconds + новый nonce),
-  - прокрутить к плееру,
-  - НЕ очищать history state до подтверждённого применения seek.
-- При клике Play в списке вопросов на странице урока:
-  - точно так же выставлять pendingSeekRef (новый nonce) + seconds,
-  - прокрутка к плееру.
+```typescript
+// После создания плеера
+const container = document.getElementById(containerId);
+if (container) {
+  const iframe = container.querySelector('iframe');
+  if (iframe) {
+    iframe.style.width = '100%';
+    iframe.style.height = '100%';
+    iframe.style.position = 'absolute';
+    iframe.style.inset = '0';
+  }
+}
+```
 
-2.2. “Подтверждение применения” со стороны VideoBlock / Kinescope API
-В useKinescopePlayer / VideoBlock:
-- Подключить обработчик “player ready” (или эквивалент из API), и только после ready:
-  - mute()
-  - setCurrentTime(seconds) (и только если его нет — fallback на seekTo)
-  - play()
-- После успешного play:
-  - вызвать callback onApplied(nonce) вверх, чтобы:
-    - пометить pendingSeekRef как consumed,
-    - и только тогда очистить navigation state (replaceState).
-- Если play() реально блокируется:
-  - показать небольшой баннер над плеером: “Автозапуск заблокирован браузером — нажмите Play”
-  - кнопка в баннере вызывает player.play() (это уже 100% user gesture).
+И контейнер сделать `position: relative` с `aspect-ratio`:
+```tsx
+<div 
+  id={containerId}
+  className="relative aspect-video rounded-lg overflow-hidden bg-black w-full"
+/>
+```
 
-2.3. Убрать “тихие ошибки”
-- Сейчас ошибки seekAndPlay глушатся warn’ом. Добавить:
-  - toast.warning (dev-only или только для этого сценария), чтобы видно было “seek не применился”.
-  - Логи вида: [Kinescope] ready, applyPending, success/fail, seconds, nonce.
+---
 
-DoD 2:
-- Клик “Смотреть видеоответ” → переход на урок → видео играет с нужного таймкода без второго клика.
-- Клик Play по вопросу на странице урока → видео играет сразу.
-- Повторный клик по другому вопросу → видео сразу играет с нового таймкода.
-- В случае блокировки — появляется баннер с явным действием (а не “тишина”).
+## Технические детали
 
---------------------------------------------------------------------
-3) Хлебные крошки: одна линия, русские, без slug’ов
-Факт по коду:
-- DashboardLayout уже пытается скрывать глобальные крошки на /library*.
-- Внутренние крошки на LibraryLesson/LibraryModule уже рисуются.
+### VideoBlock.tsx (строки 132-136)
+```tsx
+// БЫЛО:
+<div 
+  id={containerId}
+  className="aspect-video rounded-lg overflow-hidden bg-black"
+/>
 
-Почему всё равно “двойные” у вас:
-- По вашему скрину верхние крошки явно из старого кода в live (или рендерятся в другом layout).
+// СТАНЕТ:
+<div 
+  id={containerId}
+  className="relative w-full aspect-video rounded-lg overflow-hidden bg-black"
+/>
+```
 
-3.1. Двойной предохранитель (чтобы не зависеть от layout)
-- В DashboardBreadcrumbs добавить early-return:
-  - if (location.pathname.startsWith("/library")) return null;
-Это гарантирует: даже если компонент где-то отрендерен, на /library он не покажется.
-(Точечная правка, без рефакторинга.)
+### useKinescopePlayer.ts (после строки 238)
+После `playerRef.current = player;` добавить:
+```typescript
+// Force iframe to fill container
+setTimeout(() => {
+  const container = document.getElementById(containerId);
+  if (container) {
+    const iframe = container.querySelector('iframe');
+    if (iframe) {
+      iframe.style.width = '100%';
+      iframe.style.height = '100%';
+      iframe.style.position = 'absolute';
+      iframe.style.top = '0';
+      iframe.style.left = '0';
+    }
+  }
+}, 50);
+```
 
-3.2. Убедиться, что внутренние крошки всегда “База знаний → Выпуск №N”
-- В LibraryLesson:
-  - последний сегмент: использовать currentLesson.title (уже так).
-  - если title пустой/slug-подобный — fallback форматировать из lessonSlug (episode-100 → “Выпуск №100”), без показа slug.
-- В LibraryModule аналогично: никаких “container-…”.
+---
 
-DoD 3:
-- На /library/* ровно одна линия крошек.
-- Нет “episode-100”, “container-…”, “Library…” в UI.
+## Ожидаемый результат
+- Видеоплеер занимает всю ширину контейнера
+- Соотношение сторон 16:9 сохраняется (aspect-video)
+- Удобно смотреть без включения полноэкранного режима
+- Работает на desktop, tablet и mobile
 
---------------------------------------------------------------------
-4) Описание “краткое, но доступен полный текст” — на странице видеоответа и в карточках
-Карточки LessonCard уже реализуют:
-- desktop: HoverCard
-- mobile: Collapsible + “Показать полностью” + stopPropagation
+## Файлы для изменения
+1. `src/components/admin/lesson-editor/blocks/VideoBlock.tsx` — добавить `relative w-full` к контейнеру
+2. `src/hooks/useKinescopePlayer.ts` — принудительно установить размеры iframe после создания плеера
 
-Что просите сейчас дополнительно:
-- На странице видеоответа (LibraryLesson) описание сейчас выводится полностью обычным <p>. Нужно “аккуратно, но полный доступ”.
-
-4.1. LibraryLesson: сделать описание как “превью + полный текст”
-- Desktop: HoverCard на line-clamp-2/3
-- Mobile/Tablet: Collapsible “Показать полностью/Свернуть” (кнопка с нормальным hit-area)
-- Важно: без переходов/скроллов, чисто UI.
-
-DoD 4:
-- На десктопе наведение показывает полный текст красиво.
-- На мобильных “Показать полностью” разворачивает, ничего не ломает и не ведёт по ссылкам.
-
---------------------------------------------------------------------
-5) Пруфы (обязательные) + smoke по кнопкам/полям
-После внедрения (в preview), я сделаю реальную проверку в интерфейсе и приложу доказательства.
-
-5.1. Скриншоты (минимум)
-A) /knowledge → вкладка “Вопросы”
-- До клика: видно “Смотреть видеоответ”
-- После клика: URL /library/... (внутри платформы)
-- В консоли: нет срабатываний kill-switch
-
-B) /library/.../episode-100
-- Одна линия крошек, на русском
-- В момент запуска: видно, что плеер “играет” (таймер/индикатор)
-
-C) Вопросы этого выпуска
-- Клик Play по вопросу → видео играет
-
-D) Описание
-- Desktop: hover-card раскрытие
-- Mobile: collapsible раскрытие
-
-5.2. Smoke-чек по интерактиву (чтобы не сломать “выпадающие кнопки и поля”)
-- Tabs на /knowledge
-- поиск
-- sidebar toggle
-- “К списку” на уроке
-- prev/next навигация
-- “Отметить как пройденный”
-
-5.3. Diff-summary
-- Короткий список изменённых файлов и зачем (строго по делу).
-
-5.4. Важный момент про “ничего не поменялось”
-- Frontend изменения применяются на опубликованном домене только после “Publish → Update”.
-- В отчёте я приложу скрин из preview с маркером сборки.
-- Если вы проверяете live — нужно повторить тот же сценарий после обновления, иначе будет старый код и старые крошки/ссылки.
-
---------------------------------------------------------------------
-Ожидаемые точечные файлы правок (минимально)
-- src/components/layout/DashboardBreadcrumbs.tsx (early return на /library*)
-- src/components/layout/DashboardLayout.tsx (по необходимости, но уже есть)
-- src/pages/Knowledge.tsx (подключить goToVideoAnswer + data-атрибут)
-- src/pages/LibraryLesson.tsx (pending seek модель + не чистить state раньше времени + описание hover/expand)
-- src/hooks/useKinescopePlayer.ts (ready/applyPending + setCurrentTime fallback + явный баннер при блокировке)
-- src/components/admin/lesson-editor/blocks/VideoBlock.tsx (приём pending seek + вызов applyPending после ready)
-- src/pages/admin/AdminKbImport.tsx (усилить isEpisodeDescriptionRow: не только “пустой номер”, но и детектор по “Кратко:”/“Описание выпуска”, чтобы 100/100)
-- (новый) небольшой util/hook для kill-switch и goToVideoAnswer (add-only)
-
-STOP/предохранители
-- Kill-switch не блокирует другие внешние сценарии (чеки/телеграм/файлы) — только kinescope.io для сценария “вопросы → видеоответ”.
-- Импорт не меняем массово без необходимости, только детектор строк-описаний и отображение статистики.
+## DoD
+- Видео отображается на всю ширину карточки контента
+- Соотношение сторон 16:9
+- Скриншот: видео занимает нормальный размер, без необходимости включать полный экран
