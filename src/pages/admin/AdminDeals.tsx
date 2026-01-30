@@ -129,6 +129,19 @@ export default function AdminDeals() {
     },
   });
 
+  // Fetch tariffs for filter
+  const { data: tariffs } = useQuery({
+    queryKey: ["tariffs-filter"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("tariffs")
+        .select("id, name, product_id, products_v2(name)")
+        .eq("is_active", true)
+        .order("name");
+      return data || [];
+    },
+  });
+
   // Fetch profiles for contact info - map by both id and user_id
   const { data: profilesMap } = useQuery({
     queryKey: ["profiles-map"],
@@ -149,7 +162,7 @@ export default function AdminDeals() {
     },
   });
 
-  // Build filter fields dynamically based on available products
+  // Build filter fields dynamically based on available products and tariffs
   const DEAL_FILTER_FIELDS: FilterField[] = useMemo(() => [
     { key: "order_number", label: "№ заказа", type: "text" },
     { key: "customer_email", label: "Email", type: "text" },
@@ -168,6 +181,15 @@ export default function AdminDeals() {
       options: products?.map(p => ({ value: p.id, label: p.name })) || []
     },
     { 
+      key: "tariff_id", 
+      label: "Тариф", 
+      type: "select",
+      options: tariffs?.map(t => ({ 
+        value: t.id, 
+        label: `${(t.products_v2 as any)?.name || ''}: ${t.name}`.replace(/^: /, '')
+      })) || []
+    },
+    { 
       key: "reconcile_source", 
       label: "Источник", 
       type: "select",
@@ -181,7 +203,7 @@ export default function AdminDeals() {
     { key: "final_price", label: "Сумма", type: "number" },
     { key: "is_trial", label: "Триал", type: "boolean" },
     { key: "created_at", label: "Дата создания", type: "date" },
-  ], [products]);
+  ], [products, tariffs]);
 
   // Subscription Health stats
   const { data: healthStats } = useQuery({

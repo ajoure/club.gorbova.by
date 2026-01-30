@@ -25,8 +25,9 @@ export const GlassCard = forwardRef<HTMLDivElement, GlassCardProps>(
         )}
         style={{
           background:
-            "linear-gradient(135deg, hsl(var(--card) / 0.9), hsl(var(--card) / 0.7))",
-          backdropFilter: "blur(20px)",
+            "linear-gradient(135deg, hsl(var(--card) / 0.6), hsl(var(--card) / 0.3))",
+          backdropFilter: "blur(24px)",
+          WebkitBackdropFilter: "blur(24px)",
           ...style,
         }}
         {...props}

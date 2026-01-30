@@ -133,23 +133,7 @@ interface Contact {
 
 // formatContactName imported from @/lib/nameUtils
 
-// Simplified filters - only 4 (status_account combines status + account check)
-const CONTACT_FILTER_FIELDS: FilterField[] = [
-  { 
-    key: "status_account", 
-    label: "Статус / Аккаунт", 
-    type: "select",
-    options: [
-      { value: "active", label: "Активен" },
-      { value: "archived", label: "Архивный" },
-      { value: "no_account", label: "Без аккаунта" },
-      { value: "has_account", label: "С аккаунтом" },
-    ]
-  },
-  { key: "has_deals", label: "Есть покупки", type: "boolean" },
-  { key: "has_telegram", label: "Есть Telegram", type: "boolean" },
-  { key: "is_duplicate", label: "Дубль", type: "boolean" },
-];
+// CONTACT_FILTER_FIELDS is now built dynamically with products/tariffs data
 
 // Default columns configuration
 const DEFAULT_COLUMNS: ColumnConfig[] = [
@@ -565,6 +549,113 @@ export default function AdminContacts() {
     }
   }, [contactFromUrl, contacts, setSearchParams, fromPage]);
 
+  // Fetch products for filter options
+  const { data: products } = useQuery({
+    queryKey: ["products-filter"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("products_v2")
+        .select("id, name")
+        .eq("is_active", true)
+        .order("name");
+      return data || [];
+    },
+  });
+
+  // Fetch tariffs for filter options
+  const { data: tariffs } = useQuery({
+    queryKey: ["tariffs-filter"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("tariffs")
+        .select("id, name, product_id, products_v2(name)")
+        .eq("is_active", true)
+        .order("name");
+      return data || [];
+    },
+  });
+
+  // Fetch user purchases (paid orders) grouped by user_id
+  const { data: purchaseMap } = useQuery({
+    queryKey: ["contact-purchases"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("orders_v2")
+        .select("user_id, product_id, tariff_id")
+        .eq("status", "paid");
+      
+      const map = new Map<string, { productIds: Set<string>; tariffIds: Set<string> }>();
+      data?.forEach(o => {
+        if (!o.user_id) return;
+        const existing = map.get(o.user_id) || { productIds: new Set(), tariffIds: new Set() };
+        if (o.product_id) existing.productIds.add(o.product_id);
+        if (o.tariff_id) existing.tariffIds.add(o.tariff_id);
+        map.set(o.user_id, existing);
+      });
+      return map;
+    },
+  });
+
+  // Fetch active subscriptions grouped by user_id
+  const { data: subscriptionMap } = useQuery({
+    queryKey: ["contact-subscriptions"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("subscriptions_v2")
+        .select("user_id, tariff_id, tariffs(product_id)")
+        .in("status", ["active", "trial"]);
+      
+      const map = new Map<string, { tariffIds: Set<string>; productIds: Set<string> }>();
+      data?.forEach(s => {
+        if (!s.user_id) return;
+        const existing = map.get(s.user_id) || { tariffIds: new Set(), productIds: new Set() };
+        if (s.tariff_id) existing.tariffIds.add(s.tariff_id);
+        if ((s.tariffs as any)?.product_id) existing.productIds.add((s.tariffs as any).product_id);
+        map.set(s.user_id, existing);
+      });
+      return map;
+    },
+  });
+
+  // Build filter fields dynamically with products/tariffs
+  const CONTACT_FILTER_FIELDS: FilterField[] = useMemo(() => [
+    { 
+      key: "status_account", 
+      label: "Статус / Аккаунт", 
+      type: "select",
+      options: [
+        { value: "active", label: "Активен" },
+        { value: "archived", label: "Архивный" },
+        { value: "no_account", label: "Без аккаунта" },
+        { value: "has_account", label: "С аккаунтом" },
+      ]
+    },
+    { key: "has_deals", label: "Есть покупки", type: "boolean" },
+    { key: "has_telegram", label: "Есть Telegram", type: "boolean" },
+    { key: "is_duplicate", label: "Дубль", type: "boolean" },
+    { 
+      key: "purchased_product", 
+      label: "Купленный продукт", 
+      type: "select",
+      options: products?.map(p => ({ value: p.id, label: p.name })) || []
+    },
+    { 
+      key: "purchased_tariff", 
+      label: "Тариф покупки", 
+      type: "select",
+      options: tariffs?.map(t => ({ 
+        value: t.id, 
+        label: `${(t.products_v2 as any)?.name || ''}: ${t.name}`.replace(/^: /, '')
+      })) || []
+    },
+    { 
+      key: "active_subscription", 
+      label: "Активная подписка", 
+      type: "select",
+      options: products?.map(p => ({ value: p.id, label: p.name })) || []
+    },
+  ], [products, tariffs]);
+
   // Fetch duplicate count
   const { data: duplicateCount } = useQuery({
     queryKey: ["duplicate-count"],
@@ -630,10 +721,19 @@ export default function AdminContacts() {
           computedDuplicateIds.has(contact.id) ||
           (contact.duplicate_flag && contact.duplicate_flag !== "none")
         );
+      case "purchased_product":
+        const purchases = purchaseMap?.get(contact.user_id);
+        return purchases ? Array.from(purchases.productIds) : [];
+      case "purchased_tariff":
+        const purchaseTariffs = purchaseMap?.get(contact.user_id);
+        return purchaseTariffs ? Array.from(purchaseTariffs.tariffIds) : [];
+      case "active_subscription":
+        const subs = subscriptionMap?.get(contact.user_id);
+        return subs ? Array.from(subs.productIds) : [];
       default:
         return (contact as any)[fieldKey];
     }
-  }, [computedDuplicateIds]);
+  }, [computedDuplicateIds, purchaseMap, subscriptionMap]);
 
   const filteredContacts = useMemo(() => {
     if (!contacts) return [];

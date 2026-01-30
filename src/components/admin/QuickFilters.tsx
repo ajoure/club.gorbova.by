@@ -1,8 +1,6 @@
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,7 +11,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Plus, X } from "lucide-react";
+import { Plus, X, Filter } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export interface FilterField {
   key: string;
@@ -81,10 +80,6 @@ export function QuickFilters({
   activePreset,
   onPresetChange,
 }: QuickFiltersProps) {
-  const [pendingFilter, setPendingFilter] = useState<{
-    field: FilterField;
-    operator: string;
-  } | null>(null);
   const [pendingValue, setPendingValue] = useState("");
 
   const customFilters = useMemo(() => {
@@ -105,7 +100,6 @@ export function QuickFilters({
   const handleAddFilter = (field: FilterField, operator: string, value: string) => {
     const newFilter: ActiveFilter = { field: field.key, operator, value };
     onFiltersChange([...activeFilters, newFilter]);
-    setPendingFilter(null);
     setPendingValue("");
   };
 
@@ -114,7 +108,6 @@ export function QuickFilters({
     const presetFiltersCount = preset?.filters.length || 0;
     
     if (index < presetFiltersCount) {
-      // Removing a preset filter - switch to "all" preset
       onPresetChange("all");
       onFiltersChange(activeFilters.filter((_, i) => i !== index));
     } else {
@@ -159,11 +152,12 @@ export function QuickFilters({
 
     if (field.type === "select" && field.options) {
       return (
-        <div className="flex flex-col gap-1 mt-2">
+        <div className="flex flex-col gap-1 mt-2 max-h-60 overflow-y-auto">
           {field.options.map(option => (
             <DropdownMenuItem
               key={option.value}
               onClick={() => handleAddFilter(field, operator, option.value)}
+              className="cursor-pointer"
             >
               {option.label}
             </DropdownMenuItem>
@@ -175,10 +169,16 @@ export function QuickFilters({
     if (field.type === "boolean") {
       return (
         <div className="flex flex-col gap-1 mt-2">
-          <DropdownMenuItem onClick={() => handleAddFilter(field, operator, "true")}>
+          <DropdownMenuItem 
+            onClick={() => handleAddFilter(field, operator, "true")}
+            className="cursor-pointer"
+          >
             Да
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => handleAddFilter(field, operator, "false")}>
+          <DropdownMenuItem 
+            onClick={() => handleAddFilter(field, operator, "false")}
+            className="cursor-pointer"
+          >
             Нет
           </DropdownMenuItem>
         </div>
@@ -214,47 +214,67 @@ export function QuickFilters({
   };
 
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <ToggleGroup 
-        type="single" 
-        value={activePreset}
-        onValueChange={(value) => value && handlePresetClick(value)}
-        className="justify-start"
-      >
-        {presets.map(preset => (
-          <ToggleGroupItem
-            key={preset.id}
-            value={preset.id}
-            className="whitespace-nowrap data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-          >
-            {preset.label}
-            {preset.count !== undefined && preset.count > 0 && (
-              <Badge variant="secondary" className="ml-1.5 h-5 px-1.5 text-xs">
-                {preset.count}
-              </Badge>
-            )}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
+    <div className="flex items-center gap-3 flex-wrap p-3 rounded-2xl bg-card/30 backdrop-blur-xl border border-border/30 shadow-[0_4px_24px_rgba(0,0,0,0.06)]">
+      {/* Preset tabs with glass effect */}
+      <div className="flex items-center gap-1 p-1 rounded-xl bg-background/50 backdrop-blur-sm border border-border/20">
+        {presets.map(preset => {
+          const isActive = activePreset === preset.id;
+          return (
+            <button
+              key={preset.id}
+              onClick={() => handlePresetClick(preset.id)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 whitespace-nowrap",
+                isActive 
+                  ? "bg-primary text-primary-foreground shadow-sm" 
+                  : "text-muted-foreground hover:text-foreground hover:bg-background/80"
+              )}
+            >
+              {preset.label}
+              {preset.count !== undefined && preset.count > 0 && (
+                <span className={cn(
+                  "ml-1.5 px-1.5 py-0.5 text-xs rounded-full",
+                  isActive
+                    ? "bg-primary-foreground/20 text-primary-foreground"
+                    : "bg-primary/10 text-primary"
+                )}>
+                  {preset.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
-      <Separator orientation="vertical" className="h-6 hidden sm:block" />
-
+      {/* Add filter button */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm">
-            <Plus className="h-4 w-4 mr-1" />
+          <Button 
+            variant="outline" 
+            size="sm"
+            className="bg-background/50 backdrop-blur-sm border-border/30 hover:bg-background/80"
+          >
+            <Filter className="h-4 w-4 mr-1.5" />
             Фильтр
+            <Plus className="h-3 w-3 ml-1" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuContent 
+          align="start" 
+          className="w-64 p-2 bg-popover/95 backdrop-blur-xl border border-border/50 shadow-lg rounded-xl"
+        >
           {fields.map(field => (
             <DropdownMenuSub key={field.key}>
-              <DropdownMenuSubTrigger>{field.label}</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-48">
+              <DropdownMenuSubTrigger className="rounded-lg">
+                {field.label}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-48 bg-popover/95 backdrop-blur-xl border border-border/50 rounded-xl">
                 {(OPERATORS[field.type] || OPERATORS.text).map(op => (
                   <DropdownMenuSub key={op.value}>
-                    <DropdownMenuSubTrigger>{op.label}</DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent>
+                    <DropdownMenuSubTrigger className="rounded-lg">
+                      {op.label}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="bg-popover/95 backdrop-blur-xl border border-border/50 rounded-xl">
                       {renderValueInput(field, op.value)}
                     </DropdownMenuSubContent>
                   </DropdownMenuSub>
@@ -265,17 +285,18 @@ export function QuickFilters({
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {/* Active filter badges */}
       {customFilters.map((filter, i) => {
         const realIndex = activeFilters.indexOf(filter);
         return (
           <Badge 
             key={i} 
             variant="secondary" 
-            className="gap-1 cursor-pointer hover:bg-destructive/20"
+            className="gap-1.5 px-3 py-1 rounded-full bg-background/60 backdrop-blur-sm border border-border/30 text-foreground hover:bg-destructive/10 hover:border-destructive/30 hover:text-destructive cursor-pointer transition-colors"
             onClick={() => handleRemoveFilter(realIndex)}
           >
             {getFilterLabel(filter)}
-            <X className="h-3 w-3" />
+            <X className="h-3 w-3 opacity-60" />
           </Badge>
         );
       })}
@@ -300,7 +321,6 @@ export function applyFilters<T>(
         const composite = value as { status: string; hasAccount: boolean } | undefined;
         if (!composite) return false;
         
-        // Calculate match based on filterValue
         let match = false;
         switch (filterValue) {
           case "no_account":
@@ -318,8 +338,23 @@ export function applyFilters<T>(
             match = true;
         }
         
-        // Apply operator
         return filter.operator === "not_equals" ? !match : match;
+      }
+
+      // Handle array values (for purchased_product, purchased_tariff, active_subscription)
+      if (Array.isArray(value)) {
+        switch (filter.operator) {
+          case "equals":
+            return value.includes(filterValue);
+          case "not_equals":
+            return !value.includes(filterValue);
+          case "empty":
+            return value.length === 0;
+          case "not_empty":
+            return value.length > 0;
+          default:
+            return value.includes(filterValue);
+        }
       }
 
       switch (filter.operator) {
