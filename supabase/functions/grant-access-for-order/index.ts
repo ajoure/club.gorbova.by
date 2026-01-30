@@ -13,6 +13,80 @@ const STAFF_EMAILS = [
   'irenessa@yandex.ru',
 ];
 
+/**
+ * PATCH 2: Get correct recurring_amount for trial orders
+ * For trial orders, we need the price from auto_charge_offer_id, not order.final_price (1 BYN)
+ * 
+ * The offer_id can be stored in:
+ * - order.offer_id (top-level field)
+ * - order.meta.offer_id (meta object)
+ * - order.meta.auto_charge_offer_id (direct reference to full payment offer)
+ */
+async function getRecurringAmount(order: any, supabase: any): Promise<number> {
+  // Default: use order's final_price
+  let recurringAmount = order.final_price;
+  const orderMeta = (order.meta || {}) as Record<string, any>;
+
+  // For trial orders, look up the real price from auto_charge_offer
+  if (!order.is_trial) {
+    return recurringAmount;
+  }
+
+  try {
+    // First check if auto_charge_offer_id is already in meta
+    if (orderMeta.auto_charge_offer_id) {
+      const { data: fullOffer } = await supabase
+        .from('tariff_offers')
+        .select('amount')
+        .eq('id', orderMeta.auto_charge_offer_id)
+        .maybeSingle();
+
+      if (fullOffer?.amount) {
+        recurringAmount = fullOffer.amount;
+        console.log(`[grant-access] Trial order: recurring_amount from meta.auto_charge_offer_id = ${recurringAmount} (was ${order.final_price})`);
+        return recurringAmount;
+      }
+    }
+
+    // Fallback: try to find offer_id (can be in order.offer_id or order.meta.offer_id)
+    const offerId = order.offer_id || orderMeta.offer_id;
+    if (offerId) {
+      const { data: trialOffer } = await supabase
+        .from('tariff_offers')
+        .select('auto_charge_offer_id')
+        .eq('id', offerId)
+        .maybeSingle();
+
+      if (trialOffer?.auto_charge_offer_id) {
+        const { data: fullOffer } = await supabase
+          .from('tariff_offers')
+          .select('amount')
+          .eq('id', trialOffer.auto_charge_offer_id)
+          .maybeSingle();
+
+        if (fullOffer?.amount) {
+          recurringAmount = fullOffer.amount;
+          console.log(`[grant-access] Trial order: recurring_amount from offer.auto_charge_offer_id = ${recurringAmount} (was ${order.final_price})`);
+          return recurringAmount;
+        }
+      }
+    }
+
+    // Last fallback: use auto_charge_amount from meta if available
+    if (orderMeta.auto_charge_amount && orderMeta.auto_charge_amount > 0) {
+      recurringAmount = orderMeta.auto_charge_amount;
+      console.log(`[grant-access] Trial order: recurring_amount from meta.auto_charge_amount = ${recurringAmount} (was ${order.final_price})`);
+      return recurringAmount;
+    }
+
+    console.warn(`[grant-access] Trial order ${order.id}: no auto_charge_offer found, using final_price ${order.final_price}`);
+  } catch (err) {
+    console.error('[grant-access] Error fetching auto_charge_offer amount:', err);
+  }
+
+  return recurringAmount;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -434,7 +508,7 @@ Deno.serve(async (req) => {
             granted_by: "grant-access-for-order",
             granted_at: now.toISOString(),
             initial_order_id: orderId,
-            recurring_amount: order.final_price,
+            recurring_amount: await getRecurringAmount(order, supabase),
             recurring_currency: order.currency || 'BYN',
             recurring_snapshot: recurringSnapshot,
           },

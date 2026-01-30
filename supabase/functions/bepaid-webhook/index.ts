@@ -900,6 +900,10 @@ Deno.serve(async (req) => {
         card_last4: transaction?.credit_card?.last_4 || paymentV2.card_last4 || null,
         // Save receipt_url from webhook if available
         receipt_url: transaction?.receipt_url || paymentV2.receipt_url || null,
+        // PATCH 1: Sync amount from bePaid transaction (source of truth)
+        ...(transaction?.amount != null
+          ? { amount: transaction.amount / 100 }
+          : {}),
       };
 
       // =====================================================================
