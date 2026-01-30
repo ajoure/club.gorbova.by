@@ -12,8 +12,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   ArrowLeft,
   ArrowRight,
@@ -21,7 +19,6 @@ import {
   Download,
   Clock,
   ChevronRight,
-  ChevronDown,
   FileText,
   Video,
   Music,
@@ -70,8 +67,7 @@ export default function LibraryLesson() {
   const [autoplayNonce, setAutoplayNonce] = useState<number>(0);
   // Track if we've consumed the navigation state (to not re-apply on re-renders)
   const navigationStateConsumedRef = useRef<number | null>(null);
-  // Description expand state for mobile
-  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  
   
   // Handle seekTo from navigation state (from Knowledge page questions)
   // CRITICAL: Do NOT clear state until seek is actually applied by player
@@ -222,51 +218,6 @@ export default function LibraryLesson() {
               )}
             </div>
             <h1 className="text-2xl font-bold">{currentLesson.title}</h1>
-            
-            {/* Description with hover/expand for full text */}
-            {currentLesson.description && (
-              <>
-                {/* Desktop: HoverCard */}
-                <div className="hidden md:block">
-                  {currentLesson.description.length > 150 ? (
-                    <HoverCard openDelay={200}>
-                      <HoverCardTrigger asChild>
-                        <p className="text-muted-foreground mt-2 line-clamp-2 cursor-help">
-                          {currentLesson.description}
-                        </p>
-                      </HoverCardTrigger>
-                      <HoverCardContent className="w-96 max-h-64 overflow-y-auto">
-                        <p className="text-sm text-foreground whitespace-pre-wrap">
-                          {currentLesson.description}
-                        </p>
-                      </HoverCardContent>
-                    </HoverCard>
-                  ) : (
-                    <p className="text-muted-foreground mt-2">{currentLesson.description}</p>
-                  )}
-                </div>
-                
-                {/* Mobile/Tablet: Collapsible */}
-                <div className="md:hidden">
-                  {currentLesson.description.length > 100 ? (
-                    <Collapsible open={descriptionExpanded} onOpenChange={setDescriptionExpanded}>
-                      <p className={`text-muted-foreground mt-2 ${!descriptionExpanded ? 'line-clamp-2' : ''}`}>
-                        {currentLesson.description}
-                      </p>
-                      <CollapsibleTrigger 
-                        className="flex items-center gap-1 text-sm text-primary hover:text-primary/80 mt-1 py-2 min-h-[44px]"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <ChevronDown className={`h-4 w-4 transition-transform ${descriptionExpanded ? 'rotate-180' : ''}`} />
-                        {descriptionExpanded ? "Свернуть" : "Показать полностью"}
-                      </CollapsibleTrigger>
-                    </Collapsible>
-                  ) : (
-                    <p className="text-muted-foreground mt-2">{currentLesson.description}</p>
-                  )}
-                </div>
-              </>
-            )}
           </div>
           <Button
             variant="outline"
@@ -368,6 +319,23 @@ export default function LibraryLesson() {
               </Card>
             )}
           </>
+        )}
+
+        {/* Описание выпуска — под видео, полный текст */}
+        {currentLesson.description && (
+          <Card className="mb-6">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Описание выпуска
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-foreground whitespace-pre-wrap leading-relaxed">
+                {currentLesson.description}
+              </p>
+            </CardContent>
+          </Card>
         )}
 
         {/* Attachments */}
