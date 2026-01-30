@@ -132,7 +132,7 @@ export function VideoBlock({
           <div className="relative">
             <div 
               id={containerId}
-              className="aspect-video rounded-lg overflow-hidden bg-black"
+              className="relative w-full aspect-video rounded-lg overflow-hidden bg-black"
             />
             {/* Autoplay blocked banner */}
             {autoplayBlocked && (

@@ -238,6 +238,21 @@ export function useKinescopePlayer({
         playerRef.current = player;
         isReadyRef.current = true;
         
+        // Force iframe to fill container (Kinescope API doesn't always respect 100%)
+        setTimeout(() => {
+          const containerEl = document.getElementById(containerId);
+          if (containerEl) {
+            const iframe = containerEl.querySelector('iframe');
+            if (iframe) {
+              iframe.style.width = '100%';
+              iframe.style.height = '100%';
+              iframe.style.position = 'absolute';
+              iframe.style.top = '0';
+              iframe.style.left = '0';
+            }
+          }
+        }, 50);
+        
         console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player ready:`, { videoId, containerId });
 
         // If initial autoplay timecode was provided, set it as pending
