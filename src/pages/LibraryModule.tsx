@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useTrainingLessons, TrainingLesson } from "@/hooks/useTrainingLessons";
+import { useTrainingModules } from "@/hooks/useTrainingModules";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +19,7 @@ import {
   Clock,
   CheckCircle2,
   ChevronRight,
+  Lock,
 } from "lucide-react";
 
 const contentTypeConfig = {
@@ -66,6 +68,11 @@ export default function LibraryModule() {
     },
     enabled: !!moduleSlug,
   });
+
+  // Get access info from useTrainingModules
+  const { modules: allModules, loading: modulesLoading } = useTrainingModules();
+  const moduleWithAccess = allModules.find(m => m.slug === moduleSlug);
+  const hasAccess = moduleWithAccess?.has_access ?? true;
 
   const { lessons, loading: lessonsLoading, markCompleted, markIncomplete } = useTrainingLessons(module?.id);
 
@@ -167,6 +174,27 @@ export default function LibraryModule() {
           </CardContent>
         </Card>
 
+        {/* Access Restricted Banner */}
+        {!hasAccess && !modulesLoading && (
+          <Card className="mb-6 border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800">
+            <CardContent className="py-8 text-center">
+              <Lock className="h-12 w-12 mx-auto mb-4 text-amber-600 dark:text-amber-500" />
+              <h3 className="text-lg font-semibold mb-2 text-amber-900 dark:text-amber-100">
+                Контент доступен участникам тарифов FULL и BUSINESS
+              </h3>
+              <p className="text-amber-700 dark:text-amber-300 mb-4 max-w-md mx-auto">
+                Оформите подписку на Gorbova Club, чтобы получить доступ к этим материалам
+              </p>
+              <Button 
+                onClick={() => window.location.href = 'https://club.gorbova.by'}
+                className="bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                Узнать о Клубе
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Lessons List */}
         {lessonsLoading ? (
           <div className="space-y-4">
@@ -174,6 +202,8 @@ export default function LibraryModule() {
               <Skeleton key={i} className="h-24 w-full" />
             ))}
           </div>
+        ) : !hasAccess ? (
+          null // Don't show lessons if no access
         ) : lessons.length === 0 ? (
           <Card className="text-center py-12">
             <CardContent>

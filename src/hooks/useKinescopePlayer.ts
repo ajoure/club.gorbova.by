@@ -290,14 +290,19 @@ export function useKinescopePlayer({
         requestAnimationFrame(forceFill);
         
         // Force fill after delay (Kinescope sometimes changes styles later)
-        setTimeout(forceFill, 100);
-        setTimeout(forceFill, 300);
-        setTimeout(forceFill, 500);
+        // Use isMounted guard to prevent DOM operations after unmount
+        setTimeout(() => { if (isMounted) forceFill(); }, 100);
+        setTimeout(() => { if (isMounted) forceFill(); }, 300);
+        setTimeout(() => { if (isMounted) forceFill(); }, 500);
         
         // Setup MutationObserver to catch any late style changes by Kinescope
         const containerEl = document.getElementById(containerId);
         if (containerEl) {
-          observer = new MutationObserver(throttledForceFill);
+          observer = new MutationObserver(() => {
+            // Guard: prevent DOM operations after unmount (fixes removeChild error)
+            if (!isMounted) return;
+            throttledForceFill();
+          });
           observer.observe(containerEl, {
             attributes: true,
             attributeFilter: ['style', 'class'],
