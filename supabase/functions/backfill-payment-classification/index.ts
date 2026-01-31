@@ -62,9 +62,10 @@ serve(async (req) => {
 
     // Get unclassified payments
     // Note: is_trial, description don't exist on payments_v2, check via meta
+    // PATCH-4: Added amount and currency for 1 BYN card verification rule
     const { data: payments, error: fetchError } = await supabase
       .from('payments_v2')
-      .select('id, status, transaction_type, order_id, is_recurring, product_name_raw, meta')
+      .select('id, status, transaction_type, order_id, is_recurring, product_name_raw, meta, amount, currency')
       .is('payment_classification', null)
       .gte('created_at', fromDate)
       .order('created_at', { ascending: true })
@@ -93,6 +94,8 @@ serve(async (req) => {
         is_trial: payment.meta?.is_trial || false,
         description: payment.product_name_raw, // Use product_name_raw as description
         meta: payment.meta,
+        amount: payment.amount,
+        currency: payment.currency,
       });
 
       if (!dryRun) {

@@ -1,16 +1,20 @@
 /**
  * PATCH 2: Payment Classification System
  * 
- * Classifies payments based on metadata, NOT amounts.
+ * Classifies payments based on metadata, transaction_type, and amount.
  * This is the single source of truth for payment type determination.
+ * 
+ * PATCH-1 update: Added amount/currency for 1 BYN card verification rule,
+ * added failed_purchase class for failed payments with order.
  */
 
 export type PaymentClassification =
-  | 'card_verification'     // void/authorization, no order created
+  | 'card_verification'     // void/authorization, or 1 BYN without order
   | 'trial_purchase'        // has_order + is_trial flag
   | 'regular_purchase'      // has_order + succeeded + !is_trial
   | 'subscription_renewal'  // is_recurring=true OR order_number starts with 'REN-'
   | 'refund'                // status=refunded OR transaction_type contains refund
+  | 'failed_purchase'       // has_order + failed/declined/error status
   | 'orphan_technical';     // succeeded without order, not matching other categories
 
 export interface PaymentForClassification {
@@ -22,14 +26,17 @@ export interface PaymentForClassification {
   is_trial?: boolean | null;
   description?: string | null;
   meta?: Record<string, any> | null;
+  amount?: number | null;
+  currency?: string | null;
 }
 
 /**
- * Classify payment based on metadata, NOT amount.
+ * Classify payment based on metadata, transaction_type, amount.
  * 
  * Priority order:
+ * 0. Failed purchase (has order + failed/declined/error)
  * 1. Refund (status or transaction_type)
- * 2. Card verification (void/authorization without order)
+ * 2. Card verification (void/authorization without order, OR 1 BYN without order in BYN currency)
  * 3. Subscription renewal (is_recurring or REN- order)
  * 4. Trial purchase (has order + is_trial)
  * 5. Regular purchase (has order + succeeded)
@@ -41,6 +48,16 @@ export function classifyPayment(payment: PaymentForClassification): PaymentClass
   const desc = (payment.description || '').toLowerCase();
   const orderNumber = payment.order_number || '';
   const meta = payment.meta || {};
+  const amount = payment.amount !== undefined && payment.amount !== null ? Number(payment.amount) : null;
+  const currency = (payment.currency || '').toUpperCase();
+
+  // Priority 0: Failed purchase (has order but failed/declined/error)
+  if (
+    payment.order_id &&
+    (status === 'failed' || status === 'declined' || status === 'error')
+  ) {
+    return 'failed_purchase';
+  }
 
   // Priority 1: Refund
   if (
@@ -51,13 +68,15 @@ export function classifyPayment(payment: PaymentForClassification): PaymentClass
     return 'refund';
   }
 
-  // Priority 2: Card verification (void/authorization without order)
+  // Priority 2: Card verification
+  // 2a. By transaction_type (void/authorization without order)
   if (
     (txType.includes('void') || txType.includes('authorization')) &&
     !payment.order_id
   ) {
     return 'card_verification';
   }
+  // 2b. By description
   if (
     desc.includes('проверка карты') ||
     desc.includes('card verification') ||
@@ -65,8 +84,18 @@ export function classifyPayment(payment: PaymentForClassification): PaymentClass
   ) {
     return 'card_verification';
   }
-  // Check meta for verification flags
+  // 2c. By meta flags
   if (meta.is_card_verification === true || meta.is_verification === true) {
+    return 'card_verification';
+  }
+  // 2d. By amount: 1 BYN (or less) without order in BYN currency = card verification
+  if (
+    amount !== null &&
+    amount <= 1 &&
+    currency === 'BYN' &&
+    !payment.order_id &&
+    status === 'succeeded'
+  ) {
     return 'card_verification';
   }
 
@@ -108,6 +137,7 @@ export function getClassificationLabel(classification: PaymentClassification): s
     regular_purchase: 'Обычная покупка',
     subscription_renewal: 'Продление подписки',
     refund: 'Возврат',
+    failed_purchase: 'Неуспешная покупка',
     orphan_technical: 'Техническая операция',
   };
   return labels[classification] || classification;
