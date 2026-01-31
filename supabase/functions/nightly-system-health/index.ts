@@ -163,12 +163,26 @@ serve(async (req) => {
       })
       .eq('id', runId);
 
-    // PATCH 9: Send Telegram alert to owner if FAIL
+    // PATCH 9: Send Telegram alert to super_admin owner if FAIL
     if (failedChecks.length > 0 && notifyOwner) {
-      const ownerChatId = Deno.env.get('OWNER_TELEGRAM_CHAT_ID');
-      const botToken = Deno.env.get('PRIMARY_TELEGRAM_BOT_TOKEN');
+      // Find super_admin owner by email
+      const ownerEmail = '7500084@gmail.com';
       
-      if (ownerChatId && botToken) {
+      const { data: ownerProfile } = await supabase
+        .from('profiles')
+        .select('telegram_user_id, full_name')
+        .eq('email', ownerEmail)
+        .maybeSingle();
+      
+      // Get primary bot token from telegram_bots table
+      const { data: primaryBot } = await supabase
+        .from('telegram_bots')
+        .select('bot_token_encrypted')
+        .eq('is_primary', true)
+        .eq('status', 'active')
+        .maybeSingle();
+      
+      if (ownerProfile?.telegram_user_id && primaryBot?.bot_token_encrypted) {
         // Build plain-text message (NO Markdown to avoid parsing issues)
         const nowStr = new Date().toLocaleString('ru-RU', { timeZone: targetTz });
         let alertText = `NIGHTLY CHECK: ${failedChecks.length}/${invariantsResult.summary?.total_checks || 0} FAILED\n\n`;
@@ -192,21 +206,25 @@ serve(async (req) => {
         alertText += `Run ID: ${runId}`;
 
         try {
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          await fetch(`https://api.telegram.org/bot${primaryBot.bot_token_encrypted}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              chat_id: ownerChatId,
+              chat_id: ownerProfile.telegram_user_id,
               text: alertText,
               // NO parse_mode = plain text (more reliable)
             }),
           });
-          console.log(`[NIGHTLY] Sent alert to owner ${ownerChatId}`);
+          console.log(`[NIGHTLY] Sent alert to owner ${ownerProfile.full_name} (TG: ${ownerProfile.telegram_user_id})`);
         } catch (tgError) {
           console.error('[NIGHTLY] Failed to send Telegram alert:', tgError);
         }
       } else {
-        console.warn('[NIGHTLY] OWNER_TELEGRAM_CHAT_ID or PRIMARY_TELEGRAM_BOT_TOKEN not set');
+        console.warn('[NIGHTLY] Owner not found or no Telegram linked:', { 
+          ownerEmail, 
+          hasTelegram: !!ownerProfile?.telegram_user_id,
+          hasBot: !!primaryBot 
+        });
       }
     }
 
@@ -226,6 +244,7 @@ serve(async (req) => {
         target_tz: targetTz,
         target_hour: targetHour,
         notify_sent: failedChecks.length > 0 && notifyOwner,
+        owner_email: '7500084@gmail.com',
       },
     });
 
