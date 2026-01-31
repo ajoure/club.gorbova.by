@@ -240,6 +240,9 @@ serve(async (req) => {
     }
 
     // PATCH 12: Audit log with SYSTEM ACTOR (MANDATORY)
+    // PATCH-7: Token source tracking for security debt monitoring
+    const tokenFromEnv = !!Deno.env.get('PRIMARY_TELEGRAM_BOT_TOKEN');
+    
     await supabase.from('audit_logs').insert({
       action: 'nightly.system_health_run',
       actor_type: 'system',
@@ -256,6 +259,9 @@ serve(async (req) => {
         target_hour: targetHour,
         notify_sent: failedChecks.length > 0 && notifyOwner,
         owner_email: '7500084@gmail.com',
+        // PATCH-7: Security debt tracking
+        token_source: tokenFromEnv ? 'env_secret' : 'db_fallback_DEPRECATED',
+        security_debt: !tokenFromEnv,
       },
     });
 
