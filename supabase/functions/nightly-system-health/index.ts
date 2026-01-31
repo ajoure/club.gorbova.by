@@ -174,15 +174,25 @@ serve(async (req) => {
         .eq('email', ownerEmail)
         .maybeSingle();
       
-      // Get primary bot token from telegram_bots table
-      const { data: primaryBot } = await supabase
-        .from('telegram_bots')
-        .select('bot_token_encrypted')
-        .eq('is_primary', true)
-        .eq('status', 'active')
-        .maybeSingle();
+      // PATCH-A: Get bot token from env first, fallback to DB only if not set
+      // TODO: Remove DB fallback after full migration to env secrets
+      let botToken = Deno.env.get('PRIMARY_TELEGRAM_BOT_TOKEN');
       
-      if (ownerProfile?.telegram_user_id && primaryBot?.bot_token_encrypted) {
+      if (!botToken) {
+        // Fallback: Get from telegram_bots table (legacy, to be removed)
+        const { data: primaryBot } = await supabase
+          .from('telegram_bots')
+          .select('bot_token_encrypted')
+          .eq('is_primary', true)
+          .eq('status', 'active')
+          .maybeSingle();
+        botToken = primaryBot?.bot_token_encrypted || null;
+        if (botToken) {
+          console.warn('[NIGHTLY] Using bot token from DB (legacy). Migrate to PRIMARY_TELEGRAM_BOT_TOKEN env secret.');
+        }
+      }
+      
+      if (ownerProfile?.telegram_user_id && botToken) {
         // Build plain-text message (NO Markdown to avoid parsing issues)
         const nowStr = new Date().toLocaleString('ru-RU', { timeZone: targetTz });
         let alertText = `NIGHTLY CHECK: ${failedChecks.length}/${invariantsResult.summary?.total_checks || 0} FAILED\n\n`;
@@ -206,7 +216,7 @@ serve(async (req) => {
         alertText += `Run ID: ${runId}`;
 
         try {
-          await fetch(`https://api.telegram.org/bot${primaryBot.bot_token_encrypted}/sendMessage`, {
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -223,7 +233,8 @@ serve(async (req) => {
         console.warn('[NIGHTLY] Owner not found or no Telegram linked:', { 
           ownerEmail, 
           hasTelegram: !!ownerProfile?.telegram_user_id,
-          hasBot: !!primaryBot 
+          hasToken: !!botToken,
+          tokenSource: Deno.env.get('PRIMARY_TELEGRAM_BOT_TOKEN') ? 'env' : 'db_fallback'
         });
       }
     }

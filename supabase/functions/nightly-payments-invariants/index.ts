@@ -68,22 +68,41 @@ serve(async (req) => {
     });
 
     // INV-2: Orphan payments 2026+ (succeeded, amount>0, profile_id not null, order_id null)
-    const { data: orphans, count: orphanCount } = await supabase
+    // PATCH-B: Exclude card_verification (void/authorization) - they legitimately have no order
+    // Also exclude statement_sync imports and test payments
+    const { data: allOrphans } = await supabase
       .from('payments_v2')
-      .select('id, provider_payment_id, amount, paid_at, profile_id', { count: 'exact' })
+      .select('id, provider_payment_id, amount, paid_at, profile_id, transaction_type, origin, meta')
       .gte('paid_at', '2026-01-01')
       .eq('status', 'succeeded')
       .gt('amount', 0)
       .not('profile_id', 'is', null)
       .is('order_id', null)
-      .limit(10);
+      // Exclude card verification transaction types - they don't create orders by design
+      .not('transaction_type', 'in', '(void,Отмена,authorization_void,authorization)')
+      // Only check webhook-originated payments (bepaid), not statement imports
+      .eq('origin', 'bepaid')
+      .limit(50);
+
+    // Filter out test payments in code (can't filter jsonb->>'test_payment' easily in SDK)
+    const orphans = (allOrphans || []).filter((o: any) => 
+      o.meta?.test_payment !== true && o.meta?.test_payment !== 'true'
+    );
+    const orphanCount = orphans.length;
 
     invariants.push({
-      name: 'INV-2: No orphan payments 2026+',
-      passed: (orphanCount || 0) === 0,
-      count: orphanCount || 0,
-      samples: (orphans || []).slice(0, 5),
-      description: 'All 2026+ succeeded payments should have order_id',
+      name: 'INV-2: No orphan payments 2026+ (webhook-originated, non-test)',
+      passed: orphanCount === 0,
+      count: orphanCount,
+      samples: orphans.slice(0, 5).map((o: any) => ({
+        id: o.id,
+        provider_payment_id: o.provider_payment_id,
+        amount: o.amount,
+        paid_at: o.paid_at,
+        transaction_type: o.transaction_type,
+        origin: o.origin,
+      })),
+      description: 'All 2026+ webhook-originated succeeded payments (except card_verification/test) should have order_id',
     });
 
     // INV-3: Amount mismatches (payment.amount != order.final_price)
