@@ -975,7 +975,10 @@ async function chargeSubscription(
     const chargeAttemptAt = new Date().toISOString();
 
     if (chargeResult.transaction?.status === 'successful') {
-      // PATCH A: Fix status 'completed' → 'succeeded' + mandatory error handling
+      // PATCH 1: Fix status 'completed' → 'succeeded' + MANDATORY amount sync from provider
+      // Source of truth: chargeResult.transaction.amount / 100
+      const providerAmount = chargeResult.transaction.amount / 100;
+      
       const { data: updatedPayment, error: updatePaymentError } = await supabase
         .from('payments_v2')
         .update({
@@ -986,9 +989,13 @@ async function chargeSubscription(
           card_last4: chargeResult.transaction.credit_card?.last_4 ?? null,
           card_brand: chargeResult.transaction.credit_card?.brand ?? null,
           receipt_url: chargeResult.transaction.receipt_url ?? null,
+          // PATCH 1: Sync amount from bePaid (source of truth)
+          amount: providerAmount,
+          // PATCH 2: Set classification
+          payment_classification: 'subscription_renewal',
         })
         .eq('id', payment.id)
-        .select('id, status, paid_at, provider_payment_id')
+        .select('id, status, paid_at, provider_payment_id, amount')
         .single();
 
       // PATCH A: Log finalize failure if update failed

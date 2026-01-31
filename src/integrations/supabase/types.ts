@@ -4576,6 +4576,7 @@ export type Database = {
           order_id: string | null
           origin: string | null
           paid_at: string | null
+          payment_classification: string | null
           payment_token: string | null
           product_name_raw: string | null
           profile_id: string | null
@@ -4608,6 +4609,7 @@ export type Database = {
           order_id?: string | null
           origin?: string | null
           paid_at?: string | null
+          payment_classification?: string | null
           payment_token?: string | null
           product_name_raw?: string | null
           profile_id?: string | null
@@ -4640,6 +4642,7 @@ export type Database = {
           order_id?: string | null
           origin?: string | null
           paid_at?: string | null
+          payment_classification?: string | null
           payment_token?: string | null
           product_name_raw?: string | null
           profile_id?: string | null
@@ -6009,6 +6012,89 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      system_health_checks: {
+        Row: {
+          category: string
+          check_key: string
+          check_name: string
+          count: number | null
+          created_at: string
+          details: Json | null
+          duration_ms: number | null
+          id: string
+          run_id: string
+          sample_rows: Json | null
+          status: string
+        }
+        Insert: {
+          category: string
+          check_key: string
+          check_name: string
+          count?: number | null
+          created_at?: string
+          details?: Json | null
+          duration_ms?: number | null
+          id?: string
+          run_id: string
+          sample_rows?: Json | null
+          status: string
+        }
+        Update: {
+          category?: string
+          check_key?: string
+          check_name?: string
+          count?: number | null
+          created_at?: string
+          details?: Json | null
+          duration_ms?: number | null
+          id?: string
+          run_id?: string
+          sample_rows?: Json | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "system_health_checks_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "system_health_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      system_health_runs: {
+        Row: {
+          created_at: string
+          finished_at: string | null
+          id: string
+          meta: Json | null
+          run_type: string
+          started_at: string
+          status: string
+          summary: Json | null
+        }
+        Insert: {
+          created_at?: string
+          finished_at?: string | null
+          id?: string
+          meta?: Json | null
+          run_type?: string
+          started_at?: string
+          status?: string
+          summary?: Json | null
+        }
+        Update: {
+          created_at?: string
+          finished_at?: string | null
+          id?: string
+          meta?: Json | null
+          run_type?: string
+          started_at?: string
+          status?: string
+          summary?: Json | null
+        }
+        Relationships: []
       }
       tariff_features: {
         Row: {
@@ -8448,6 +8534,20 @@ export type Database = {
           auth_user_id: string
           profile_id: string
           resolved_from: string
+        }[]
+      }
+      rpc_find_wrongly_revoked: {
+        Args: never
+        Returns: {
+          access_status: string
+          full_name: string
+          has_entitlement: boolean
+          has_manual_access: boolean
+          has_subscription: boolean
+          member_id: string
+          profile_id: string
+          telegram_user_id: number
+          user_id: string
         }[]
       }
       search_club_members_enriched: {

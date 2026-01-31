@@ -125,6 +125,160 @@ serve(async (req) => {
       description: 'payment.amount should equal order.final_price for succeeded payments',
     });
 
+    // INV-7: Amount synced with provider_response (PATCH 6 - no hardcoded amounts)
+    const { data: paymentsWithProviderResponse } = await supabase
+      .from('payments_v2')
+      .select('id, amount, provider_response')
+      .eq('status', 'succeeded')
+      .not('provider_response', 'is', null)
+      .gte('paid_at', '2026-01-01')
+      .limit(200);
+
+    const amountMismatches = (paymentsWithProviderResponse || []).filter((p: any) => {
+      const providerAmount = p.provider_response?.transaction?.amount;
+      if (!providerAmount) return false;
+      return Math.abs(Number(p.amount) - (providerAmount / 100)) > 0.01;
+    });
+
+    invariants.push({
+      name: 'INV-7: Amount synced with provider_response',
+      passed: amountMismatches.length === 0,
+      count: amountMismatches.length,
+      samples: amountMismatches.slice(0, 5).map((m: any) => ({
+        payment_id: m.id,
+        db_amount: m.amount,
+        provider_amount: m.provider_response?.transaction?.amount / 100,
+      })),
+      description: 'payments_v2.amount must equal provider_response.transaction.amount/100',
+    });
+
+    // INV-8: Classification coverage (PATCH 6 - payments must be classified)
+    const { count: unclassifiedCount } = await supabase
+      .from('payments_v2')
+      .select('*', { count: 'exact', head: true })
+      .is('payment_classification', null)
+      .gte('created_at', '2026-01-01');
+
+    invariants.push({
+      name: 'INV-8: Payment classification coverage',
+      passed: true, // Informational for now, will become FAIL after backfill
+      count: unclassifiedCount || 0,
+      samples: [],
+      description: 'All 2026+ payments should have payment_classification',
+    });
+
+    // INV-9: Card verification must NOT have order_id (PATCH 6)
+    const { data: cardVerifWithOrder, count: cvOrderCount } = await supabase
+      .from('payments_v2')
+      .select('id, order_id, transaction_type', { count: 'exact' })
+      .eq('payment_classification', 'card_verification')
+      .not('order_id', 'is', null)
+      .limit(10);
+
+    invariants.push({
+      name: 'INV-9: Card verification without order',
+      passed: (cvOrderCount || 0) === 0,
+      count: cvOrderCount || 0,
+      samples: (cardVerifWithOrder || []).slice(0, 5),
+      description: 'card_verification payments must not create orders',
+    });
+
+    // INV-10: No expired active entitlements (PATCH 7)
+    const { data: expiredActiveEntitlements, count: expEntCount } = await supabase
+      .from('entitlements')
+      .select('id, user_id, expires_at', { count: 'exact' })
+      .eq('status', 'active')
+      .lt('expires_at', new Date().toISOString())
+      .not('expires_at', 'is', null)
+      .limit(10);
+
+    invariants.push({
+      name: 'INV-10: No expired active entitlements',
+      passed: (expEntCount || 0) === 0,
+      count: expEntCount || 0,
+      samples: (expiredActiveEntitlements || []).slice(0, 5),
+      description: 'Active entitlements must have expires_at > now OR expires_at IS NULL',
+    });
+
+    // INV-11: No expired active subscriptions (PATCH 7)
+    const { data: expiredActiveSubs, count: expSubCount } = await supabase
+      .from('subscriptions_v2')
+      .select('id, user_id, access_end_at', { count: 'exact' })
+      .in('status', ['active', 'trial'])
+      .lt('access_end_at', new Date().toISOString())
+      .not('access_end_at', 'is', null)
+      .limit(10);
+
+    invariants.push({
+      name: 'INV-11: No expired active subscriptions',
+      passed: (expSubCount || 0) === 0,
+      count: expSubCount || 0,
+      samples: (expiredActiveSubs || []).slice(0, 5),
+      description: 'Active subscriptions must have access_end_at > now',
+    });
+
+    // INV-12: No wrongly revoked Telegram users (PATCH 8 - set-based via RPC)
+    const { data: wronglyRevoked, error: wrError } = await supabase.rpc('rpc_find_wrongly_revoked');
+    
+    invariants.push({
+      name: 'INV-12: No wrongly revoked Telegram users',
+      passed: wrError ? false : (wronglyRevoked?.length || 0) === 0,
+      count: wronglyRevoked?.length || 0,
+      samples: (wronglyRevoked || []).slice(0, 5),
+      description: 'Users with valid access must have access_status=ok',
+    });
+
+    // INV-13: Trial orders have access created (PATCH 10 - trial flow invariant)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    
+    const { data: trialOrders } = await supabase
+      .from('orders_v2')
+      .select('id, order_number, user_id, is_trial, status, created_at')
+      .eq('is_trial', true)
+      .eq('status', 'paid')
+      .gte('created_at', sevenDaysAgo)
+      .limit(50);
+
+    // Check access for each trial order (batch approach)
+    const trialUserIds = [...new Set((trialOrders || []).map((o: any) => o.user_id))];
+    const trialsWithoutAccess: any[] = [];
+
+    if (trialUserIds.length > 0) {
+      // Batch check subscriptions
+      const { data: subsForTrials } = await supabase
+        .from('subscriptions_v2')
+        .select('user_id')
+        .in('user_id', trialUserIds)
+        .in('status', ['active', 'trial']);
+      const usersWithSub = new Set((subsForTrials || []).map((s: any) => s.user_id));
+
+      // Batch check entitlements
+      const { data: entsForTrials } = await supabase
+        .from('entitlements')
+        .select('user_id')
+        .in('user_id', trialUserIds)
+        .eq('status', 'active');
+      const usersWithEnt = new Set((entsForTrials || []).map((e: any) => e.user_id));
+
+      for (const order of trialOrders || []) {
+        if (!usersWithSub.has(order.user_id) && !usersWithEnt.has(order.user_id)) {
+          trialsWithoutAccess.push({
+            order_id: order.id,
+            order_number: order.order_number,
+            user_id: order.user_id,
+          });
+        }
+      }
+    }
+
+    invariants.push({
+      name: 'INV-13: Trial orders create access (7d)',
+      passed: trialsWithoutAccess.length === 0,
+      count: trialsWithoutAccess.length,
+      samples: trialsWithoutAccess.slice(0, 5),
+      description: 'Paid trial orders must create subscription or entitlement',
+    });
+
     // INV-4: Trial/non-trial mismatch guards (check audit_logs counters)
     const { count: trialBlockedCount } = await supabase
       .from('audit_logs')
