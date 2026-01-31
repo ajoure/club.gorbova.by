@@ -8340,6 +8340,17 @@ export type Database = {
       generate_order_number: { Args: never; Returns: string }
       generate_ticket_number: { Args: never; Returns: string }
       generate_ticket_number_atomic: { Args: never; Returns: string }
+      get_business_orphan_payments: {
+        Args: { from_date?: string }
+        Returns: {
+          amount: number
+          id: string
+          origin: string
+          paid_at: string
+          payment_classification: string
+          provider_payment_id: string
+        }[]
+      }
       get_club_members_enriched: {
         Args: { p_club_id: string; p_scope?: string }
         Returns: {

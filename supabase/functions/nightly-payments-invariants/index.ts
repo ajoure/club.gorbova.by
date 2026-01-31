@@ -67,43 +67,70 @@ serve(async (req) => {
       description: 'payments_v2(provider, provider_payment_id) should be unique',
     });
 
-    // INV-2: Orphan payments 2026+ (succeeded, amount>0, profile_id not null, order_id null)
-    // PATCH-B: Exclude card_verification (void/authorization) - they legitimately have no order
-    // Also exclude statement_sync imports and test payments
-    const { data: allOrphans } = await supabase
-      .from('payments_v2')
-      .select('id, provider_payment_id, amount, paid_at, profile_id, transaction_type, origin, meta')
-      .gte('paid_at', '2026-01-01')
-      .eq('status', 'succeeded')
-      .gt('amount', 0)
-      .not('profile_id', 'is', null)
-      .is('order_id', null)
-      // Exclude card verification transaction types - they don't create orders by design
-      .not('transaction_type', 'in', '(void,Отмена,authorization_void,authorization)')
-      // Only check webhook-originated payments (bepaid), not statement imports
-      .eq('origin', 'bepaid')
-      .limit(50);
-
-    // Filter out test payments in code (can't filter jsonb->>'test_payment' easily in SDK)
-    const orphans = (allOrphans || []).filter((o: any) => 
-      o.meta?.test_payment !== true && o.meta?.test_payment !== 'true'
+    // INV-2A (STRICT FAIL): Business payments must have order_id
+    // Uses RPC with DB-level test_payment filter (no JS filter hack)
+    const { data: businessOrphans, error: boError } = await supabase.rpc(
+      'get_business_orphan_payments',
+      { from_date: '2026-01-01' }
     );
-    const orphanCount = orphans.length;
+
+    if (boError) {
+      console.error('[NIGHTLY] INV-2A RPC error:', boError);
+    }
+
+    const businessOrphanCount = businessOrphans?.length || 0;
 
     invariants.push({
-      name: 'INV-2: No orphan payments 2026+ (webhook-originated, non-test)',
-      passed: orphanCount === 0,
-      count: orphanCount,
-      samples: orphans.slice(0, 5).map((o: any) => ({
+      name: 'INV-2A: No business payments without order (STRICT)',
+      passed: businessOrphanCount === 0,
+      count: businessOrphanCount,
+      samples: (businessOrphans || []).slice(0, 5).map((o: any) => ({
         id: o.id,
         provider_payment_id: o.provider_payment_id,
         amount: o.amount,
         paid_at: o.paid_at,
-        transaction_type: o.transaction_type,
+        payment_classification: o.payment_classification,
         origin: o.origin,
       })),
-      description: 'All 2026+ webhook-originated succeeded payments (except card_verification/test) should have order_id',
+      description: 'Business payments (trial/regular/renewal) MUST have order_id. Classification-based, no origin/txtype hacks.',
     });
+
+    // INV-2B (CONTROL): Technical orphans - tracked, not FAIL
+    // Threshold warning at 200 to detect growth
+    const TECH_ORPHAN_THRESHOLD = 200;
+    const { data: techOrphans, count: techOrphanCount } = await supabase
+      .from('payments_v2')
+      .select('id, provider_payment_id, amount, paid_at, payment_classification, origin', { count: 'exact' })
+      .gte('paid_at', '2026-01-01')
+      .eq('status', 'succeeded')
+      .gt('amount', 0)
+      .is('order_id', null)
+      .in('payment_classification', ['card_verification', 'refund', 'orphan_technical'])
+      .limit(10);
+
+    invariants.push({
+      name: 'INV-2B: Technical orphans (CONTROL)',
+      passed: true, // Not a failure - just tracking
+      count: techOrphanCount || 0,
+      samples: (techOrphans || []).slice(0, 5).map((o: any) => ({
+        id: o.id,
+        provider_payment_id: o.provider_payment_id,
+        amount: o.amount,
+        payment_classification: o.payment_classification,
+      })),
+      description: 'Technical payments (card_verification/refund/orphan) without order - tracked only',
+    });
+
+    // INV-2B-WARN: Anti-silent-growth guard
+    if ((techOrphanCount || 0) > TECH_ORPHAN_THRESHOLD) {
+      invariants.push({
+        name: 'INV-2B-WARN: Technical orphans above threshold',
+        passed: false, // WARNING - investigate growth
+        count: (techOrphanCount || 0) - TECH_ORPHAN_THRESHOLD,
+        samples: [],
+        description: `Technical orphans exceed ${TECH_ORPHAN_THRESHOLD} threshold - investigate for potential issues`,
+      });
+    }
 
     // INV-3: Amount mismatches (payment.amount != order.final_price)
     const { data: mismatches } = await supabase
@@ -171,7 +198,7 @@ serve(async (req) => {
       description: 'payments_v2.amount must equal provider_response.transaction.amount/100',
     });
 
-    // INV-8: Classification coverage (PATCH 6 - payments must be classified)
+    // INV-8: Classification coverage (STRICT - after backfill completion)
     const { count: unclassifiedCount } = await supabase
       .from('payments_v2')
       .select('*', { count: 'exact', head: true })
@@ -179,11 +206,11 @@ serve(async (req) => {
       .gte('created_at', '2026-01-01');
 
     invariants.push({
-      name: 'INV-8: Payment classification coverage',
-      passed: true, // Informational for now, will become FAIL after backfill
+      name: 'INV-8: Payment classification coverage (STRICT)',
+      passed: (unclassifiedCount || 0) === 0, // STRICT FAIL if any unclassified
       count: unclassifiedCount || 0,
       samples: [],
-      description: 'All 2026+ payments should have payment_classification',
+      description: 'All 2026+ payments MUST have payment_classification. FAIL if any unclassified.',
     });
 
     // INV-9: Card verification must NOT have order_id (PATCH 6)
