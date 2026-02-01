@@ -198,12 +198,23 @@ serve(async (req) => {
   const bepaidAuth = btoa(`${bepaidShopId}:${bepaidSecretKey}`);
   const testMode = Deno.env.get("BEPAID_TEST_MODE") === "true";
 
+  // PATCH-6: GUARD - Stop guards and limits
+  const MAX_BATCH = 50;        // Max preregistrations per run
+  const MAX_ERRORS = 10;       // Abort if too many errors
+  const MAX_RUNTIME_MS = 55000; // 55 sec max runtime guard
+  const startTime = Date.now();
+
   const results = {
     processed: 0,
     charged: 0,
     failed: 0,
     skipped: 0,
     errors: [] as string[],
+    guards: {
+      batch_limited: false,
+      error_aborted: false,
+      runtime_aborted: false,
+    },
   };
 
   try {
@@ -229,6 +240,7 @@ serve(async (req) => {
 
     // 1. Find preregistrations that are ready for charging
     // Status: new or contacted, with user_id set (has account)
+    // PATCH-2: Added meta field to preserve existing billing data
     const { data: preregistrations, error: preregError } = await supabase
       .from("course_preregistrations")
       .select(`
@@ -240,7 +252,8 @@ serve(async (req) => {
         product_code,
         tariff_name,
         status,
-        created_at
+        created_at,
+        meta
       `)
       .in("status", ["new", "contacted"])
       .not("user_id", "is", null);
@@ -259,9 +272,10 @@ serve(async (req) => {
     console.log(`Found ${preregistrations.length} preregistrations to check`);
 
     // 2. Get preregistration offer to check charge window
+    // PATCH-1: Fixed column name charge_offer_id → auto_charge_offer_id
     const { data: preregOffer } = await supabase
       .from("tariff_offers")
-      .select("id, meta, charge_offer_id")
+      .select("id, meta, auto_charge_offer_id")
       .eq("offer_type", "preregistration")
       .eq("is_active", true)
       .single();
@@ -278,7 +292,11 @@ serve(async (req) => {
     const chargeWindowStart = meta.preregistration?.charge_window_start || meta.charge_window_start || 1;
     const chargeWindowEnd = meta.preregistration?.charge_window_end || meta.charge_window_end || 4;
     const firstChargeDate = meta.preregistration?.first_charge_date || meta.first_charge_date;
-    const chargeOfferId = meta.charge_offer_id || preregOffer.charge_offer_id;
+    // PATCH-1: Fixed chargeOfferId priority: meta.preregistration.charge_offer_id → meta.charge_offer_id → auto_charge_offer_id
+    const chargeOfferId = 
+      meta?.preregistration?.charge_offer_id || 
+      meta?.charge_offer_id || 
+      preregOffer?.auto_charge_offer_id;
 
     // PATCH-1: Check first_charge_date (YYYY-MM-DD string comparison)
     if (firstChargeDate && todayMinsk < firstChargeDate) {
@@ -311,18 +329,18 @@ serve(async (req) => {
       throw new Error("No charge_offer_id configured for preregistration offer");
     }
 
-    const { data: chargeOffer } = await supabase
+    const { data: chargeOffer, error: chargeOfferError } = await supabase
       .from("tariff_offers")
       .select(`
         id,
         amount,
         tariff_id,
-        is_recurring,
-        tariffs!inner (
+        meta,
+        tariffs (
           id,
           name,
           product_id,
-          products_v2!inner (
+          products_v2 (
             id,
             name,
             code
@@ -331,6 +349,11 @@ serve(async (req) => {
       `)
       .eq("id", chargeOfferId)
       .single();
+    
+    if (chargeOfferError) {
+      console.error(`Error fetching charge offer ${chargeOfferId}: ${chargeOfferError.message}`);
+      throw new Error(`Charge offer ${chargeOfferId} not found: ${chargeOfferError.message}`);
+    }
 
     if (!chargeOffer) {
       throw new Error(`Charge offer ${chargeOfferId} not found`);
@@ -346,7 +369,28 @@ serve(async (req) => {
     console.log(`Charge offer: ${chargeAmount} ${currency} for ${productName}`);
 
     // 4. Process each preregistration
-    for (const prereg of preregistrations) {
+    // PATCH-6: Apply batch limit
+    const limitedPreregs = preregistrations.slice(0, MAX_BATCH);
+    if (preregistrations.length > MAX_BATCH) {
+      results.guards.batch_limited = true;
+      console.log(`GUARD: Batch limited to ${MAX_BATCH} (total: ${preregistrations.length})`);
+    }
+
+    for (const prereg of limitedPreregs) {
+      // PATCH-6: Runtime guard check
+      if (Date.now() - startTime > MAX_RUNTIME_MS) {
+        results.guards.runtime_aborted = true;
+        console.log(`GUARD: Runtime limit reached (${MAX_RUNTIME_MS}ms), aborting`);
+        break;
+      }
+      
+      // PATCH-6: Error limit guard
+      if (results.failed >= MAX_ERRORS) {
+        results.guards.error_aborted = true;
+        console.log(`GUARD: Max errors (${MAX_ERRORS}) reached, aborting`);
+        break;
+      }
+
       results.processed++;
       console.log(`Processing preregistration ${prereg.id} for ${prereg.email}`);
 
@@ -430,7 +474,7 @@ serve(async (req) => {
         const { data: orderNumResult } = await supabase.rpc("generate_order_number");
         const orderNumber = orderNumResult || `ORD-${Date.now()}`;
 
-        // 4.4 Create order
+        // 4.4 Create order (note: orders_v2 uses paid_amount, not amount)
         const { data: order, error: orderError } = await supabase
           .from("orders_v2")
           .insert({
@@ -440,7 +484,6 @@ serve(async (req) => {
             product_id: product.id,
             tariff_id: tariff.id,
             offer_id: chargeOffer.id,
-            amount: chargeAmount,
             currency,
             status: "pending",
             customer_email: prereg.email,
@@ -451,6 +494,7 @@ serve(async (req) => {
               preregistration_id: prereg.id,
               auto_charged: true,
               charged_at: now.toISOString(),
+              expected_amount: chargeAmount,
             },
           })
           .select()

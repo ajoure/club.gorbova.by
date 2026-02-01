@@ -92,11 +92,11 @@ interface Preregistration {
 
 type BillingSegment = 'all' | 'pending' | 'paid' | 'overdue';
 
+// PATCH-5: Removed converted status - only real statuses remain
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
   new: { label: "Новая", variant: "secondary" },
   confirmed: { label: "Подтверждена", variant: "default" },
   contacted: { label: "Связались", variant: "outline" },
-  converted: { label: "Оплачено", variant: "default" },
   paid: { label: "Оплачено", variant: "default" },
   cancelled: { label: "Отменена", variant: "destructive" },
 };
@@ -164,17 +164,17 @@ export function PreregistrationsTabContent() {
         profiles: p.user_id ? profilesMap[p.user_id] || null : null,
       })) as Preregistration[];
       
-      // Apply billing segment filter
+      // Apply billing segment filter (PATCH-5: removed converted from checks)
       if (billingFilter === 'pending') {
         result = result.filter((p) => {
           const billingStatus = p.meta?.billing?.billing_status;
-          return !['paid', 'converted', 'cancelled'].includes(p.status) &&
-                 !['overdue', 'no_card', 'failed'].includes(billingStatus || '');
+          return !['paid', 'cancelled'].includes(p.status) &&
+                 !['overdue', 'no_card', 'failed', 'paid'].includes(billingStatus || '');
         });
       } else if (billingFilter === 'paid') {
         result = result.filter((p) => {
           const billingStatus = p.meta?.billing?.billing_status;
-          return p.status === 'paid' || p.status === 'converted' || billingStatus === 'paid';
+          return p.status === 'paid' || billingStatus === 'paid';
         });
       } else if (billingFilter === 'overdue') {
         result = result.filter((p) => {
@@ -187,14 +187,20 @@ export function PreregistrationsTabContent() {
     },
   });
 
-  // Fetch stats with billing segments
+  // PATCH-4: Fetch stats with billing segments - respects productFilter
   const { data: stats } = useQuery({
-    queryKey: ["preregistration-stats"],
+    queryKey: ["preregistration-stats", productFilter],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("course_preregistrations")
         .select("status, product_code, meta");
+      
+      // Apply product filter to stats query
+      if (productFilter !== "all") {
+        query = query.eq("product_code", productFilter);
+      }
 
+      const { data, error } = await query;
       if (error) throw error;
 
       const total = data.length;
@@ -205,16 +211,16 @@ export function PreregistrationsTabContent() {
         return acc;
       }, {} as Record<string, number>);
 
-      // Billing segment counts
+      // Billing segment counts (PATCH-5: removed converted from checks)
       const billingPending = data.filter((p) => {
         const billingStatus = (p.meta as any)?.billing?.billing_status;
-        return !['paid', 'converted', 'cancelled'].includes(p.status) &&
-               !['overdue', 'no_card', 'failed'].includes(billingStatus || '');
+        return !['paid', 'cancelled'].includes(p.status) &&
+               !['overdue', 'no_card', 'failed', 'paid'].includes(billingStatus || '');
       }).length;
       
       const billingPaid = data.filter((p) => {
         const billingStatus = (p.meta as any)?.billing?.billing_status;
-        return p.status === 'paid' || p.status === 'converted' || billingStatus === 'paid';
+        return p.status === 'paid' || billingStatus === 'paid';
       }).length;
       
       const billingOverdue = data.filter((p) => {
@@ -482,6 +488,7 @@ export function PreregistrationsTabContent() {
         <Card>
           <CardContent className="pt-6">
             <div className="overflow-x-auto">
+              {/* PATCH-3: Added Card/Attempts/Last Attempt/TG/Email columns like AutoRenewals */}
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -505,25 +512,40 @@ export function PreregistrationsTabContent() {
                     <TableHead>Имя</TableHead>
                     <TableHead>Контакты</TableHead>
                     <TableHead>Продукт</TableHead>
-                    <TableHead>Тариф</TableHead>
                     <TableHead>Статус</TableHead>
+                    <TableHead className="text-center">Карта</TableHead>
+                    <TableHead className="text-center">Попытки</TableHead>
+                    <TableHead>Last Attempt</TableHead>
+                    <TableHead className="text-center">TG</TableHead>
+                    <TableHead className="text-center">Email</TableHead>
                     <TableHead>Дата</TableHead>
-                    <TableHead>TG</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {isLoading ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <TableRow key={i}>
-                        <TableCell colSpan={8}>
+                        <TableCell colSpan={11}>
                           <Skeleton className="h-10 w-full" />
                         </TableCell>
                       </TableRow>
                     ))
                   ) : preregistrations && preregistrations.length > 0 ? (
-                    preregistrations.map((prereg) => {
+                  preregistrations.map((prereg) => {
                       const status = statusConfig[prereg.status] || { label: prereg.status, variant: "secondary" as const };
                       const isSelected = selectedIds.has(prereg.id);
+                      const billing = prereg.meta?.billing;
+                      const hasCard = billing?.has_active_card ?? false;
+                      const attemptsCount = billing?.attempts_count ?? 0;
+                      const lastAttemptAt = billing?.last_attempt_at;
+                      const lastAttemptStatus = billing?.last_attempt_status;
+                      const notified = billing?.notified;
+                      
+                      // TG notification status: tomorrow_charge_at indicates notification sent
+                      const tgSent = !!notified?.tomorrow_charge_at || !!notified?.no_card_at || !!notified?.failed_at;
+                      // Email would be similar if we track it
+                      const emailSent = false; // Placeholder until email tracking is added
+                      
                       return (
                         <TableRow
                           key={prereg.id}
@@ -565,33 +587,56 @@ export function PreregistrationsTabContent() {
                             </span>
                           </TableCell>
                           <TableCell>
-                            <span className="text-sm text-muted-foreground">
-                              {prereg.tariff_name || "—"}
+                            <Badge variant={status.variant}>{status.label}</Badge>
+                          </TableCell>
+                          {/* PATCH-3: Card column */}
+                          <TableCell className="text-center">
+                            {hasCard ? (
+                              <CreditCard className="h-4 w-4 text-green-500 mx-auto" />
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          {/* PATCH-3: Attempts column */}
+                          <TableCell className="text-center">
+                            <span className="text-sm">{attemptsCount}/3</span>
+                          </TableCell>
+                          {/* PATCH-3: Last Attempt column */}
+                          <TableCell>
+                            {lastAttemptAt ? (
+                              <div className="text-xs">
+                                <div>{format(new Date(lastAttemptAt), "dd.MM HH:mm", { locale: ru })}</div>
+                                <div className={lastAttemptStatus === 'success' ? 'text-green-500' : lastAttemptStatus === 'failed' ? 'text-red-500' : 'text-muted-foreground'}>
+                                  {lastAttemptStatus === 'success' ? 'ok' : lastAttemptStatus === 'failed' ? 'fail' : lastAttemptStatus || '—'}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground text-sm">—</span>
+                            )}
+                          </TableCell>
+                          {/* PATCH-3: TG notification column */}
+                          <TableCell className="text-center">
+                            <span className={`text-lg ${tgSent ? 'text-green-500' : 'text-muted-foreground'}`}>
+                              {tgSent ? '●' : '○'}
                             </span>
                           </TableCell>
-                          <TableCell>
-                            <Badge variant={status.variant}>{status.label}</Badge>
+                          {/* PATCH-3: Email notification column */}
+                          <TableCell className="text-center">
+                            <span className={`text-lg ${emailSent ? 'text-green-500' : 'text-muted-foreground'}`}>
+                              {emailSent ? '●' : '○'}
+                            </span>
                           </TableCell>
                           <TableCell>
                             <span className="text-sm text-muted-foreground">
                               {format(new Date(prereg.created_at), "dd.MM.yy", { locale: ru })}
                             </span>
                           </TableCell>
-                          <TableCell>
-                            {prereg.profiles?.telegram_user_id ? (
-                              <Badge variant="outline" className="gap-1">
-                                <MessageSquare className="h-3 w-3" />
-                              </Badge>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
                         </TableRow>
                       );
                     })
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                         Предзаписи не найдены
                       </TableCell>
                     </TableRow>
