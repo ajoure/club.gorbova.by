@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback, ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { useState, useRef, useCallback, ReactNode, useEffect } from "react";
+import { Loader2, ArrowDown } from "lucide-react";
 
 interface PullToRefreshProps {
   children: ReactNode;
@@ -33,15 +33,29 @@ function findScrollableParent(el: HTMLElement | null): HTMLElement | null {
   return null;
 }
 
+// Constants
+const THRESHOLD_PERCENT = 0.35; // 35% of screen height
+const COOLDOWN_MS = 1500;
+const HORIZONTAL_LOCK_THRESHOLD = 12; // px before we decide direction
+
 export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [pullDistance, setPullDistance] = useState(0);
+  const [pullState, setPullState] = useState<'idle' | 'pulling' | 'ready'>('idle');
+  
   const containerRef = useRef<HTMLDivElement>(null);
   const startY = useRef(0);
+  const startX = useRef(0);
   const isPulling = useRef(false);
+  const directionLocked = useRef<'vertical' | 'horizontal' | null>(null);
   const currentPullDistance = useRef(0);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
-  const threshold = 60;
+  const lastRefreshTime = useRef(0);
+  
+  // Calculate threshold based on screen height
+  const threshold = typeof window !== 'undefined' 
+    ? Math.max(80, window.innerHeight * THRESHOLD_PERCENT) 
+    : 120;
 
   const blurIfNeeded = useCallback((e: React.SyntheticEvent) => {
     const active = document.activeElement;
@@ -50,119 +64,196 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
     (active as HTMLElement).blur();
   }, []);
 
+  const resetPull = useCallback(() => {
+    isPulling.current = false;
+    directionLocked.current = null;
+    currentPullDistance.current = 0;
+    scrollContainerRef.current = null;
+    setPullDistance(0);
+    setPullState('idle');
+  }, []);
+
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
-      // If a text input is focused, don't start pull-to-refresh.
+      // Block if editing, refreshing, or in cooldown
       if (isEditableElement(document.activeElement)) return;
+      if (refreshing) return;
+      
+      // Cooldown check
+      const now = Date.now();
+      if (now - lastRefreshTime.current < COOLDOWN_MS) return;
 
-      // Find the scrollable container (could be a parent with overflow-y: auto/scroll)
+      // Find scrollable container
       const scrollContainer = findScrollableParent(containerRef.current);
       const scrollTop = scrollContainer 
         ? scrollContainer.scrollTop 
         : window.scrollY;
 
-      // Check if we're at the top of the scrollable area
-      if (scrollTop === 0 && !refreshing) {
-        startY.current = e.touches[0].clientY;
-        isPulling.current = true;
-        scrollContainerRef.current = scrollContainer;
-      }
+      // CRITICAL: Only start pull if at absolute top (scrollTop === 0)
+      if (scrollTop !== 0) return;
+
+      startY.current = e.touches[0].clientY;
+      startX.current = e.touches[0].clientX;
+      isPulling.current = true;
+      directionLocked.current = null;
+      scrollContainerRef.current = scrollContainer;
+      setPullState('pulling');
     },
     [refreshing]
   );
 
   const handleTouchMove = useCallback(
     (e: React.TouchEvent) => {
-      // Never interfere with typing: this is a common reason why mobile can't dismiss the keyboard.
+      // Guard checks
       if (isEditableElement(document.activeElement)) return;
       if (!isPulling.current || refreshing) return;
 
-      // Check scroll position of the tracked container
+      // Re-check scroll position
       const scrollTop = scrollContainerRef.current 
         ? scrollContainerRef.current.scrollTop 
         : window.scrollY;
 
-      // Stop if user scrolled down
+      // If user scrolled up (scrollTop > 0), cancel pull immediately
       if (scrollTop > 0) {
-        isPulling.current = false;
-        setPullDistance(0);
-        currentPullDistance.current = 0;
-        scrollContainerRef.current = null;
+        resetPull();
         return;
       }
 
       const currentY = e.touches[0].clientY;
-      const diff = currentY - startY.current;
+      const currentX = e.touches[0].clientX;
+      const diffY = currentY - startY.current;
+      const diffX = currentX - startX.current;
 
-      if (diff > 0) {
-        e.preventDefault();
-        // Make the gesture feel natural: user pulls ~60px → refresh
-        const distance = Math.min(diff, threshold * 1.5);
+      // Lock direction after small movement
+      if (!directionLocked.current && (Math.abs(diffX) > HORIZONTAL_LOCK_THRESHOLD || Math.abs(diffY) > HORIZONTAL_LOCK_THRESHOLD)) {
+        if (Math.abs(diffX) > Math.abs(diffY)) {
+          // Horizontal gesture - cancel pull, let browser handle
+          directionLocked.current = 'horizontal';
+          resetPull();
+          return;
+        } else {
+          directionLocked.current = 'vertical';
+        }
+      }
+
+      // If horizontal locked, ignore
+      if (directionLocked.current === 'horizontal') return;
+
+      // Only respond to downward pull
+      if (diffY > 0 && directionLocked.current === 'vertical') {
+        e.preventDefault(); // Prevent native scroll/refresh
+        
+        // Rubber-band effect: diminishing returns after threshold
+        const resistance = diffY > threshold ? 0.3 : 0.6;
+        const distance = Math.min(diffY * resistance, threshold * 1.8);
+        
         setPullDistance(distance);
         currentPullDistance.current = distance;
+        setPullState(distance >= threshold ? 'ready' : 'pulling');
+      } else if (diffY < 0) {
+        // User pulled up - cancel
+        resetPull();
       }
     },
-    [refreshing]
+    [refreshing, threshold, resetPull]
   );
 
   const handleTouchEnd = useCallback(() => {
     if (!isPulling.current) return;
 
+    const wasReady = currentPullDistance.current >= threshold;
+    
+    // Reset visual state
     isPulling.current = false;
+    directionLocked.current = null;
     scrollContainerRef.current = null;
 
-    const shouldRefresh = currentPullDistance.current >= threshold;
-    currentPullDistance.current = 0;
-
-    if (!shouldRefresh) {
+    if (!wasReady) {
+      // Not enough pull - just reset
       setPullDistance(0);
+      setPullState('idle');
+      currentPullDistance.current = 0;
       return;
     }
 
-    // IMPORTANT: reload must happen synchronously after the gesture on mobile
+    // Trigger refresh
+    lastRefreshTime.current = Date.now();
+    
     if (!onRefresh) {
+      // No custom handler - reload page
       window.location.reload();
       return;
     }
 
     setRefreshing(true);
-    setPullDistance(threshold / 2);
+    setPullState('idle');
+    setPullDistance(threshold * 0.4); // Keep indicator visible during refresh
 
-    Promise.resolve(onRefresh()).finally(() => {
-      setRefreshing(false);
-      setPullDistance(0);
-    });
-  }, [onRefresh]);
+    Promise.resolve(onRefresh())
+      .finally(() => {
+        setRefreshing(false);
+        setPullDistance(0);
+        currentPullDistance.current = 0;
+      });
+  }, [onRefresh, threshold]);
 
-  const indicatorOpacity = Math.min(pullDistance / threshold, 1);
-  const indicatorScale = 0.5 + indicatorOpacity * 0.5;
+  // Cancel on touch cancel
+  const handleTouchCancel = useCallback(() => {
+    resetPull();
+  }, [resetPull]);
+
+  // Calculate visual states
+  const progress = Math.min(pullDistance / threshold, 1);
+  const indicatorOpacity = Math.min(progress * 1.5, 1);
+  const indicatorScale = 0.6 + progress * 0.4;
+  const rotation = progress * 180;
 
   return (
     <div
       ref={containerRef}
-      className="flex-1 min-h-0 flex flex-col relative touch-pan-y"
+      className="flex-1 min-h-0 flex flex-col relative"
+      style={{
+        // iOS: Disable native pull-to-refresh
+        overscrollBehavior: 'contain',
+        WebkitOverflowScrolling: 'touch',
+        touchAction: 'pan-y',
+      }}
       onPointerDownCapture={blurIfNeeded}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
     >
       {/* Pull indicator */}
-      {pullDistance > 0 && (
+      {(pullDistance > 0 || refreshing) && (
         <div
-          className="absolute left-1/2 z-50 flex items-center justify-center pointer-events-none"
+          className="absolute left-1/2 z-50 flex items-center justify-center pointer-events-none transition-opacity duration-150"
           style={{
-            top: pullDistance - 40,
+            top: Math.max(8, pullDistance - 48),
             opacity: indicatorOpacity,
             transform: `translateX(-50%) scale(${indicatorScale})`,
           }}
         >
-          <div className="bg-background border border-border rounded-full p-2 shadow-lg">
-            <Loader2
-              className={`h-5 w-5 text-primary ${refreshing ? "animate-spin" : ""}`}
-              style={{
-                transform: refreshing ? "none" : `rotate(${pullDistance * 4}deg)`,
-              }}
-            />
+          <div 
+            className={`
+              bg-background border-2 rounded-full p-2.5 shadow-lg
+              ${pullState === 'ready' ? 'border-primary bg-primary/10' : 'border-border'}
+              ${refreshing ? 'border-primary' : ''}
+            `}
+          >
+            {refreshing ? (
+              <Loader2 className="h-5 w-5 text-primary animate-spin" />
+            ) : (
+              <ArrowDown
+                className={`h-5 w-5 transition-colors duration-150 ${
+                  pullState === 'ready' ? 'text-primary' : 'text-muted-foreground'
+                }`}
+                style={{
+                  transform: `rotate(${rotation}deg)`,
+                  transition: 'transform 0.1s ease-out',
+                }}
+              />
+            )}
           </div>
         </div>
       )}
@@ -171,8 +262,8 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
       <div
         className="flex-1 min-h-0 flex flex-col"
         style={{
-          transform: pullDistance > 0 ? `translateY(${pullDistance}px)` : "none",
-          transition: isPulling.current ? "none" : "transform 0.2s ease-out",
+          transform: pullDistance > 0 ? `translateY(${pullDistance}px)` : 'none',
+          transition: isPulling.current ? 'none' : 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
         }}
       >
         {children}
