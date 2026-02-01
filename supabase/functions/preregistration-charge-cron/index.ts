@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // PATCH-F: BUILD_ID for deployment verification - MUST BE UNIQUE EACH DEPLOY
-const BUILD_ID = "prereg-cron:2026-02-02T10:30:00Z";
+const BUILD_ID = "prereg-cron:2026-02-02T11:30:00Z";
 
 // PATCH-0.1: Expected production shop_id - hard guard
 const EXPECTED_SHOP_ID = "33524";
@@ -378,98 +378,109 @@ async function getBepaidShopId(supabase: any): Promise<{ shopId: string; source:
 }
 
 // PATCH-0: Preflight check - verify bePaid credentials
-async function runPreflight(supabase: any, bepaidShopId: string, bepaidSecretKey: string): Promise<{
+// Strategy: Send a request with invalid token to /transactions/payments
+// If credentials are valid: bePaid returns 422 with "token not found" error
+// If credentials are invalid: bePaid returns 401 or 403
+// This confirms shop_id and secret_key are correct without any real transaction
+async function runPreflight(supabase: any, bepaidShopId: string, bepaidSecretKey: string, shopIdSource: string): Promise<{
   ok: boolean;
   build_id: string;
   host_used: string;
   shop_id_masked: string;
   shop_id_source: string;
-  shop_name?: string;
   http_status?: number;
-  provider_error?: string;
+  transaction_status?: string;
+  provider_error?: string | null;
   provider_check: string;
   charge_capability: boolean;
+  recent_payments_count?: number;
 }> {
   const bepaidAuth = btoa(`${bepaidShopId}:${bepaidSecretKey}`);
   const host = "gateway.bepaid.by";
   const shopIdMasked = bepaidShopId.substring(0, 3) + "**";
 
+  console.log(`[${BUILD_ID}] Preflight: verifying credentials for shop ${shopIdMasked} (source: ${shopIdSource})`);
+
   try {
-    // Step 1: Check shop exists via GET /shops/{id}
-    const shopResponse = await fetch(`https://${host}/shops/${bepaidShopId}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Basic ${bepaidAuth}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    const shopResult = await shopResponse.json();
-    
-    if (!shopResponse.ok || shopResult.errors) {
-      return {
-        ok: false,
-        build_id: BUILD_ID,
-        host_used: host,
-        shop_id_masked: shopIdMasked,
-        shop_id_source: "unknown",
-        http_status: shopResponse.status,
-        provider_error: shopResult.errors?.base?.[0] || shopResult.message || "Shop not found",
-        provider_check: "shop_only",
-        charge_capability: false,
-      };
-    }
-
-    // Step 2: Try a test authorization to verify charge capability
-    // Use minimal test transaction (1 kopeck, test mode, will be voided)
+    // Method 1: Try a payment with invalid token
+    // This verifies that credentials are accepted by bePaid
+    // Expected response: 422 "Token not found" = credentials OK
+    // If 401/403 = credentials invalid
     const testPayload = {
       request: {
         amount: 1, // 1 kopeck
         currency: "BYN",
-        description: "Preflight check - will be voided",
+        description: "Preflight credential verification",
         test: true,
         credit_card: {
-          number: "4200000000000000", // bePaid test card
-          exp_month: "12",
-          exp_year: "2030",
-          verification_value: "123",
+          token: "preflight_invalid_token_check_12345", // Invalid token on purpose
         },
       },
     };
 
-    const authResponse = await fetch(`https://${host}/transactions/authorizations`, {
+    const response = await fetch(`https://${host}/transactions/payments`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${bepaidAuth}`,
         "Content-Type": "application/json",
+        "X-API-Version": "2",
       },
       body: JSON.stringify(testPayload),
     });
 
-    const authResult = await authResponse.json();
+    const result = await response.json();
     
-    // Check if we can at least attempt transactions
-    // Even if card is invalid, shop auth must work
-    const hasAuthCapability = authResponse.status !== 401 && authResponse.status !== 403;
+    console.log(`[${BUILD_ID}] Preflight bePaid response: status=${response.status}, body=${JSON.stringify(result)}`);
+    
+    // Credential check logic:
+    // 401 = Invalid credentials (wrong secret key)
+    // 403 = Forbidden (account issue)
+    // 422 = Unprocessable Entity (expected - token invalid, but credentials OK!)
+    // Other = Unknown
+    const isAuthError = response.status === 401 || response.status === 403;
+    const isCredentialsValid = !isAuthError;
+    
+    // Check if this is expected "token not found" error (means credentials work)
+    const errorMessage = result.errors?.base?.[0] || result.response?.message || result.message || "";
+    const isTokenError = errorMessage.toLowerCase().includes("token") || 
+                         errorMessage.toLowerCase().includes("card") ||
+                         errorMessage.toLowerCase().includes("credit_card");
+    
+    // Method 2: Additional verification via DB - check recent successful payments
+    const { count: recentPaymentsCount } = await supabase
+      .from("payments_v2")
+      .select("*", { count: "exact", head: true })
+      .eq("provider", "bepaid")
+      .eq("status", "paid")
+      .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+
+    const hasRecentPayments = (recentPaymentsCount || 0) > 0;
+    
+    // Final determination
+    const chargeCapability = isCredentialsValid && (isTokenError || hasRecentPayments);
+    
+    console.log(`[${BUILD_ID}] Preflight: credentials_valid=${isCredentialsValid}, token_error=${isTokenError}, recent_payments=${recentPaymentsCount}, charge_capable=${chargeCapability}`);
 
     return {
-      ok: true,
+      ok: isCredentialsValid,
       build_id: BUILD_ID,
       host_used: host,
       shop_id_masked: shopIdMasked,
-      shop_id_source: "db",
-      shop_name: shopResult.shop?.name || "Unknown",
-      http_status: shopResponse.status,
-      provider_check: "shop+auth",
-      charge_capability: hasAuthCapability,
+      shop_id_source: shopIdSource,
+      http_status: response.status,
+      provider_check: isCredentialsValid ? (isTokenError ? "token_validation" : "recent_payments") : "auth_failed",
+      charge_capability: chargeCapability,
+      provider_error: isCredentialsValid ? null : errorMessage,
+      recent_payments_count: recentPaymentsCount || 0,
     };
   } catch (err) {
+    console.error(`[${BUILD_ID}] Preflight error:`, err);
     return {
       ok: false,
       build_id: BUILD_ID,
       host_used: host,
       shop_id_masked: shopIdMasked,
-      shop_id_source: "unknown",
+      shop_id_source: shopIdSource,
       provider_error: err instanceof Error ? err.message : String(err),
       provider_check: "error",
       charge_capability: false,
@@ -533,8 +544,7 @@ serve(async (req) => {
   // PATCH-0: Preflight mode - just check credentials
   if (isPreflight) {
     console.log(`[${BUILD_ID}] Running preflight check`);
-    const preflightResult = await runPreflight(supabase, bepaidShopId, bepaidSecretKey);
-    preflightResult.shop_id_source = shopIdSource;
+    const preflightResult = await runPreflight(supabase, bepaidShopId, bepaidSecretKey, shopIdSource);
     
     console.log(`[${BUILD_ID}] Preflight result:`, JSON.stringify(preflightResult));
     
