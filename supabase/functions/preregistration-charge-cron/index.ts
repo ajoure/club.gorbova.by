@@ -1,13 +1,51 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// PATCH-B: BUILD_ID for deployment verification (no PII in logs)
-const BUILD_ID = "prereg-cron:2026-02-01T22:32Z";
+// PATCH-F: BUILD_ID for deployment verification - MUST BE UNIQUE EACH DEPLOY
+const BUILD_ID = "prereg-cron:2026-02-01T23:15:00Z";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+// PATCH-I-2: Whitelist validation to prevent "column does not exist" errors
+const ALLOWED_ORDERS_V2_FIELDS = [
+  'order_number', 'user_id', 'profile_id', 'product_id', 'tariff_id', 'flow_id',
+  'payment_plan_id', 'pricing_stage_id', 'base_price', 'discount_percent',
+  'final_price', 'currency', 'status', 'paid_amount', 'is_trial', 'trial_end_at',
+  'customer_email', 'customer_phone', 'customer_ip', 'meta', 'purchase_snapshot',
+  'payer_type', 'offer_id'
+];
+
+const ALLOWED_PAYMENTS_V2_FIELDS = [
+  'order_id', 'user_id', 'profile_id', 'amount', 'currency', 'status', 'provider',
+  'provider_payment_id', 'provider_response', 'payment_token', 'card_last4',
+  'card_brand', 'installment_number', 'is_recurring', 'error_message', 'paid_at',
+  'meta', 'origin', 'transaction_type', 'payment_classification'
+];
+
+const ALLOWED_SUBSCRIPTIONS_V2_FIELDS = [
+  'user_id', 'profile_id', 'order_id', 'product_id', 'tariff_id', 'flow_id', 'status',
+  'access_start_at', 'access_end_at', 'is_trial', 'trial_end_at', 'next_charge_at',
+  'charge_attempts', 'payment_token', 'canceled_at', 'cancel_reason', 'meta',
+  'payment_method_id', 'auto_renew'
+];
+
+function pickAllowedFields(payload: Record<string, any>, allowed: string[]): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const key of allowed) {
+    if (key in payload) result[key] = payload[key];
+  }
+  return result;
+}
+
+function assertRequired(payload: Record<string, any>, required: string[], ctx: string): void {
+  const missing = required.filter((k) => payload[k] === undefined || payload[k] === null);
+  if (missing.length) {
+    throw new Error(`REQUIRED_FIELDS_MISSING(${ctx}): ${missing.join(",")}`);
+  }
+}
 
 function translatePaymentError(error: string): string {
   const errorMap: Record<string, string> = {
@@ -513,25 +551,29 @@ serve(async (req) => {
 
         console.log(`Created order ${order.id} (${orderNumber}) for preregistration ${prereg.id}`);
 
-        // 4.5 Create payment record (payments_v2 doesn't have payment_method_id - store in meta)
+        // 4.5 Create payment record - PATCH-I: Use whitelist + assertRequired
+        const paymentPayloadRaw = {
+          order_id: order.id,
+          user_id: prereg.user_id,
+          profile_id: profile.id,
+          amount: chargeAmount,
+          currency,
+          status: "processing",
+          provider: "bepaid",
+          is_recurring: true,
+          meta: {
+            type: "preregistration_auto_charge",
+            preregistration_id: prereg.id,
+            payment_method_id: paymentMethod.id,
+            payment_token: paymentMethod.provider_token,
+          },
+        };
+        const paymentPayload = pickAllowedFields(paymentPayloadRaw, ALLOWED_PAYMENTS_V2_FIELDS);
+        assertRequired(paymentPayload, ["order_id", "user_id", "amount", "currency", "status", "provider"], "payments_v2");
+        
         const { data: payment, error: paymentError } = await supabase
           .from("payments_v2")
-          .insert({
-            order_id: order.id,
-            user_id: prereg.user_id,
-            profile_id: profile.id,
-            amount: chargeAmount,
-            currency,
-            status: "processing",
-            provider: "bepaid",
-            payment_token: paymentMethod.provider_token,
-            is_recurring: true,
-            meta: {
-              type: "preregistration_auto_charge",
-              preregistration_id: prereg.id,
-              payment_method_id: paymentMethod.id,
-            },
-          })
+          .insert(paymentPayload)
           .select()
           .single();
 
@@ -604,29 +646,35 @@ serve(async (req) => {
 
           // PATCH-A: subscriptions_v2 doesn't have amount/currency/billing_cycle columns
           // Store charge details in meta instead
+          // PATCH-I: Use whitelist + assertRequired for subscriptions_v2
+          const subPayloadRaw = {
+            user_id: prereg.user_id,
+            profile_id: profile.id,
+            order_id: order.id,
+            tariff_id: tariff.id,
+            product_id: product.id,
+            status: "active",
+            is_trial: false, // PATCH-I-1: NOT NULL field - required!
+            payment_method_id: paymentMethod.id,
+            payment_token: paymentMethod.provider_token,
+            access_start_at: now.toISOString(),
+            access_end_at: nextChargeAt.toISOString(),
+            next_charge_at: nextChargeAt.toISOString(),
+            auto_renew: true,
+            meta: {
+              source: "preregistration_auto_charge",
+              preregistration_id: prereg.id,
+              charge_amount: chargeAmount,
+              charge_currency: currency,
+              billing_cycle: "monthly",
+            },
+          };
+          const subPayload = pickAllowedFields(subPayloadRaw, ALLOWED_SUBSCRIPTIONS_V2_FIELDS);
+          assertRequired(subPayload, ["user_id", "product_id", "status", "access_start_at", "is_trial", "auto_renew"], "subscriptions_v2");
+          
           await supabase
             .from("subscriptions_v2")
-            .insert({
-              user_id: prereg.user_id,
-              profile_id: profile.id,
-              order_id: order.id,
-              tariff_id: tariff.id,
-              product_id: product.id,
-              status: "active",
-              payment_method_id: paymentMethod.id,
-              payment_token: paymentMethod.provider_token,
-              access_start_at: now.toISOString(),
-              access_end_at: nextChargeAt.toISOString(),
-              next_charge_at: nextChargeAt.toISOString(),
-              auto_renew: true,
-              meta: {
-                source: "preregistration_auto_charge",
-                preregistration_id: prereg.id,
-                charge_amount: chargeAmount,
-                charge_currency: currency,
-                billing_cycle: "monthly",
-              },
-            });
+            .insert(subPayload);
 
           // 4.10 Grant access via edge function
           await supabase.functions.invoke("grant-access-for-order", {

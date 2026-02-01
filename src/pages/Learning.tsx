@@ -318,7 +318,10 @@ export default function Learning() {
   
   const { modules, loading } = useTrainingModules();
   
-  // PATCH-C: Check buh_business access - preregistration new/contacted = RESERVE only, not access
+  // PATCH-J: Check buh_business access - preregistration new/contacted = RESERVE only, not access
+  // Using SPECIFIC product_id to avoid false matches with other subscriptions
+  const BUH_PRODUCT_ID = "85046734-2282-4ded-b0d3-8c66c8f5bc2b";
+  
   const { data: businessTrainingAccess } = useQuery({
     queryKey: ["buh-business-access", user?.id],
     queryFn: async () => {
@@ -346,15 +349,17 @@ export default function Learning() {
         .eq("status", "active")
         .maybeSingle();
       
-      // Check active subscription
+      // PATCH-J: Check active subscription FOR BUH_BUSINESS ONLY (by product_id)
       const { data: subscription } = await supabase
         .from("subscriptions_v2")
-        .select("id, status")
+        .select("id, status, product_id")
         .eq("user_id", user.id)
+        .eq("product_id", BUH_PRODUCT_ID)
         .in("status", ["active", "trial"])
         .maybeSingle();
       
-      // PATCH-C: Paid access = entitlement OR subscription OR prereg with status=paid
+      // PATCH-J: Paid access = entitlement(buh_business) OR subscription(buh_business) OR prereg(status='paid')
+      // new/contacted = reservation only, NOT access
       const hasPaidAccess = !!entitlement || !!subscription || preregistration?.status === "paid";
       
       return {
