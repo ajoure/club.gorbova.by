@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// PATCH-B: BUILD_ID for deployment verification (no PII in logs)
+const BUILD_ID = "prereg-cron:2026-02-01T22:32Z";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -80,7 +83,7 @@ ${userName}, спасибо за оплату!
         parse_mode: "Markdown",
       }),
     });
-    console.log(`Sent payment success notification to user ${userId} via Telegram`);
+    console.log(`[${BUILD_ID}] Sent payment success notification to user ${userId}`);
   } catch (err) {
     console.error("Failed to send payment success notification:", err);
   }
@@ -142,7 +145,7 @@ ${userName}, к сожалению, не удалось провести опл�
         parse_mode: "Markdown",
       }),
     });
-    console.log(`Sent payment failure notification to user ${userId} via Telegram`);
+    console.log(`[${BUILD_ID}] Sent payment failure notification to user ${userId}`);
   } catch (err) {
     console.error("Failed to send payment failure notification:", err);
   }
@@ -236,7 +239,7 @@ serve(async (req) => {
       timeZone: 'Europe/Minsk'
     }).format(now);
     
-    console.log(`Preregistration charge cron started at ${now.toISOString()}, todayMinsk: ${todayMinsk}, dayOfMonth: ${dayOfMonth}`);
+    console.log(`[${BUILD_ID}] START preregistration-charge-cron at ${now.toISOString()}, todayMinsk: ${todayMinsk}, dayOfMonth: ${dayOfMonth}`);
 
     // 1. Find preregistrations that are ready for charging
     // Status: new or contacted, with user_id set (has account)
@@ -392,7 +395,8 @@ serve(async (req) => {
       }
 
       results.processed++;
-      console.log(`Processing preregistration ${prereg.id} for ${prereg.email}`);
+      // PATCH-B: No PII in logs - only id/user_id
+      console.log(`[${BUILD_ID}] Processing preregistration`, { id: prereg.id, user_id: prereg.user_id, product_code: prereg.product_code });
 
       try {
         // PATCH-2: Check if user already has a paid order for this product (prevent double charge)
@@ -474,7 +478,8 @@ serve(async (req) => {
         const { data: orderNumResult } = await supabase.rpc("generate_order_number");
         const orderNumber = orderNumResult || `ORD-${Date.now()}`;
 
-        // 4.4 Create order (note: orders_v2 uses paid_amount, not amount)
+        // 4.4 Create order (using only existing columns in orders_v2)
+        // Required NOT NULL columns: base_price, final_price
         const { data: order, error: orderError } = await supabase
           .from("orders_v2")
           .insert({
@@ -484,17 +489,19 @@ serve(async (req) => {
             product_id: product.id,
             tariff_id: tariff.id,
             offer_id: chargeOffer.id,
+            base_price: chargeAmount,
+            final_price: chargeAmount,
             currency,
             status: "pending",
             customer_email: prereg.email,
             customer_phone: prereg.phone,
-            customer_name: prereg.name,
-            source: "preregistration_auto_charge",
             meta: {
               preregistration_id: prereg.id,
               auto_charged: true,
               charged_at: now.toISOString(),
               expected_amount: chargeAmount,
+              customer_name: prereg.name,
+              source: "preregistration_auto_charge",
             },
           })
           .select()
@@ -506,7 +513,7 @@ serve(async (req) => {
 
         console.log(`Created order ${order.id} (${orderNumber}) for preregistration ${prereg.id}`);
 
-        // 4.5 Create payment record
+        // 4.5 Create payment record (payments_v2 doesn't have payment_method_id - store in meta)
         const { data: payment, error: paymentError } = await supabase
           .from("payments_v2")
           .insert({
@@ -517,12 +524,12 @@ serve(async (req) => {
             currency,
             status: "processing",
             provider: "bepaid",
-            payment_method_id: paymentMethod.id,
             payment_token: paymentMethod.provider_token,
             is_recurring: true,
             meta: {
               type: "preregistration_auto_charge",
               preregistration_id: prereg.id,
+              payment_method_id: paymentMethod.id,
             },
           })
           .select()
@@ -549,7 +556,7 @@ serve(async (req) => {
           },
         };
 
-        console.log(`Charging ${chargeAmount} ${currency} for preregistration ${prereg.id}`);
+        console.log(`[${BUILD_ID}] Charging ${chargeAmount} ${currency} for preregistration ${prereg.id}`);
 
         const chargeResponse = await fetch("https://gateway.bepaid.by/transactions/payments", {
           method: "POST",
@@ -561,7 +568,7 @@ serve(async (req) => {
         });
 
         const chargeResult = await chargeResponse.json();
-        console.log(`Charge response for ${prereg.id}:`, JSON.stringify(chargeResult).substring(0, 500));
+        console.log(`[${BUILD_ID}] Charge response for prereg ${prereg.id}:`, JSON.stringify(chargeResult).substring(0, 500));
 
         const txStatus = chargeResult?.transaction?.status;
         const txUid = chargeResult?.transaction?.uid;
@@ -578,13 +585,16 @@ serve(async (req) => {
             })
             .eq("id", payment.id);
 
-          // 4.8 Update order to paid
+          // 4.8 Update order to paid (paid_at doesn't exist - store in meta)
           await supabase
             .from("orders_v2")
             .update({
               status: "paid",
-              paid_at: now.toISOString(),
               paid_amount: chargeAmount,
+              meta: {
+                ...((order.meta as any) || {}),
+                paid_at: now.toISOString(),
+              },
             })
             .eq("id", order.id);
 
@@ -592,6 +602,8 @@ serve(async (req) => {
           const nextChargeAt = new Date(now);
           nextChargeAt.setMonth(nextChargeAt.getMonth() + 1);
 
+          // PATCH-A: subscriptions_v2 doesn't have amount/currency/billing_cycle columns
+          // Store charge details in meta instead
           await supabase
             .from("subscriptions_v2")
             .insert({
@@ -603,14 +615,16 @@ serve(async (req) => {
               status: "active",
               payment_method_id: paymentMethod.id,
               payment_token: paymentMethod.provider_token,
-              amount: chargeAmount,
-              currency,
-              billing_cycle: "monthly",
+              access_start_at: now.toISOString(),
+              access_end_at: nextChargeAt.toISOString(),
               next_charge_at: nextChargeAt.toISOString(),
               auto_renew: true,
               meta: {
                 source: "preregistration_auto_charge",
                 preregistration_id: prereg.id,
+                charge_amount: chargeAmount,
+                charge_currency: currency,
+                billing_cycle: "monthly",
               },
             });
 
@@ -658,7 +672,7 @@ serve(async (req) => {
           });
 
           results.charged++;
-          console.log(`Successfully charged preregistration ${prereg.id}`);
+          console.log(`[${BUILD_ID}] Successfully charged preregistration ${prereg.id}`);
         } else {
           // Charge failed
           const errorMessage = chargeResult?.transaction?.message || 
@@ -727,20 +741,23 @@ serve(async (req) => {
           });
 
           results.failed++;
-          results.errors.push(`${prereg.email}: ${errorMessage}`);
-          console.error(`Failed to charge preregistration ${prereg.id}: ${errorMessage}`);
+          // PATCH-B: No PII in errors - use id only
+          results.errors.push(`prereg_${prereg.id}: ${errorMessage}`);
+          console.error(`[${BUILD_ID}] Failed to charge preregistration ${prereg.id}: ${errorMessage}`);
         }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         results.failed++;
-        results.errors.push(`${prereg.email}: ${errorMsg}`);
-        console.error(`Error processing preregistration ${prereg.id}:`, err);
+        // PATCH-B: No PII in errors
+        results.errors.push(`prereg_${prereg.id}: ${errorMsg}`);
+        console.error(`[${BUILD_ID}] Error processing preregistration ${prereg.id}:`, err);
       }
     }
 
-    console.log(`Preregistration charge cron completed:`, results);
+    console.log(`[${BUILD_ID}] END preregistration-charge-cron results:`, JSON.stringify(results));
 
-    return new Response(JSON.stringify({ success: true, results }), {
+    // PATCH-B: Include build_id in response for verification
+    return new Response(JSON.stringify({ success: true, build_id: BUILD_ID, results }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
