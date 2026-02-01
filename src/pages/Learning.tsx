@@ -76,21 +76,8 @@ const products: Product[] = [
     lessonCount: 25,
     duration: "7 недель",
   },
-  {
-    id: "5",
-    title: "Бухгалтерия как бизнес",
-    description: "Ежемесячный тренинг: от бухгалтера в найме к владельцу своего бизнеса",
-    badge: "Старт 5 февраля",
-    badgeVariant: "secondary",
-    price: "250 BYN/мес",
-    image: katerinaBusinessImage,
-    isPurchased: false,
-    purchaseLink: "/business-training",
-    courseSlug: "buh-business",
-    lessonCount: 12,
-    completedCount: 0,
-    duration: "Квест",
-  },
+  // PATCH-C: Removed hardcoded "Бухгалтерия как бизнес" to prevent duplication
+  // Real module from DB (training_modules) will be shown via libraryModules/allProductsModules
   {
     id: "3",
     title: "Консультация эксперта",
@@ -331,22 +318,26 @@ export default function Learning() {
   
   const { modules, loading } = useTrainingModules();
   
-  // Check if user has preregistration or active subscription for buh_business
+  // PATCH-C: Check buh_business access - preregistration new/contacted = RESERVE only, not access
   const { data: businessTrainingAccess } = useQuery({
     queryKey: ["buh-business-access", user?.id],
     queryFn: async () => {
-      if (!user?.id) return { hasPreregistration: false, hasActiveSubscription: false };
+      if (!user?.id) return { 
+        hasReservation: false, 
+        hasPaidAccess: false,
+        reservationStatus: null as string | null,
+      };
       
-      // Check preregistration
+      // Check preregistration (any status for reservation badge)
       const { data: preregistration } = await supabase
         .from("course_preregistrations")
         .select("id, status")
         .eq("user_id", user.id)
         .eq("product_code", "buh_business")
-        .in("status", ["new", "contacted"])
+        .in("status", ["new", "contacted", "paid"])
         .maybeSingle();
       
-      // Check entitlements
+      // Check entitlements for actual access
       const { data: entitlement } = await supabase
         .from("entitlements")
         .select("id, status")
@@ -355,9 +346,21 @@ export default function Learning() {
         .eq("status", "active")
         .maybeSingle();
       
+      // Check active subscription
+      const { data: subscription } = await supabase
+        .from("subscriptions_v2")
+        .select("id, status")
+        .eq("user_id", user.id)
+        .in("status", ["active", "trial"])
+        .maybeSingle();
+      
+      // PATCH-C: Paid access = entitlement OR subscription OR prereg with status=paid
+      const hasPaidAccess = !!entitlement || !!subscription || preregistration?.status === "paid";
+      
       return {
-        hasPreregistration: !!preregistration,
-        hasActiveSubscription: !!entitlement,
+        hasReservation: !!preregistration && preregistration.status !== "paid",
+        hasPaidAccess,
+        reservationStatus: preregistration?.status || null,
       };
     },
     enabled: !!user?.id,
@@ -396,17 +399,8 @@ export default function Learning() {
       };
     }
     
-    // Special handling for buh-business product
-    if (product.courseSlug === "buh-business") {
-      const hasAccess = businessTrainingAccess?.hasPreregistration || businessTrainingAccess?.hasActiveSubscription;
-      return {
-        ...product,
-        isPurchased: hasAccess || false,
-        badge: hasAccess 
-          ? (businessTrainingAccess?.hasActiveSubscription ? "Активно" : "Бронь")
-          : "Старт 5 февраля",
-      };
-    }
+    // PATCH-C: Removed buh-business handling here - mock was deleted
+    // Real module from training_modules handles this via menu_section_key
     
     if (matchingModule) {
       return {
