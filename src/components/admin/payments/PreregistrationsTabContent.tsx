@@ -49,12 +49,14 @@ import {
   RefreshCw,
   AlertTriangle,
   CreditCard,
+  XCircle,
 } from "lucide-react";
 
 interface PreregistrationBilling {
   billing_status?: 'pending' | 'paid' | 'no_card' | 'failed' | 'overdue';
   attempts_count?: number;
   last_attempt_at?: string;
+  last_attempt_window_key?: string;
   last_attempt_status?: 'success' | 'failed' | 'skipped';
   last_attempt_error?: string;
   has_active_card?: boolean;
@@ -90,7 +92,8 @@ interface Preregistration {
   } | null;
 }
 
-type BillingSegment = 'all' | 'pending' | 'paid' | 'overdue';
+// PATCH-5: Enhanced billing segments with proper terminology
+type BillingSegment = 'all' | 'pending' | 'no_card' | 'failed' | 'paid';
 
 // PATCH-5: Removed converted status - only real statuses remain
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
@@ -164,22 +167,31 @@ export function PreregistrationsTabContent() {
         profiles: p.user_id ? profilesMap[p.user_id] || null : null,
       })) as Preregistration[];
       
-      // Apply billing segment filter (PATCH-5: removed converted from checks)
+      // PATCH-5: Enhanced billing segment filters with proper separation
       if (billingFilter === 'pending') {
+        // Ожидают списания: new/contacted без billing_status или billing_status = pending
         result = result.filter((p) => {
           const billingStatus = p.meta?.billing?.billing_status;
           return !['paid', 'cancelled'].includes(p.status) &&
-                 !['overdue', 'no_card', 'failed', 'paid'].includes(billingStatus || '');
+                 (!billingStatus || billingStatus === 'pending');
+        });
+      } else if (billingFilter === 'no_card') {
+        // Нет карты
+        result = result.filter((p) => {
+          const billingStatus = p.meta?.billing?.billing_status;
+          return billingStatus === 'no_card';
+        });
+      } else if (billingFilter === 'failed') {
+        // Ошибка списания
+        result = result.filter((p) => {
+          const billingStatus = p.meta?.billing?.billing_status;
+          return billingStatus === 'failed';
         });
       } else if (billingFilter === 'paid') {
+        // Оплачено
         result = result.filter((p) => {
           const billingStatus = p.meta?.billing?.billing_status;
           return p.status === 'paid' || billingStatus === 'paid';
-        });
-      } else if (billingFilter === 'overdue') {
-        result = result.filter((p) => {
-          const billingStatus = p.meta?.billing?.billing_status;
-          return ['overdue', 'no_card', 'failed'].includes(billingStatus || '');
         });
       }
       
@@ -211,24 +223,29 @@ export function PreregistrationsTabContent() {
         return acc;
       }, {} as Record<string, number>);
 
-      // Billing segment counts (PATCH-5: removed converted from checks)
+      // PATCH-5: Enhanced billing segment counts with proper separation
       const billingPending = data.filter((p) => {
         const billingStatus = (p.meta as any)?.billing?.billing_status;
         return !['paid', 'cancelled'].includes(p.status) &&
-               !['overdue', 'no_card', 'failed', 'paid'].includes(billingStatus || '');
+               (!billingStatus || billingStatus === 'pending');
+      }).length;
+      
+      const billingNoCard = data.filter((p) => {
+        const billingStatus = (p.meta as any)?.billing?.billing_status;
+        return billingStatus === 'no_card';
+      }).length;
+      
+      const billingFailed = data.filter((p) => {
+        const billingStatus = (p.meta as any)?.billing?.billing_status;
+        return billingStatus === 'failed';
       }).length;
       
       const billingPaid = data.filter((p) => {
         const billingStatus = (p.meta as any)?.billing?.billing_status;
         return p.status === 'paid' || billingStatus === 'paid';
       }).length;
-      
-      const billingOverdue = data.filter((p) => {
-        const billingStatus = (p.meta as any)?.billing?.billing_status;
-        return ['overdue', 'no_card', 'failed'].includes(billingStatus || '');
-      }).length;
 
-      return { total, newCount, confirmed, byProduct, billingPending, billingPaid, billingOverdue };
+      return { total, newCount, confirmed, byProduct, billingPending, billingNoCard, billingFailed, billingPaid };
     },
   });
 
@@ -392,7 +409,7 @@ export function PreregistrationsTabContent() {
           </Card>
         </div>
 
-        {/* Billing Segment Tabs */}
+        {/* PATCH-5: Enhanced Billing Segment Tabs with proper terminology */}
         <div className="flex flex-wrap gap-2">
           <Button 
             variant={billingFilter === 'all' ? 'default' : 'outline'}
@@ -408,8 +425,28 @@ export function PreregistrationsTabContent() {
             className="gap-2"
           >
             <Clock className="h-4 w-4" />
-            Новые 
+            Ожидают списания
             <Badge variant="secondary" className="ml-1">{stats?.billingPending || 0}</Badge>
+          </Button>
+          <Button 
+            variant={billingFilter === 'no_card' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setBillingFilter('no_card')}
+            className="gap-2"
+          >
+            <CreditCard className="h-4 w-4 text-yellow-500" />
+            Нет карты
+            <Badge variant="secondary" className="ml-1">{stats?.billingNoCard || 0}</Badge>
+          </Button>
+          <Button 
+            variant={billingFilter === 'failed' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setBillingFilter('failed')}
+            className="gap-2"
+          >
+            <XCircle className="h-4 w-4 text-red-500" />
+            Ошибка списания
+            <Badge variant="secondary" className="ml-1">{stats?.billingFailed || 0}</Badge>
           </Button>
           <Button 
             variant={billingFilter === 'paid' ? 'default' : 'outline'}
@@ -418,18 +455,8 @@ export function PreregistrationsTabContent() {
             className="gap-2"
           >
             <CheckCircle className="h-4 w-4 text-green-500" />
-            Оплаченные 
+            Оплаченные
             <Badge variant="secondary" className="ml-1">{stats?.billingPaid || 0}</Badge>
-          </Button>
-          <Button 
-            variant={billingFilter === 'overdue' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setBillingFilter('overdue')}
-            className="gap-2"
-          >
-            <AlertTriangle className="h-4 w-4 text-red-500" />
-            Просроченные 
-            <Badge variant="secondary" className="ml-1">{stats?.billingOverdue || 0}</Badge>
           </Button>
         </div>
 

@@ -1,164 +1,175 @@
 
-План v3.3.1 (FINAL) — BLOCKER-фиксы + Whitelist-валидация
+# План v3.4.1 (FINAL) — bePaid Preflight + Cron 1-4 февраля + Anti-repeat + Anti-spam
 
-Жёсткие правила исполнения
-	1.	Ничего не ломать, только по плану.
-	2.	Add-only, минимальный diff.
-	3.	Dry-run → execute.
-	4.	STOP-guards обязательны.
-	5.	No-PII в логах.
-	6.	DoD только по фактам: логи+HTTP-ответ Edge Function + SQL + UI-скрины из 7500084@gmail.com.
+## Жёсткие правила исполнения
 
-⸻
+1. Ничего не ломать, только по плану
+2. Add-only, минимальный diff
+3. Dry-run / preflight → execute
+4. STOP-guards обязательны
+5. No-PII в логах
+6. DoD только по фактам: логи + HTTP-ответ Edge Function + SQL + UI-скрины из 7500084@gmail.com
 
-PATCH-J (BLOCKER): Learning.tsx — подписка только для buh_business (и без ложных совпадений)
+---
 
-Файл: src/pages/Learning.tsx
+## ✅ PATCH-0.1 (DONE): shop_id из БД + жёсткий STOP-guard
 
-J1) Subscription check только по product_id buh_business
+**Файл:** `supabase/functions/preregistration-charge-cron/index.ts`
 
-const BUH_PRODUCT_ID = "85046734-2282-4ded-b0d3-8c66c8f5bc2b";
+Реализовано:
+- `getBepaidShopId()` — читает из `integration_instances` → `payment_settings` → `env`
+- HARD GUARD: `if (bepaidShopId !== EXPECTED_SHOP_ID)` → error
+- `EXPECTED_SHOP_ID = "33524"` — правильный production shop_id
 
-const { data: subscription } = await supabase
-  .from("subscriptions_v2")
-  .select("id, status, product_id")
-  .eq("user_id", user.id)
-  .eq("product_id", BUH_PRODUCT_ID)
-  .in("status", ["active", "trial"])
-  .maybeSingle();
+---
 
-J2) Paid access = entitlement(buh_business) OR subscription(buh_business) OR prereg(status=‘paid’)
+## ✅ PATCH-0 (DONE): bePaid Preflight (двухшаговый)
 
-ВАЖНО: prereg new/contacted — это только бронь, не доступ.
+**Файл:** `supabase/functions/preregistration-charge-cron/index.ts`
 
-const hasPaidAccess =
-  !!entitlement || !!subscription || preregistration?.status === "paid";
+Режим `?preflight=1`:
+1. GET /shops/{shop_id} → проверка существования
+2. POST /transactions/authorizations с тестовой картой → проверка charge capability
+3. Возвращает: `{ ok, build_id, host_used, shop_id_masked, shop_id_source, shop_name, provider_check, charge_capability }`
 
-const hasReservation =
-  !!preregistration && preregistration.status !== "paid";
+---
 
+## ✅ PATCH-2 (DONE): Time-guard + Deadline-guard
 
-⸻
+**Файл:** `supabase/functions/preregistration-charge-cron/index.ts`
 
-PATCH-F (PROOF): BUILD_ID должен меняться на каждом деплое и возвращаться в ответе
+- `isWithinExecutionWindow()` — только 09:00-09:10 и 21:00-21:10 Europe/Minsk
+- `isBeforeDeadline()` — до 04.02.2026 23:59 Minsk
+- При нарушении: `{ processed: 0, reason: "outside_window" | "deadline_passed" }`
 
-Файл: supabase/functions/preregistration-charge-cron/index.ts
-	1.	Обновить BUILD_ID на уникальный (обязательно менять при каждом деплое):
+---
 
-const BUILD_ID = "prereg-cron:2026-02-01T22:55:00Z";
+## ✅ PATCH-4 (DONE): Anti-repeat (window_key без TZ)
 
-	2.	START/END логи + вернуть build_id в HTTP-ответе:
+**Файл:** `supabase/functions/preregistration-charge-cron/index.ts`
 
-console.log(`[${BUILD_ID}] START`);
-...
-console.log(`[${BUILD_ID}] END`, JSON.stringify(results));
-return new Response(JSON.stringify({ build_id: BUILD_ID, ...results }), { status: 200 });
+- `getWindowKey()` → формат `2026-02-02|09` / `2026-02-02|21`
+- Хранится в `meta.billing.last_attempt_window_key`
+- Если window_key совпадает → SKIP (не увеличивает attempts_count)
 
+---
 
-⸻
+## ✅ PATCH-3 (DONE): TG уведомления с anti-spam guard
 
-PATCH-I-1 (BLOCKER): subscriptions_v2 — is_trial NOT NULL
+**Файл:** `supabase/functions/preregistration-charge-cron/index.ts`
 
-Файл: supabase/functions/preregistration-charge-cron/index.ts
+- `sendNoCardNotification()` — проверяет `billing.notified.no_card_at`
+- `sendPaymentFailureNotification()` — проверяет `billing.notified.failed_at`
+- TG отправляется ОДИН РАЗ на статус, повтор только при смене статуса
 
-В insert subscriptions_v2 обязательно добавить:
+---
 
-is_trial: false,
+## ✅ PATCH-5 (DONE): UI сегменты с правильной терминологией
 
+**Файл:** `src/components/admin/payments/PreregistrationsTabContent.tsx`
 
-⸻
+Сегменты:
+- `pending` → «Ожидают списания»
+- `no_card` → «Нет карты» (желтая иконка)
+- `failed` → «Ошибка списания» (красная иконка)
+- `paid` → «Оплаченные» (зеленая иконка)
 
-PATCH-I-2 (GUARD): Whitelist-валидация (без “тихих” потерь полей)
+Убран `overdue` до 05.02 — чтобы не путать.
 
-Цель: защита от “column does not exist” + чтобы ошибки не прятались.
+---
 
-I2.1) Добавить pickAllowedFields + strictMissingRequired
+## ⏳ PATCH-1 (TODO): CRON только 1-4 февраля
 
-function pickAllowedFields(payload: Record<string, any>, allowed: string[]) {
-  const result: Record<string, any> = {};
-  for (const key of allowed) if (key in payload) result[key] = payload[key];
-  return result;
-}
+Нужно создать cron jobs через SQL:
 
-function assertRequired(payload: Record<string, any>, required: string[], ctx: string) {
-  const missing = required.filter((k) => payload[k] === undefined || payload[k] === null);
-  if (missing.length) {
-    throw new Error(`REQUIRED_FIELDS_MISSING(${ctx}): ${missing.join(",")}`);
-  }
-}
+```sql
+-- 09:00 Minsk = 06:00 UTC
+SELECT cron.schedule(
+  'prereg-charge-morning',
+  '0 6 1-4 2 *',
+  $$
+  SELECT net.http_post(
+    url := 'https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/preregistration-charge-cron?execute=1',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhkamdramNlb3dubW1ucnFxdHV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY2NTczNjMsImV4cCI6MjA4MjIzMzM2M30.bg4ALwTFZ57YYDLgB4IwLqIDrt0XcQGIlDEGllNBX0E'
+    ),
+    body := '{}'::jsonb
+  );
+  $$
+);
 
-I2.2) Whitelist списки (как у тебя), но обязательно добавить REQUIRED для каждого insert
+-- 21:00 Minsk = 18:00 UTC
+SELECT cron.schedule(
+  'prereg-charge-evening',
+  '0 18 1-4 2 *',
+  $$
+  SELECT net.http_post(
+    url := 'https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/preregistration-charge-cron?execute=1',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhkamdramNlb3dubW1ucnFxdHV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY2NTczNjMsImV4cCI6MjA4MjIzMzM2M30.bg4ALwTFZ57YYDLgB4IwLqIDrt0XcQGIlDEGllNBX0E'
+    ),
+    body := '{}'::jsonb
+  );
+  $$
+);
+```
 
-Не допускаем “тихого” пропуска NOT NULL.
+---
 
-Пример использования:
+## DoD — обязательные пруфы
 
-const orderPayloadRaw = { ... };
-const orderPayload = pickAllowedFields(orderPayloadRaw, ALLOWED_ORDERS_V2_FIELDS);
-assertRequired(orderPayload, ["user_id","product_id","status","base_price","final_price","currency"], "orders_v2");
-await supabase.from("orders_v2").insert(orderPayload);
+### 1. Preflight HTTP-ответ (скрин)
 
-const paymentPayloadRaw = { ... };
-const paymentPayload = pickAllowedFields(paymentPayloadRaw, ALLOWED_PAYMENTS_V2_FIELDS);
-assertRequired(paymentPayload, ["order_id","user_id","amount","currency","status","provider"], "payments_v2");
-await supabase.from("payments_v2").insert(paymentPayload);
+Ожидание:
+- `ok: true`
+- `shop_id_masked: 335**`
+- `provider_check: "shop+auth"`
+- `charge_capability: true`
 
-const subPayloadRaw = { ... };
-const subPayload = pickAllowedFields(subPayloadRaw, ALLOWED_SUBSCRIPTIONS_V2_FIELDS);
-assertRequired(subPayload, ["user_id","product_id","status","access_start_at","is_trial","auto_renew"], "subscriptions_v2");
-await supabase.from("subscriptions_v2").insert(subPayload);
+### 2. Execute вне окна (скрин)
 
+- `processed: 0`
+- `reason: "outside_window"`
 
-⸻
+### 3. SQL-пруфы
 
-Порядок выполнения
-	1.	PATCH-J (Learning.tsx)
-	2.	PATCH-F (BUILD_ID)
-	3.	PATCH-I-1 (is_trial:false)
-	4.	PATCH-I-2 (whitelist + assertRequired)
-	5.	Deploy Edge Function
-	6.	Verify (вызов + SQL + UI)
-
-⸻
-
-DoD (обязательные пруфы сразу)
-
-1) Edge Function HTTP-ответ (скрин)
-
-Должно быть:
-	•	build_id = "prereg-cron:2026-02-01T22:55:00Z"
-	•	processed / skipped / failed / guards
-
-2) Edge Function Logs (скрин)
-	•	[BUILD_ID] START
-	•	[BUILD_ID] END ...
-	•	No PII
-
-3) SQL-пруфы (скрин результата)
-
+```sql
+-- A) billing status distribution
 SELECT
-  count(*) as total,
-  count(*) FILTER (WHERE meta->'billing' IS NOT NULL) as billing_present,
-  count(*) FILTER (WHERE (meta->'billing'->>'billing_status') IS NOT NULL) as status_present
+  count(*) total,
+  count(*) FILTER (WHERE (meta->'billing'->>'billing_status') IS NOT NULL) status_present,
+  count(*) FILTER (WHERE (meta->'billing'->>'billing_status')='no_card') no_card,
+  count(*) FILTER (WHERE (meta->'billing'->>'billing_status')='failed') failed,
+  count(*) FILTER (WHERE (meta->'billing'->>'billing_status')='paid') paid
 FROM course_preregistrations
 WHERE product_code='buh_business';
 
+-- B) telegram_logs events
 SELECT event_type, count(*)
 FROM telegram_logs
 WHERE event_type LIKE 'preregistration_%'
+GROUP BY 1;
+
+-- C) anti-repeat check
+SELECT
+  meta->'billing'->>'last_attempt_window_key' AS window_key,
+  count(*)
+FROM course_preregistrations
+WHERE product_code='buh_business'
 GROUP BY 1
 ORDER BY 2 DESC;
+```
 
-4) UI-пруфы (скрины) — строго из 7500084@gmail.com
-	•	“Моя библиотека”:
-	•	если нет оплаты/доступа — нет “куплено”
-	•	при prereg new/contacted — только бейдж “Бронь”
-	•	(если применимо) /admin/payments/preorders — по плану v3.3
+### 4. UI-пруфы (из 7500084@gmail.com)
 
-⸻
+- /admin/payments/preorders
+- Видны сегменты: «Ожидают списания», «Нет карты», «Ошибка списания», «Оплаченные»
+- CRM-статусы отделены от billing-сегментов
 
-Важно: что НЕ принимается
-	•	“кэш/подождать”
-	•	“исправлено” без скринов/SQL/логов
-	•	UI-пруфы из другой учётки
+---
 
+## BUILD_ID текущий
+
+`prereg-cron:2026-02-02T10:30:00Z`

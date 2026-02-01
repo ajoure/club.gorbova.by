@@ -2,7 +2,10 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // PATCH-F: BUILD_ID for deployment verification - MUST BE UNIQUE EACH DEPLOY
-const BUILD_ID = "prereg-cron:2026-02-01T23:15:00Z";
+const BUILD_ID = "prereg-cron:2026-02-02T10:30:00Z";
+
+// PATCH-0.1: Expected production shop_id - hard guard
+const EXPECTED_SHOP_ID = "33524";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,6 +50,54 @@ function assertRequired(payload: Record<string, any>, required: string[], ctx: s
   }
 }
 
+// PATCH-4: Generate window key in format "2026-02-02|09" (without TZ suffix)
+function getWindowKey(now: Date): string {
+  const minskFormatter = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Minsk' });
+  const dateStr = minskFormatter.format(now);
+  
+  const hourFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Minsk',
+    hour: 'numeric',
+    hour12: false
+  });
+  const minskHour = parseInt(hourFormatter.format(now), 10);
+  
+  // Determine which window: 09 or 21
+  const windowHour = minskHour < 15 ? 9 : 21;
+  return `${dateStr}|${String(windowHour).padStart(2, '0')}`;
+}
+
+// PATCH-2: Check if current time is within allowed execution windows
+function isWithinExecutionWindow(now: Date): { allowed: boolean; hour: number; minute: number; reason?: string } {
+  const timeFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Minsk',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false
+  });
+  const timeStr = timeFormatter.format(now);
+  const [hourStr, minuteStr] = timeStr.split(':');
+  const hour = parseInt(hourStr, 10);
+  const minute = parseInt(minuteStr, 10);
+  
+  // Windows: 09:00-09:10 or 21:00-21:10
+  const inMorningWindow = hour === 9 && minute <= 10;
+  const inEveningWindow = hour === 21 && minute <= 10;
+  
+  if (inMorningWindow || inEveningWindow) {
+    return { allowed: true, hour, minute };
+  }
+  
+  return { allowed: false, hour, minute, reason: "outside_window" };
+}
+
+// PATCH-2: Check if before deadline (04.02.2026 23:59 Minsk)
+function isBeforeDeadline(now: Date): boolean {
+  // Deadline: 2026-02-04 23:59:59 Europe/Minsk = 2026-02-04 20:59:59 UTC
+  const deadline = new Date("2026-02-04T20:59:59Z");
+  return now <= deadline;
+}
+
 function translatePaymentError(error: string): string {
   const errorMap: Record<string, string> = {
     "insufficient_funds": "Недостаточно средств на карте",
@@ -62,6 +113,7 @@ function translatePaymentError(error: string): string {
     "lost_card": "Карта утеряна",
     "stolen_card": "Карта украдена",
     "timeout": "Время ожидания истекло",
+    "shop not found": "Магазин не найден в bePaid",
   };
 
   for (const [key, translation] of Object.entries(errorMap)) {
@@ -133,8 +185,15 @@ async function sendPaymentFailureNotification(
   productName: string,
   amount: number,
   currency: string,
-  errorMessage: string
-): Promise<void> {
+  errorMessage: string,
+  billing: any
+): Promise<boolean> {
+  // PATCH-3: Anti-spam guard - check if already notified for this status
+  if (billing?.notified?.failed_at) {
+    console.log(`[${BUILD_ID}] Skipping failure notification - already sent at ${billing.notified.failed_at}`);
+    return false;
+  }
+  
   try {
     const { data: profile } = await supabase
       .from("profiles")
@@ -143,7 +202,7 @@ async function sendPaymentFailureNotification(
       .single();
 
     if (!profile?.telegram_user_id || profile.telegram_link_status !== "active") {
-      return;
+      return false;
     }
 
     const { data: linkBot } = await supabase
@@ -154,7 +213,7 @@ async function sendPaymentFailureNotification(
       .limit(1)
       .single();
 
-    if (!linkBot?.token) return;
+    if (!linkBot?.token) return false;
 
     const userName = profile.full_name || "Клиент";
     const russianError = translatePaymentError(errorMessage);
@@ -184,8 +243,73 @@ ${userName}, к сожалению, не удалось провести опл�
       }),
     });
     console.log(`[${BUILD_ID}] Sent payment failure notification to user ${userId}`);
+    return true;
   } catch (err) {
     console.error("Failed to send payment failure notification:", err);
+    return false;
+  }
+}
+
+// PATCH-3: Send no_card notification with anti-spam guard
+async function sendNoCardNotification(
+  supabase: any,
+  userId: string,
+  productName: string,
+  billing: any
+): Promise<boolean> {
+  // Anti-spam guard - check if already notified
+  if (billing?.notified?.no_card_at) {
+    console.log(`[${BUILD_ID}] Skipping no_card notification - already sent at ${billing.notified.no_card_at}`);
+    return false;
+  }
+  
+  try {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("telegram_user_id, telegram_link_status, full_name")
+      .eq("user_id", userId)
+      .single();
+
+    if (!profile?.telegram_user_id || profile.telegram_link_status !== "active") {
+      return false;
+    }
+
+    const { data: linkBot } = await supabase
+      .from("telegram_bots")
+      .select("token")
+      .eq("is_link_bot", true)
+      .eq("is_active", true)
+      .limit(1)
+      .single();
+
+    if (!linkBot?.token) return false;
+
+    const userName = profile.full_name || "Клиент";
+    const message = `⚠️ *Карта не привязана*
+
+${userName}, у вас нет привязанной карты для автоматической оплаты.
+
+📦 *Продукт:* ${productName}
+
+Чтобы завершить регистрацию, привяжите карту или оплатите вручную на сайте.
+
+🔗 [Привязать карту](https://business-training.gorbova.by/settings/payment-methods)
+🔗 [Оплатить вручную](https://business-training.gorbova.by)`;
+
+    await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: profile.telegram_user_id,
+        text: message,
+        parse_mode: "Markdown",
+      }),
+    });
+    console.log(`[${BUILD_ID}] Sent no_card notification to user ${userId}`);
+    return true;
+  } catch (err) {
+    console.error("Failed to send no_card notification:", err);
+    return false;
   }
 }
 
@@ -199,18 +323,6 @@ async function sendAdminNotification(
   errorMessage?: string
 ): Promise<void> {
   try {
-    const { data: admins } = await supabase
-      .from("profiles")
-      .select("telegram_user_id")
-      .eq("telegram_link_status", "active")
-      .in("user_id", 
-        supabase.from("user_roles_v2")
-          .select("user_id")
-          .eq("role_id", 
-            supabase.from("roles").select("id").eq("code", "super_admin").single()
-          )
-      );
-
     // Use notify-admins function instead
     await supabase.functions.invoke("telegram-notify-admins", {
       body: {
@@ -225,6 +337,146 @@ async function sendAdminNotification(
   }
 }
 
+// PATCH-0.1: Get bePaid shop_id from DB sources with hard guard
+async function getBepaidShopId(supabase: any): Promise<{ shopId: string; source: string }> {
+  // 1. Check integration_instances first
+  const { data: bepaidInstance } = await supabase
+    .from("integration_instances")
+    .select("config")
+    .eq("provider", "bepaid")
+    .in("status", ["active", "connected"])
+    .limit(1)
+    .maybeSingle();
+
+  const bepaidConfig = bepaidInstance?.config as Record<string, any> | null;
+  if (bepaidConfig?.shop_id) {
+    return { shopId: String(bepaidConfig.shop_id), source: "integration_instances" };
+  }
+
+  // 2. Fallback to payment_settings
+  const { data: settings } = await supabase
+    .from("payment_settings")
+    .select("key, value")
+    .in("key", ["bepaid_shop_id"]);
+
+  const settingsMap = settings?.reduce((acc: Record<string, string>, s: { key: string; value: string }) => {
+    acc[s.key] = s.value;
+    return acc;
+  }, {}) || {};
+
+  if (settingsMap.bepaid_shop_id) {
+    return { shopId: settingsMap.bepaid_shop_id, source: "payment_settings" };
+  }
+
+  // 3. Fallback to env (but NOT hardcoded fallback!)
+  const envShopId = Deno.env.get("BEPAID_SHOP_ID");
+  if (envShopId) {
+    return { shopId: envShopId, source: "env" };
+  }
+
+  throw new Error("BEPAID_SHOP_ID not configured in integration_instances, payment_settings, or env");
+}
+
+// PATCH-0: Preflight check - verify bePaid credentials
+async function runPreflight(supabase: any, bepaidShopId: string, bepaidSecretKey: string): Promise<{
+  ok: boolean;
+  build_id: string;
+  host_used: string;
+  shop_id_masked: string;
+  shop_id_source: string;
+  shop_name?: string;
+  http_status?: number;
+  provider_error?: string;
+  provider_check: string;
+  charge_capability: boolean;
+}> {
+  const bepaidAuth = btoa(`${bepaidShopId}:${bepaidSecretKey}`);
+  const host = "gateway.bepaid.by";
+  const shopIdMasked = bepaidShopId.substring(0, 3) + "**";
+
+  try {
+    // Step 1: Check shop exists via GET /shops/{id}
+    const shopResponse = await fetch(`https://${host}/shops/${bepaidShopId}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Basic ${bepaidAuth}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const shopResult = await shopResponse.json();
+    
+    if (!shopResponse.ok || shopResult.errors) {
+      return {
+        ok: false,
+        build_id: BUILD_ID,
+        host_used: host,
+        shop_id_masked: shopIdMasked,
+        shop_id_source: "unknown",
+        http_status: shopResponse.status,
+        provider_error: shopResult.errors?.base?.[0] || shopResult.message || "Shop not found",
+        provider_check: "shop_only",
+        charge_capability: false,
+      };
+    }
+
+    // Step 2: Try a test authorization to verify charge capability
+    // Use minimal test transaction (1 kopeck, test mode, will be voided)
+    const testPayload = {
+      request: {
+        amount: 1, // 1 kopeck
+        currency: "BYN",
+        description: "Preflight check - will be voided",
+        test: true,
+        credit_card: {
+          number: "4200000000000000", // bePaid test card
+          exp_month: "12",
+          exp_year: "2030",
+          verification_value: "123",
+        },
+      },
+    };
+
+    const authResponse = await fetch(`https://${host}/transactions/authorizations`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${bepaidAuth}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(testPayload),
+    });
+
+    const authResult = await authResponse.json();
+    
+    // Check if we can at least attempt transactions
+    // Even if card is invalid, shop auth must work
+    const hasAuthCapability = authResponse.status !== 401 && authResponse.status !== 403;
+
+    return {
+      ok: true,
+      build_id: BUILD_ID,
+      host_used: host,
+      shop_id_masked: shopIdMasked,
+      shop_id_source: "db",
+      shop_name: shopResult.shop?.name || "Unknown",
+      http_status: shopResponse.status,
+      provider_check: "shop+auth",
+      charge_capability: hasAuthCapability,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      build_id: BUILD_ID,
+      host_used: host,
+      shop_id_masked: shopIdMasked,
+      shop_id_source: "unknown",
+      provider_error: err instanceof Error ? err.message : String(err),
+      provider_check: "error",
+      charge_capability: false,
+    };
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -234,10 +486,62 @@ serve(async (req) => {
   const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, supabaseKey);
 
-  const bepaidShopId = Deno.env.get("BEPAID_SHOP_ID") || "369258";
+  const url = new URL(req.url);
+  const isPreflight = url.searchParams.get("preflight") === "1";
+  const isExecute = url.searchParams.get("execute") === "1";
+
+  // PATCH-0.1: Get shop_id from DB sources with hard guard
+  let bepaidShopId: string;
+  let shopIdSource: string;
+  
+  try {
+    const shopResult = await getBepaidShopId(supabase);
+    bepaidShopId = shopResult.shopId;
+    shopIdSource = shopResult.source;
+    
+    // HARD GUARD: Verify it's the expected production shop_id
+    if (bepaidShopId !== EXPECTED_SHOP_ID) {
+      console.error(`[${BUILD_ID}] INVALID_SHOP_ID_GUARD: got ${bepaidShopId}, expected ${EXPECTED_SHOP_ID}`);
+      return new Response(JSON.stringify({
+        success: false,
+        build_id: BUILD_ID,
+        error: `INVALID_SHOP_ID_GUARD: ${bepaidShopId}`,
+        expected: EXPECTED_SHOP_ID,
+        source: shopIdSource,
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    
+    console.log(`[${BUILD_ID}] Using shop_id=${bepaidShopId} from ${shopIdSource}`);
+  } catch (err) {
+    return new Response(JSON.stringify({
+      success: false,
+      build_id: BUILD_ID,
+      error: err instanceof Error ? err.message : String(err),
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   const bepaidSecretKey = Deno.env.get("BEPAID_SECRET_KEY")!;
   const bepaidAuth = btoa(`${bepaidShopId}:${bepaidSecretKey}`);
   const testMode = Deno.env.get("BEPAID_TEST_MODE") === "true";
+
+  // PATCH-0: Preflight mode - just check credentials
+  if (isPreflight) {
+    console.log(`[${BUILD_ID}] Running preflight check`);
+    const preflightResult = await runPreflight(supabase, bepaidShopId, bepaidSecretKey);
+    preflightResult.shop_id_source = shopIdSource;
+    
+    console.log(`[${BUILD_ID}] Preflight result:`, JSON.stringify(preflightResult));
+    
+    return new Response(JSON.stringify(preflightResult), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   // PATCH-6: GUARD - Stop guards and limits
   const MAX_BATCH = 50;        // Max preregistrations per run
@@ -255,12 +559,60 @@ serve(async (req) => {
       batch_limited: false,
       error_aborted: false,
       runtime_aborted: false,
+      outside_window: false,
+      deadline_passed: false,
     },
   };
 
   try {
     const now = new Date();
     
+    console.log(`[${BUILD_ID}] START preregistration-charge-cron at ${now.toISOString()}`);
+
+    // PATCH-2: Time-guard and Deadline-guard (only for execute mode)
+    if (isExecute) {
+      // Check time window
+      const windowCheck = isWithinExecutionWindow(now);
+      if (!windowCheck.allowed) {
+        console.log(`[${BUILD_ID}] Outside execution window: hour=${windowCheck.hour}, minute=${windowCheck.minute}`);
+        return new Response(JSON.stringify({
+          success: true,
+          build_id: BUILD_ID,
+          processed: 0,
+          skipped_all: true,
+          reason: "outside_window",
+          window_info: {
+            hour: windowCheck.hour,
+            minute: windowCheck.minute,
+            allowed_windows: "09:00-09:10, 21:00-21:10 Europe/Minsk",
+          },
+          guards: { ...results.guards, outside_window: true },
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      
+      // Check deadline
+      if (!isBeforeDeadline(now)) {
+        console.log(`[${BUILD_ID}] Deadline passed (2026-02-04)`);
+        return new Response(JSON.stringify({
+          success: true,
+          build_id: BUILD_ID,
+          processed: 0,
+          skipped_all: true,
+          reason: "deadline_passed",
+          deadline: "2026-02-04",
+          guards: { ...results.guards, deadline_passed: true },
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // PATCH-4: Get current window key for anti-repeat
+    const currentWindowKey = getWindowKey(now);
+    console.log(`[${BUILD_ID}] Current window key: ${currentWindowKey}`);
+
     // PATCH-1: Use Minsk timezone for charge window logic
     const minskFormatter = new Intl.DateTimeFormat('en-US', {
       timeZone: 'Europe/Minsk',
@@ -277,11 +629,9 @@ serve(async (req) => {
       timeZone: 'Europe/Minsk'
     }).format(now);
     
-    console.log(`[${BUILD_ID}] START preregistration-charge-cron at ${now.toISOString()}, todayMinsk: ${todayMinsk}, dayOfMonth: ${dayOfMonth}`);
+    console.log(`[${BUILD_ID}] todayMinsk: ${todayMinsk}, dayOfMonth: ${dayOfMonth}`);
 
     // 1. Find preregistrations that are ready for charging
-    // Status: new or contacted, with user_id set (has account)
-    // PATCH-2: Added meta field to preserve existing billing data
     const { data: preregistrations, error: preregError } = await supabase
       .from("course_preregistrations")
       .select(`
@@ -304,16 +654,16 @@ serve(async (req) => {
     }
 
     if (!preregistrations || preregistrations.length === 0) {
-      console.log("No preregistrations found for charging");
-      return new Response(JSON.stringify({ success: true, results }), {
+      console.log(`[${BUILD_ID}] No preregistrations found for charging`);
+      console.log(`[${BUILD_ID}] END results:`, JSON.stringify(results));
+      return new Response(JSON.stringify({ success: true, build_id: BUILD_ID, results }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    console.log(`Found ${preregistrations.length} preregistrations to check`);
+    console.log(`[${BUILD_ID}] Found ${preregistrations.length} preregistrations to check`);
 
     // 2. Get preregistration offer to check charge window
-    // PATCH-1: Fixed column name charge_offer_id → auto_charge_offer_id
     const { data: preregOffer } = await supabase
       .from("tariff_offers")
       .select("id, meta, auto_charge_offer_id")
@@ -322,28 +672,29 @@ serve(async (req) => {
       .single();
 
     if (!preregOffer) {
-      console.log("No active preregistration offer found");
-      return new Response(JSON.stringify({ success: true, results, message: "No preregistration offer" }), {
+      console.log(`[${BUILD_ID}] No active preregistration offer found`);
+      console.log(`[${BUILD_ID}] END results:`, JSON.stringify(results));
+      return new Response(JSON.stringify({ success: true, build_id: BUILD_ID, results, message: "No preregistration offer" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const meta = preregOffer.meta as any || {};
-    // PATCH-1: Fixed charge window logic - use day-of-month integers, not date strings
     const chargeWindowStart = meta.preregistration?.charge_window_start || meta.charge_window_start || 1;
     const chargeWindowEnd = meta.preregistration?.charge_window_end || meta.charge_window_end || 4;
     const firstChargeDate = meta.preregistration?.first_charge_date || meta.first_charge_date;
-    // PATCH-1: Fixed chargeOfferId priority: meta.preregistration.charge_offer_id → meta.charge_offer_id → auto_charge_offer_id
     const chargeOfferId = 
       meta?.preregistration?.charge_offer_id || 
       meta?.charge_offer_id || 
       preregOffer?.auto_charge_offer_id;
 
-    // PATCH-1: Check first_charge_date (YYYY-MM-DD string comparison)
+    // Check first_charge_date
     if (firstChargeDate && todayMinsk < firstChargeDate) {
-      console.log(`Today ${todayMinsk} is before first_charge_date ${firstChargeDate}`);
+      console.log(`[${BUILD_ID}] Today ${todayMinsk} is before first_charge_date ${firstChargeDate}`);
+      console.log(`[${BUILD_ID}] END results:`, JSON.stringify(results));
       return new Response(JSON.stringify({ 
         success: true, 
+        build_id: BUILD_ID,
         results, 
         message: `Before first charge date (${firstChargeDate})` 
       }), {
@@ -351,11 +702,13 @@ serve(async (req) => {
       });
     }
 
-    // PATCH-1: Check if day of month is within charge window (1-4)
+    // Check if day of month is within charge window (1-4)
     if (dayOfMonth < chargeWindowStart || dayOfMonth > chargeWindowEnd) {
-      console.log(`Day ${dayOfMonth} is outside charge window ${chargeWindowStart}-${chargeWindowEnd}`);
+      console.log(`[${BUILD_ID}] Day ${dayOfMonth} is outside charge window ${chargeWindowStart}-${chargeWindowEnd}`);
+      console.log(`[${BUILD_ID}] END results:`, JSON.stringify(results));
       return new Response(JSON.stringify({ 
         success: true, 
+        build_id: BUILD_ID,
         results, 
         message: `Outside charge window (day ${dayOfMonth} not in ${chargeWindowStart}-${chargeWindowEnd})` 
       }), {
@@ -363,9 +716,9 @@ serve(async (req) => {
       });
     }
     
-    console.log(`Charge window check passed: day ${dayOfMonth} is within ${chargeWindowStart}-${chargeWindowEnd}`);
+    console.log(`[${BUILD_ID}] Charge window check passed: day ${dayOfMonth} is within ${chargeWindowStart}-${chargeWindowEnd}`);
 
-    // 3. Get the charge offer details (amount, product, tariff)
+    // 3. Get the charge offer details
     if (!chargeOfferId) {
       throw new Error("No charge_offer_id configured for preregistration offer");
     }
@@ -392,7 +745,6 @@ serve(async (req) => {
       .single();
     
     if (chargeOfferError) {
-      console.error(`Error fetching charge offer ${chargeOfferId}: ${chargeOfferError.message}`);
       throw new Error(`Charge offer ${chargeOfferId} not found: ${chargeOfferError.message}`);
     }
 
@@ -407,37 +759,45 @@ serve(async (req) => {
     const productName = product?.name || "Бухгалтерия как бизнес";
     const productCode = product?.code || "buh_business";
 
-    console.log(`Charge offer: ${chargeAmount} ${currency} for ${productName}`);
+    console.log(`[${BUILD_ID}] Charge offer: ${chargeAmount} ${currency} for ${productName}`);
 
     // 4. Process each preregistration
-    // PATCH-6: Apply batch limit
     const limitedPreregs = preregistrations.slice(0, MAX_BATCH);
     if (preregistrations.length > MAX_BATCH) {
       results.guards.batch_limited = true;
-      console.log(`GUARD: Batch limited to ${MAX_BATCH} (total: ${preregistrations.length})`);
+      console.log(`[${BUILD_ID}] GUARD: Batch limited to ${MAX_BATCH} (total: ${preregistrations.length})`);
     }
 
     for (const prereg of limitedPreregs) {
-      // PATCH-6: Runtime guard check
+      // Runtime guard check
       if (Date.now() - startTime > MAX_RUNTIME_MS) {
         results.guards.runtime_aborted = true;
-        console.log(`GUARD: Runtime limit reached (${MAX_RUNTIME_MS}ms), aborting`);
+        console.log(`[${BUILD_ID}] GUARD: Runtime limit reached (${MAX_RUNTIME_MS}ms), aborting`);
         break;
       }
       
-      // PATCH-6: Error limit guard
+      // Error limit guard
       if (results.failed >= MAX_ERRORS) {
         results.guards.error_aborted = true;
-        console.log(`GUARD: Max errors (${MAX_ERRORS}) reached, aborting`);
+        console.log(`[${BUILD_ID}] GUARD: Max errors (${MAX_ERRORS}) reached, aborting`);
         break;
       }
 
       results.processed++;
-      // PATCH-B: No PII in logs - only id/user_id
       console.log(`[${BUILD_ID}] Processing preregistration`, { id: prereg.id, user_id: prereg.user_id, product_code: prereg.product_code });
 
       try {
-        // PATCH-2: Check if user already has a paid order for this product (prevent double charge)
+        const currentMeta = (prereg as any).meta || {};
+        const currentBilling = currentMeta.billing || {};
+
+        // PATCH-4: Anti-repeat check - skip if already processed in this window
+        if (currentBilling.last_attempt_window_key === currentWindowKey) {
+          console.log(`[${BUILD_ID}] Skipping prereg ${prereg.id}: already processed in window ${currentWindowKey}`);
+          results.skipped++;
+          continue;
+        }
+
+        // Check if user already has a paid order
         const { data: existingPaidOrder } = await supabase
           .from("orders_v2")
           .select("id, order_number")
@@ -448,9 +808,8 @@ serve(async (req) => {
           .maybeSingle();
 
         if (existingPaidOrder) {
-          console.log(`Skipping ${prereg.id}: user already has paid order ${existingPaidOrder.order_number}`);
+          console.log(`[${BUILD_ID}] Skipping ${prereg.id}: user already has paid order ${existingPaidOrder.order_number}`);
           
-          // Auto-convert prereg to 'paid' status
           await supabase
             .from("course_preregistrations")
             .update({ status: "paid", updated_at: now.toISOString() })
@@ -460,7 +819,7 @@ serve(async (req) => {
           continue;
         }
 
-        // 4.1 Get user's profile and payment method
+        // Get user's profile
         const { data: profile } = await supabase
           .from("profiles")
           .select("id, telegram_user_id")
@@ -468,12 +827,12 @@ serve(async (req) => {
           .single();
 
         if (!profile) {
-          console.log(`Skipping ${prereg.id}: profile not found for user ${prereg.user_id}`);
+          console.log(`[${BUILD_ID}] Skipping ${prereg.id}: profile not found for user ${prereg.user_id}`);
           results.skipped++;
           continue;
         }
 
-        // 4.2 Find active payment method
+        // Find active payment method
         const { data: paymentMethod } = await supabase
           .from("payment_methods")
           .select("id, provider_token, brand, last4, supports_recurring")
@@ -484,40 +843,58 @@ serve(async (req) => {
           .single();
 
         if (!paymentMethod || !paymentMethod.provider_token) {
-          console.log(`Skipping ${prereg.id}: no active payment method for user ${prereg.user_id}`);
+          console.log(`[${BUILD_ID}] No payment method for prereg ${prereg.id}`);
+          
+          // PATCH-3: Send no_card notification with anti-spam guard
+          const notified = await sendNoCardNotification(supabase, prereg.user_id, productName, currentBilling);
           
           // Update billing meta for no_card
-          const currentMeta = (prereg as any).meta || {};
           await supabase
             .from("course_preregistrations")
             .update({
               meta: {
                 ...currentMeta,
                 billing: {
-                  ...(currentMeta.billing || {}),
+                  ...currentBilling,
                   billing_status: "no_card",
                   has_active_card: false,
+                  last_attempt_window_key: currentWindowKey,
+                  notified: {
+                    ...currentBilling.notified,
+                    ...(notified ? { no_card_at: now.toISOString() } : {}),
+                  },
                 },
               },
               updated_at: now.toISOString(),
             })
             .eq("id", prereg.id);
           
+          // Log to telegram_logs
+          if (notified) {
+            await supabase.from("telegram_logs").insert({
+              user_id: prereg.user_id,
+              action: "PREREG_NO_CARD_WARNING",
+              event_type: "preregistration_no_card",
+              status: "ok",
+              message_text: `⚠️ Карта не привязана для "${productName}"`,
+              meta: { preregistration_id: prereg.id },
+            });
+          }
+          
           results.skipped++;
           continue;
         }
 
-        // Check if card supports recurring (if not, warn but try anyway for old cards)
+        // Check if card supports recurring
         if (paymentMethod.supports_recurring === false) {
-          console.warn(`Warning: Payment method ${paymentMethod.id} may not support recurring charges`);
+          console.warn(`[${BUILD_ID}] Warning: Payment method ${paymentMethod.id} may not support recurring charges`);
         }
 
-        // 4.3 Generate order number
+        // Generate order number
         const { data: orderNumResult } = await supabase.rpc("generate_order_number");
         const orderNumber = orderNumResult || `ORD-${Date.now()}`;
 
-        // 4.4 Create order (using only existing columns in orders_v2)
-        // Required NOT NULL columns: base_price, final_price
+        // Create order
         const { data: order, error: orderError } = await supabase
           .from("orders_v2")
           .insert({
@@ -549,9 +926,9 @@ serve(async (req) => {
           throw new Error(`Failed to create order: ${orderError?.message}`);
         }
 
-        console.log(`Created order ${order.id} (${orderNumber}) for preregistration ${prereg.id}`);
+        console.log(`[${BUILD_ID}] Created order ${order.id} (${orderNumber}) for preregistration ${prereg.id}`);
 
-        // 4.5 Create payment record - PATCH-I: Use whitelist + assertRequired
+        // Create payment record
         const paymentPayloadRaw = {
           order_id: order.id,
           user_id: prereg.user_id,
@@ -581,10 +958,10 @@ serve(async (req) => {
           throw new Error(`Failed to create payment: ${paymentError?.message}`);
         }
 
-        // 4.6 Execute charge via bePaid
+        // Execute charge via bePaid
         const chargePayload = {
           request: {
-            amount: Math.round(chargeAmount * 100), // Convert to kopecks
+            amount: Math.round(chargeAmount * 100),
             currency,
             description: `${productName}: ${prereg.name}`,
             tracking_id: payment.id,
@@ -616,7 +993,7 @@ serve(async (req) => {
         const txUid = chargeResult?.transaction?.uid;
 
         if (txStatus === "successful") {
-          // 4.7 Update payment to successful
+          // Update payment to successful
           await supabase
             .from("payments_v2")
             .update({
@@ -627,7 +1004,7 @@ serve(async (req) => {
             })
             .eq("id", payment.id);
 
-          // 4.8 Update order to paid (paid_at doesn't exist - store in meta)
+          // Update order to paid
           await supabase
             .from("orders_v2")
             .update({
@@ -640,13 +1017,10 @@ serve(async (req) => {
             })
             .eq("id", order.id);
 
-          // 4.9 Create subscription
+          // Create subscription
           const nextChargeAt = new Date(now);
           nextChargeAt.setMonth(nextChargeAt.getMonth() + 1);
 
-          // PATCH-A: subscriptions_v2 doesn't have amount/currency/billing_cycle columns
-          // Store charge details in meta instead
-          // PATCH-I: Use whitelist + assertRequired for subscriptions_v2
           const subPayloadRaw = {
             user_id: prereg.user_id,
             profile_id: profile.id,
@@ -654,7 +1028,7 @@ serve(async (req) => {
             tariff_id: tariff.id,
             product_id: product.id,
             status: "active",
-            is_trial: false, // PATCH-I-1: NOT NULL field - required!
+            is_trial: false,
             payment_method_id: paymentMethod.id,
             payment_token: paymentMethod.provider_token,
             access_start_at: now.toISOString(),
@@ -676,12 +1050,12 @@ serve(async (req) => {
             .from("subscriptions_v2")
             .insert(subPayload);
 
-          // 4.10 Grant access via edge function
+          // Grant access via edge function
           await supabase.functions.invoke("grant-access-for-order", {
             body: { orderId: order.id },
           });
 
-          // 4.11 Update preregistration to paid + billing meta
+          // Update preregistration to paid + billing meta
           await supabase
             .from("course_preregistrations")
             .update({
@@ -690,8 +1064,9 @@ serve(async (req) => {
               meta: {
                 billing: {
                   billing_status: "paid",
-                  attempts_count: 1,
+                  attempts_count: (currentBilling.attempts_count || 0) + 1,
                   last_attempt_at: now.toISOString(),
+                  last_attempt_window_key: currentWindowKey,
                   last_attempt_status: "success",
                   last_attempt_error: null,
                   has_active_card: true,
@@ -700,11 +1075,11 @@ serve(async (req) => {
             })
             .eq("id", prereg.id);
 
-          // 4.12 Send notifications
+          // Send notifications
           await sendPaymentSuccessNotification(supabase, prereg.user_id, productName, chargeAmount, currency);
           await sendAdminNotification(supabase, "success", prereg.id, prereg.email, chargeAmount, currency);
           
-          // 4.13 Log to telegram_logs with message_text
+          // Log to telegram_logs
           await supabase.from("telegram_logs").insert({
             user_id: prereg.user_id,
             action: "PREREG_PAYMENT_SUCCESS",
@@ -748,9 +1123,12 @@ serve(async (req) => {
             })
             .eq("id", order.id);
 
+          // PATCH-3: Send failure notification with anti-spam guard
+          const notified = await sendPaymentFailureNotification(
+            supabase, prereg.user_id, productName, chargeAmount, currency, errorMessage, currentBilling
+          );
+
           // Update prereg billing meta for failed attempt
-          const currentMeta = (prereg as any).meta || {};
-          const currentBilling = currentMeta.billing || {};
           await supabase
             .from("course_preregistrations")
             .update({
@@ -761,16 +1139,20 @@ serve(async (req) => {
                   billing_status: "failed",
                   attempts_count: (currentBilling.attempts_count || 0) + 1,
                   last_attempt_at: now.toISOString(),
+                  last_attempt_window_key: currentWindowKey,
                   last_attempt_status: "failed",
                   last_attempt_error: errorMessage,
                   has_active_card: true,
+                  notified: {
+                    ...currentBilling.notified,
+                    ...(notified ? { failed_at: now.toISOString() } : {}),
+                  },
                 },
               },
               updated_at: now.toISOString(),
             })
             .eq("id", prereg.id);
 
-          await sendPaymentFailureNotification(supabase, prereg.user_id, productName, chargeAmount, currency, errorMessage);
           await sendAdminNotification(supabase, "failure", prereg.id, prereg.email, chargeAmount, currency, errorMessage);
           
           // Log failure to telegram_logs
@@ -789,14 +1171,12 @@ serve(async (req) => {
           });
 
           results.failed++;
-          // PATCH-B: No PII in errors - use id only
           results.errors.push(`prereg_${prereg.id}: ${errorMessage}`);
           console.error(`[${BUILD_ID}] Failed to charge preregistration ${prereg.id}: ${errorMessage}`);
         }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         results.failed++;
-        // PATCH-B: No PII in errors
         results.errors.push(`prereg_${prereg.id}: ${errorMsg}`);
         console.error(`[${BUILD_ID}] Error processing preregistration ${prereg.id}:`, err);
       }
@@ -804,15 +1184,15 @@ serve(async (req) => {
 
     console.log(`[${BUILD_ID}] END preregistration-charge-cron results:`, JSON.stringify(results));
 
-    // PATCH-B: Include build_id in response for verification
     return new Response(JSON.stringify({ success: true, build_id: BUILD_ID, results }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
-    console.error("Preregistration charge cron error:", error);
+    console.error(`[${BUILD_ID}] Preregistration charge cron error:`, error);
     return new Response(
       JSON.stringify({ 
         success: false, 
+        build_id: BUILD_ID,
         error: error instanceof Error ? error.message : String(error),
         results 
       }),
