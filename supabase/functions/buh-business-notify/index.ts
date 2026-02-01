@@ -156,13 +156,43 @@ serve(async (req) => {
             results.sent++;
             results.users.push({ email: prereg.email, name: prereg.name, status: "sent" });
             
-            // Log notification
+            // Log notification with message_text
             await supabase.from("telegram_logs").insert({
-              bot_id: linkBot.id,
-              event_type: "buh_business_tomorrow_charge",
               user_id: prereg.user_id,
-              payload: { prereg_id: prereg.id, message_id: result.result?.message_id },
+              action: "PREREG_CHARGE_REMINDER",
+              event_type: "preregistration_tomorrow_charge",
+              status: "ok",
+              message_text: TEMPLATES.tomorrow_charge,
+              meta: { 
+                preregistration_id: prereg.id, 
+                message_id: result.result?.message_id,
+                type: "tomorrow_charge",
+              },
             });
+            
+            // Update prereg billing.notified
+            const { data: preregData } = await supabase
+              .from("course_preregistrations")
+              .select("meta")
+              .eq("id", prereg.id)
+              .single();
+            const currentMeta = preregData?.meta || {};
+            const currentBilling = (currentMeta as any).billing || {};
+            await supabase
+              .from("course_preregistrations")
+              .update({
+                meta: {
+                  ...currentMeta,
+                  billing: {
+                    ...currentBilling,
+                    notified: {
+                      ...(currentBilling.notified || {}),
+                      tomorrow_charge_at: new Date().toISOString(),
+                    },
+                  },
+                },
+              })
+              .eq("id", prereg.id);
           } else {
             results.failed++;
             results.errors.push(`${prereg.email}: ${result.description}`);
@@ -254,13 +284,45 @@ serve(async (req) => {
             results.sent++;
             results.users.push({ email: prereg.email, name: prereg.name, status: "sent" });
             
-            // Log notification
+            // Log notification with message_text
             await supabase.from("telegram_logs").insert({
-              bot_id: linkBot.id,
-              event_type: "buh_business_no_card",
               user_id: prereg.user_id,
-              payload: { prereg_id: prereg.id, message_id: result.result?.message_id },
+              action: "PREREG_NO_CARD_WARNING",
+              event_type: "preregistration_no_card",
+              status: "ok",
+              message_text: TEMPLATES.no_card,
+              meta: { 
+                preregistration_id: prereg.id, 
+                message_id: result.result?.message_id,
+                type: "no_card",
+              },
             });
+            
+            // Update prereg billing.notified
+            const { data: preregData } = await supabase
+              .from("course_preregistrations")
+              .select("meta")
+              .eq("id", prereg.id)
+              .single();
+            const currentMeta = preregData?.meta || {};
+            const currentBilling = (currentMeta as any).billing || {};
+            await supabase
+              .from("course_preregistrations")
+              .update({
+                meta: {
+                  ...currentMeta,
+                  billing: {
+                    ...currentBilling,
+                    billing_status: "no_card",
+                    has_active_card: false,
+                    notified: {
+                      ...(currentBilling.notified || {}),
+                      no_card_at: new Date().toISOString(),
+                    },
+                  },
+                },
+              })
+              .eq("id", prereg.id);
           } else {
             results.failed++;
             results.errors.push(`${prereg.email}: ${result.description}`);

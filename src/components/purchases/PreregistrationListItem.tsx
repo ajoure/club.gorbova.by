@@ -22,6 +22,7 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
   confirmed: { label: "Подтверждена", variant: "default" },
   contacted: { label: "Связались", variant: "outline" },
   converted: { label: "Оплачено", variant: "default" },
+  paid: { label: "Оплачено", variant: "default" },
   cancelled: { label: "Отменена", variant: "destructive" },
 };
 

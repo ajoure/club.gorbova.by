@@ -399,6 +399,24 @@ serve(async (req) => {
 
         if (!paymentMethod || !paymentMethod.provider_token) {
           console.log(`Skipping ${prereg.id}: no active payment method for user ${prereg.user_id}`);
+          
+          // Update billing meta for no_card
+          const currentMeta = (prereg as any).meta || {};
+          await supabase
+            .from("course_preregistrations")
+            .update({
+              meta: {
+                ...currentMeta,
+                billing: {
+                  ...(currentMeta.billing || {}),
+                  billing_status: "no_card",
+                  has_active_card: false,
+                },
+              },
+              updated_at: now.toISOString(),
+            })
+            .eq("id", prereg.id);
+          
           results.skipped++;
           continue;
         }
@@ -557,18 +575,43 @@ serve(async (req) => {
             body: { orderId: order.id },
           });
 
-          // 4.11 Update preregistration to converted
+          // 4.11 Update preregistration to paid + billing meta
           await supabase
             .from("course_preregistrations")
             .update({
-              status: "converted",
+              status: "paid",
               updated_at: now.toISOString(),
+              meta: {
+                billing: {
+                  billing_status: "paid",
+                  attempts_count: 1,
+                  last_attempt_at: now.toISOString(),
+                  last_attempt_status: "success",
+                  last_attempt_error: null,
+                  has_active_card: true,
+                },
+              },
             })
             .eq("id", prereg.id);
 
           // 4.12 Send notifications
           await sendPaymentSuccessNotification(supabase, prereg.user_id, productName, chargeAmount, currency);
           await sendAdminNotification(supabase, "success", prereg.id, prereg.email, chargeAmount, currency);
+          
+          // 4.13 Log to telegram_logs with message_text
+          await supabase.from("telegram_logs").insert({
+            user_id: prereg.user_id,
+            action: "PREREG_PAYMENT_SUCCESS",
+            event_type: "preregistration_payment_success",
+            status: "ok",
+            message_text: `✅ Платёж ${chargeAmount} ${currency} за "${productName}"`,
+            meta: {
+              preregistration_id: prereg.id,
+              amount: chargeAmount,
+              currency,
+              order_id: order.id,
+            },
+          });
 
           results.charged++;
           console.log(`Successfully charged preregistration ${prereg.id}`);
@@ -599,8 +642,45 @@ serve(async (req) => {
             })
             .eq("id", order.id);
 
+          // Update prereg billing meta for failed attempt
+          const currentMeta = (prereg as any).meta || {};
+          const currentBilling = currentMeta.billing || {};
+          await supabase
+            .from("course_preregistrations")
+            .update({
+              meta: {
+                ...currentMeta,
+                billing: {
+                  ...currentBilling,
+                  billing_status: "failed",
+                  attempts_count: (currentBilling.attempts_count || 0) + 1,
+                  last_attempt_at: now.toISOString(),
+                  last_attempt_status: "failed",
+                  last_attempt_error: errorMessage,
+                  has_active_card: true,
+                },
+              },
+              updated_at: now.toISOString(),
+            })
+            .eq("id", prereg.id);
+
           await sendPaymentFailureNotification(supabase, prereg.user_id, productName, chargeAmount, currency, errorMessage);
           await sendAdminNotification(supabase, "failure", prereg.id, prereg.email, chargeAmount, currency, errorMessage);
+          
+          // Log failure to telegram_logs
+          await supabase.from("telegram_logs").insert({
+            user_id: prereg.user_id,
+            action: "PREREG_PAYMENT_FAILED",
+            event_type: "preregistration_payment_failed",
+            status: "ok",
+            message_text: `❌ Платёж не прошёл: ${errorMessage}`,
+            meta: {
+              preregistration_id: prereg.id,
+              amount: chargeAmount,
+              currency,
+              error: errorMessage,
+            },
+          });
 
           results.failed++;
           results.errors.push(`${prereg.email}: ${errorMessage}`);

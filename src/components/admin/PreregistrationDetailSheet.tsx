@@ -32,8 +32,27 @@ import {
   Save,
   ExternalLink,
   Globe,
+  CreditCard,
+  CheckCircle,
+  XCircle,
+  Clock,
+  AlertTriangle,
 } from "lucide-react";
 import { getProductName } from "@/lib/product-names";
+
+interface PreregistrationBilling {
+  billing_status?: 'pending' | 'paid' | 'no_card' | 'failed' | 'overdue';
+  attempts_count?: number;
+  last_attempt_at?: string;
+  last_attempt_status?: 'success' | 'failed' | 'skipped';
+  last_attempt_error?: string;
+  has_active_card?: boolean;
+  notified?: {
+    tomorrow_charge_at?: string;
+    no_card_at?: string;
+    failed_at?: string;
+  };
+}
 
 interface Preregistration {
   id: string;
@@ -49,6 +68,9 @@ interface Preregistration {
   created_at: string;
   updated_at: string;
   user_id: string | null;
+  meta?: {
+    billing?: PreregistrationBilling;
+  } | null;
   profiles?: {
     id: string;
     full_name: string | null;
@@ -68,8 +90,17 @@ const statusOptions = [
   { value: "confirmed", label: "Подтверждена", variant: "default" as const },
   { value: "contacted", label: "Связались", variant: "outline" as const },
   { value: "converted", label: "Оплачено", variant: "default" as const },
+  { value: "paid", label: "Оплачено", variant: "default" as const },
   { value: "cancelled", label: "Отменена", variant: "destructive" as const },
 ];
+
+const billingStatusLabels: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
+  pending: { label: "Ожидает", variant: "secondary" },
+  paid: { label: "Оплачено", variant: "default" },
+  no_card: { label: "Нет карты", variant: "destructive" },
+  failed: { label: "Ошибка", variant: "destructive" },
+  overdue: { label: "Просрочено", variant: "destructive" },
+};
 
 export function PreregistrationDetailSheet({
   preregistration,
@@ -232,6 +263,97 @@ export function PreregistrationDetailSheet({
               )}
             </div>
           </div>
+
+          {/* Billing Info Card */}
+          {preregistration.meta?.billing && (
+            <div className="bg-muted/30 rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-primary flex items-center gap-2">
+                <CreditCard className="h-4 w-4" />
+                Биллинг
+              </h3>
+              <div className="space-y-2.5 pl-1">
+                {/* Billing Status */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Статус:</span>
+                  <Badge 
+                    variant={billingStatusLabels[preregistration.meta.billing.billing_status || 'pending']?.variant || 'secondary'}
+                  >
+                    {billingStatusLabels[preregistration.meta.billing.billing_status || 'pending']?.label || 'Ожидает'}
+                  </Badge>
+                </div>
+                
+                {/* Card Status */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Карта:</span>
+                  {preregistration.meta.billing.has_active_card ? (
+                    <Badge variant="outline" className="bg-green-500/10 text-green-700 border-green-500/30">
+                      <CheckCircle className="h-3 w-3 mr-1" /> Привязана
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="bg-red-500/10 text-red-700 border-red-500/30">
+                      <XCircle className="h-3 w-3 mr-1" /> Нет карты
+                    </Badge>
+                  )}
+                </div>
+                
+                {/* Attempts */}
+                {(preregistration.meta.billing.attempts_count || 0) > 0 && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Попытки:</span>
+                    <span className="text-sm font-medium">{preregistration.meta.billing.attempts_count}</span>
+                  </div>
+                )}
+                
+                {/* Last Attempt */}
+                {preregistration.meta.billing.last_attempt_at && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Посл. попытка:</span>
+                    <span className="text-sm flex items-center gap-1">
+                      {format(new Date(preregistration.meta.billing.last_attempt_at), "dd.MM HH:mm", { locale: ru })}
+                      {preregistration.meta.billing.last_attempt_status === 'failed' && (
+                        <XCircle className="h-3 w-3 text-red-500" />
+                      )}
+                      {preregistration.meta.billing.last_attempt_status === 'success' && (
+                        <CheckCircle className="h-3 w-3 text-green-500" />
+                      )}
+                    </span>
+                  </div>
+                )}
+                
+                {/* Error */}
+                {preregistration.meta.billing.last_attempt_error && (
+                  <div className="text-xs text-red-500 bg-red-500/10 p-2 rounded">
+                    {preregistration.meta.billing.last_attempt_error}
+                  </div>
+                )}
+                
+                {/* Notifications */}
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+                  <span className="text-xs text-muted-foreground">Уведомления:</span>
+                  {preregistration.meta.billing.notified?.tomorrow_charge_at && (
+                    <Badge variant="outline" className="text-xs">
+                      TG: списание ✓
+                    </Badge>
+                  )}
+                  {preregistration.meta.billing.notified?.no_card_at && (
+                    <Badge variant="outline" className="text-xs">
+                      TG: нет карты ✓
+                    </Badge>
+                  )}
+                  {preregistration.meta.billing.notified?.failed_at && (
+                    <Badge variant="outline" className="text-xs">
+                      TG: ошибка ✓
+                    </Badge>
+                  )}
+                  {!preregistration.meta.billing.notified?.tomorrow_charge_at && 
+                   !preregistration.meta.billing.notified?.no_card_at &&
+                   !preregistration.meta.billing.notified?.failed_at && (
+                    <span className="text-xs text-muted-foreground">нет</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Status Change */}
           <div className="space-y-2">

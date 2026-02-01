@@ -1005,6 +1005,7 @@ export type Database = {
           created_at: string
           email: string
           id: string
+          meta: Json | null
           name: string
           notes: string | null
           phone: string | null
@@ -1020,6 +1021,7 @@ export type Database = {
           created_at?: string
           email: string
           id?: string
+          meta?: Json | null
           name: string
           notes?: string | null
           phone?: string | null
@@ -1035,6 +1037,7 @@ export type Database = {
           created_at?: string
           email?: string
           id?: string
+          meta?: Json | null
           name?: string
           notes?: string | null
           phone?: string | null

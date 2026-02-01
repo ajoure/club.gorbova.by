@@ -47,7 +47,23 @@ import {
   CheckCircle,
   MessageSquare,
   RefreshCw,
+  AlertTriangle,
+  CreditCard,
 } from "lucide-react";
+
+interface PreregistrationBilling {
+  billing_status?: 'pending' | 'paid' | 'no_card' | 'failed' | 'overdue';
+  attempts_count?: number;
+  last_attempt_at?: string;
+  last_attempt_status?: 'success' | 'failed' | 'skipped';
+  last_attempt_error?: string;
+  has_active_card?: boolean;
+  notified?: {
+    tomorrow_charge_at?: string;
+    no_card_at?: string;
+    failed_at?: string;
+  };
+}
 
 interface Preregistration {
   id: string;
@@ -63,6 +79,9 @@ interface Preregistration {
   created_at: string;
   updated_at: string;
   user_id: string | null;
+  meta?: {
+    billing?: PreregistrationBilling;
+  } | null;
   profiles?: {
     id: string;
     full_name: string | null;
@@ -71,11 +90,14 @@ interface Preregistration {
   } | null;
 }
 
+type BillingSegment = 'all' | 'pending' | 'paid' | 'overdue';
+
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
   new: { label: "Новая", variant: "secondary" },
   confirmed: { label: "Подтверждена", variant: "default" },
   contacted: { label: "Связались", variant: "outline" },
   converted: { label: "Оплачено", variant: "default" },
+  paid: { label: "Оплачено", variant: "default" },
   cancelled: { label: "Отменена", variant: "destructive" },
 };
 
@@ -92,13 +114,16 @@ export function PreregistrationsTabContent() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
-  // Fetch preregistrations
+  // Billing segment filter
+  const [billingFilter, setBillingFilter] = useState<BillingSegment>('all');
+
+  // Fetch preregistrations with meta
   const { data: preregistrations, isLoading, refetch } = useQuery({
-    queryKey: ["admin-preregistrations", search, statusFilter, productFilter],
+    queryKey: ["admin-preregistrations", search, statusFilter, productFilter, billingFilter],
     queryFn: async () => {
       let query = supabase
         .from("course_preregistrations")
-        .select("*")
+        .select("*, meta")
         .order("created_at", { ascending: false });
 
       if (search) {
@@ -134,20 +159,41 @@ export function PreregistrationsTabContent() {
         }
       }
 
-      return data.map(p => ({
+      let result = data.map(p => ({
         ...p,
         profiles: p.user_id ? profilesMap[p.user_id] || null : null,
       })) as Preregistration[];
+      
+      // Apply billing segment filter
+      if (billingFilter === 'pending') {
+        result = result.filter((p) => {
+          const billingStatus = p.meta?.billing?.billing_status;
+          return !['paid', 'converted', 'cancelled'].includes(p.status) &&
+                 !['overdue', 'no_card', 'failed'].includes(billingStatus || '');
+        });
+      } else if (billingFilter === 'paid') {
+        result = result.filter((p) => {
+          const billingStatus = p.meta?.billing?.billing_status;
+          return p.status === 'paid' || p.status === 'converted' || billingStatus === 'paid';
+        });
+      } else if (billingFilter === 'overdue') {
+        result = result.filter((p) => {
+          const billingStatus = p.meta?.billing?.billing_status;
+          return ['overdue', 'no_card', 'failed'].includes(billingStatus || '');
+        });
+      }
+      
+      return result;
     },
   });
 
-  // Fetch stats
+  // Fetch stats with billing segments
   const { data: stats } = useQuery({
     queryKey: ["preregistration-stats"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("course_preregistrations")
-        .select("status, product_code");
+        .select("status, product_code, meta");
 
       if (error) throw error;
 
@@ -159,7 +205,24 @@ export function PreregistrationsTabContent() {
         return acc;
       }, {} as Record<string, number>);
 
-      return { total, newCount, confirmed, byProduct };
+      // Billing segment counts
+      const billingPending = data.filter((p) => {
+        const billingStatus = (p.meta as any)?.billing?.billing_status;
+        return !['paid', 'converted', 'cancelled'].includes(p.status) &&
+               !['overdue', 'no_card', 'failed'].includes(billingStatus || '');
+      }).length;
+      
+      const billingPaid = data.filter((p) => {
+        const billingStatus = (p.meta as any)?.billing?.billing_status;
+        return p.status === 'paid' || p.status === 'converted' || billingStatus === 'paid';
+      }).length;
+      
+      const billingOverdue = data.filter((p) => {
+        const billingStatus = (p.meta as any)?.billing?.billing_status;
+        return ['overdue', 'no_card', 'failed'].includes(billingStatus || '');
+      }).length;
+
+      return { total, newCount, confirmed, byProduct, billingPending, billingPaid, billingOverdue };
     },
   });
 
@@ -321,6 +384,47 @@ export function PreregistrationsTabContent() {
               </div>
             </CardContent>
           </Card>
+        </div>
+
+        {/* Billing Segment Tabs */}
+        <div className="flex flex-wrap gap-2">
+          <Button 
+            variant={billingFilter === 'all' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setBillingFilter('all')}
+          >
+            Все
+          </Button>
+          <Button 
+            variant={billingFilter === 'pending' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setBillingFilter('pending')}
+            className="gap-2"
+          >
+            <Clock className="h-4 w-4" />
+            Новые 
+            <Badge variant="secondary" className="ml-1">{stats?.billingPending || 0}</Badge>
+          </Button>
+          <Button 
+            variant={billingFilter === 'paid' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setBillingFilter('paid')}
+            className="gap-2"
+          >
+            <CheckCircle className="h-4 w-4 text-green-500" />
+            Оплаченные 
+            <Badge variant="secondary" className="ml-1">{stats?.billingPaid || 0}</Badge>
+          </Button>
+          <Button 
+            variant={billingFilter === 'overdue' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setBillingFilter('overdue')}
+            className="gap-2"
+          >
+            <AlertTriangle className="h-4 w-4 text-red-500" />
+            Просроченные 
+            <Badge variant="secondary" className="ml-1">{stats?.billingOverdue || 0}</Badge>
+          </Button>
         </div>
 
         {/* Filters */}

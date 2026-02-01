@@ -103,6 +103,14 @@ export const EVENT_LABELS: Record<string, string> = {
   "payment.success": "Успешная оплата",
   "payment.failed": "Ошибка оплаты",
   
+  // ===== Предзаписи =====
+  preregistration_tomorrow_charge: "Уведомление о завтрашнем списании",
+  preregistration_no_card: "Уведомление: нет карты",
+  preregistration_payment_success: "Успешное списание предзаписи",
+  preregistration_payment_failed: "Неудачное списание предзаписи",
+  buh_business_tomorrow_charge: "Уведомление о завтрашнем списании",
+  buh_business_no_card: "Уведомление: нет карты",
+  
   // ===== Биллинг =====
   "billing.charge_date_aligned": "Дата списания выровнена",
   "billing.charge_date_auto_corrected": "Дата списания автоисправлена",
