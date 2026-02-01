@@ -34,9 +34,12 @@ function findScrollableParent(el: HTMLElement | null): HTMLElement | null {
 }
 
 // Constants
-const THRESHOLD_PERCENT = 0.35; // 35% of screen height
+const THRESHOLD_PERCENT = 0.22; // 22% of screen height (lowered for better UX)
 const COOLDOWN_MS = 1500;
 const HORIZONTAL_LOCK_THRESHOLD = 12; // px before we decide direction
+const TOP_TOLERANCE = 5; // px tolerance for iOS inertia/overscroll
+const THRESHOLD_MIN_PX = 90;
+const THRESHOLD_MAX_PX = 220;
 
 export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
   const [refreshing, setRefreshing] = useState(false);
@@ -52,10 +55,9 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const lastRefreshTime = useRef(0);
   
-  // Calculate threshold based on screen height
-  const threshold = typeof window !== 'undefined' 
-    ? Math.max(80, window.innerHeight * THRESHOLD_PERCENT) 
-    : 120;
+  // Calculate threshold based on screen height with clamp
+  const raw = typeof window !== 'undefined' ? window.innerHeight * THRESHOLD_PERCENT : 120;
+  const threshold = Math.min(THRESHOLD_MAX_PX, Math.max(THRESHOLD_MIN_PX, raw));
 
   const blurIfNeeded = useCallback((e: React.SyntheticEvent) => {
     const active = document.activeElement;
@@ -83,14 +85,22 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
       const now = Date.now();
       if (now - lastRefreshTime.current < COOLDOWN_MS) return;
 
-      // Find scrollable container
-      const scrollContainer = findScrollableParent(containerRef.current);
+      // Find scrollable container from touch target with fallback
+      const targetEl = (e.target as Element | null) ?? null;
+      const startFrom = (targetEl && typeof (targetEl as any).closest === 'function') 
+        ? (targetEl as Element) 
+        : (e.currentTarget as Element);
+
+      const scrollContainer =
+        findScrollableParent(startFrom as HTMLElement)
+        ?? (document.scrollingElement as HTMLElement | null);
+      
       const scrollTop = scrollContainer 
         ? scrollContainer.scrollTop 
         : window.scrollY;
 
-      // CRITICAL: Only start pull if at absolute top (scrollTop === 0)
-      if (scrollTop !== 0) return;
+      // Allow small tolerance for iOS inertia (scrollTop can be 1-5px)
+      if (scrollTop > TOP_TOLERANCE) return;
 
       startY.current = e.touches[0].clientY;
       startX.current = e.touches[0].clientX;
@@ -113,8 +123,8 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
         ? scrollContainerRef.current.scrollTop 
         : window.scrollY;
 
-      // If user scrolled up (scrollTop > 0), cancel pull immediately
-      if (scrollTop > 0) {
+      // If user scrolled beyond tolerance, cancel pull immediately
+      if (scrollTop > TOP_TOLERANCE) {
         resetPull();
         return;
       }
@@ -139,9 +149,9 @@ export function PullToRefresh({ children, onRefresh }: PullToRefreshProps) {
       // If horizontal locked, ignore
       if (directionLocked.current === 'horizontal') return;
 
-      // Only respond to downward pull
-      if (diffY > 0 && directionLocked.current === 'vertical') {
-        e.preventDefault(); // Prevent native scroll/refresh
+      // Only respond to downward pull when at top
+      if (diffY > 0 && directionLocked.current === 'vertical' && scrollTop <= TOP_TOLERANCE) {
+        e.preventDefault(); // Prevent native scroll/refresh only during active pull
         
         // Rubber-band effect: diminishing returns after threshold
         const resistance = diffY > threshold ? 0.3 : 0.6;
