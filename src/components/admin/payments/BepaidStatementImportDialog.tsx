@@ -101,6 +101,15 @@ interface ParsedRow {
   [key: string]: unknown;
 }
 
+/**
+ * Normalize timezone offset format: +0300 → +03:00
+ * Required because browser Date() doesn't reliably parse "+0300" format
+ */
+function normalizeTimezoneOffset(dateStr: string): string {
+  // Match patterns like "+0300" or "-0500" at the end of string
+  return dateStr.replace(/([+-])(\d{2})(\d{2})$/, '$1$2:$3');
+}
+
 // Parse Excel date - works with Date objects, numbers (Excel serial), or strings
 // Note: For Excel serial dates, we use a simple conversion since XLSX.SSF is loaded dynamically
 function parseExcelDate(value: unknown): string | null {
@@ -132,14 +141,18 @@ function parseExcelDate(value: unknown): string | null {
     const trimmed = value.trim();
     if (!trimmed) return null;
     
-    // Method 1: Try native Date parsing (handles "2026-01-03 19:07:25 +0300" well)
-    const nativeDate = new Date(trimmed);
+    // PATCH: Normalize timezone offset format before parsing
+    // "2026-01-06 09:58:06 +0300" → "2026-01-06 09:58:06 +03:00"
+    const normalized = normalizeTimezoneOffset(trimmed);
+    
+    // Method 1: Try native Date parsing (handles ISO-like formats well after normalization)
+    const nativeDate = new Date(normalized);
     if (!isNaN(nativeDate.getTime())) {
       return nativeDate.toISOString();
     }
     
     // Method 2: Try ISO format
-    const isoDate = parseISO(trimmed);
+    const isoDate = parseISO(normalized);
     if (isValid(isoDate)) return isoDate.toISOString();
     
     // Method 3: Try common formats

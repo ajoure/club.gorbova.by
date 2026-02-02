@@ -90,17 +90,27 @@ export function useBepaidStatement(dateFilter: DateFilter, searchQuery: string =
   return useQuery({
     queryKey: ['bepaid-statement', dateFilter.from, dateFilter.to, searchQuery],
     queryFn: async () => {
+      // Build query with fallback for NULL paid_at
+      // Use OR filter: (paid_at in range) OR (paid_at IS NULL AND created_at_bepaid in range)
       let query = supabase
         .from('bepaid_statement_rows')
         .select('*')
-        .order('paid_at', { ascending: false });
+        .order('paid_at', { ascending: false, nullsFirst: false });
       
-      // Apply date filter
-      if (dateFilter.from) {
-        query = query.gte('paid_at', dateFilter.from);
-      }
-      if (dateFilter.to) {
-        query = query.lte('paid_at', dateFilter.to);
+      // Apply date filter with fallback logic
+      if (dateFilter.from && dateFilter.to) {
+        // Complex OR filter: include rows where paid_at is in range, OR where paid_at is null but created_at_bepaid is in range
+        query = query.or(
+          `and(paid_at.gte.${dateFilter.from},paid_at.lte.${dateFilter.to}),and(paid_at.is.null,created_at_bepaid.gte.${dateFilter.from},created_at_bepaid.lte.${dateFilter.to})`
+        );
+      } else if (dateFilter.from) {
+        query = query.or(
+          `paid_at.gte.${dateFilter.from},and(paid_at.is.null,created_at_bepaid.gte.${dateFilter.from})`
+        );
+      } else if (dateFilter.to) {
+        query = query.or(
+          `paid_at.lte.${dateFilter.to},and(paid_at.is.null,created_at_bepaid.lte.${dateFilter.to})`
+        );
       }
       
       const { data, error } = await query;
@@ -148,13 +158,21 @@ export function useBepaidStatementStats(dateFilter: DateFilter) {
     queryFn: async () => {
       let query = supabase
         .from('bepaid_statement_rows')
-        .select('amount, transaction_type, status, commission_total, payout_amount');
+        .select('amount, transaction_type, status, commission_total, payout_amount, paid_at, created_at_bepaid');
       
-      if (dateFilter.from) {
-        query = query.gte('paid_at', dateFilter.from);
-      }
-      if (dateFilter.to) {
-        query = query.lte('paid_at', dateFilter.to);
+      // Apply same fallback filter as list query
+      if (dateFilter.from && dateFilter.to) {
+        query = query.or(
+          `and(paid_at.gte.${dateFilter.from},paid_at.lte.${dateFilter.to}),and(paid_at.is.null,created_at_bepaid.gte.${dateFilter.from},created_at_bepaid.lte.${dateFilter.to})`
+        );
+      } else if (dateFilter.from) {
+        query = query.or(
+          `paid_at.gte.${dateFilter.from},and(paid_at.is.null,created_at_bepaid.gte.${dateFilter.from})`
+        );
+      } else if (dateFilter.to) {
+        query = query.or(
+          `paid_at.lte.${dateFilter.to},and(paid_at.is.null,created_at_bepaid.lte.${dateFilter.to})`
+        );
       }
       
       const { data, error } = await query;
