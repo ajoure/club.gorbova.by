@@ -216,7 +216,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Verify admin role (PATCH-4: no maybeSingle, use limit(1))
+    // Verify admin role (PATCH-4: join with roles table, check code)
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) {
@@ -226,14 +226,22 @@ serve(async (req) => {
       });
     }
 
+    // Join user_roles_v2 with roles to get role code
     const { data: roleData } = await supabase
       .from('user_roles_v2')
-      .select('role')
-      .eq('user_id', user.id)
-      .in('role', ['admin', 'superadmin'])
-      .limit(1);
+      .select('role_id, roles:role_id(code)')
+      .eq('user_id', user.id);
 
-    if (!roleData || roleData.length === 0) {
+    const hasAdminRole = roleData?.some((r) => {
+      const roles = r.roles as unknown;
+      if (roles && typeof roles === 'object' && 'code' in roles) {
+        const code = (roles as { code: string }).code;
+        return code === 'admin' || code === 'super_admin';
+      }
+      return false;
+    });
+
+    if (!hasAdminRole) {
       return new Response(JSON.stringify({ error: 'Admin access required' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
