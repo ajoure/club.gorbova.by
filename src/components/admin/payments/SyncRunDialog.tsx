@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -34,10 +35,10 @@ interface SyncStats {
   diff_amount: number;
   duration_ms?: number;
   dry_run?: boolean;
-  // Origin-based filtering
+  // Origin-based filtering (DEPRECATED - always 0)
   excluded_import_count?: number;
   excluded_null_paid_at_count?: number;
-  strategy_used?: 'list' | 'uid_fallback' | 'unknown';
+  strategy_used?: 'list' | 'uid_fallback' | 'statement_first' | 'unknown';
   selected_host?: string;
   uid_breakdown?: {
     ok_tx_found: number;
@@ -47,6 +48,11 @@ interface SyncStats {
     server_errors: number;
     other_4xx: number;
   };
+  // PATCH-2: Statement reconcile fields
+  statement_count?: number;
+  db_count?: number;
+  missing_in_db?: number;
+  missing_uids_sample?: string[];
 }
 
 interface SyncRunDialogProps {
@@ -284,6 +290,7 @@ export default function SyncRunDialog({ open, onOpenChange, onComplete }: SyncRu
                     <Badge variant="secondary">
                       {stats.strategy_used === 'list' ? 'API List' : 
                        stats.strategy_used === 'uid_fallback' ? 'UID Probe' : 
+                       stats.strategy_used === 'statement_first' ? 'Statement' :
                        'Unknown'}
                     </Badge>
                   )}
@@ -312,19 +319,48 @@ export default function SyncRunDialog({ open, onOpenChange, onComplete }: SyncRu
                     {stats.errors}
                   </span>
                 </div>
-                {stats.excluded_import_count !== undefined && stats.excluded_import_count > 0 && (
-                  <div className="flex justify-between p-2 rounded bg-yellow-500/10 border border-yellow-500/20 col-span-2">
-                    <span className="text-yellow-700 dark:text-yellow-400">Исключено (import):</span>
-                    <span className="font-mono text-yellow-700 dark:text-yellow-400">{stats.excluded_import_count}</span>
-                  </div>
-                )}
-                {stats.excluded_null_paid_at_count !== undefined && stats.excluded_null_paid_at_count > 0 && (
-                  <div className="flex justify-between p-2 rounded bg-orange-500/10 border border-orange-500/20 col-span-2">
-                    <span className="text-orange-700 dark:text-orange-400">Исключено (pending/manual):</span>
-                    <span className="font-mono text-orange-700 dark:text-orange-400">{stats.excluded_null_paid_at_count}</span>
-                  </div>
-                )}
               </div>
+              
+              {/* PATCH-2: Statement reconcile results */}
+              {stats.strategy_used === 'statement_first' && (
+                <div className="rounded-lg border p-3 space-y-2">
+                  <div className="text-sm font-medium text-muted-foreground">Сверка с выпиской</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="flex justify-between p-2 rounded bg-muted/50">
+                      <span className="text-muted-foreground">В выписке:</span>
+                      <span className="font-mono">{stats.statement_count || 0}</span>
+                    </div>
+                    <div className="flex justify-between p-2 rounded bg-muted/50">
+                      <span className="text-muted-foreground">В базе:</span>
+                      <span className="font-mono">{stats.db_count || 0}</span>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Отсутствуют в базе:</span>
+                    <Badge variant={(stats.missing_in_db || 0) > 0 ? "destructive" : "default"}>
+                      {stats.missing_in_db || 0}
+                    </Badge>
+                  </div>
+                </div>
+              )}
+              
+              {/* PATCH-2: Missing UIDs sample */}
+              {stats.missing_uids_sample && stats.missing_uids_sample.length > 0 && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                  <div className="text-sm font-medium text-amber-600 dark:text-amber-400 mb-2">
+                    Missing UIDs (первые {stats.missing_uids_sample.length})
+                  </div>
+                  <ScrollArea className="h-24">
+                    <div className="space-y-1">
+                      {stats.missing_uids_sample.map((uid, i) => (
+                        <div key={i} className="text-xs font-mono text-muted-foreground truncate">
+                          {uid}
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </div>
+              )}
 
               {/* Diff summary */}
               <div className="rounded-lg border p-3 space-y-2">

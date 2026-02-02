@@ -49,7 +49,7 @@ interface SyncStats {
   endpoint_used?: string;
   endpoint_attempts?: any[];
   selected_host?: string;
-  strategy_used?: 'list' | 'uid_fallback' | 'unknown';
+  strategy_used?: 'list' | 'uid_fallback' | 'statement_first' | 'unknown';
   not_found_rate?: number;
   sample_uids?: string[];
   uid_probe_attempts?: Array<{ host: string; uid: string; status: number | null; ok: boolean; error: string | null }>;
@@ -69,10 +69,15 @@ interface SyncStats {
   list_error?: string;
   not_found_all_hosts_count?: number;
   retries_performed_count?: number;
-  // Origin-based filtering stats
-  excluded_import_count?: number;
-  excluded_null_paid_at_count?: number;
+  // PATCH-2: Statement-first reconcile stats (deprecated exclusions)
+  excluded_import_count?: number; // DEPRECATED - always 0
+  excluded_null_paid_at_count?: number; // DEPRECATED - always 0
   bepaid_origin_count?: number;
+  // PATCH-2: New statement reconcile fields
+  statement_count?: number;
+  db_count?: number;
+  missing_in_db?: number;
+  missing_uids_sample?: string[];
 }
 
 interface EndpointAttempt {
@@ -788,25 +793,39 @@ serve(async (req) => {
         let offset = 0;
         const pageSize = 1000;
 
-        // Count excluded imports for stats (origin != 'bepaid' in date range)
-        const { count: excludedImportCount } = await supabase
-          .from('payments_v2')
-          .select('*', { count: 'exact', head: true })
-          .eq('provider', 'bepaid')
-          .neq('origin', 'bepaid')
+        // PATCH-2: Deprecated exclusion counts - reconcile must compare ALL
+        // These are kept as 0 for UI compatibility, but we no longer exclude data
+        stats.excluded_import_count = 0;
+        stats.excluded_null_paid_at_count = 0;
+        
+        // PATCH-2: Statement-first reconcile - compare bepaid_statement_rows with payments_v2
+        console.log('[Sync] Falling back to statement-first reconcile...');
+        
+        const { data: statementRows, count: statementCount } = await supabase
+          .from('bepaid_statement_rows')
+          .select('uid', { count: 'exact' })
           .gte('paid_at', startISO)
-          .lte('paid_at', endISO);
+          .lte('paid_at', endISO)
+          .not('uid', 'is', null);
         
-        // Count NULL paid_at records (pending/manual - separate from imports)
-        const { count: excludedNullPaidAtCount } = await supabase
+        const { data: dbPayments, count: dbCount } = await supabase
           .from('payments_v2')
-          .select('*', { count: 'exact', head: true })
+          .select('provider_payment_id', { count: 'exact' })
           .eq('provider', 'bepaid')
-          .eq('origin', 'bepaid')
-          .is('paid_at', null);
+          .not('provider_payment_id', 'is', null);
         
-        stats.excluded_import_count = excludedImportCount || 0;
-        stats.excluded_null_paid_at_count = excludedNullPaidAtCount || 0;
+        const statementUids = new Set((statementRows || []).map((r: any) => r.uid));
+        const dbUids = new Set((dbPayments || []).map((p: any) => p.provider_payment_id));
+        
+        const missingUids = [...statementUids].filter(uid => !dbUids.has(uid));
+        
+        stats.statement_count = statementCount || 0;
+        stats.db_count = dbCount || 0;
+        stats.missing_in_db = missingUids.length;
+        stats.missing_uids_sample = missingUids.slice(0, 50);
+        stats.strategy_used = 'statement_first';
+        
+        console.log(`[Sync] Statement reconcile: statement=${stats.statement_count}, db=${stats.db_count}, missing=${stats.missing_in_db}`);
 
         while (uidSet.size < Math.min(limit, MAX_TRANSACTIONS)) {
           const { data: rows, error: rowsErr } = await supabase
