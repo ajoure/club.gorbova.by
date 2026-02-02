@@ -10,7 +10,9 @@ import { parseISO, parse, isValid } from "date-fns";
 import { Json } from "@/integrations/supabase/types";
 
 // Column mapping from Russian headers to DB fields
+// PATCH-B3: Added ERIP-specific columns for full compatibility
 const COLUMN_MAP: Record<string, string> = {
+  // Common fields
   'uid': 'uid',
   'id заказа': 'order_id_bepaid',
   'статус': 'status',
@@ -72,6 +74,23 @@ const COLUMN_MAP: Record<string, string> = {
   'курс конвертации': 'conversion_rate',
   'перечисленная сумма после конвертации': 'converted_payout',
   'сумма комиссий в валюте после конвертации': 'converted_commission',
+  
+  // PATCH-B3: ERIP-specific columns (stored in raw_data, mapped to existing fields)
+  'код услуги': 'product_code',
+  'сокращенное наименование услуги': 'description', // fallback if description empty
+  'номера счета': 'payment_identifier',
+  'номер запроса ерип': 'bank_id',
+  'номер операции ерип': 'auth_code',
+  'код агента': 'bank_code',
+  'расчетный агент': 'bank_name',
+  'номер мемориального ордера': 'rrn',
+  'тип авторизации': 'recurring_type',
+  'описание типа авторизации': 'reason',
+  'код устройства авторизации': 'gateway_id',
+  'описание типа устройства': 'token_provider',
+  'номер счета плательщика': 'payment_identifier',
+  'код региона плательщика': 'region',
+  'фио плательщика': 'card_holder', // For ERIP, use payer name as card_holder
 };
 
 const DATE_FIELDS = ['created_at_bepaid', 'paid_at', 'payout_date', 'expires_at'];
@@ -157,6 +176,7 @@ interface BepaidStatementImportDialogProps {
 export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatementImportDialogProps) {
   const [file, setFile] = useState<File | null>(null);
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
+  const [invalidRows, setInvalidRows] = useState<{row: number; reason: string; preview: string}[]>([]); // PATCH-B2
   const [parseStatus, setParseStatus] = useState<'idle' | 'parsing' | 'ready' | 'error'>('idle');
   const [parseError, setParseError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<{ created: number; errors: number } | null>(null);
@@ -171,6 +191,7 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
     setParseStatus('parsing');
     setParseError(null);
     setParsedRows([]);
+    setInvalidRows([]); // PATCH-B2
     setImportResult(null);
     
     try {
@@ -200,6 +221,7 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
       }
       
       const allRows: ParsedRow[] = [];
+      const allInvalidRows: {row: number; reason: string; preview: string}[] = []; // PATCH-B2
       
       for (const sheetName of sheetsToProcess) {
         const sheet = workbook.Sheets[sheetName];
@@ -209,9 +231,12 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
         
         // Find header row (first row with UID or similar)
         let headerRowIndex = 0;
-        for (let i = 0; i < Math.min(10, jsonData.length); i++) {
+        for (let i = 0; i < Math.min(15, jsonData.length); i++) { // PATCH-B1: Extended search to 15 rows
           const row = jsonData[i] as string[];
-          if (row.some(cell => String(cell).toLowerCase() === 'uid')) {
+          if (row.some(cell => {
+            const cellStr = String(cell).toLowerCase();
+            return cellStr === 'uid' || cellStr.includes('id транз');
+          })) {
             headerRowIndex = i;
             break;
           }
@@ -266,9 +291,20 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
           // Only add rows with UID
           if (hasUid && rowObj.uid) {
             allRows.push(rowObj);
+          } else {
+            // PATCH-B2: Track invalid rows instead of silently skipping
+            const rowPreview = row.slice(0, 3).map(v => String(v || '').substring(0, 20)).join(' | ');
+            allInvalidRows.push({
+              row: i + 1, // 1-indexed for user display
+              reason: !hasUid ? 'Нет UID' : 'Пустой UID',
+              preview: rowPreview || '(пустая строка)',
+            });
           }
         }
       }
+      
+      // PATCH-B2: Set invalid rows for display
+      setInvalidRows(allInvalidRows);
       
       if (allRows.length === 0) {
         setParseStatus('error');
@@ -321,6 +357,7 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
     onOpenChange(false);
     setFile(null);
     setParsedRows([]);
+    setInvalidRows([]); // PATCH-B2
     setParseStatus('idle');
     setParseError(null);
     setImportResult(null);
@@ -376,9 +413,27 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
                 <CheckCircle2 className="h-4 w-4" />
                 <span>Готово к импорту: {parsedRows.length} строк</span>
               </div>
+              {/* PATCH-B2: Show invalid rows count */}
+              {invalidRows.length > 0 && (
+                <div className="flex items-center gap-2 text-amber-500">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>Пропущено строк без UID: {invalidRows.length}</span>
+                </div>
+              )}
               <p className="text-xs text-muted-foreground">
                 Данные будут импортированы в базу данных. Существующие записи с таким же UID будут обновлены.
               </p>
+              {/* PATCH-B2: Show first few invalid rows for debugging */}
+              {invalidRows.length > 0 && invalidRows.length <= 10 && (
+                <div className="mt-2 p-2 bg-amber-500/10 rounded text-xs">
+                  <p className="font-medium text-amber-600 dark:text-amber-400 mb-1">Пропущенные строки:</p>
+                  {invalidRows.map((ir, idx) => (
+                    <div key={idx} className="text-muted-foreground">
+                      Строка {ir.row}: {ir.reason} — {ir.preview}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           

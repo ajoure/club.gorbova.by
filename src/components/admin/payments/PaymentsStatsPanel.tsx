@@ -1,11 +1,11 @@
 import { useMemo } from "react";
-import { CheckCircle2, XCircle, RotateCcw, Percent, TrendingUp, Loader2 } from "lucide-react";
+import { CheckCircle2, XCircle, RotateCcw, Percent, TrendingUp, Loader2, Clock } from "lucide-react";
 import { UnifiedPayment } from "@/hooks/useUnifiedPayments";
 import { classifyPayment } from "@/lib/paymentClassification";
 import { cn } from "@/lib/utils";
 
-// Payment filter types
-export type StatsFilterType = 'successful' | 'refunded' | 'cancelled' | 'failed' | null;
+// Payment filter types - PATCH-C3: Added 'processing'
+export type StatsFilterType = 'successful' | 'refunded' | 'cancelled' | 'failed' | 'processing' | null;
 
 interface PaymentsStatsPanelProps {
   payments: UnifiedPayment[];
@@ -119,6 +119,7 @@ export default function PaymentsStatsPanel({
         refunded: { count: 0, amount: 0 },
         failed: { count: 0, amount: 0 },
         cancelled: { count: 0, amount: 0 },
+        processing: { count: 0, amount: 0 }, // PATCH-C3: Added processing stats
         fees: { amount: 0, percent: 0 },
         netRevenue: 0,
       };
@@ -132,6 +133,8 @@ export default function PaymentsStatsPanel({
     let failedAmount = 0;
     let cancelledCount = 0;
     let cancelledAmount = 0;
+    let processingCount = 0; // PATCH-C3
+    let processingAmount = 0; // PATCH-C3
     let totalFees = 0;
 
     for (const p of payments) {
@@ -139,6 +142,14 @@ export default function PaymentsStatsPanel({
       const absAmount = Math.abs(p.amount || 0);
       // Extract real commission from meta (synced from bePaid statement)
       const realFee = (p as any).commission_total || 0;
+      
+      // PATCH-C3: Handle processing/pending as separate category
+      const isProcessing = ['processing', 'pending', 'incomplete', 'pending_3ds'].includes(p.status_normalized || '');
+      if (isProcessing) {
+        processingCount++;
+        processingAmount += absAmount;
+        continue; // Don't classify as failed
+      }
       
       switch (category) {
         case 'successful':
@@ -176,6 +187,7 @@ export default function PaymentsStatsPanel({
       refunded: { count: refundedCount, amount: refundedAmount },
       failed: { count: failedCount, amount: failedAmount },
       cancelled: { count: cancelledCount, amount: cancelledAmount },
+      processing: { count: processingCount, amount: processingAmount }, // PATCH-C3
       fees: { amount: estimatedFees, percent: feePercent },
       netRevenue,
     };
@@ -199,7 +211,7 @@ export default function PaymentsStatsPanel({
   }
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
       <StatCard
         title="Успешные"
         amount={stats.successful.amount}
@@ -221,6 +233,18 @@ export default function PaymentsStatsPanel({
         isActive={activeFilter === 'refunded'}
         isClickable={!!onFilterChange}
         onClick={() => handleFilterClick('refunded')}
+      />
+      {/* PATCH-C3: Added Processing card */}
+      <StatCard
+        title="В обработке"
+        amount={stats.processing.amount}
+        count={stats.processing.count}
+        icon={<Clock className="h-4 w-4 text-blue-500" />}
+        colorClass="text-blue-500"
+        accentGradient="from-blue-500 to-blue-400"
+        isActive={activeFilter === 'processing'}
+        isClickable={!!onFilterChange}
+        onClick={() => handleFilterClick('processing')}
       />
       <StatCard
         title="Отмены"

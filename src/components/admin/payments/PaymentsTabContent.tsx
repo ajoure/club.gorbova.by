@@ -46,7 +46,7 @@ export type PaymentFilters = {
 
 const defaultFilters: PaymentFilters = {
   search: "",
-  status: "successful_and_refunds",
+  status: "all", // PATCH-C2: Changed from "successful_and_refunds" to show ALL transactions by default
   type: "all",
   hasContact: "all",
   hasDeal: "all",
@@ -211,10 +211,15 @@ export function PaymentsTabContent() {
           if (!isSuccessful && !isRefundStatus && !isRefundType && !isNegativeAmount) return false;
         } else if (filters.status === "cancelled") {
           if (!isCancelledTransaction(p)) return false;
+        } else if (filters.status === "processing") {
+          // PATCH-C3: Filter for processing/pending transactions
+          const processingStatuses = ['processing', 'pending', 'incomplete', 'pending_3ds'];
+          if (!processingStatuses.includes(p.status_normalized)) return false;
         } else if (filters.status === "failed") {
-          const failedStatuses = ['failed', 'declined', 'expired', 'error', 'incomplete'];
+          const failedStatuses = ['failed', 'declined', 'expired', 'error'];
           const isCancel = isCancelledTransaction(p);
-          if (!failedStatuses.includes(p.status_normalized) || isCancel) return false;
+          const isProcessing = ['processing', 'pending', 'incomplete'].includes(p.status_normalized);
+          if (!failedStatuses.includes(p.status_normalized) || isCancel || isProcessing) return false;
         } else if (filters.status !== p.status_normalized) {
           return false;
         }
@@ -363,11 +368,12 @@ export function PaymentsTabContent() {
         {/* Period selector */}
         <DatePeriodSelector value={dateFilter} onChange={setDateFilter} />
         
-        {/* Pill-style status tabs */}
+        {/* Pill-style status tabs - PATCH-C3: Added processing tab */}
         <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20">
           {[
-            { id: "successful_and_refunds", label: "Успешные" },
             { id: "all", label: "Все" },
+            { id: "successful_and_refunds", label: "Успешные" },
+            { id: "processing", label: "В обработке" },
             { id: "failed", label: "Ошибки" },
           ].map((tab) => {
             const isActive = filters.status === tab.id;

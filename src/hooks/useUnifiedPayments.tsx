@@ -184,15 +184,16 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             orders:order_id(id, order_number, status, product_id, purchase_snapshot, profile_id, profiles(id, full_name, email, phone, user_id)),
             profiles:profile_id(id, full_name, email, phone, user_id)
           `)
-          .eq("provider", "bepaid")
-          .not("paid_at", "is", null); // Sync with RPC: exclude pending/manual with null paid_at
+          .eq("provider", "bepaid");
         
-        // Filter by origin based on includeImport toggle
-        // IMPORTANT: Always include 'statement_sync' to show records synced from bePaid statements
+        // PATCH-C1: Removed .not("paid_at", "is", null) to show processing/pending transactions
+        // PATCH-C1: Removed strict origin filter - show all origins including manual_adjustment
+        // Filter by origin based on includeImport toggle (expanded to include all legitimate origins)
         if (includeImport) {
-          query = query.in("origin", ["bepaid", "import", "statement_sync"]);
+          query = query.in("origin", ["bepaid", "import", "statement_sync", "manual_adjustment"]);
         } else {
-          query = query.in("origin", ["bepaid", "statement_sync"]);
+          // Show all non-import origins
+          query = query.or("origin.eq.bepaid,origin.eq.statement_sync,origin.eq.manual_adjustment,origin.is.null");
         }
         
         query = query.gte("paid_at", `${fromDate}T00:00:00Z`);
