@@ -282,9 +282,35 @@ export function useBepaidStatementImport() {
       const batchSize = 100;
       let created = 0;
       let errors = 0;
+      const errorDetails: string[] = [];
       
-      for (let i = 0; i < rows.length; i += batchSize) {
-        const batch = rows.slice(i, i + batchSize);
+      // PATCH: Pre-deduplicate by UID to prevent "affect row second time" error
+      const uniqueRows = Array.from(
+        rows.reduce((map, row) => {
+          const existing = map.get(row.uid);
+          if (!existing) {
+            map.set(row.uid, row);
+          } else {
+            // Merge: keep existing values, overwrite with new non-null values
+            const merged = { ...existing };
+            for (const [key, value] of Object.entries(row)) {
+              if (value !== null && value !== undefined && value !== '') {
+                (merged as Record<string, unknown>)[key] = value;
+              }
+            }
+            map.set(row.uid, merged as BepaidStatementInsert);
+          }
+          return map;
+        }, new Map<string, BepaidStatementInsert>())
+      ).map(([_, row]) => row);
+      
+      const duplicatesSkipped = rows.length - uniqueRows.length;
+      if (duplicatesSkipped > 0) {
+        console.log(`Import: merged ${duplicatesSkipped} duplicate UIDs`);
+      }
+      
+      for (let i = 0; i < uniqueRows.length; i += batchSize) {
+        const batch = uniqueRows.slice(i, i + batchSize);
         
         const { error } = await supabase
           .from('bepaid_statement_rows')
@@ -298,13 +324,20 @@ export function useBepaidStatementImport() {
         
         if (error) {
           console.error('Batch upsert error:', error);
+          errorDetails.push(`Batch ${Math.floor(i/batchSize) + 1}: ${error.message}`);
           errors += batch.length;
         } else {
           created += batch.length;
         }
       }
       
-      return { created, errors, total: rows.length };
+      return { 
+        created, 
+        errors, 
+        total: uniqueRows.length,
+        duplicatesSkipped,
+        errorDetails 
+      };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bepaid-statement'] });
