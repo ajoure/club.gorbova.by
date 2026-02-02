@@ -320,6 +320,7 @@ export type Database = {
           secure_3d: string | null
           shop_id: string | null
           shop_name: string | null
+          sort_ts: string | null
           status: string | null
           token_provider: string | null
           tracking_id: string | null
@@ -387,6 +388,7 @@ export type Database = {
           secure_3d?: string | null
           shop_id?: string | null
           shop_name?: string | null
+          sort_ts?: string | null
           status?: string | null
           token_provider?: string | null
           tracking_id?: string | null
@@ -454,6 +456,7 @@ export type Database = {
           secure_3d?: string | null
           shop_id?: string | null
           shop_name?: string | null
+          sort_ts?: string | null
           status?: string | null
           token_provider?: string | null
           tracking_id?: string | null
@@ -8343,6 +8346,10 @@ export type Database = {
       generate_order_number: { Args: never; Returns: string }
       generate_ticket_number: { Args: never; Returns: string }
       generate_ticket_number_atomic: { Args: never; Returns: string }
+      get_bepaid_statement_stats: {
+        Args: { from_date: string; to_date: string }
+        Returns: Json
+      }
       get_business_orphan_payments: {
         Args: { from_date?: string }
         Returns: {

@@ -1,7 +1,8 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { parse as csvParse } from "https://deno.land/std@0.224.0/csv/parse.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const BUILD_ID = "2026-02-02T12:00:00Z-csv-import-v1";
+const BUILD_ID = "2026-02-02T14:30:00Z-csv-import-v2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -9,88 +10,89 @@ const corsHeaders = {
 };
 
 /**
- * Column mapping: Russian CSV headers → DB fields
- * Only clean Russian UTF-8 headers from bePaid CSV export
+ * Raw column mapping: readable keys → DB fields
+ * Keys will be normalized via normalizeHeader() before lookup
  */
-const COLUMN_MAP: Record<string, string> = {
+const RAW_COLUMN_MAP: Record<string, string> = {
   // Common fields
-  'uid': 'uid',
-  'id заказа': 'order_id_bepaid',
-  'статус': 'status',
-  'описание': 'description',
-  'сумма': 'amount',
-  'валюта': 'currency',
-  'комиссия,%': 'commission_percent',
-  'комиссия за операцию': 'commission_per_op',
-  'сумма комиссий': 'commission_total',
-  'перечисленная сумма': 'payout_amount',
-  'тип транзакции': 'transaction_type',
-  'трекинг id': 'tracking_id',
-  'дата создания': 'created_at_bepaid',
-  'дата оплаты': 'paid_at',
-  'дата перечисления': 'payout_date',
-  'действует до': 'expires_at',
-  'сообщение': 'message',
-  'id магазина': 'shop_id',
-  'магазин': 'shop_name',
-  'категория бизнеса': 'business_category',
-  'id банка': 'bank_id',
-  'имя': 'first_name',
-  'фамилия': 'last_name',
-  'адрес': 'address',
-  'страна': 'country',
-  'город': 'city',
-  'индекс': 'zip',
-  'область': 'region',
-  'телефон': 'phone',
-  'ip': 'ip',
-  'e-mail': 'email',
-  'email': 'email',
-  'способ оплаты': 'payment_method',
-  'код продукта': 'product_code',
-  'карта': 'card_masked',
-  'владелец карты': 'card_holder',
-  'карта действует': 'card_expires',
-  'bin карты': 'card_bin',
-  'банк': 'bank_name',
-  'страна банка': 'bank_country',
-  '3-d secure': 'secure_3d',
-  'результат avs': 'avs_result',
-  'fraud': 'fraud',
-  'код авторизации': 'auth_code',
-  'rrn': 'rrn',
-  'причина': 'reason',
-  'идентификатор оплаты': 'payment_identifier',
-  'провайдер токена': 'token_provider',
-  'id торговца': 'merchant_id',
-  'страна торговца': 'merchant_country',
-  'компания торговца': 'merchant_company',
-  'сумма после конвертации': 'converted_amount',
-  'валюта после конвертации': 'converted_currency',
-  'id шлюза': 'gateway_id',
-  'рекуррентный тип': 'recurring_type',
-  'card bin (8)': 'card_bin_8',
-  'код банка': 'bank_code',
-  'код ответа': 'response_code',
-  'курс конвертации': 'conversion_rate',
-  'перечисленная сумма после конвертации': 'converted_payout',
-  'сумма комиссий в валюте после конвертации': 'converted_commission',
+  'UID': 'uid',
+  'ID заказа': 'order_id_bepaid',
+  'Статус': 'status',
+  'Описание': 'description',
+  'Сумма': 'amount',
+  'Валюта': 'currency',
+  'Комиссия,%': 'commission_percent',
+  'Комиссия, %': 'commission_percent',
+  'Комиссия за операцию': 'commission_per_op',
+  'Сумма комиссий': 'commission_total',
+  'Перечисленная сумма': 'payout_amount',
+  'Тип транзакции': 'transaction_type',
+  'Трекинг ID': 'tracking_id',
+  'Дата создания': 'created_at_bepaid',
+  'Дата оплаты': 'paid_at',
+  'Дата перечисления': 'payout_date',
+  'Действует до': 'expires_at',
+  'Сообщение': 'message',
+  'ID магазина': 'shop_id',
+  'Магазин': 'shop_name',
+  'Категория бизнеса': 'business_category',
+  'ID банка': 'bank_id',
+  'Имя': 'first_name',
+  'Фамилия': 'last_name',
+  'Адрес': 'address',
+  'Страна': 'country',
+  'Город': 'city',
+  'Индекс': 'zip',
+  'Область': 'region',
+  'Телефон': 'phone',
+  'IP': 'ip',
+  'E-mail': 'email',
+  'Email': 'email',
+  'Способ оплаты': 'payment_method',
+  'Код продукта': 'product_code',
+  'Карта': 'card_masked',
+  'Владелец карты': 'card_holder',
+  'Карта действует': 'card_expires',
+  'BIN карты': 'card_bin',
+  'Банк': 'bank_name',
+  'Страна банка': 'bank_country',
+  '3-D Secure': 'secure_3d',
+  'Результат AVS': 'avs_result',
+  'Fraud': 'fraud',
+  'Код авторизации': 'auth_code',
+  'RRN': 'rrn',
+  'Причина': 'reason',
+  'Идентификатор оплаты': 'payment_identifier',
+  'Провайдер токена': 'token_provider',
+  'ID торговца': 'merchant_id',
+  'Страна торговца': 'merchant_country',
+  'Компания торговца': 'merchant_company',
+  'Сумма после конвертации': 'converted_amount',
+  'Валюта после конвертации': 'converted_currency',
+  'ID шлюза': 'gateway_id',
+  'Рекуррентный тип': 'recurring_type',
+  'Card BIN (8)': 'card_bin_8',
+  'Код банка': 'bank_code',
+  'Код ответа': 'response_code',
+  'Курс конвертации': 'conversion_rate',
+  'Перечисленная сумма после конвертации': 'converted_payout',
+  'Сумма комиссий в валюте после конвертации': 'converted_commission',
   // ERIP-specific
-  'код услуги': 'product_code',
-  'сокращенное наименование услуги': 'description',
-  'номера счета': 'payment_identifier',
-  'номер запроса ерип': 'bank_id',
-  'номер операции ерип': 'auth_code',
-  'код агента': 'bank_code',
-  'расчетный агент': 'bank_name',
-  'номер мемориального ордера': 'rrn',
-  'тип авторизации': 'recurring_type',
-  'описание типа авторизации': 'reason',
-  'код устройства авторизации': 'gateway_id',
-  'описание типа устройства': 'token_provider',
-  'номер счета плательщика': 'payment_identifier',
-  'код региона плательщика': 'region',
-  'фио плательщика': 'card_holder',
+  'Код услуги': 'product_code',
+  'Сокращенное наименование услуги': 'description',
+  'Номера счета': 'payment_identifier',
+  'Номер запроса ЕРИП': 'bank_id',
+  'Номер операции ЕРИП': 'auth_code',
+  'Код агента': 'bank_code',
+  'Расчетный агент': 'bank_name',
+  'Номер мемориального ордера': 'rrn',
+  'Тип авторизации': 'recurring_type',
+  'Описание типа авторизации': 'reason',
+  'Код устройства авторизации': 'gateway_id',
+  'Описание типа устройства': 'token_provider',
+  'Номер счета плательщика': 'payment_identifier',
+  'Код региона плательщика': 'region',
+  'ФИО плательщика': 'card_holder',
 };
 
 const DATE_FIELDS = ['created_at_bepaid', 'paid_at', 'payout_date', 'expires_at'];
@@ -111,30 +113,43 @@ function normalizeHeader(h: string): string {
     .toLowerCase();
 }
 
+// Build normalized COLUMN_MAP at init time
+const COLUMN_MAP: Record<string, string> = {};
+for (const [rawKey, dbField] of Object.entries(RAW_COLUMN_MAP)) {
+  COLUMN_MAP[normalizeHeader(rawKey)] = dbField;
+}
+
 /**
- * Parse server date: "2026-01-06 09:58:06 +0300" → ISO string
+ * Parse server date WITHOUT converting to UTC (keep offset ISO)
+ * "2026-01-06 09:58:06 +0300" → "2026-01-06T09:58:06+03:00"
  */
 function parseServerDate(dateStr: string): string | null {
   if (!dateStr || typeof dateStr !== 'string') return null;
   const trimmed = dateStr.trim();
   if (!trimmed) return null;
   
-  // Pattern: YYYY-MM-DD HH:mm:ss +0300 → +03:00
+  // Pattern: YYYY-MM-DD HH:mm:ss +0300 → YYYY-MM-DDTHH:mm:ss+03:00
   const match = trimmed.match(
     /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+([+-])(\d{2})(\d{2})$/
   );
   if (match) {
     const [, date, time, sign, tzH, tzM] = match;
-    const isoStr = `${date}T${time}${sign}${tzH}:${tzM}`;
-    const d = new Date(isoStr);
-    if (!isNaN(d.getTime())) return d.toISOString();
+    // Return ISO with original offset, NO toISOString()
+    return `${date}T${time}${sign}${tzH}:${tzM}`;
   }
   
-  // Fallback: try direct parse
-  const d = new Date(trimmed);
-  if (!isNaN(d.getTime())) return d.toISOString();
+  // Already ISO-like (starts with YYYY-MM-DDT) → return as-is
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(trimmed)) {
+    return trimmed;
+  }
   
-  return null;
+  // Date-only (no time) → add 00:00:00+03:00 (provider offset)
+  const dateOnlyMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})$/);
+  if (dateOnlyMatch) {
+    return `${dateOnlyMatch[1]}T00:00:00+03:00`;
+  }
+  
+  return null; // unrecognized format
 }
 
 /**
@@ -148,73 +163,31 @@ function parseNumber(val: string): number | null {
 }
 
 /**
- * Simple CSV parser for server-side (handles quoted fields)
+ * Detect CSV delimiter by counting occurrences in header line
  */
-function parseCSV(csvText: string): { headers: string[]; rows: Record<string, string>[] } {
-  const lines = csvText.split(/\r?\n/);
-  if (lines.length < 2) return { headers: [], rows: [] };
+function detectDelimiter(csvText: string): string {
+  // Take first non-empty lines (up to 5) for analysis
+  const lines = csvText.split(/\r?\n/).filter(l => l.trim()).slice(0, 5);
+  if (lines.length === 0) return ';';
   
-  // Find header row (skip empty lines)
-  let headerIdx = 0;
-  while (headerIdx < lines.length && !lines[headerIdx].trim()) {
-    headerIdx++;
-  }
-  if (headerIdx >= lines.length) return { headers: [], rows: [] };
+  const headerLine = lines[0];
   
-  const headerLine = lines[headerIdx];
-  const headers = parseCSVLine(headerLine).map(normalizeHeader);
-  
-  const rows: Record<string, string>[] = [];
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    
-    const values = parseCSVLine(line);
-    const row: Record<string, string> = {};
-    headers.forEach((h, idx) => {
-      row[h] = values[idx] || '';
-    });
-    rows.push(row);
-  }
-  
-  return { headers, rows };
-}
-
-/**
- * Parse a single CSV line (handles quoted fields with commas)
- */
-function parseCSVLine(line: string): string[] {
-  const result: string[] = [];
-  let current = '';
+  // Count delimiters outside quotes
+  let semicolons = 0;
+  let commas = 0;
   let inQuotes = false;
   
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    const nextChar = line[i + 1];
-    
-    if (inQuotes) {
-      if (char === '"' && nextChar === '"') {
-        current += '"';
-        i++; // skip escaped quote
-      } else if (char === '"') {
-        inQuotes = false;
-      } else {
-        current += char;
-      }
-    } else {
-      if (char === '"') {
-        inQuotes = true;
-      } else if (char === ',' || char === ';') {
-        result.push(current.trim());
-        current = '';
-      } else {
-        current += char;
-      }
+  for (const char of headerLine) {
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (!inQuotes) {
+      if (char === ';') semicolons++;
+      if (char === ',') commas++;
     }
   }
-  result.push(current.trim());
   
-  return result;
+  // Prefer semicolon if equal (common in Russian CSV)
+  return semicolons >= commas ? ';' : ',';
 }
 
 interface ParsedRow {
@@ -243,7 +216,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Verify admin role
+    // Verify admin role (PATCH-4: no maybeSingle, use limit(1))
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) {
@@ -258,9 +231,9 @@ serve(async (req) => {
       .select('role')
       .eq('user_id', user.id)
       .in('role', ['admin', 'superadmin'])
-      .maybeSingle();
+      .limit(1);
 
-    if (!roleData) {
+    if (!roleData || roleData.length === 0) {
       return new Response(JSON.stringify({ error: 'Admin access required' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -278,25 +251,65 @@ serve(async (req) => {
       });
     }
 
-    // Parse CSV on server
-    const { headers, rows: rawRows } = parseCSV(csv_text);
-    console.log(`[${BUILD_ID}] Parsed ${rawRows.length} raw rows, headers: ${headers.slice(0, 5).join(', ')}...`);
+    // Detect delimiter
+    const delimiter = detectDelimiter(csv_text);
+    console.log(`[${BUILD_ID}] Detected delimiter: '${delimiter}'`);
 
-    // Apply limit
-    const limitedRows = rawRows.slice(0, limit);
+    // Parse CSV using Deno std/csv (supports multiline quoted fields)
+    let csvData: string[][];
+    try {
+      csvData = csvParse(csv_text, {
+        separator: delimiter,
+        lazyQuotes: true,
+        fieldsPerRecord: 0, // allow variable field count
+      });
+    } catch (parseError) {
+      console.error(`[${BUILD_ID}] CSV parse error:`, parseError);
+      return new Response(JSON.stringify({ 
+        error: `CSV parse error: ${parseError instanceof Error ? parseError.message : 'Unknown'}`,
+        build_id: BUILD_ID,
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (csvData.length < 2) {
+      return new Response(JSON.stringify({ 
+        error: 'CSV must have header row and at least one data row',
+        build_id: BUILD_ID,
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Normalize headers
+    const rawHeaders = csvData[0];
+    const headers = rawHeaders.map(normalizeHeader);
+    console.log(`[${BUILD_ID}] Parsed ${csvData.length - 1} raw rows, headers: ${headers.slice(0, 5).join(', ')}...`);
+
+    // Build rows as Record<normalizedHeader, value>
+    const rawRows = csvData.slice(1, 1 + limit).map(rowArr => {
+      const row: Record<string, string> = {};
+      headers.forEach((h, i) => {
+        row[h] = String(rowArr[i] ?? '').trim();
+      });
+      return row;
+    });
 
     // Map and validate rows
     const validRows: ParsedRow[] = [];
     const invalidRows: { row: number; reason: string }[] = [];
     
-    for (let i = 0; i < limitedRows.length; i++) {
-      const rawRow = limitedRows[i];
+    for (let i = 0; i < rawRows.length; i++) {
+      const rawRow = rawRows[i];
       const parsedRow: ParsedRow = { uid: '', raw_data: rawRow };
       
-      // Map columns
-      for (const [csvHeader, dbField] of Object.entries(COLUMN_MAP)) {
-        const value = rawRow[csvHeader];
-        if (value === undefined || value === '') continue;
+      // Map columns using normalized COLUMN_MAP
+      for (const [normalizedHeader, value] of Object.entries(rawRow)) {
+        const dbField = COLUMN_MAP[normalizedHeader];
+        if (!dbField || value === '') continue;
         
         if (DATE_FIELDS.includes(dbField)) {
           const parsed = parseServerDate(value);
@@ -339,10 +352,10 @@ serve(async (req) => {
     const duplicatesMerged = validRows.length - finalRows.length;
 
     const stats = {
-      total_rows: limitedRows.length,
+      total_rows: rawRows.length,
       valid_rows: finalRows.length,
       invalid_rows: invalidRows.length,
-      invalid_rate: limitedRows.length > 0 ? (invalidRows.length / limitedRows.length) : 0,
+      invalid_rate: rawRows.length > 0 ? (invalidRows.length / rawRows.length) : 0,
       duplicates_merged: duplicatesMerged,
     };
 
@@ -350,7 +363,7 @@ serve(async (req) => {
 
     // DRY-RUN: return stats only
     if (dry_run) {
-      // Audit log
+      // Audit log (no PII)
       await supabase.from('audit_logs').insert({
         action: 'bepaid_csv_import.dry_run',
         actor_type: 'system',
@@ -374,6 +387,7 @@ serve(async (req) => {
           amount: r.amount,
           status: r.status,
           paid_at: r.paid_at,
+          transaction_type: r.transaction_type,
         })),
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -395,8 +409,7 @@ serve(async (req) => {
 
     // Upsert in batches
     const BATCH_SIZE = 200;
-    let created = 0;
-    let updated = 0;
+    let upserted = 0;
     let errors = 0;
     const errorDetails: string[] = [];
 
@@ -478,11 +491,11 @@ serve(async (req) => {
         errorDetails.push(`Batch ${Math.floor(i/BATCH_SIZE) + 1}: ${error.message}`);
         errors += batch.length;
       } else {
-        created += batch.length;
+        upserted += batch.length;
       }
     }
 
-    // Audit log
+    // Audit log (no PII)
     await supabase.from('audit_logs').insert({
       action: 'bepaid_csv_import.execute',
       actor_type: 'system',
@@ -492,20 +505,19 @@ serve(async (req) => {
         build_id: BUILD_ID,
         initiator_user_id: user.id,
         ...stats,
-        created,
-        updated,
+        upserted,
         errors,
       },
     });
 
-    console.log(`[${BUILD_ID}] END: created=${created}, errors=${errors}`);
+    console.log(`[${BUILD_ID}] END: upserted=${upserted}, errors=${errors}`);
 
     return new Response(JSON.stringify({
       success: true,
       mode: 'execute',
       build_id: BUILD_ID,
       stats,
-      created,
+      upserted,
       errors,
       error_details: errorDetails.slice(0, 5),
     }), {

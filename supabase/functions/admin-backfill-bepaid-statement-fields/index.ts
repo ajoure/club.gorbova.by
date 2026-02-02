@@ -1,7 +1,7 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const BUILD_ID = "2026-02-02T12:00:00Z-backfill-fields-v1";
+const BUILD_ID = "2026-02-02T14:30:00Z-backfill-fields-v2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -83,7 +83,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Verify admin role
+    // Verify admin role (PATCH-4: no maybeSingle, use limit(1))
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) {
@@ -98,9 +98,9 @@ serve(async (req) => {
       .select('role')
       .eq('user_id', user.id)
       .in('role', ['admin', 'superadmin'])
-      .maybeSingle();
+      .limit(1);
 
-    if (!roleData) {
+    if (!roleData || roleData.length === 0) {
       return new Response(JSON.stringify({ error: 'Admin access required' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -205,7 +205,7 @@ serve(async (req) => {
 
     console.log(`[${BUILD_ID}] Parseable: ${results.parseable}, Not parseable: ${results.not_parseable}, Rate: ${(parseableRate * 100).toFixed(1)}%`);
 
-    // DRY-RUN: return stats only
+    // DRY-RUN: return stats only (no PII)
     if (dry_run) {
       await supabase.from('audit_logs').insert({
         action: 'bepaid_statement_backfill.fields.dry_run',
@@ -264,14 +264,15 @@ serve(async (req) => {
         .eq('id', update.id);
 
       if (error) {
-        console.error(`[${BUILD_ID}] Update error for ${update.uid}:`, error.message);
+        // Log error without PII (only uid)
+        console.error(`[${BUILD_ID}] Update error for uid ${update.uid}:`, error.message);
         results.errors++;
       } else {
         results.updated++;
       }
     }
 
-    // Audit log
+    // Audit log (no PII)
     await supabase.from('audit_logs').insert({
       action: 'bepaid_statement_backfill.fields.execute',
       actor_type: 'system',
