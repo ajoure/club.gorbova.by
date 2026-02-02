@@ -1,12 +1,13 @@
 import { useState, useMemo } from "react";
-import { Upload, Search, CheckSquare, X } from "lucide-react";
+import { Upload, Search, CheckSquare, X, ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BepaidStatementTable } from "./BepaidStatementTable";
 import { BepaidStatementSummary, StatementFilterType } from "./BepaidStatementSummary";
 import { BepaidStatementImportDialog } from "./BepaidStatementImportDialog";
-import { useBepaidStatement, useBepaidStatementStats } from "@/hooks/useBepaidStatement";
+import { useBepaidStatementPaginated, useBepaidStatementStats } from "@/hooks/useBepaidStatement";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 
 const FILTER_LABELS: Record<Exclude<StatementFilterType, null>, string> = {
@@ -15,6 +16,12 @@ const FILTER_LABELS: Record<Exclude<StatementFilterType, null>, string> = {
   cancellations: 'Отмены',
   errors: 'Ошибки',
 };
+
+const PAGE_SIZE_OPTIONS = [
+  { value: '20', label: '20 строк' },
+  { value: '50', label: '50 строк' },
+  { value: '100', label: '100 строк' },
+];
 
 export function BepaidStatementTabContent() {
   // Default to current month
@@ -27,15 +34,34 @@ export function BepaidStatementTabContent() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState<StatementFilterType>(null);
+  const [pageSize, setPageSize] = useState<number>(50);
 
-  const { data: rows = [], isLoading } = useBepaidStatement(dateFilter, searchQuery);
+  // Use paginated query
+  const {
+    data: paginatedData,
+    isLoading,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useBepaidStatementPaginated({
+    dateFilter,
+    searchQuery,
+    pageSize,
+  });
+  
   const { data: stats, isLoading: statsLoading } = useBepaidStatementStats(dateFilter);
+
+  // Flatten all pages into single array
+  const allRows = useMemo(() => {
+    if (!paginatedData?.pages) return [];
+    return paginatedData.pages.flatMap(page => page.rows);
+  }, [paginatedData]);
 
   // Filter rows based on type filter
   const filteredRows = useMemo(() => {
-    if (!typeFilter) return rows;
+    if (!typeFilter) return allRows;
     
-    return rows.filter(row => {
+    return allRows.filter(row => {
       const txType = (row.transaction_type || '').toLowerCase();
       const status = (row.status || '').toLowerCase();
       
@@ -52,7 +78,7 @@ export function BepaidStatementTabContent() {
           return true;
       }
     });
-  }, [rows, typeFilter]);
+  }, [allRows, typeFilter]);
 
   // Calculate selected rows sum
   const selectedStats = useMemo(() => {
@@ -79,16 +105,33 @@ export function BepaidStatementTabContent() {
     setSelectedIds(new Set());
   };
 
+  const handlePageSizeChange = (value: string) => {
+    setPageSize(parseInt(value, 10));
+    setSelectedIds(new Set());
+  };
+
   return (
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <Button onClick={() => setImportDialogOpen(true)} size="sm">
             <Upload className="h-4 w-4 mr-2" />
-            Импорт
+            Импорт CSV
           </Button>
           <PeriodSelector value={dateFilter} onChange={setDateFilter} />
+          <Select value={pageSize.toString()} onValueChange={handlePageSizeChange}>
+            <SelectTrigger className="w-[120px] h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZE_OPTIONS.map(opt => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         
         <div className="relative w-full sm:w-80">
@@ -118,7 +161,7 @@ export function BepaidStatementTabContent() {
           </span>
           <span className="text-sm text-muted-foreground">|</span>
           <span className="text-sm text-muted-foreground">
-            {filteredRows.length} из {rows.length} транзакций
+            {filteredRows.length} из {allRows.length} транзакций
           </span>
           <Button
             variant="ghost"
@@ -154,10 +197,35 @@ export function BepaidStatementTabContent() {
         onSelectionChange={setSelectedIds}
       />
 
+      {/* Load more button */}
+      {hasNextPage && (
+        <div className="flex justify-center pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Загрузка...
+              </>
+            ) : (
+              <>
+                <ChevronDown className="h-4 w-4 mr-2" />
+                Загрузить ещё
+              </>
+            )}
+          </Button>
+        </div>
+      )}
+
       {/* Row count */}
       <div className="text-xs text-muted-foreground text-right">
         Показано: {filteredRows.length} строк
-        {typeFilter && ` (отфильтровано из ${rows.length})`}
+        {typeFilter && ` (отфильтровано из ${allRows.length})`}
+        {hasNextPage && ' • есть ещё'}
       </div>
 
       {/* Import dialog */}

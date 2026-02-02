@@ -1,184 +1,40 @@
 import { useState, useCallback } from "react";
-import { assertExcelAllowedOrThrow } from "@/lib/iosPreviewHardStops";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, Info } from "lucide-react";
-import { useBepaidStatementImport } from "@/hooks/useBepaidStatement";
+import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Info, Eye, Play } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { parseISO, parse, isValid } from "date-fns";
-import { Json } from "@/integrations/supabase/types";
+import { supabase } from "@/integrations/supabase/client";
+import { useQueryClient } from "@tanstack/react-query";
 
-// Column mapping from Russian headers to DB fields
-// PATCH-B3: Added ERIP-specific columns for full compatibility
-const COLUMN_MAP: Record<string, string> = {
-  // Common fields
-  'uid': 'uid',
-  'id заказа': 'order_id_bepaid',
-  'статус': 'status',
-  'описание': 'description',
-  'сумма': 'amount',
-  'валюта': 'currency',
-  'комиссия,%': 'commission_percent',
-  'комиссия за операцию': 'commission_per_op',
-  'сумма комиссий': 'commission_total',
-  'перечисленная сумма': 'payout_amount',
-  'тип транзакции': 'transaction_type',
-  'трекинг id': 'tracking_id',
-  'дата создания': 'created_at_bepaid',
-  'дата оплаты': 'paid_at',
-  'дата перечисления': 'payout_date',
-  'действует до': 'expires_at',
-  'сообщение': 'message',
-  'id магазина': 'shop_id',
-  'магазин': 'shop_name',
-  'категория бизнеса': 'business_category',
-  'id банка': 'bank_id',
-  'имя': 'first_name',
-  'фамилия': 'last_name',
-  'адрес': 'address',
-  'страна': 'country',
-  'город': 'city',
-  'индекс': 'zip',
-  'область': 'region',
-  'телефон': 'phone',
-  'ip': 'ip',
-  'e-mail': 'email',
-  'email': 'email',
-  'способ оплаты': 'payment_method',
-  'код продукта': 'product_code',
-  'карта': 'card_masked',
-  'владелец карты': 'card_holder',
-  'карта действует': 'card_expires',
-  'bin карты': 'card_bin',
-  'банк': 'bank_name',
-  'страна банка': 'bank_country',
-  '3-d secure': 'secure_3d',
-  'результат avs': 'avs_result',
-  'fraud': 'fraud',
-  'код авторизации': 'auth_code',
-  'rrn': 'rrn',
-  'причина': 'reason',
-  'идентификатор оплаты': 'payment_identifier',
-  'провайдер токена': 'token_provider',
-  'id торговца': 'merchant_id',
-  'страна торговца': 'merchant_country',
-  'компания торговца': 'merchant_company',
-  'сумма после конвертации': 'converted_amount',
-  'валюта после конвертации': 'converted_currency',
-  'id шлюза': 'gateway_id',
-  'рекуррентный тип': 'recurring_type',
-  'card bin (8)': 'card_bin_8',
-  'код банка': 'bank_code',
-  'код ответа': 'response_code',
-  'курс конвертации': 'conversion_rate',
-  'перечисленная сумма после конвертации': 'converted_payout',
-  'сумма комиссий в валюте после конвертации': 'converted_commission',
-  
-  // PATCH-B3: ERIP-specific columns (stored in raw_data, mapped to existing fields)
-  'код услуги': 'product_code',
-  'сокращенное наименование услуги': 'description', // fallback if description empty
-  'номера счета': 'payment_identifier',
-  'номер запроса ерип': 'bank_id',
-  'номер операции ерип': 'auth_code',
-  'код агента': 'bank_code',
-  'расчетный агент': 'bank_name',
-  'номер мемориального ордера': 'rrn',
-  'тип авторизации': 'recurring_type',
-  'описание типа авторизации': 'reason',
-  'код устройства авторизации': 'gateway_id',
-  'описание типа устройства': 'token_provider',
-  'номер счета плательщика': 'payment_identifier',
-  'код региона плательщика': 'region',
-  'фио плательщика': 'card_holder', // For ERIP, use payer name as card_holder
-};
+const MAX_FILE_SIZE_MB = 10;
 
-const DATE_FIELDS = ['created_at_bepaid', 'paid_at', 'payout_date', 'expires_at'];
-const NUMBER_FIELDS = ['amount', 'commission_percent', 'commission_per_op', 'commission_total', 'payout_amount', 'converted_amount', 'converted_payout', 'converted_commission', 'conversion_rate'];
-
-interface ParsedRow {
-  uid: string;
-  [key: string]: unknown;
+interface ImportStats {
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  invalid_rate: number;
+  duplicates_merged: number;
 }
 
-/**
- * Normalize timezone offset format: +0300 → +03:00
- * Required because browser Date() doesn't reliably parse "+0300" format
- */
-function normalizeTimezoneOffset(dateStr: string): string {
-  // Match patterns like "+0300" or "-0500" at the end of string
-  return dateStr.replace(/([+-])(\d{2})(\d{2})$/, '$1$2:$3');
+interface DryRunResponse {
+  success: boolean;
+  mode: 'dry_run';
+  build_id: string;
+  stats: ImportStats;
+  sample_errors?: Array<{ row: number; reason: string }>;
+  sample_parsed?: Array<{ uid: string; amount: number; status: string; paid_at: string }>;
 }
 
-// Parse Excel date - works with Date objects, numbers (Excel serial), or strings
-// Note: For Excel serial dates, we use a simple conversion since XLSX.SSF is loaded dynamically
-function parseExcelDate(value: unknown): string | null {
-  if (!value) return null;
-  
-  // Handle Date objects (xlsx with cellDates: true returns Date objects)
-  if (value instanceof Date) {
-    if (!isNaN(value.getTime())) {
-      return value.toISOString();
-    }
-    return null;
-  }
-  
-  // Excel serial date number - simple conversion without XLSX.SSF
-  // Excel dates are days since 1900-01-01 (with a bug for 1900 leap year)
-  if (typeof value === 'number') {
-    // Excel epoch is 1899-12-30 (accounting for the leap year bug)
-    const excelEpoch = new Date(1899, 11, 30);
-    const msPerDay = 24 * 60 * 60 * 1000;
-    const date = new Date(excelEpoch.getTime() + value * msPerDay);
-    if (!isNaN(date.getTime())) {
-      return date.toISOString();
-    }
-    return null;
-  }
-  
-  // String date
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    
-    // PATCH: Normalize timezone offset format before parsing
-    // "2026-01-06 09:58:06 +0300" → "2026-01-06 09:58:06 +03:00"
-    const normalized = normalizeTimezoneOffset(trimmed);
-    
-    // Method 1: Try native Date parsing (handles ISO-like formats well after normalization)
-    const nativeDate = new Date(normalized);
-    if (!isNaN(nativeDate.getTime())) {
-      return nativeDate.toISOString();
-    }
-    
-    // Method 2: Try ISO format
-    const isoDate = parseISO(normalized);
-    if (isValid(isoDate)) return isoDate.toISOString();
-    
-    // Method 3: Try common formats
-    const formats = ['dd.MM.yyyy HH:mm:ss', 'dd.MM.yyyy HH:mm', 'dd.MM.yyyy', 'yyyy-MM-dd HH:mm:ss', 'yyyy-MM-dd'];
-    for (const fmt of formats) {
-      try {
-        const parsed = parse(trimmed, fmt, new Date());
-        if (isValid(parsed)) return parsed.toISOString();
-      } catch {
-        // continue
-      }
-    }
-  }
-  
-  return null;
-}
-
-function parseNumber(value: unknown): number | null {
-  if (value == null || value === '') return null;
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') {
-    const cleaned = value.replace(/\s/g, '').replace(',', '.');
-    const num = parseFloat(cleaned);
-    return isNaN(num) ? null : num;
-  }
-  return null;
+interface ExecuteResponse {
+  success: boolean;
+  mode: 'execute' | 'execute_blocked';
+  build_id: string;
+  stats: ImportStats;
+  created?: number;
+  errors?: number;
+  error?: string;
+  error_details?: string[];
 }
 
 interface BepaidStatementImportDialogProps {
@@ -188,225 +44,188 @@ interface BepaidStatementImportDialogProps {
 
 export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatementImportDialogProps) {
   const [file, setFile] = useState<File | null>(null);
-  const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
-  const [invalidRows, setInvalidRows] = useState<{row: number; reason: string; preview: string}[]>([]); // PATCH-B2
-  const [duplicatesCount, setDuplicatesCount] = useState<number>(0);
-  const [parseStatus, setParseStatus] = useState<'idle' | 'parsing' | 'ready' | 'error'>('idle');
+  const [csvText, setCsvText] = useState<string>('');
+  const [parseStatus, setParseStatus] = useState<'idle' | 'reading' | 'ready' | 'error'>('idle');
   const [parseError, setParseError] = useState<string | null>(null);
-  const [importResult, setImportResult] = useState<{ created: number; errors: number; duplicatesSkipped?: number; errorDetails?: string[] } | null>(null);
   
-  const importMutation = useBepaidStatementImport();
+  const [dryRunResult, setDryRunResult] = useState<DryRunResponse | null>(null);
+  const [importResult, setImportResult] = useState<ExecuteResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  const queryClient = useQueryClient();
 
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
     
+    // STOP-guard: file size limit
+    const fileSizeMB = selectedFile.size / (1024 * 1024);
+    if (fileSizeMB > MAX_FILE_SIZE_MB) {
+      setParseStatus('error');
+      setParseError(`Файл слишком большой (${fileSizeMB.toFixed(1)} MB). Максимум: ${MAX_FILE_SIZE_MB} MB. Разбейте период на части.`);
+      return;
+    }
+    
     setFile(selectedFile);
-    setParseStatus('parsing');
+    setParseStatus('reading');
     setParseError(null);
-    setParsedRows([]);
-    setInvalidRows([]); // PATCH-B2
-    setDuplicatesCount(0);
+    setCsvText('');
+    setDryRunResult(null);
     setImportResult(null);
     
     try {
-      // Dynamic import of xlsx library to reduce bundle size
-      // iOS preview hard stop - throw before loading heavy XLSX library
-      assertExcelAllowedOrThrow();
-      const XLSX = await import('xlsx');
-      const buffer = await selectedFile.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+      // Read file as text (UTF-8)
+      const text = await selectedFile.text();
       
-      // Find transaction sheets
-      const cardSheet = workbook.SheetNames.find(name => 
-        name.toLowerCase().includes('карточн') || 
-        name.toLowerCase().includes('card') ||
-        name.toLowerCase().includes('транзакци')
-      );
-      const eripSheet = workbook.SheetNames.find(name => 
-        name.toLowerCase().includes('ерип') || 
-        name.toLowerCase().includes('erip')
-      );
-      
-      const sheetsToProcess = [cardSheet, eripSheet].filter(Boolean) as string[];
-      
-      if (sheetsToProcess.length === 0) {
-        // Fallback to first sheet if no match
-        sheetsToProcess.push(workbook.SheetNames[0]);
-      }
-      
-      const allRows: ParsedRow[] = [];
-      const allInvalidRows: {row: number; reason: string; preview: string}[] = []; // PATCH-B2
-      
-      for (const sheetName of sheetsToProcess) {
-        const sheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as unknown[][];
-        
-        if (jsonData.length < 2) continue;
-        
-        // Find header row (first row with UID or similar)
-        let headerRowIndex = 0;
-        for (let i = 0; i < Math.min(15, jsonData.length); i++) { // PATCH-B1: Extended search to 15 rows
-          const row = jsonData[i] as string[];
-          if (row.some(cell => {
-            const cellStr = String(cell).toLowerCase();
-            return cellStr === 'uid' || cellStr.includes('id транз');
-          })) {
-            headerRowIndex = i;
-            break;
-          }
-        }
-        
-        const headers = (jsonData[headerRowIndex] as string[]).map(h => String(h || '').toLowerCase().trim());
-        
-        // Map headers to DB columns
-        const headerMap: { index: number; dbField: string }[] = [];
-        headers.forEach((header, index) => {
-          const dbField = COLUMN_MAP[header];
-          if (dbField) {
-            headerMap.push({ index, dbField });
-          }
-        });
-        
-        // Process data rows
-        for (let i = headerRowIndex + 1; i < jsonData.length; i++) {
-          const row = jsonData[i] as unknown[];
-          if (!row || row.length === 0) continue;
-          
-          const rawDataObj: Record<string, unknown> = {};
-          headers.forEach((h, idx) => {
-            rawDataObj[h] = row[idx];
-          });
-          
-          const rowObj: ParsedRow = {
-            uid: '',
-            raw_data: rawDataObj as Json,
-          };
-          
-          let hasUid = false;
-          
-          for (const { index, dbField } of headerMap) {
-            const value = row[index];
-            
-            // Handle different field types
-            if (DATE_FIELDS.includes(dbField)) {
-              rowObj[dbField] = parseExcelDate(value);
-            } else if (NUMBER_FIELDS.includes(dbField)) {
-              rowObj[dbField] = parseNumber(value);
-            } else {
-              rowObj[dbField] = value != null ? String(value) : null;
-            }
-            
-            if (dbField === 'uid' && value) {
-              rowObj.uid = String(value);
-              hasUid = true;
-            }
-          }
-          
-          // Only add rows with UID
-          if (hasUid && rowObj.uid) {
-            allRows.push(rowObj);
-          } else {
-            // PATCH-B2: Track invalid rows instead of silently skipping
-            const rowPreview = row.slice(0, 3).map(v => String(v || '').substring(0, 20)).join(' | ');
-            allInvalidRows.push({
-              row: i + 1, // 1-indexed for user display
-              reason: !hasUid ? 'Нет UID' : 'Пустой UID',
-              preview: rowPreview || '(пустая строка)',
-            });
-          }
-        }
-      }
-      
-      // PATCH-B2: Set invalid rows for display
-      setInvalidRows(allInvalidRows);
-      
-      if (allRows.length === 0) {
+      if (!text.trim()) {
         setParseStatus('error');
-        setParseError('Не найдено строк с UID. Проверьте формат файла.');
+        setParseError('Файл пуст');
         return;
       }
       
-      // PATCH: Deduplicate rows by UID (keep merged data from all occurrences)
-      const deduplicatedRows = Array.from(
-        allRows.reduce((map, row) => {
-          const existing = map.get(row.uid);
-          if (!existing) {
-            map.set(row.uid, row);
-          } else {
-            // Merge: keep existing values, overwrite with new non-null values
-            const merged = { ...existing };
-            for (const [key, value] of Object.entries(row)) {
-              if (value !== null && value !== undefined && value !== '') {
-                merged[key as keyof ParsedRow] = value;
-              }
-            }
-            map.set(row.uid, merged);
-          }
-          return map;
-        }, new Map<string, ParsedRow>())
-      ).map(([_, row]) => row);
-      
-      // Report duplicates found
-      const dupsCount = allRows.length - deduplicatedRows.length;
-      setDuplicatesCount(dupsCount);
-      if (dupsCount > 0) {
-        console.log(`Deduplicated ${dupsCount} rows with same UID`);
+      // Basic validation: check if it looks like CSV
+      const lines = text.trim().split(/\r?\n/);
+      if (lines.length < 2) {
+        setParseStatus('error');
+        setParseError('Файл должен содержать заголовки и хотя бы одну строку данных');
+        return;
       }
       
-      setParsedRows(deduplicatedRows);
+      // Check for UID column
+      const firstLine = lines[0].toLowerCase();
+      if (!firstLine.includes('uid')) {
+        setParseStatus('error');
+        setParseError('Не найден столбец UID. Убедитесь, что это выписка bePaid в формате CSV.');
+        return;
+      }
+      
+      setCsvText(text);
       setParseStatus('ready');
       
     } catch (err) {
-      console.error('Parse error:', err);
+      console.error('File read error:', err);
       setParseStatus('error');
-      setParseError(`Ошибка парсинга: ${err instanceof Error ? err.message : 'Неизвестная ошибка'}`);
+      setParseError(`Ошибка чтения файла: ${err instanceof Error ? err.message : 'Неизвестная ошибка'}`);
     }
   }, []);
 
-  const handleImport = async () => {
-    if (parsedRows.length === 0) return;
+  const handleDryRun = async () => {
+    if (!csvText) return;
+    
+    setIsLoading(true);
+    setDryRunResult(null);
+    setImportResult(null);
     
     try {
-      const result = await importMutation.mutateAsync(parsedRows);
-      setImportResult({ 
-        created: result.created, 
-        errors: result.errors,
-        duplicatesSkipped: result.duplicatesSkipped,
-        errorDetails: result.errorDetails 
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Не авторизован');
+      }
+      
+      const response = await supabase.functions.invoke('admin-import-bepaid-statement-csv', {
+        body: {
+          dry_run: true,
+          source: 'bepaid_csv',
+          csv_text: csvText,
+          limit: 5000,
+        },
       });
       
-      toast({
-        title: "Импорт завершён",
-        description: `Импортировано: ${result.total - result.errors}, ошибок: ${result.errors}`,
-      });
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
       
-      // Close after success
-      setTimeout(() => {
-        onOpenChange(false);
-        // Reset state
-        setFile(null);
-        setParsedRows([]);
-        setParseStatus('idle');
-        setImportResult(null);
-      }, 2000);
+      const result = response.data as DryRunResponse;
+      setDryRunResult(result);
+      
+      if (result.success) {
+        toast({
+          title: "Проверка завершена",
+          description: `Готово к импорту: ${result.stats.valid_rows} строк`,
+        });
+      }
       
     } catch (err) {
+      console.error('Dry run error:', err);
+      toast({
+        title: "Ошибка проверки",
+        description: err instanceof Error ? err.message : 'Неизвестная ошибка',
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleExecute = async () => {
+    if (!csvText || !dryRunResult?.success) return;
+    
+    setIsLoading(true);
+    setImportResult(null);
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Не авторизован');
+      }
+      
+      const response = await supabase.functions.invoke('admin-import-bepaid-statement-csv', {
+        body: {
+          dry_run: false,
+          source: 'bepaid_csv',
+          csv_text: csvText,
+          limit: 5000,
+        },
+      });
+      
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
+      
+      const result = response.data as ExecuteResponse;
+      setImportResult(result);
+      
+      if (result.success) {
+        toast({
+          title: "Импорт завершён",
+          description: `Импортировано: ${result.created}, ошибок: ${result.errors || 0}`,
+        });
+        
+        // Invalidate queries
+        queryClient.invalidateQueries({ queryKey: ['bepaid-statement'] });
+        queryClient.invalidateQueries({ queryKey: ['bepaid-statement-stats'] });
+        
+        // Close after success
+        setTimeout(() => {
+          handleClose();
+        }, 2000);
+      } else {
+        toast({
+          title: "Импорт заблокирован",
+          description: result.error || 'STOP-guard сработал',
+          variant: "destructive",
+        });
+      }
+      
+    } catch (err) {
+      console.error('Execute error:', err);
       toast({
         title: "Ошибка импорта",
         description: err instanceof Error ? err.message : 'Неизвестная ошибка',
         variant: "destructive",
       });
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleClose = () => {
     onOpenChange(false);
     setFile(null);
-    setParsedRows([]);
-    setInvalidRows([]); // PATCH-B2
+    setCsvText('');
     setParseStatus('idle');
     setParseError(null);
+    setDryRunResult(null);
     setImportResult(null);
   };
 
@@ -415,11 +234,11 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <FileSpreadsheet className="h-5 w-5" />
+            <FileText className="h-5 w-5" />
             Импорт выписки bePaid
           </DialogTitle>
           <DialogDescription>
-            Загрузите Excel или CSV файл с выпиской bePaid. Транзакции с одинаковым UID будут обновлены.
+            Загрузите CSV файл с выпиской bePaid (UTF-8). Транзакции с одинаковым UID будут обновлены.
           </DialogDescription>
         </DialogHeader>
         
@@ -428,22 +247,23 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
           <div className="flex flex-col gap-2">
             <Input
               type="file"
-              accept=".xlsx,.xls,.csv"
+              accept=".csv"
               onChange={handleFileChange}
               className="cursor-pointer"
+              disabled={isLoading}
             />
             {file && (
               <p className="text-xs text-muted-foreground">
-                Файл: {file.name}
+                Файл: {file.name} ({(file.size / 1024).toFixed(1)} KB)
               </p>
             )}
           </div>
           
-          {/* Parse status */}
-          {parseStatus === 'parsing' && (
+          {/* Read status */}
+          {parseStatus === 'reading' && (
             <div className="flex items-center gap-2 text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Парсинг файла...</span>
+              <span>Чтение файла...</span>
             </div>
           )}
           
@@ -454,36 +274,52 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
             </div>
           )}
           
-          {parseStatus === 'ready' && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-emerald-500">
-                <CheckCircle2 className="h-4 w-4" />
-                <span>Готово к импорту: {parsedRows.length} строк</span>
-              </div>
-              {/* Show duplicates merged count */}
-              {duplicatesCount > 0 && (
-                <div className="flex items-center gap-2 text-blue-500">
-                  <Info className="h-4 w-4" />
-                  <span>Объединено дубликатов UID: {duplicatesCount}</span>
-                </div>
-              )}
-              {/* PATCH-B2: Show invalid rows count */}
-              {invalidRows.length > 0 && (
-                <div className="flex items-center gap-2 text-amber-500">
-                  <AlertCircle className="h-4 w-4" />
-                  <span>Пропущено строк без UID: {invalidRows.length}</span>
-                </div>
-              )}
-              <p className="text-xs text-muted-foreground">
-                Данные будут импортированы в базу данных. Существующие записи с таким же UID будут обновлены.
+          {parseStatus === 'ready' && !dryRunResult && (
+            <div className="flex items-center gap-2 text-emerald-500">
+              <CheckCircle2 className="h-4 w-4" />
+              <span>Файл прочитан, готов к проверке</span>
+            </div>
+          )}
+          
+          {/* Dry-run results */}
+          {dryRunResult && (
+            <div className="rounded-lg bg-muted/50 p-3 space-y-2">
+              <p className="text-sm font-medium flex items-center gap-2">
+                <Eye className="h-4 w-4" />
+                Результат проверки (dry-run):
               </p>
-              {/* PATCH-B2: Show first few invalid rows for debugging */}
-              {invalidRows.length > 0 && invalidRows.length <= 10 && (
-                <div className="mt-2 p-2 bg-amber-500/10 rounded text-xs">
-                  <p className="font-medium text-amber-600 dark:text-amber-400 mb-1">Пропущенные строки:</p>
-                  {invalidRows.map((ir, idx) => (
-                    <div key={idx} className="text-muted-foreground">
-                      Строка {ir.row}: {ir.reason} — {ir.preview}
+              
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>Всего строк: <span className="font-medium">{dryRunResult.stats.total_rows}</span></div>
+                <div>Валидных: <span className="font-medium text-emerald-500">{dryRunResult.stats.valid_rows}</span></div>
+                <div>Невалидных: <span className="font-medium text-amber-500">{dryRunResult.stats.invalid_rows}</span></div>
+                <div>Дубликатов: <span className="font-medium text-blue-500">{dryRunResult.stats.duplicates_merged}</span></div>
+              </div>
+              
+              {dryRunResult.stats.invalid_rate > 0.10 && (
+                <div className="flex items-center gap-2 text-destructive text-xs">
+                  <AlertCircle className="h-3 w-3" />
+                  <span>Высокий % ошибок ({(dryRunResult.stats.invalid_rate * 100).toFixed(1)}%) - импорт будет заблокирован</span>
+                </div>
+              )}
+              
+              {dryRunResult.sample_parsed && dryRunResult.sample_parsed.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs text-muted-foreground mb-1">Примеры распознанных строк:</p>
+                  {dryRunResult.sample_parsed.map((row, i) => (
+                    <div key={i} className="text-xs font-mono bg-background/50 p-1 rounded">
+                      UID: {row.uid} | {row.amount} | {row.status}
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {dryRunResult.sample_errors && dryRunResult.sample_errors.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs text-amber-500 mb-1">Примеры ошибок:</p>
+                  {dryRunResult.sample_errors.slice(0, 3).map((err, i) => (
+                    <div key={i} className="text-xs text-muted-foreground">
+                      Строка {err.row}: {err.reason}
                     </div>
                   ))}
                 </div>
@@ -491,49 +327,80 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
             </div>
           )}
           
+          {/* Execute result */}
           {importResult && (
             <div className="rounded-lg bg-muted/50 p-3 space-y-1">
               <p className="text-sm font-medium">Результат импорта:</p>
-              <p className="text-xs text-muted-foreground">
-                Импортировано: {importResult.created}, ошибок: {importResult.errors}
-              </p>
-              {importResult.duplicatesSkipped && importResult.duplicatesSkipped > 0 && (
-                <p className="text-xs text-blue-500">
-                  Объединено дубликатов UID: {importResult.duplicatesSkipped}
+              {importResult.success ? (
+                <>
+                  <p className="text-xs text-emerald-500">
+                    ✓ Импортировано: {importResult.created}
+                  </p>
+                  {importResult.errors && importResult.errors > 0 && (
+                    <p className="text-xs text-amber-500">
+                      Ошибок: {importResult.errors}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-destructive">
+                  ✗ {importResult.error}
                 </p>
-              )}
-              {importResult.errors > 0 && importResult.errorDetails && importResult.errorDetails.length > 0 && (
-                <div className="mt-2 text-xs text-destructive">
-                  <p className="font-medium">Ошибки:</p>
-                  {importResult.errorDetails.slice(0, 3).map((err, i) => (
-                    <p key={i}>{err}</p>
-                  ))}
-                </div>
               )}
             </div>
           )}
+          
+          {/* Info box */}
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-500/10 text-xs">
+            <Info className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
+            <div className="text-muted-foreground">
+              <p className="font-medium text-foreground mb-1">Рекомендация:</p>
+              <p>Экспортируйте выписку из bePaid в формате CSV (UTF-8). Это обеспечивает стабильный импорт на любых устройствах.</p>
+            </div>
+          </div>
         </div>
         
-        <DialogFooter>
-          <Button variant="outline" onClick={handleClose}>
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" onClick={handleClose} disabled={isLoading}>
             Отмена
           </Button>
-          <Button 
-            onClick={handleImport}
-            disabled={parseStatus !== 'ready' || importMutation.isPending}
-          >
-            {importMutation.isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Импорт...
-              </>
-            ) : (
-              <>
-                <Upload className="h-4 w-4 mr-2" />
-                Импортировать
-              </>
-            )}
-          </Button>
+          
+          {!dryRunResult ? (
+            <Button 
+              onClick={handleDryRun}
+              disabled={parseStatus !== 'ready' || isLoading}
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Проверка...
+                </>
+              ) : (
+                <>
+                  <Eye className="h-4 w-4 mr-2" />
+                  Проверить (Dry-run)
+                </>
+              )}
+            </Button>
+          ) : (
+            <Button 
+              onClick={handleExecute}
+              disabled={!dryRunResult.success || isLoading || importResult?.success}
+              variant={dryRunResult.success ? "default" : "secondary"}
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Импорт...
+                </>
+              ) : (
+                <>
+                  <Play className="h-4 w-4 mr-2" />
+                  Импортировать
+                </>
+              )}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

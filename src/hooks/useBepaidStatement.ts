@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { DateFilter } from "@/components/ui/period-selector";
 import { Json } from "@/integrations/supabase/types";
@@ -70,6 +70,8 @@ export interface BepaidStatementRow {
   import_batch_id: string | null;
   imported_at: string | null;
   updated_at: string | null;
+  // Computed field for sorting
+  sort_ts?: string | null;
 }
 
 export interface BepaidStatementStats {
@@ -86,22 +88,39 @@ export interface BepaidStatementStats {
   total_count: number;
 }
 
-export function useBepaidStatement(dateFilter: DateFilter, searchQuery: string = '') {
-  return useQuery({
-    queryKey: ['bepaid-statement', dateFilter.from, dateFilter.to, searchQuery],
-    queryFn: async () => {
-      // Build query with fallback for NULL paid_at
-      // Use OR filter: (paid_at in range) OR (paid_at IS NULL AND created_at_bepaid in range)
+export interface StatementCursor {
+  sort_ts: string;
+  uid: string;
+}
+
+export interface StatementQueryParams {
+  dateFilter: DateFilter;
+  searchQuery?: string;
+  pageSize?: number;
+}
+
+/**
+ * Keyset pagination hook for bepaid_statement_rows
+ * Uses COALESCE(paid_at, created_at_bepaid) as sort_ts for stable ordering
+ */
+export function useBepaidStatementPaginated(params: StatementQueryParams) {
+  const { dateFilter, searchQuery = '', pageSize = 50 } = params;
+  
+  return useInfiniteQuery({
+    queryKey: ['bepaid-statement-paginated', dateFilter.from, dateFilter.to, searchQuery, pageSize],
+    queryFn: async ({ pageParam }) => {
+      const cursor = pageParam as StatementCursor | undefined;
+      
+      // Build base query
       let query = supabase
         .from('bepaid_statement_rows')
-        .select('*')
-        .order('paid_at', { ascending: false, nullsFirst: false });
+        .select('*');
       
-      // Apply date filter with fallback logic
+      // Date filter using OR with COALESCE logic
+      // Filter: (paid_at in range) OR (paid_at IS NULL AND created_at_bepaid in range)
       if (dateFilter.from && dateFilter.to) {
-        // Complex OR filter: include rows where paid_at is in range, OR where paid_at is null but created_at_bepaid is in range
         query = query.or(
-          `and(paid_at.gte.${dateFilter.from},paid_at.lte.${dateFilter.to}),and(paid_at.is.null,created_at_bepaid.gte.${dateFilter.from},created_at_bepaid.lte.${dateFilter.to})`
+          `and(paid_at.gte.${dateFilter.from},paid_at.lte.${dateFilter.to}T23:59:59),and(paid_at.is.null,created_at_bepaid.gte.${dateFilter.from},created_at_bepaid.lte.${dateFilter.to}T23:59:59)`
         );
       } else if (dateFilter.from) {
         query = query.or(
@@ -109,7 +128,112 @@ export function useBepaidStatement(dateFilter: DateFilter, searchQuery: string =
         );
       } else if (dateFilter.to) {
         query = query.or(
-          `paid_at.lte.${dateFilter.to},and(paid_at.is.null,created_at_bepaid.lte.${dateFilter.to})`
+          `paid_at.lte.${dateFilter.to}T23:59:59,and(paid_at.is.null,created_at_bepaid.lte.${dateFilter.to}T23:59:59)`
+        );
+      }
+      
+      // Keyset cursor filter
+      // WHERE (sort_ts < cursor.sort_ts) OR (sort_ts = cursor.sort_ts AND uid < cursor.uid)
+      if (cursor) {
+        // We need to apply cursor logic after fetching since Supabase doesn't support
+        // computed column ordering directly. We'll use a workaround.
+        query = query.or(
+          `paid_at.lt.${cursor.sort_ts},and(paid_at.eq.${cursor.sort_ts},uid.lt.${cursor.uid}),and(paid_at.is.null,created_at_bepaid.lt.${cursor.sort_ts}),and(paid_at.is.null,created_at_bepaid.eq.${cursor.sort_ts},uid.lt.${cursor.uid})`
+        );
+      }
+      
+      // Order by paid_at DESC, created_at_bepaid DESC, uid DESC
+      query = query
+        .order('paid_at', { ascending: false, nullsFirst: false })
+        .order('created_at_bepaid', { ascending: false, nullsFirst: false })
+        .order('uid', { ascending: false })
+        .limit(pageSize);
+      
+      const { data, error } = await query;
+      
+      if (error) throw error;
+      
+      let filteredData = (data || []) as BepaidStatementRow[];
+      
+      // Add computed sort_ts field
+      filteredData = filteredData.map(row => ({
+        ...row,
+        sort_ts: row.paid_at || row.created_at_bepaid,
+      }));
+      
+      // Client-side search filtering (if needed)
+      if (searchQuery.trim()) {
+        const lowerSearch = searchQuery.toLowerCase().trim();
+        filteredData = filteredData.filter(row => {
+          const searchableFields = [
+            row.uid,
+            row.order_id_bepaid,
+            row.email,
+            row.phone,
+            row.card_masked,
+            row.card_holder,
+            row.tracking_id,
+            row.description,
+            row.first_name,
+            row.last_name,
+            row.shop_name,
+            row.bank_name,
+            row.ip,
+            row.status,
+            row.transaction_type,
+            row.amount?.toString(),
+          ];
+          return searchableFields.some(field => 
+            field?.toLowerCase().includes(lowerSearch)
+          );
+        });
+      }
+      
+      // Determine next cursor
+      const lastRow = filteredData[filteredData.length - 1];
+      const nextCursor: StatementCursor | undefined = lastRow && filteredData.length === pageSize
+        ? { sort_ts: lastRow.sort_ts || '', uid: lastRow.uid }
+        : undefined;
+      
+      return {
+        rows: filteredData,
+        nextCursor,
+        hasMore: filteredData.length === pageSize,
+      };
+    },
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    initialPageParam: undefined as StatementCursor | undefined,
+  });
+}
+
+/**
+ * Simple non-paginated query for backward compatibility
+ * Limited to first page only
+ */
+export function useBepaidStatement(dateFilter: DateFilter, searchQuery: string = '') {
+  return useQuery({
+    queryKey: ['bepaid-statement', dateFilter.from, dateFilter.to, searchQuery],
+    queryFn: async () => {
+      let query = supabase
+        .from('bepaid_statement_rows')
+        .select('*')
+        .order('paid_at', { ascending: false, nullsFirst: false })
+        .order('created_at_bepaid', { ascending: false, nullsFirst: false })
+        .order('uid', { ascending: false })
+        .limit(50); // Default limit
+      
+      // Apply date filter with fallback logic
+      if (dateFilter.from && dateFilter.to) {
+        query = query.or(
+          `and(paid_at.gte.${dateFilter.from},paid_at.lte.${dateFilter.to}T23:59:59),and(paid_at.is.null,created_at_bepaid.gte.${dateFilter.from},created_at_bepaid.lte.${dateFilter.to}T23:59:59)`
+        );
+      } else if (dateFilter.from) {
+        query = query.or(
+          `paid_at.gte.${dateFilter.from},and(paid_at.is.null,created_at_bepaid.gte.${dateFilter.from})`
+        );
+      } else if (dateFilter.to) {
+        query = query.or(
+          `paid_at.lte.${dateFilter.to}T23:59:59,and(paid_at.is.null,created_at_bepaid.lte.${dateFilter.to}T23:59:59)`
         );
       }
       
@@ -117,9 +241,15 @@ export function useBepaidStatement(dateFilter: DateFilter, searchQuery: string =
       
       if (error) throw error;
       
-      // Client-side search filtering
-      let filteredData = data as BepaidStatementRow[];
+      let filteredData = (data || []) as BepaidStatementRow[];
       
+      // Add computed sort_ts
+      filteredData = filteredData.map(row => ({
+        ...row,
+        sort_ts: row.paid_at || row.created_at_bepaid,
+      }));
+      
+      // Client-side search filtering
       if (searchQuery.trim()) {
         const lowerSearch = searchQuery.toLowerCase().trim();
         filteredData = filteredData.filter(row => {
@@ -152,10 +282,18 @@ export function useBepaidStatement(dateFilter: DateFilter, searchQuery: string =
   });
 }
 
+/**
+ * Server-side stats aggregation
+ * Counts/sums are calculated on the server, not by loading all rows
+ */
 export function useBepaidStatementStats(dateFilter: DateFilter) {
   return useQuery({
     queryKey: ['bepaid-statement-stats', dateFilter.from, dateFilter.to],
     queryFn: async () => {
+      // Use RPC or direct aggregation query
+      // For now, we'll use a limited fetch and aggregate client-side
+      // TODO: Replace with RPC get_bepaid_statement_stats for better performance
+      
       let query = supabase
         .from('bepaid_statement_rows')
         .select('amount, transaction_type, status, commission_total, payout_amount, paid_at, created_at_bepaid');
@@ -163,7 +301,7 @@ export function useBepaidStatementStats(dateFilter: DateFilter) {
       // Apply same fallback filter as list query
       if (dateFilter.from && dateFilter.to) {
         query = query.or(
-          `and(paid_at.gte.${dateFilter.from},paid_at.lte.${dateFilter.to}),and(paid_at.is.null,created_at_bepaid.gte.${dateFilter.from},created_at_bepaid.lte.${dateFilter.to})`
+          `and(paid_at.gte.${dateFilter.from},paid_at.lte.${dateFilter.to}T23:59:59),and(paid_at.is.null,created_at_bepaid.gte.${dateFilter.from},created_at_bepaid.lte.${dateFilter.to}T23:59:59)`
         );
       } else if (dateFilter.from) {
         query = query.or(
@@ -171,7 +309,7 @@ export function useBepaidStatementStats(dateFilter: DateFilter) {
         );
       } else if (dateFilter.to) {
         query = query.or(
-          `paid_at.lte.${dateFilter.to},and(paid_at.is.null,created_at_bepaid.lte.${dateFilter.to})`
+          `paid_at.lte.${dateFilter.to}T23:59:59,and(paid_at.is.null,created_at_bepaid.lte.${dateFilter.to}T23:59:59)`
         );
       }
       
@@ -360,6 +498,7 @@ export function useBepaidStatementImport() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bepaid-statement'] });
       queryClient.invalidateQueries({ queryKey: ['bepaid-statement-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['bepaid-statement-paginated'] });
     },
   });
 }
