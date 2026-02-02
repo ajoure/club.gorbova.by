@@ -7,6 +7,10 @@ import { Calendar } from "@/components/ui/calendar";
 import { Label } from "@/components/ui/label";
 import { format, startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter, subQuarters, startOfYear, endOfYear, subYears, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
+import { toZonedTime } from "date-fns-tz";
+
+// PATCH-3: All periods computed in Minsk TZ
+const MINSK_TZ = 'Europe/Minsk';
 
 export interface DateFilter {
   from: string;
@@ -28,23 +32,28 @@ interface Preset {
   getRange: () => { from: string; to: string };
 }
 
+// PATCH-3: Helper to get current time in Minsk TZ
+function getNowMinsk(): Date {
+  return toZonedTime(new Date(), MINSK_TZ);
+}
+
 const presets: Preset[] = [
   {
     key: 'allTime',
     label: 'Все периоды',
     getRange: () => ({
       from: '2020-01-01',
-      to: format(new Date(), 'yyyy-MM-dd'),
+      to: format(getNowMinsk(), 'yyyy-MM-dd'),
     }),
   },
   {
     key: 'thisMonth',
     label: 'Этот месяц',
     getRange: () => {
-      const now = new Date();
+      const nowMinsk = getNowMinsk();
       return {
-        from: format(startOfMonth(now), 'yyyy-MM-dd'),
-        to: format(endOfMonth(now), 'yyyy-MM-dd'),
+        from: format(startOfMonth(nowMinsk), 'yyyy-MM-dd'),
+        to: format(endOfMonth(nowMinsk), 'yyyy-MM-dd'),
       };
     },
   },
@@ -52,7 +61,7 @@ const presets: Preset[] = [
     key: 'lastMonth',
     label: 'Прошлый месяц',
     getRange: () => {
-      const lastMonth = subMonths(new Date(), 1);
+      const lastMonth = subMonths(getNowMinsk(), 1);
       return {
         from: format(startOfMonth(lastMonth), 'yyyy-MM-dd'),
         to: format(endOfMonth(lastMonth), 'yyyy-MM-dd'),
@@ -63,10 +72,10 @@ const presets: Preset[] = [
     key: 'thisQuarter',
     label: 'Этот квартал',
     getRange: () => {
-      const now = new Date();
+      const nowMinsk = getNowMinsk();
       return {
-        from: format(startOfQuarter(now), 'yyyy-MM-dd'),
-        to: format(endOfQuarter(now), 'yyyy-MM-dd'),
+        from: format(startOfQuarter(nowMinsk), 'yyyy-MM-dd'),
+        to: format(endOfQuarter(nowMinsk), 'yyyy-MM-dd'),
       };
     },
   },
@@ -74,7 +83,7 @@ const presets: Preset[] = [
     key: 'lastQuarter',
     label: 'Прошлый квартал',
     getRange: () => {
-      const lastQuarter = subQuarters(new Date(), 1);
+      const lastQuarter = subQuarters(getNowMinsk(), 1);
       return {
         from: format(startOfQuarter(lastQuarter), 'yyyy-MM-dd'),
         to: format(endOfQuarter(lastQuarter), 'yyyy-MM-dd'),
@@ -85,10 +94,10 @@ const presets: Preset[] = [
     key: 'thisYear',
     label: 'Этот год',
     getRange: () => {
-      const now = new Date();
+      const nowMinsk = getNowMinsk();
       return {
-        from: format(startOfYear(now), 'yyyy-MM-dd'),
-        to: format(endOfYear(now), 'yyyy-MM-dd'),
+        from: format(startOfYear(nowMinsk), 'yyyy-MM-dd'),
+        to: format(endOfYear(nowMinsk), 'yyyy-MM-dd'),
       };
     },
   },
@@ -96,7 +105,7 @@ const presets: Preset[] = [
     key: 'lastYear',
     label: 'Прошлый год',
     getRange: () => {
-      const lastYear = subYears(new Date(), 1);
+      const lastYear = subYears(getNowMinsk(), 1);
       return {
         from: format(startOfYear(lastYear), 'yyyy-MM-dd'),
         to: format(endOfYear(lastYear), 'yyyy-MM-dd'),

@@ -31,10 +31,11 @@ interface ExecuteResponse {
   mode: 'execute' | 'execute_blocked';
   build_id: string;
   stats: ImportStats;
-  created?: number;
+  upserted?: number;
   errors?: number;
   error?: string;
   error_details?: string[];
+  sample_errors?: Array<{ row: number; reason: string }>;
 }
 
 interface BepaidStatementImportDialogProps {
@@ -188,17 +189,32 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
       if (result.success) {
         toast({
           title: "Импорт завершён",
-          description: `Импортировано: ${result.created}, ошибок: ${result.errors || 0}`,
+          description: `Импортировано: ${result.upserted ?? 0}, ошибок: ${result.errors || 0}`,
         });
         
-        // Invalidate queries
-        queryClient.invalidateQueries({ queryKey: ['bepaid-statement'] });
-        queryClient.invalidateQueries({ queryKey: ['bepaid-statement-stats'] });
+        // PATCH-2: Correct React Query refresh
+        // Use predicate to find all bepaid-statement related queries
+        const predicate = (query: { queryKey: readonly unknown[] }) => {
+          const key = String(query.queryKey?.[0] ?? '');
+          return key.startsWith('bepaid-statement');
+        };
+        
+        // First invalidate all related queries
+        queryClient.invalidateQueries({ predicate });
+        
+        // Remove paginated queries to reset infinite cursor/pages
+        queryClient.removeQueries({ 
+          queryKey: ['bepaid-statement-paginated'], 
+          exact: false 
+        });
+        
+        // Refetch active queries (stats will refetch immediately)
+        await queryClient.refetchQueries({ predicate, type: 'active' });
         
         // Close after success
         setTimeout(() => {
           handleClose();
-        }, 2000);
+        }, 1500);
       } else {
         toast({
           title: "Импорт заблокирован",
@@ -327,18 +343,33 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
             </div>
           )}
           
-          {/* Execute result */}
+          {/* Execute result - PATCH-4: Detailed report */}
           {importResult && (
-            <div className="rounded-lg bg-muted/50 p-3 space-y-1">
+            <div className="rounded-lg bg-muted/50 p-3 space-y-2">
               <p className="text-sm font-medium">Результат импорта:</p>
               {importResult.success ? (
                 <>
-                  <p className="text-xs text-emerald-500">
-                    ✓ Импортировано: {importResult.created}
-                  </p>
-                  {importResult.errors && importResult.errors > 0 && (
-                    <p className="text-xs text-amber-500">
-                      Ошибок: {importResult.errors}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>Всего строк: <span className="font-medium">{importResult.stats.total_rows}</span></div>
+                    <div>Валидных: <span className="font-medium text-emerald-500">{importResult.stats.valid_rows}</span></div>
+                    <div>Импортировано: <span className="font-medium text-emerald-500">{importResult.upserted ?? 0}</span></div>
+                    <div>Дубликатов: <span className="font-medium text-blue-500">{importResult.stats.duplicates_merged}</span></div>
+                    <div>Невалидных: <span className="font-medium text-amber-500">{importResult.stats.invalid_rows}</span></div>
+                    <div>Ошибок БД: <span className="font-medium text-destructive">{importResult.errors || 0}</span></div>
+                  </div>
+                  {importResult.sample_errors && importResult.sample_errors.length > 0 && (
+                    <div className="mt-2 border-t border-border/50 pt-2">
+                      <p className="text-xs text-amber-500 mb-1">Примеры ошибок:</p>
+                      {importResult.sample_errors.slice(0, 5).map((err, i) => (
+                        <div key={i} className="text-xs text-muted-foreground">
+                          Строка {err.row}: {err.reason}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {importResult.stats.duplicates_merged > 0 && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      💡 {importResult.stats.duplicates_merged} дублей UID были объединены в одну запись
                     </p>
                   )}
                 </>
