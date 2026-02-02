@@ -3,7 +3,7 @@ import { assertExcelAllowedOrThrow } from "@/lib/iosPreviewHardStops";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, Info } from "lucide-react";
 import { useBepaidStatementImport } from "@/hooks/useBepaidStatement";
 import { toast } from "@/hooks/use-toast";
 import { parseISO, parse, isValid } from "date-fns";
@@ -177,9 +177,10 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
   const [file, setFile] = useState<File | null>(null);
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [invalidRows, setInvalidRows] = useState<{row: number; reason: string; preview: string}[]>([]); // PATCH-B2
+  const [duplicatesCount, setDuplicatesCount] = useState<number>(0);
   const [parseStatus, setParseStatus] = useState<'idle' | 'parsing' | 'ready' | 'error'>('idle');
   const [parseError, setParseError] = useState<string | null>(null);
-  const [importResult, setImportResult] = useState<{ created: number; errors: number } | null>(null);
+  const [importResult, setImportResult] = useState<{ created: number; errors: number; duplicatesSkipped?: number; errorDetails?: string[] } | null>(null);
   
   const importMutation = useBepaidStatementImport();
 
@@ -192,6 +193,7 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
     setParseError(null);
     setParsedRows([]);
     setInvalidRows([]); // PATCH-B2
+    setDuplicatesCount(0);
     setImportResult(null);
     
     try {
@@ -312,7 +314,34 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
         return;
       }
       
-      setParsedRows(allRows);
+      // PATCH: Deduplicate rows by UID (keep merged data from all occurrences)
+      const deduplicatedRows = Array.from(
+        allRows.reduce((map, row) => {
+          const existing = map.get(row.uid);
+          if (!existing) {
+            map.set(row.uid, row);
+          } else {
+            // Merge: keep existing values, overwrite with new non-null values
+            const merged = { ...existing };
+            for (const [key, value] of Object.entries(row)) {
+              if (value !== null && value !== undefined && value !== '') {
+                merged[key as keyof ParsedRow] = value;
+              }
+            }
+            map.set(row.uid, merged);
+          }
+          return map;
+        }, new Map<string, ParsedRow>())
+      ).map(([_, row]) => row);
+      
+      // Report duplicates found
+      const dupsCount = allRows.length - deduplicatedRows.length;
+      setDuplicatesCount(dupsCount);
+      if (dupsCount > 0) {
+        console.log(`Deduplicated ${dupsCount} rows with same UID`);
+      }
+      
+      setParsedRows(deduplicatedRows);
       setParseStatus('ready');
       
     } catch (err) {
@@ -327,7 +356,12 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
     
     try {
       const result = await importMutation.mutateAsync(parsedRows);
-      setImportResult({ created: result.total - result.errors, errors: result.errors });
+      setImportResult({ 
+        created: result.created, 
+        errors: result.errors,
+        duplicatesSkipped: result.duplicatesSkipped,
+        errorDetails: result.errorDetails 
+      });
       
       toast({
         title: "Импорт завершён",
@@ -413,6 +447,13 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
                 <CheckCircle2 className="h-4 w-4" />
                 <span>Готово к импорту: {parsedRows.length} строк</span>
               </div>
+              {/* Show duplicates merged count */}
+              {duplicatesCount > 0 && (
+                <div className="flex items-center gap-2 text-blue-500">
+                  <Info className="h-4 w-4" />
+                  <span>Объединено дубликатов UID: {duplicatesCount}</span>
+                </div>
+              )}
               {/* PATCH-B2: Show invalid rows count */}
               {invalidRows.length > 0 && (
                 <div className="flex items-center gap-2 text-amber-500">
@@ -443,6 +484,19 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
               <p className="text-xs text-muted-foreground">
                 Импортировано: {importResult.created}, ошибок: {importResult.errors}
               </p>
+              {importResult.duplicatesSkipped && importResult.duplicatesSkipped > 0 && (
+                <p className="text-xs text-blue-500">
+                  Объединено дубликатов UID: {importResult.duplicatesSkipped}
+                </p>
+              )}
+              {importResult.errors > 0 && importResult.errorDetails && importResult.errorDetails.length > 0 && (
+                <div className="mt-2 text-xs text-destructive">
+                  <p className="font-medium">Ошибки:</p>
+                  {importResult.errorDetails.slice(0, 3).map((err, i) => (
+                    <p key={i}>{err}</p>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
