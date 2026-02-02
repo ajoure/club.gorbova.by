@@ -600,6 +600,8 @@ export type Database = {
           linked_at: string | null
           linked_by: string | null
           profile_id: string
+          provider: string | null
+          provider_token: string | null
           source: string | null
           updated_at: string | null
         }
@@ -612,6 +614,8 @@ export type Database = {
           linked_at?: string | null
           linked_by?: string | null
           profile_id: string
+          provider?: string | null
+          provider_token?: string | null
           source?: string | null
           updated_at?: string | null
         }
@@ -624,6 +628,8 @@ export type Database = {
           linked_at?: string | null
           linked_by?: string | null
           profile_id?: string
+          provider?: string | null
+          provider_token?: string | null
           source?: string | null
           updated_at?: string | null
         }
@@ -8131,6 +8137,25 @@ export type Database = {
           in_chat: boolean
         }[]
       }
+      admin_get_payments_page_v1: {
+        Args: {
+          p_from: string
+          p_limit?: number
+          p_offset?: number
+          p_provider?: string
+          p_search?: string
+          p_status?: string
+          p_to: string
+        }
+        Returns: {
+          rows: Json
+          total_count: number
+        }[]
+      }
+      admin_get_payments_stats_v1: {
+        Args: { p_from: string; p_provider?: string; p_to: string }
+        Returns: Json
+      }
       admin_repair_card_links: {
         Args: {
           _brand: string
@@ -8196,6 +8221,16 @@ export type Database = {
           p_dry_run?: boolean
           p_limit?: number
           p_profile_id: string
+        }
+        Returns: Json
+      }
+      backfill_payments_by_card_token: {
+        Args: {
+          p_dry_run?: boolean
+          p_limit?: number
+          p_profile_id: string
+          p_provider?: string
+          p_provider_token?: string
         }
         Returns: Json
       }

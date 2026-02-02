@@ -432,10 +432,18 @@ serve(async (req) => {
     }
 
     // Deduplicate by UID (last-win merge)
+    // PATCH-6: Track duplicates for explain_mismatch
     const deduped = new Map<string, ParsedRow>();
+    const duplicateDetails: Array<{ uid: string; reason: string }> = [];
+    
     for (const row of allValidRows) {
       const existing = deduped.get(row.uid);
       if (existing) {
+        // Track duplicate for explain_mismatch
+        duplicateDetails.push({
+          uid: row.uid.substring(0, 16) + '...',
+          reason: `duplicate_merged from ${row._source_file}`,
+        });
         // Merge: keep existing, overwrite with new non-null
         for (const [k, v] of Object.entries(row)) {
           if (v !== null && v !== undefined && v !== '' && k !== '_source_file') {
@@ -506,6 +514,14 @@ serve(async (req) => {
           paid_at: r.paid_at,
           transaction_type: r.transaction_type,
         })),
+        // PATCH-6: Include explain_mismatch with invalid rows and duplicates
+        explain_mismatch: [
+          ...allInvalidRows.slice(0, 10).map(e => ({
+            uid: '—',
+            reason: `Row ${e.row} in ${e.file}: ${e.reason}`,
+          })),
+          ...duplicateDetails.slice(0, 10),
+        ].slice(0, 20),
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

@@ -138,8 +138,10 @@ export default function SyncWithStatementDialog({
     totalBatches: number;
     applied: number;
     errors: number;
-    failedBatches: number[];
   } | null>(null);
+  
+  // PATCH-5: Separate state for failed batches (persists after completion)
+  const [failedBatches, setFailedBatches] = useState<number[]>([]);
   
   // Date range - PATCH-4: default to current month in Minsk
   const [fromDate, setFromDate] = useState(
@@ -235,9 +237,11 @@ export default function SyncWithStatementDialog({
     const totalBatches = Math.ceil(allUids.length / BATCH_SIZE);
     
     // PATCH-3: Process in batches
+    // PATCH-5: Clear failed batches at start (not during progress updates)
+    setFailedBatches([]);
     let totalApplied = 0;
     let totalErrors = 0;
-    const failedBatches: number[] = [];
+    const newFailedBatches: number[] = [];
     const allErrorDetails: ErrorDetail[] = [];
     
     for (let i = 0; i < totalBatches; i++) {
@@ -248,7 +252,6 @@ export default function SyncWithStatementDialog({
         totalBatches,
         applied: totalApplied,
         errors: totalErrors,
-        failedBatches,
       });
       
       try {
@@ -271,10 +274,13 @@ export default function SyncWithStatementDialog({
         }
       } catch (err: any) {
         console.error(`Batch ${i + 1} failed:`, err);
-        failedBatches.push(i);
+        newFailedBatches.push(i);
         totalErrors += batchUids.length;
       }
     }
+    
+    // PATCH-5: Save failed batches to persistent state
+    setFailedBatches(newFailedBatches);
     
     // Update final stats
     const finalStats: SyncStats = {
@@ -287,7 +293,8 @@ export default function SyncWithStatementDialog({
     setStats(finalStats);
     
     // PATCH-3: Show appropriate result
-    if (failedBatches.length === 0) {
+    // PATCH-5: Use newFailedBatches for conditional (failedBatches state updates async)
+    if (newFailedBatches.length === 0) {
       setStatus('done');
       toast.success("Синхронизация завершена", {
         description: `Применено: ${totalApplied}, ошибок: ${totalErrors}`,
@@ -296,7 +303,7 @@ export default function SyncWithStatementDialog({
       // Partial success
       setStatus('partial');
       toast.warning("Частично выполнено", {
-        description: `Применено: ${totalApplied}, проваленных батчей: ${failedBatches.length}`,
+        description: `Применено: ${totalApplied}, проваленных батчей: ${newFailedBatches.length}`,
       });
     } else {
       // Complete failure
@@ -309,14 +316,14 @@ export default function SyncWithStatementDialog({
     onComplete?.();
   };
 
-  // Handler for retrying failed batches only
+  // PATCH-5: Handler for retrying failed batches only (uses persistent failedBatches state)
   const handleRetryFailed = async () => {
-    if (!progress?.failedBatches.length) return;
+    if (failedBatches.length === 0) return;
     
     const allUids = Array.from(selectedUids);
     const failedUids: string[] = [];
     
-    for (const batchIndex of progress.failedBatches) {
+    for (const batchIndex of failedBatches) {
       const batchUids = allUids.slice(batchIndex * BATCH_SIZE, (batchIndex + 1) * BATCH_SIZE);
       failedUids.push(...batchUids);
     }
@@ -332,6 +339,7 @@ export default function SyncWithStatementDialog({
     setChanges([]);
     setSelectedUids(new Set());
     setError(null);
+    setFailedBatches([]); // PATCH-5: Clear failed batches on reset
   };
 
   const toggleUid = (uid: string) => {

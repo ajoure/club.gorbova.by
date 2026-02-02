@@ -42,6 +42,8 @@ interface DryRunResponse {
   totals_expected?: TotalsExpected;
   sample_errors?: Array<{ row: number; file?: string; reason: string }>;
   sample_parsed?: Array<{ uid: string; amount: number; status: string; paid_at: string }>;
+  // PATCH-6: explain_mismatch for diagnosing count differences
+  explain_mismatch?: Array<{ uid: string; reason: string }>;
 }
 
 interface ExecuteResponse {
@@ -461,6 +463,23 @@ export function BepaidStatementImportDialog({ open, onOpenChange }: BepaidStatem
                       {err.file && `[${err.file}] `}Строка {err.row}: {err.reason}
                     </div>
                   ))}
+                </div>
+              )}
+              
+              {/* PATCH-6: Explain mismatch for count differences */}
+              {dryRunResult.explain_mismatch && dryRunResult.explain_mismatch.length > 0 && (
+                <div className="mt-3 p-2 border rounded bg-amber-500/10 border-amber-500/20">
+                  <p className="text-xs text-amber-600 font-medium mb-1">
+                    Причины расхождения ({dryRunResult.explain_mismatch.length}):
+                  </p>
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {dryRunResult.explain_mismatch.map((item, i) => (
+                      <div key={i} className="text-xs font-mono text-muted-foreground">
+                        {item.uid !== '—' && <span className="text-foreground">{item.uid} — </span>}
+                        {item.reason}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
