@@ -18,8 +18,10 @@ import {
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { format, startOfMonth, endOfMonth } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 import { useUnifiedPayments, UnifiedPayment, DateFilter } from "@/hooks/useUnifiedPayments";
 import PaymentsStatsPanel, { StatsFilterType } from "./PaymentsStatsPanel";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PaymentsTable, { ColumnConfig, DEFAULT_COLUMNS } from "@/components/admin/payments/PaymentsTable";
 import PaymentsFilters from "@/components/admin/payments/PaymentsFilters";
 import PaymentsBatchActions from "@/components/admin/payments/PaymentsBatchActions";
@@ -66,12 +68,16 @@ export function PaymentsTabContent() {
   const queryClient = useQueryClient();
   const { role } = useAuth();
   
-  // Date filter - default to current month
-  const now = new Date();
+  // Date filter - default to current month in Europe/Minsk
+  const MINSK_TZ = 'Europe/Minsk';
+  const nowMinsk = toZonedTime(new Date(), MINSK_TZ);
   const [dateFilter, setDateFilter] = useState<DateFilter>({
-    from: format(startOfMonth(now), 'yyyy-MM-dd'),
-    to: format(endOfMonth(now), 'yyyy-MM-dd'),
+    from: format(startOfMonth(nowMinsk), 'yyyy-MM-dd'),
+    to: format(endOfMonth(nowMinsk), 'yyyy-MM-dd'),
   });
+  
+  // PATCH-5: Page size for UI limiting (reduces displayed rows, not server load)
+  const [pageSize, setPageSize] = useState<number>(50);
   
   // Filters
   const [filters, setFilters] = useState<PaymentFilters>(defaultFilters);
@@ -348,19 +354,33 @@ export function PaymentsTabContent() {
 
   return (
     <div className="space-y-3">
-      {/* 1. Stats Panel - на самом верху после вкладок */}
+      {/* 1. Stats Panel - PATCH-2: uses filteredPayments for unified source */}
       <div className="pt-1">
         <PaymentsStatsPanel 
-          payments={payments} 
+          payments={filteredPayments} 
           isLoading={isLoading}
           activeFilter={statsFilter}
           onFilterChange={setStatsFilter}
+          totalUnfilteredCount={payments.length}
         />
       </div>
       
-      {/* 2. Строка периода + счётчик транзакций */}
-      <div className="text-xs text-muted-foreground text-center py-1">
-        {dateFilter.from} — {dateFilter.to || 'сегодня'} — {filteredPayments.length} из {payments.length} транзакций
+      {/* 2. Строка периода + счётчик + лимит - PATCH-5 */}
+      <div className="flex items-center justify-center gap-3 text-xs text-muted-foreground py-1">
+        <span>{dateFilter.from} — {dateFilter.to || 'сегодня'}</span>
+        <span>•</span>
+        <span>Показано: {Math.min(pageSize, filteredPayments.length)} из {filteredPayments.length} транзакций</span>
+        <Select value={pageSize.toString()} onValueChange={(v) => setPageSize(parseInt(v, 10))}>
+          <SelectTrigger className="h-6 w-[80px] text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="20">20</SelectItem>
+            <SelectItem value="50">50</SelectItem>
+            <SelectItem value="100">100</SelectItem>
+            <SelectItem value="500">500</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       
       {/* 3. Quick Filters Row - единая строка */}
@@ -534,10 +554,10 @@ export function PaymentsTabContent() {
         </div>
       )}
       
-      {/* 5. Table - без Card wrapper */}
+      {/* 5. Table - PATCH-5: limited by pageSize */}
       <div className="overflow-x-auto">
         <PaymentsTable
-          payments={filteredPayments}
+          payments={filteredPayments.slice(0, pageSize)}
           isLoading={isLoading}
           selectedItems={selectedItems}
           onToggleSelectAll={toggleSelectAll}
@@ -549,6 +569,19 @@ export function PaymentsTabContent() {
           onColumnsChange={setColumns}
         />
       </div>
+      
+      {/* Load more button - PATCH-5 */}
+      {filteredPayments.length > pageSize && (
+        <div className="flex justify-center">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => setPageSize(prev => Math.min(prev + 50, filteredPayments.length))}
+          >
+            Показать ещё ({filteredPayments.length - pageSize} осталось)
+          </Button>
+        </div>
+      )}
       
       {/* Sync dialog - API */}
       <SyncRunDialog 

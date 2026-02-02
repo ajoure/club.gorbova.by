@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { format } from "date-fns";
+import { useState, useCallback } from "react";
+import { format, startOfMonth, endOfMonth } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 import { 
   RefreshCw, CheckCircle2, XCircle, AlertTriangle, Play, Loader2,
   Plus, Pencil, Trash2, ChevronDown, ChevronUp, Shield
@@ -19,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Progress } from "@/components/ui/progress";
 import {
   Collapsible,
   CollapsibleContent,
@@ -27,6 +29,11 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+// PATCH-3: Batching constants
+const BATCH_SIZE = 100;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 1000;
 
 interface Difference {
   field: string;
@@ -114,16 +121,33 @@ export default function SyncWithStatementDialog({
   defaultFromDate,
   defaultToDate,
 }: SyncWithStatementDialogProps) {
-  const [status, setStatus] = useState<'idle' | 'loading' | 'preview' | 'applying' | 'done' | 'error'>('idle');
+  // PATCH-4: Use Europe/Minsk for default dates
+  const MINSK_TZ = 'Europe/Minsk';
+  const nowMinsk = toZonedTime(new Date(), MINSK_TZ);
+  
+  const [status, setStatus] = useState<'idle' | 'loading' | 'preview' | 'applying' | 'done' | 'error' | 'partial'>('idle');
   const [stats, setStats] = useState<SyncStats | null>(null);
   const [changes, setChanges] = useState<SyncChange[]>([]);
   const [selectedUids, setSelectedUids] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [dryRun, setDryRun] = useState(true);
   
-  // Date range
-  const [fromDate, setFromDate] = useState(defaultFromDate || "2026-01-01");
-  const [toDate, setToDate] = useState(defaultToDate || format(new Date(), "yyyy-MM-dd"));
+  // PATCH-3: Batching progress state
+  const [progress, setProgress] = useState<{
+    currentBatch: number;
+    totalBatches: number;
+    applied: number;
+    errors: number;
+    failedBatches: number[];
+  } | null>(null);
+  
+  // Date range - PATCH-4: default to current month in Minsk
+  const [fromDate, setFromDate] = useState(
+    defaultFromDate || format(startOfMonth(nowMinsk), "yyyy-MM-dd")
+  );
+  const [toDate, setToDate] = useState(
+    defaultToDate || format(endOfMonth(nowMinsk), "yyyy-MM-dd")
+  );
   
   // Expanded sections
   const [expandedSections, setExpandedSections] = useState({
@@ -165,6 +189,39 @@ export default function SyncWithStatementDialog({
     }
   };
 
+  // PATCH-3: Helper for retry with exponential backoff
+  const invokeWithRetry = useCallback(async (
+    body: any,
+    maxRetries: number = MAX_RETRIES
+  ): Promise<any> => {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const { data, error: invokeError } = await supabase.functions.invoke('sync-payments-with-statement', { body });
+        
+        if (invokeError) {
+          const isTransportError = invokeError.message?.includes('Failed to send') || 
+                                    invokeError.message?.includes('network') ||
+                                    invokeError.message?.includes('timeout');
+          
+          if (isTransportError && attempt < maxRetries) {
+            const delay = RETRY_DELAY_MS * Math.pow(2, attempt);
+            console.log(`[sync] Retry ${attempt + 1}/${maxRetries} after ${delay}ms...`);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
+          throw invokeError;
+        }
+        
+        return data;
+      } catch (err: any) {
+        if (attempt === maxRetries) throw err;
+        const delay = RETRY_DELAY_MS * Math.pow(2, attempt);
+        console.log(`[sync] Retry ${attempt + 1}/${maxRetries} after ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }, []);
+
   const handleApply = async () => {
     if (selectedUids.size === 0) {
       toast.warning("Выберите хотя бы одну транзакцию");
@@ -172,31 +229,101 @@ export default function SyncWithStatementDialog({
     }
     
     setStatus('applying');
+    setProgress(null);
     
-    try {
-      const { data, error: invokeError } = await supabase.functions.invoke('sync-payments-with-statement', {
-        body: {
+    const allUids = Array.from(selectedUids);
+    const totalBatches = Math.ceil(allUids.length / BATCH_SIZE);
+    
+    // PATCH-3: Process in batches
+    let totalApplied = 0;
+    let totalErrors = 0;
+    const failedBatches: number[] = [];
+    const allErrorDetails: ErrorDetail[] = [];
+    
+    for (let i = 0; i < totalBatches; i++) {
+      const batchUids = allUids.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+      
+      setProgress({
+        currentBatch: i + 1,
+        totalBatches,
+        applied: totalApplied,
+        errors: totalErrors,
+        failedBatches,
+      });
+      
+      try {
+        const data = await invokeWithRetry({
           from_date: fromDate,
           to_date: toDate,
           dry_run: false,
-          selected_uids: Array.from(selectedUids),
-        },
-      });
-      
-      if (invokeError) throw new Error(invokeError.message);
-      if (!data.success) throw new Error(data.error || 'Unknown error');
-      
-      setStats(data.stats);
+          selected_uids: batchUids,
+          batch_id: `batch_${i + 1}_of_${totalBatches}`,
+        });
+        
+        if (!data.success) {
+          throw new Error(data.error || 'Unknown error');
+        }
+        
+        totalApplied += data.stats.applied;
+        totalErrors += data.stats.errors || 0;
+        if (data.stats.error_details) {
+          allErrorDetails.push(...data.stats.error_details);
+        }
+      } catch (err: any) {
+        console.error(`Batch ${i + 1} failed:`, err);
+        failedBatches.push(i);
+        totalErrors += batchUids.length;
+      }
+    }
+    
+    // Update final stats
+    const finalStats: SyncStats = {
+      ...(stats || {} as SyncStats),
+      applied: totalApplied,
+      skipped: allUids.length - totalApplied - totalErrors,
+      errors: totalErrors,
+      error_details: allErrorDetails.slice(0, 20), // Limit to 20
+    };
+    setStats(finalStats);
+    
+    // PATCH-3: Show appropriate result
+    if (failedBatches.length === 0) {
       setStatus('done');
       toast.success("Синхронизация завершена", {
-        description: `Применено: ${data.stats.applied}, пропущено: ${data.stats.skipped}`,
+        description: `Применено: ${totalApplied}, ошибок: ${totalErrors}`,
       });
-      onComplete?.();
-    } catch (err: any) {
-      setError(err.message);
+    } else if (totalApplied > 0) {
+      // Partial success
+      setStatus('partial');
+      toast.warning("Частично выполнено", {
+        description: `Применено: ${totalApplied}, проваленных батчей: ${failedBatches.length}`,
+      });
+    } else {
+      // Complete failure
       setStatus('error');
-      toast.error("Ошибка применения", { description: err.message });
+      setError(`Все батчи провалены. Проверьте соединение.`);
+      toast.error("Ошибка синхронизации");
     }
+    
+    setProgress(null);
+    onComplete?.();
+  };
+
+  // Handler for retrying failed batches only
+  const handleRetryFailed = async () => {
+    if (!progress?.failedBatches.length) return;
+    
+    const allUids = Array.from(selectedUids);
+    const failedUids: string[] = [];
+    
+    for (const batchIndex of progress.failedBatches) {
+      const batchUids = allUids.slice(batchIndex * BATCH_SIZE, (batchIndex + 1) * BATCH_SIZE);
+      failedUids.push(...batchUids);
+    }
+    
+    // Update selectedUids to only failed ones and restart
+    setSelectedUids(new Set(failedUids));
+    handleApply();
   };
 
   const handleReset = () => {
@@ -698,10 +825,42 @@ export default function SyncWithStatementDialog({
           )}
 
           {status === 'applying' && (
-            <Button disabled className="gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Применение...
-            </Button>
+            <div className="flex flex-col items-center gap-3 flex-1">
+              {progress && (
+                <div className="w-full space-y-2">
+                  <Progress value={(progress.currentBatch / progress.totalBatches) * 100} className="h-2" />
+                  <p className="text-xs text-muted-foreground text-center">
+                    Батч {progress.currentBatch} из {progress.totalBatches} • 
+                    Применено: {progress.applied} • Ошибок: {progress.errors}
+                  </p>
+                </div>
+              )}
+              <Button disabled className="gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Применение...
+              </Button>
+            </div>
+          )}
+
+          {/* PATCH-3: Partial success state */}
+          {status === 'partial' && (
+            <>
+              <div className="flex-1 text-center">
+                <div className="flex items-center justify-center gap-2 text-amber-600">
+                  <AlertTriangle className="h-5 w-5" />
+                  <span className="font-medium">Частично выполнено</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Применено: {stats?.applied}, ошибок: {stats?.errors}
+                </p>
+              </div>
+              <Button variant="outline" onClick={handleRetryFailed}>
+                Повторить ошибки
+              </Button>
+              <Button onClick={() => onOpenChange(false)}>
+                Закрыть
+              </Button>
+            </>
           )}
 
           {status === 'done' && (

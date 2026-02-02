@@ -597,7 +597,10 @@ export type Database = {
           card_last4: string
           created_at: string | null
           id: string
+          linked_at: string | null
+          linked_by: string | null
           profile_id: string
+          source: string | null
           updated_at: string | null
         }
         Insert: {
@@ -606,7 +609,10 @@ export type Database = {
           card_last4: string
           created_at?: string | null
           id?: string
+          linked_at?: string | null
+          linked_by?: string | null
           profile_id: string
+          source?: string | null
           updated_at?: string | null
         }
         Update: {
@@ -615,7 +621,10 @@ export type Database = {
           card_last4?: string
           created_at?: string | null
           id?: string
+          linked_at?: string | null
+          linked_by?: string | null
           profile_id?: string
+          source?: string | null
           updated_at?: string | null
         }
         Relationships: [
@@ -8179,6 +8188,16 @@ export type Database = {
           sample_ids: string[]
           updated_count: number
         }[]
+      }
+      backfill_payments_by_card: {
+        Args: {
+          p_card_brand: string
+          p_card_last4: string
+          p_dry_run?: boolean
+          p_limit?: number
+          p_profile_id: string
+        }
+        Returns: Json
       }
       check_payment_status_for_deal: {
         Args: { p_payment_id: string; p_payment_source: string }
