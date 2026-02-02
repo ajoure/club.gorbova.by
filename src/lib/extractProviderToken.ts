@@ -64,17 +64,5 @@ export function extractProviderToken(providerResponse: any): string | null {
   }
 }
 
-/**
- * Hash a provider token for audit logging (no PII in logs)
- * Returns first 16 chars of SHA256 hex
- */
-export function hashProviderToken(token: string): string {
-  // Simple hash for client-side (not crypto-secure, just for audit ID)
-  let hash = 0;
-  for (let i = 0; i < token.length; i++) {
-    const char = token.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return Math.abs(hash).toString(16).padStart(8, '0').slice(0, 16);
-}
+// REMOVED: hashProviderToken() - hash must be server-side only (sha256 in SQL)
+// Client-side hash was insecure and could mislead. Use DB function for audit logs.
