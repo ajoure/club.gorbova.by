@@ -252,9 +252,11 @@ serve(async (req) => {
       .eq('id', runId);
 
     // PATCH-2: Send Telegram alert to super_admin owner ALWAYS (PASS/FAIL)
+    // CRITICAL: This must run regardless of success/failure status
     if (notifyOwner) {
       // Find super_admin owner by email
       const ownerEmail = '7500084@gmail.com';
+      console.log(`[NIGHTLY] Preparing notification for owner ${ownerEmail}, failedChecks=${failedChecks.length}`);
       
       const { data: ownerProfile } = await supabase
         .from('profiles')

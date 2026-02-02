@@ -296,3 +296,12 @@ verify_jwt = false
 
 [functions.generate-cover]
 verify_jwt = false
+
+[functions.nightly-system-health]
+verify_jwt = false
+
+[functions.nightly-payments-invariants]
+verify_jwt = false
+
+[functions.admin-reconcile-processing-payments]
+verify_jwt = false

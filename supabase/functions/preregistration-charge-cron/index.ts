@@ -1001,13 +1001,17 @@ serve(async (req) => {
 
         const txStatus = chargeResult?.transaction?.status;
         const txUid = chargeResult?.transaction?.uid;
+        
+        // PATCH-4: Handle all bePaid statuses correctly
+        // Log full response for debugging (no PII)
+        console.log(`[${BUILD_ID}] bePaid txStatus=${txStatus}, txUid=${txUid} for payment ${payment.id}`);
 
         if (txStatus === "successful") {
           // Update payment to successful
           await supabase
             .from("payments_v2")
             .update({
-              status: "completed",
+              status: "succeeded", // FIXED: use 'succeeded' not 'completed'
               paid_at: now.toISOString(),
               provider_payment_id: txUid,
               provider_response: chargeResult,
@@ -1106,8 +1110,90 @@ serve(async (req) => {
 
           results.charged++;
           console.log(`[${BUILD_ID}] Successfully charged preregistration ${prereg.id}`);
+        } else if (txStatus === "incomplete") {
+          // PATCH-4: 3D-Secure required - NOT a failure, needs user action
+          // DO NOT mark order as paid, DO NOT mark as failed
+          console.log(`[${BUILD_ID}] Payment ${payment.id} requires 3D-Secure (incomplete)`);
+          
+          await supabase
+            .from("payments_v2")
+            .update({
+              status: "processing", // Keep as processing - awaiting 3DS
+              provider_payment_id: txUid,
+              provider_response: chargeResult,
+              error_message: "Требуется подтверждение 3D-Secure",
+            })
+            .eq("id", payment.id);
+
+          // PATCH-3: Order stays pending - NOT paid!
+          // Do not update order status
+          
+          // Update prereg billing meta
+          await supabase
+            .from("course_preregistrations")
+            .update({
+              meta: {
+                ...currentMeta,
+                billing: {
+                  ...currentBilling,
+                  billing_status: "pending_3ds",
+                  attempts_count: (currentBilling.attempts_count || 0) + 1,
+                  last_attempt_at: now.toISOString(),
+                  last_attempt_window_key: currentWindowKey,
+                  last_attempt_status: "pending_3ds",
+                  last_attempt_error: "3D-Secure required",
+                  has_active_card: true,
+                },
+              },
+              updated_at: now.toISOString(),
+            })
+            .eq("id", prereg.id);
+
+          results.skipped++;
+          console.log(`[${BUILD_ID}] Preregistration ${prereg.id} requires 3D-Secure - skipped`);
+          
+        } else if (!txStatus && !chargeResult?.transaction) {
+          // PATCH-4: bePaid did not respond or timeout - keep processing for reconciler
+          console.warn(`[${BUILD_ID}] No response from bePaid for payment ${payment.id}`);
+          
+          // Save whatever response we got
+          await supabase
+            .from("payments_v2")
+            .update({
+              provider_response: chargeResult || { error: "no_transaction_in_response" },
+              error_message: "Нет ответа от платёжной системы",
+            })
+            .eq("id", payment.id);
+
+          // PATCH-3: Order stays pending - NOT paid!
+          // Do not update order status
+          
+          // Update prereg billing meta
+          await supabase
+            .from("course_preregistrations")
+            .update({
+              meta: {
+                ...currentMeta,
+                billing: {
+                  ...currentBilling,
+                  billing_status: "no_response",
+                  attempts_count: (currentBilling.attempts_count || 0) + 1,
+                  last_attempt_at: now.toISOString(),
+                  last_attempt_window_key: currentWindowKey,
+                  last_attempt_status: "no_response",
+                  last_attempt_error: "No bePaid response",
+                  has_active_card: true,
+                },
+              },
+              updated_at: now.toISOString(),
+            })
+            .eq("id", prereg.id);
+
+          results.skipped++;
+          console.warn(`[${BUILD_ID}] Preregistration ${prereg.id} - no bePaid response, needs reconcile`);
+          
         } else {
-          // Charge failed
+          // PATCH-4: Actual failure (failed, expired, declined, etc.)
           const errorMessage = chargeResult?.transaction?.message || 
                                chargeResult?.errors?.base?.[0] || 
                                "Unknown error";
@@ -1117,10 +1203,12 @@ serve(async (req) => {
             .update({
               status: "failed",
               error_message: errorMessage,
+              provider_payment_id: txUid,
               provider_response: chargeResult,
             })
             .eq("id", payment.id);
 
+          // PATCH-3: Order marked as failed - NOT paid!
           await supabase
             .from("orders_v2")
             .update({
@@ -1133,7 +1221,7 @@ serve(async (req) => {
             })
             .eq("id", order.id);
 
-          // PATCH-3: Send failure notification with anti-spam guard
+          // Send failure notification with anti-spam guard
           const notified = await sendPaymentFailureNotification(
             supabase, prereg.user_id, productName, chargeAmount, currency, errorMessage, currentBilling
           );
