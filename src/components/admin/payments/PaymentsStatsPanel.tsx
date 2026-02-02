@@ -13,6 +13,7 @@ interface PaymentsStatsPanelProps {
   dateRange?: { from: string; to?: string | null };
   activeFilter?: StatsFilterType;
   onFilterChange?: (filter: StatsFilterType) => void;
+  totalUnfilteredCount?: number; // PATCH-2: Shows "X of Y" context
 }
 
 interface StatCardProps {
@@ -110,7 +111,8 @@ export default function PaymentsStatsPanel({
   isLoading, 
   dateRange,
   activeFilter,
-  onFilterChange 
+  onFilterChange,
+  totalUnfilteredCount, // PATCH-2
 }: PaymentsStatsPanelProps) {
   const stats = useMemo(() => {
     if (!payments || payments.length === 0) {

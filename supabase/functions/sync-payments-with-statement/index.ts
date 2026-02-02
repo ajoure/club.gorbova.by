@@ -10,7 +10,11 @@ interface SyncRequest {
   to_date: string;
   dry_run?: boolean;
   selected_uids?: string[];
+  batch_id?: string; // PATCH-3: For batch tracking in logs
 }
+
+// PATCH-3: STOP-guards
+const MAX_UIDS_PER_CALL = 500;
 
 interface Difference {
   field: string;
@@ -419,7 +423,7 @@ Deno.serve(async (req) => {
     }
 
     const body: SyncRequest = await req.json();
-    const { from_date, to_date, dry_run = true, selected_uids } = body;
+    const { from_date, to_date, dry_run = true, selected_uids, batch_id } = body;
 
     if (!from_date || !to_date) {
       return new Response(JSON.stringify({ error: 'from_date and to_date are required' }), {
@@ -428,14 +432,31 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log(`[sync-statement] Starting sync: ${from_date} to ${to_date}, dry_run=${dry_run}`);
+    // PATCH-3: STOP-guard for batch size
+    if (selected_uids && selected_uids.length > MAX_UIDS_PER_CALL) {
+      console.log(`[sync-statement] STOP-guard: ${selected_uids.length} > ${MAX_UIDS_PER_CALL}`);
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: `Too many UIDs: ${selected_uids.length}. Max allowed: ${MAX_UIDS_PER_CALL}. Use batching.`,
+        max_allowed: MAX_UIDS_PER_CALL,
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
+    console.log(`[sync-statement] START batch_id=${batch_id || 'single'}, dry_run=${dry_run}, from=${from_date}, to=${to_date}`);
+
+    // PATCH-4: Use offset-aware timestamps for Minsk TZ (+03:00)
+    const fromTimestamp = `${from_date}T00:00:00+03:00`;
+    const toTimestamp = `${to_date}T23:59:59+03:00`;
+    
     // 1. Load statement data for period
     const { data: statementRows, error: stmtError } = await supabaseAdmin
       .from('bepaid_statement_rows')
       .select('*')
-      .gte('paid_at', `${from_date}T00:00:00`)
-      .lte('paid_at', `${to_date}T23:59:59`)
+      .gte('paid_at', fromTimestamp)
+      .lte('paid_at', toTimestamp)
       .not('uid', 'is', null);
 
     if (stmtError) {
@@ -450,8 +471,8 @@ Deno.serve(async (req) => {
       .eq('provider', 'bepaid')
       // Include ALL origins to properly detect existing records
       .in('origin', ['bepaid', 'statement_sync', 'import'])
-      .gte('paid_at', `${from_date}T00:00:00`)
-      .lte('paid_at', `${to_date}T23:59:59`);
+      .gte('paid_at', fromTimestamp)
+      .lte('paid_at', toTimestamp);
 
     if (pmtError) {
       console.error('[sync-statement] Payments query error:', pmtError);
@@ -1079,7 +1100,7 @@ Deno.serve(async (req) => {
       audit_log_id: auditLogId,
     };
 
-    console.log(`[sync-statement] Completed: ${stats.to_create} create, ${stats.to_update} update, ${stats.to_delete} delete`);
+    console.log(`[sync-statement] END batch_id=${batch_id || 'single'}, applied=${stats.applied}, errors=${stats.errors}`);
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
