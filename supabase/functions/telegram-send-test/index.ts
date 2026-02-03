@@ -57,14 +57,14 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Get user's Telegram link from profile
+    // Get user's Telegram ID from profile (FIX: use telegram_user_id, not telegram_link)
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("telegram_link")
-      .eq("id", userId)
+      .select("telegram_user_id, telegram_username")
+      .eq("user_id", userId)  // FIX: was eq("id", userId) - profiles.id != auth.users.id
       .single();
 
-    if (profileError || !profile?.telegram_link) {
+    if (profileError || !profile?.telegram_user_id) {
       return new Response(JSON.stringify({ 
         error: "Telegram не привязан к вашему профилю",
         details: "Привяжите Telegram в настройках профиля для получения тестовых сообщений"
@@ -74,38 +74,8 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Find user's chat_id via telegram_members table
-    const { data: memberData, error: memberError } = await supabase
-      .from("telegram_members")
-      .select("telegram_id")
-      .eq("username", profile.telegram_link.replace("@", "").toLowerCase())
-      .limit(1)
-      .maybeSingle();
-
-    // Also try by user_id if profile linked
-    let telegramChatId = memberData?.telegram_id;
-    
-    if (!telegramChatId) {
-      // Try via telegram_profile_links
-      const { data: linkData } = await supabase
-        .from("telegram_profile_links")
-        .select("telegram_user_id")
-        .eq("profile_id", userId)
-        .limit(1)
-        .maybeSingle();
-      
-      telegramChatId = linkData?.telegram_user_id;
-    }
-
-    if (!telegramChatId) {
-      return new Response(JSON.stringify({ 
-        error: "Не удалось найти ваш Telegram ID",
-        details: "Напишите боту /start чтобы привязать аккаунт"
-      }), { 
-        status: 400, 
-        headers: { ...corsHeaders, "Content-Type": "application/json" } 
-      });
-    }
+    // Use telegram_user_id directly from profile (no need for extra lookups)
+    const telegramChatId = profile.telegram_user_id;
 
     // Get bot token
     const { data: bot, error: botError } = await supabase

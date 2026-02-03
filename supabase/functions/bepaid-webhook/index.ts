@@ -2070,11 +2070,23 @@ ${userName}, к сожалению, не удалось провести опл�
           console.log('Created order_v2:', orderV2.id);
           
           // Create payment_v2 record for the order
+          // FIX: Add profile_id from orderV2 or resolve from profiles table
+          let paymentProfileId = orderV2.profile_id;
+          if (!paymentProfileId && order.user_id) {
+            const { data: profileData } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('user_id', order.user_id)
+              .maybeSingle();
+            paymentProfileId = profileData?.id || null;
+          }
+
           await supabase
             .from('payments_v2')
             .insert({
               order_id: orderV2.id,
               user_id: order.user_id,
+              profile_id: paymentProfileId,  // FIX: Add profile_id
               amount: actualAmount,
               currency: order.currency,
               status: 'succeeded',
@@ -2516,6 +2528,66 @@ ${userName}, к сожалению, не удалось провести опл�
             bepaid_subscription_id: subscriptionId,
           },
         });
+
+      // === TELEGRAM ADMIN NOTIFICATION (legacy flow) ===
+      // FIX: Add Telegram notification that was missing in legacy flow
+      try {
+        const paymentType = meta.is_trial ? '🔔 Пробный период' : '💰 Оплата';
+        const legacyProductName = product?.name || productV2?.name || 'Подписка';
+        const legacyTariffName = tariffData?.name || meta.tariff_code || '';
+        const amountFormatted = Number(order.amount).toFixed(2);
+        
+        // Get customer profile for notification
+        const { data: customerProfile } = await supabase
+          .from('profiles')
+          .select('full_name, email, phone, telegram_username')
+          .eq('user_id', order.user_id)
+          .maybeSingle();
+        
+        // Get order_v2 record for order_number (if created earlier in this flow)
+        const { data: legacyOrderV2 } = await supabase
+          .from('orders_v2')
+          .select('id, order_number')
+          .eq('meta->>legacy_order_id', internalOrderId)
+          .maybeSingle();
+
+        const telegramNotifyMessage = `${paymentType}\n\n` +
+          `👤 <b>Клиент:</b> ${customerProfile?.full_name || meta.customer_first_name || 'Не указано'}\n` +
+          `📧 Email: ${customerProfile?.email || order.customer_email || 'Не указан'}\n` +
+          `📱 Телефон: ${customerProfile?.phone || meta.customer_phone || 'Не указан'}\n` +
+          (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
+          `\n📦 <b>Продукт:</b> ${legacyProductName}\n` +
+          `📋 Тариф: ${legacyTariffName}\n` +
+          `💵 Сумма: ${amountFormatted} ${order.currency}\n` +
+          `🆔 Заказ: ${legacyOrderV2?.order_number || internalOrderId}`;
+
+        const notifyResponse = await fetch(
+          `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+            },
+            body: JSON.stringify({ 
+              message: telegramNotifyMessage,
+              source: 'bepaid_webhook_legacy',
+              order_id: legacyOrderV2?.id || internalOrderId,
+              order_number: legacyOrderV2?.order_number,
+            }),
+          }
+        );
+
+        const notifyData = await notifyResponse.json().catch(() => ({}));
+        if (!notifyResponse.ok) {
+          console.error('Admin Telegram notification error (legacy):', notifyResponse.status, notifyData);
+        } else {
+          console.log('Admin Telegram notification sent (legacy):', notifyData);
+        }
+      } catch (telegramNotifyError) {
+        console.error('Error sending Telegram notification to admins (legacy):', telegramNotifyError);
+        // Don't fail the webhook
+      }
 
       // Send admin notification email
       if (resend) {
@@ -3019,8 +3091,20 @@ async function createOrderFromWebhook(
   if (error) throw error;
 
   // Create payment record
+  // FIX: Resolve profile_id for orphan order reconstruction
+  let orphanProfileId: string | null = null;
+  if (userId) {
+    const { data: profileForPayment } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
+    orphanProfileId = profileForPayment?.id || null;
+  }
+
   await supabase.from('payments_v2').insert({
     order_id: order.id,
+    profile_id: orphanProfileId,  // FIX: Add profile_id
     amount: amountBYN,
     currency: currency,
     provider: 'bepaid',
