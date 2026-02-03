@@ -39,14 +39,13 @@ import {
   CheckCircle,
   XCircle,
   AlertTriangle,
-  Sparkles,
   Trash2,
   Link2,
+  Tag,
 } from "lucide-react";
 import { copyToClipboard, getDealUrl } from "@/utils/clipboardUtils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
-import { SmartImportWizard } from "@/components/integrations/SmartImportWizard";
 import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
@@ -56,8 +55,8 @@ import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
-import { DealsStatsBar } from "@/components/admin/deals/DealsStatsBar";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
+import { GlassFilterPanel } from "@/components/admin/GlassFilterPanel";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -80,7 +79,7 @@ export default function AdminDeals() {
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
   const [activePreset, setActivePreset] = useState("all");
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
-  const [showImportWizard, setShowImportWizard] = useState(false);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showBulkEditDialog, setShowBulkEditDialog] = useState(false);
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
@@ -205,52 +204,8 @@ export default function AdminDeals() {
     { key: "created_at", label: "Дата создания", type: "date" },
   ], [products, tariffs]);
 
-  // Subscription Health stats
-  const { data: healthStats } = useQuery({
-    queryKey: ["subscription-health-stats"],
-    queryFn: async () => {
-      const now = new Date();
-      const in72h = new Date(now.getTime() + 72 * 60 * 60 * 1000);
-      
-      const { data } = await supabase
-        .from("subscriptions_v2")
-        .select("status, payment_method_id, access_end_at")
-        .in("status", ["active", "trial"]);
-      
-      const activeWithoutCard = data?.filter(
-        s => s.status === "active" && !s.payment_method_id
-      ).length || 0;
-      
-      const trialsExpiring72h = data?.filter(s => {
-        if (s.status !== "trial" || s.payment_method_id) return false;
-        const endAt = new Date(s.access_end_at);
-        return endAt <= in72h;
-      }).length || 0;
-      
-      return { activeWithoutCard, trialsExpiring72h };
-    },
-  });
-
-  // Auto-payment stats
-  const { data: autoPaymentStats } = useQuery({
-    queryKey: ["auto-payment-stats"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("subscriptions_v2")
-        .select("id, order_id, orders_v2(final_price)")
-        .eq("status", "active")
-        .eq("auto_renew", true)
-        .not("payment_method_id", "is", null);
-      
-      const count = data?.length || 0;
-      const totalPlanned = data?.reduce((sum, s) => {
-        const price = (s.orders_v2 as any)?.final_price;
-        return sum + Number(price || 0);
-      }, 0) || 0;
-      
-      return { count, totalPlanned };
-    },
-  });
+  // Valid deal statuses (excluding pending/failed payment attempts)
+  const VALID_DEAL_STATUSES = ['paid', 'trial', 'canceled', 'refunded'] as const;
 
 
   // Get field value for sorting/filtering
@@ -270,12 +225,21 @@ export default function AdminDeals() {
     }
   }, [profilesMap]);
 
-  // Filter deals
+  // Filter deals - only valid deal statuses (not pending/failed)
   const filteredDeals = useMemo(() => {
     if (!deals) return [];
     
-    // First apply search
-    let result = deals;
+    // First filter out non-deal statuses (pending, failed, draft = payment attempts, not deals)
+    let result = deals.filter(d => 
+      VALID_DEAL_STATUSES.includes(d.status as any)
+    );
+    
+    // Apply product filter
+    if (selectedProductId) {
+      result = result.filter(d => d.product_id === selectedProductId);
+    }
+    
+    // Apply search
     if (search) {
       const searchLower = search.toLowerCase();
       result = result.filter(deal => {
@@ -291,42 +255,22 @@ export default function AdminDeals() {
       });
     }
     
-    // Then apply filters
+    // Then apply other filters
     return applyFilters(result, activeFilters, getDealFieldValue);
-  }, [deals, search, activeFilters, profilesMap, getDealFieldValue]);
+  }, [deals, search, activeFilters, profilesMap, getDealFieldValue, selectedProductId, VALID_DEAL_STATUSES]);
 
-  // Calculate stats from filtered deals (after filteredDeals is defined)
-  const stats = useMemo(() => {
-    const source = activeFilters.length > 0 || search ? filteredDeals : deals;
-    if (!source || source.length === 0) {
-      return { total: 0, paid: 0, pending: 0, revenue: 0 };
-    }
-    const total = source.length;
-    const paid = source.filter(d => d.status === "paid").length;
-    const pending = source.filter(d => d.status === "pending").length;
-    const revenue = source
-      .filter(d => d.status === "paid")
-      .reduce((sum, d) => sum + Number(d.final_price || 0), 0);
-    return { total, paid, pending, revenue };
-  }, [deals, filteredDeals, activeFilters, search]);
-
-  // Handle stat click to apply filters
-  const handleStatClick = useCallback((filter: string) => {
-    switch (filter) {
-      case "all":
-        setActiveFilters([]);
-        setActivePreset("all");
-        break;
-      case "paid":
-        setActiveFilters([{ field: "status", operator: "equals", value: "paid" }]);
-        setActivePreset("paid");
-        break;
-      case "pending":
-        setActiveFilters([{ field: "status", operator: "equals", value: "pending" }]);
-        setActivePreset("pending");
-        break;
-    }
-  }, []);
+  // Product filter counts
+  const productCounts = useMemo(() => {
+    if (!deals) return new Map<string, number>();
+    const validDeals = deals.filter(d => VALID_DEAL_STATUSES.includes(d.status as any));
+    const counts = new Map<string, number>();
+    validDeals.forEach(d => {
+      if (d.product_id) {
+        counts.set(d.product_id, (counts.get(d.product_id) || 0) + 1);
+      }
+    });
+    return counts;
+  }, [deals, VALID_DEAL_STATUSES]);
 
   // Sorting
   const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
@@ -350,8 +294,6 @@ export default function AdminDeals() {
 
   const DEAL_PRESETS: FilterPreset[] = useMemo(() => [
     { id: "all", label: "Все", filters: [] },
-    { id: "paid", label: "Оплачены", filters: [{ field: "status", operator: "equals", value: "paid" }], count: presetCounts.paid },
-    { id: "pending", label: "Ожидают оплаты", filters: [{ field: "status", operator: "equals", value: "pending" }], count: presetCounts.pending },
     { id: "trial", label: "Триал", filters: [{ field: "is_trial", operator: "equals", value: "true" }], count: presetCounts.trial },
     { id: "canceled", label: "Отменённые", filters: [{ field: "status", operator: "equals", value: "canceled" }], count: presetCounts.canceled },
     { id: "imported", label: "Импортированные", filters: [{ field: "reconcile_source", operator: "equals", value: "bepaid_archive_import" }], count: presetCounts.imported },
@@ -606,6 +548,46 @@ export default function AdminDeals() {
         </div>
       </div>
 
+      {/* Product Pills Filter */}
+      {products && products.length > 0 && (
+        <GlassFilterPanel className="mx-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Tag className="h-4 w-4 text-muted-foreground shrink-0" />
+            <button
+              onClick={() => setSelectedProductId(null)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+                !selectedProductId
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted"
+              }`}
+            >
+              Все продукты
+            </button>
+            {products.map((product) => {
+              const count = productCounts.get(product.id) || 0;
+              if (count === 0) return null;
+              const isActive = selectedProductId === product.id;
+              return (
+                <button
+                  key={product.id}
+                  onClick={() => setSelectedProductId(isActive ? null : product.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+                    isActive
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted"
+                  }`}
+                >
+                  <span>{product.name}</span>
+                  <Badge className="h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full bg-background/20 text-inherit">
+                    {count > 99 ? "99+" : count}
+                  </Badge>
+                </button>
+              );
+            })}
+          </div>
+        </GlassFilterPanel>
+      )}
+
       {/* Actions row */}
       <div className="flex items-center justify-between flex-wrap gap-3 px-1">
         <div className="flex items-center gap-2 flex-wrap">
@@ -621,10 +603,6 @@ export default function AdminDeals() {
               <span className="hidden sm:inline">Удалить архив</span>
             </Button>
           )}
-          <Button variant="outline" size="sm" className="h-8" onClick={() => setShowImportWizard(true)}>
-            <Sparkles className="h-3.5 w-3.5 sm:mr-1.5" />
-            <span className="hidden sm:inline">Импорт</span>
-          </Button>
           <Button variant="outline" size="sm" className="h-8" onClick={() => {
             queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
             queryClient.invalidateQueries({ queryKey: ["profiles-map"] });
@@ -635,15 +613,6 @@ export default function AdminDeals() {
           </Button>
         </div>
       </div>
-
-      {/* Compact Stats Bar */}
-      <DealsStatsBar
-        stats={stats}
-        healthStats={healthStats}
-        autoPaymentStats={autoPaymentStats}
-        onStatClick={handleStatClick}
-        isLoading={isLoading}
-      />
 
       {/* Search */}
       <div className="flex flex-col sm:flex-row gap-3 px-1">
@@ -867,12 +836,6 @@ export default function AdminDeals() {
         profile={selectedDeal ? profilesMap?.get(selectedDeal.user_id) : null}
         open={!!selectedDealId}
         onOpenChange={(open) => !open && setSelectedDealId(null)}
-      />
-
-      {/* Smart Import Wizard */}
-      <SmartImportWizard
-        open={showImportWizard}
-        onOpenChange={setShowImportWizard}
       />
 
       {/* Selection Box for drag select */}

@@ -368,7 +368,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     enabled: !!contact?.id && !!contact?.telegram_user_id,
   });
 
-  // Fetch deals for this contact - check both profile_id and user_id (for ghost contacts)
+  // Fetch deals for this contact - only paid/trial/cancelled (not pending/failed payment attempts)
+  // Deals = successful transactions. Payment attempts go to Payments tab.
   const { data: deals, isLoading: dealsLoading } = useQuery({
     queryKey: ["contact-deals", contact?.id, contact?.user_id],
     queryFn: async () => {
@@ -381,6 +382,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       }
       
       // Query deals by profile_id OR user_id to catch ghost contact deals
+      // Only include valid deal statuses (not pending/failed payment attempts)
       const { data, error } = await supabase
         .from("orders_v2")
         .select(`
@@ -390,6 +392,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           payments_v2(id, status, provider_response)
         `)
         .or(`profile_id.eq.${contact.id},user_id.in.(${userIds.join(',')})`)
+        .in("status", ['paid', 'canceled', 'refunded'] as const)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
