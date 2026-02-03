@@ -58,8 +58,8 @@ export function useContainerLessons(): LessonsBySectionResult {
         `)
         .in("module_id", containerIds)
         .eq("is_active", true)
-        .order("published_at", { ascending: false, nullsFirst: false })
         .order("sort_order", { ascending: false })
+        .order("published_at", { ascending: false, nullsFirst: false })
         .order("created_at", { ascending: false });
 
       if (lessonError) throw lessonError;

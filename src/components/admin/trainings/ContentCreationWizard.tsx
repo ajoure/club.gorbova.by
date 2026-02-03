@@ -21,7 +21,9 @@ import { ContentSectionSelector } from "./ContentSectionSelector";
 import { ContentTypeSelector, ContentType } from "./ContentTypeSelector";
 import { ModuleFormFields, ModuleFormData, generateSlug } from "./ModuleFormFields";
 import { LessonFormFieldsSimple, LessonFormDataSimple, generateLessonSlug } from "./LessonFormFieldsSimple";
+import { KbLessonFormFields, KbLessonFormData, generateKbLessonSlug } from "./KbLessonFormFields";
 import { CompactAccessSelector } from "./CompactAccessSelector";
+import { parseTimecode } from "@/hooks/useKbQuestions";
 
 interface ContentCreationWizardProps {
   open: boolean;
@@ -35,6 +37,7 @@ interface WizardData {
   menuSectionKey: string;
   module: ModuleFormData;
   lesson: LessonFormDataSimple;
+  kbLesson: KbLessonFormData;
   tariffIds: string[];
 }
 
@@ -72,6 +75,14 @@ const LESSON_HINTS = [
   "Создайте урок (видеоответ, выпуск). Контент редактируется после создания",
   "Настройте, кто увидит контент. Пустой выбор = доступно всем",
   "Отлично! Урок создан и готов к редактированию",
+];
+
+const KB_LESSON_HINTS = [
+  "Выберите, где будет отображаться ваш урок в меню пользователя",
+  "Выберите тип создаваемого контента",
+  "Заполните данные выпуска и добавьте вопросы",
+  "Настройте, кто увидит контент. Пустой выбор = доступно всем",
+  "Отлично! Выпуск создан и готов к редактированию",
 ];
 
 // Check if slug exists in database
@@ -147,8 +158,20 @@ const createInitialState = (initialSectionKey?: string): WizardData => ({
     slug: "",
     description: "",
   },
+  kbLesson: {
+    episode_number: 0,
+    answer_date: undefined,
+    kinescope_url: "",
+    thumbnail_url: "",
+    questions: [],
+  },
   tariffIds: [],
 });
+
+// Check if section is KB videos
+const isKbVideoSection = (sectionKey: string): boolean => {
+  return sectionKey === "knowledge-videos";
+};
 
 export function ContentCreationWizard({
   open,
@@ -171,8 +194,9 @@ export function ContentCreationWizard({
 
   // Determine which flow we're in
   const isLessonFlow = wizardData.contentType === "lesson";
+  const isKbFlow = isLessonFlow && isKbVideoSection(wizardData.menuSectionKey);
   const steps = isLessonFlow ? LESSON_STEPS : MODULE_STEPS;
-  const hints = isLessonFlow ? LESSON_HINTS : MODULE_HINTS;
+  const hints = isKbFlow ? KB_LESSON_HINTS : (isLessonFlow ? LESSON_HINTS : MODULE_HINTS);
   const maxStep = steps.length - 1;
 
   // Fetch products with tariffs
@@ -219,7 +243,11 @@ export function ContentCreationWizard({
       switch (step) {
         case 0: return !!wizardData.menuSectionKey;
         case 1: return true; // Type selection always valid
-        case 2: return !!wizardData.lesson.title && !!wizardData.lesson.slug;
+        case 2: 
+          if (isKbFlow) {
+            return wizardData.kbLesson.episode_number > 0;
+          }
+          return !!wizardData.lesson.title && !!wizardData.lesson.slug;
         case 3: return true; // Access is optional
         case 4: return true; // Done
         default: return false;
@@ -236,7 +264,7 @@ export function ContentCreationWizard({
         default: return false;
       }
     }
-  }, [step, wizardData, isLessonFlow]);
+  }, [step, wizardData, isLessonFlow, isKbFlow]);
 
   // Update section in module data
   const handleSectionChange = (key: string) => {
@@ -264,6 +292,11 @@ export function ContentCreationWizard({
   // Handle lesson form changes
   const handleLessonChange = (data: LessonFormDataSimple) => {
     setWizardData((prev) => ({ ...prev, lesson: data }));
+  };
+
+  // Handle KB lesson form changes
+  const handleKbLessonChange = (data: KbLessonFormData) => {
+    setWizardData((prev) => ({ ...prev, kbLesson: data }));
   };
 
   // Create module (module flow step 2 -> 3)
@@ -369,18 +402,36 @@ export function ContentCreationWizard({
       const containerId = await getOrCreateContainerModule(wizardData.menuSectionKey);
       setCreatedModuleId(containerId);
 
+      // Determine lesson data based on flow type
+      const lessonTitle = isKbFlow 
+        ? `Выпуск №${wizardData.kbLesson.episode_number}`
+        : wizardData.lesson.title;
+      
+      const lessonSlug = isKbFlow
+        ? generateKbLessonSlug(wizardData.kbLesson.episode_number)
+        : (wizardData.lesson.slug || generateLessonSlug(wizardData.lesson.title));
+      
+      const thumbnailUrl = isKbFlow
+        ? wizardData.kbLesson.thumbnail_url
+        : wizardData.lesson.thumbnail_url;
+
+      const sortOrder = isKbFlow ? wizardData.kbLesson.episode_number : 0;
+
       // Create lesson in container
       const { data: newLesson, error } = await supabase
         .from("training_lessons")
         .insert({
           module_id: containerId,
-          title: wizardData.lesson.title,
-          slug: wizardData.lesson.slug || generateLessonSlug(wizardData.lesson.title),
-          description: wizardData.lesson.description || null,
-          thumbnail_url: wizardData.lesson.thumbnail_url || null,
+          title: lessonTitle,
+          slug: lessonSlug,
+          description: isKbFlow ? null : (wizardData.lesson.description || null),
+          thumbnail_url: thumbnailUrl || null,
           content_type: "mixed",
           is_active: true,
-          sort_order: 0, // New lessons first, sorted by created_at DESC
+          sort_order: sortOrder,
+          published_at: isKbFlow && wizardData.kbLesson.answer_date 
+            ? wizardData.kbLesson.answer_date.toISOString()
+            : null,
         })
         .select()
         .single();
@@ -388,11 +439,59 @@ export function ContentCreationWizard({
       if (error) throw error;
 
       setCreatedLessonId(newLesson.id);
+
+      // If KB flow: create video block and questions
+      if (isKbFlow) {
+        // Create video block if URL provided
+        if (wizardData.kbLesson.kinescope_url) {
+          await supabase.from("lesson_blocks").insert({
+            lesson_id: newLesson.id,
+            block_type: "video",
+            content: {
+              url: wizardData.kbLesson.kinescope_url,
+              provider: "kinescope",
+            },
+            sort_order: 0,
+          });
+        }
+
+        // Create questions
+        if (wizardData.kbLesson.questions.length > 0) {
+          const questionsToInsert = wizardData.kbLesson.questions
+            .filter(q => q.title.trim()) // Only insert questions with titles
+            .map((q, idx) => ({
+              lesson_id: newLesson.id,
+              episode_number: wizardData.kbLesson.episode_number,
+              question_number: idx + 1,
+              title: q.title.trim(),
+              full_question: q.full_question?.trim() || null,
+              timecode_seconds: q.timecode ? parseTimecode(q.timecode) : null,
+              kinescope_url: wizardData.kbLesson.kinescope_url || null,
+              answer_date: wizardData.kbLesson.answer_date 
+                ? wizardData.kbLesson.answer_date.toISOString().split("T")[0]
+                : new Date().toISOString().split("T")[0],
+            }));
+
+          if (questionsToInsert.length > 0) {
+            const { error: qError } = await supabase
+              .from("kb_questions")
+              .insert(questionsToInsert);
+            
+            if (qError) {
+              console.error("Error inserting questions:", qError);
+              toast.error("Урок создан, но не удалось добавить вопросы");
+            }
+          }
+        }
+
+        // Invalidate KB questions cache
+        queryClient.invalidateQueries({ queryKey: ["kb-questions"] });
+      }
       
       queryClient.invalidateQueries({ queryKey: ["container-lessons"] });
       queryClient.invalidateQueries({ queryKey: ["sidebar-modules"] });
       
-      toast.success("Урок создан");
+      toast.success(isKbFlow ? "Выпуск создан" : "Урок создан");
       setStep(3);
     } catch (error: any) {
       console.error("Error creating standalone lesson:", error);
@@ -510,6 +609,19 @@ export function ContentCreationWizard({
     if (isLessonFlow) {
       // Lesson flow steps
       if (step === 2) {
+        // Check if KB flow - show special KB form
+        if (isKbFlow) {
+          return (
+            <div className="space-y-4">
+              <KbLessonFormFields
+                formData={wizardData.kbLesson}
+                onChange={handleKbLessonChange}
+              />
+            </div>
+          );
+        }
+
+        // Regular lesson form
         return (
           <div className="space-y-4">
             <LessonFormFieldsSimple
@@ -535,12 +647,24 @@ export function ContentCreationWizard({
         );
       }
       if (step === 4) {
+        const lessonTitle = isKbFlow 
+          ? `Выпуск №${wizardData.kbLesson.episode_number}`
+          : wizardData.lesson.title;
+        
         return (
           <div className="space-y-4">
             <Alert className="border-primary/30 bg-primary/5">
               <CheckCircle2 className="h-4 w-4 text-primary" />
               <AlertDescription className="ml-2">
-                <strong>Урок "{wizardData.lesson.title}"</strong> успешно создан
+                <strong>{lessonTitle}</strong> успешно создан
+                {isKbFlow && wizardData.kbLesson.questions.length > 0 && (
+                  <>
+                    <br />
+                    <span className="text-muted-foreground">
+                      Добавлено вопросов: {wizardData.kbLesson.questions.filter(q => q.title.trim()).length}
+                    </span>
+                  </>
+                )}
               </AlertDescription>
             </Alert>
 
