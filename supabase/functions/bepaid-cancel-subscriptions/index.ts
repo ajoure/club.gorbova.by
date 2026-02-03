@@ -167,10 +167,38 @@ Deno.serve(async (req) => {
           body: JSON.stringify({ cancel_reason: source === 'user_self_cancel' ? 'cancelled_by_customer' : 'cancelled_by_admin' }),
         });
 
-        if (response.ok || response.status === 404) {
-          // 404 means already canceled - treat as success
-          result.cancelled.push(subId);
+        let shouldMarkCanceled = false;
+        let failReason: string | null = null;
+
+        if (response.ok) {
+          // Direct success from bePaid
+          shouldMarkCanceled = true;
           console.log(`[bepaid-cancel-subs] Cancelled subscription ${subId}`);
+        } else if (response.status === 404) {
+          // PATCH-5: 404 handling - check local state before marking as success
+          const { data: localSub } = await supabase
+            .from('provider_subscriptions')
+            .select('state')
+            .eq('provider_subscription_id', subId)
+            .maybeSingle();
+          
+          if (localSub && localSub.state !== 'active') {
+            // Already non-active locally — treat as success
+            shouldMarkCanceled = true;
+            console.log(`[bepaid-cancel-subs] ${subId} returned 404 but already non-active locally (${localSub.state})`);
+          } else {
+            // Unknown or still active — mark as failed for investigation
+            failReason = '404: subscription not found in bePaid (local state still active)';
+            console.warn(`[bepaid-cancel-subs] ${subId} returned 404 but local state is ${localSub?.state || 'unknown'} — needs investigation`);
+          }
+        } else {
+          const errText = await response.text();
+          failReason = `${response.status}: ${errText}`;
+          console.error(`[bepaid-cancel-subs] Failed to cancel ${subId}:`, response.status);
+        }
+
+        if (shouldMarkCanceled) {
+          result.cancelled.push(subId);
 
           // Update provider_subscriptions
           await supabase
@@ -214,14 +242,13 @@ Deno.serve(async (req) => {
               targetUserId = linked.user_id;
             }
           }
-        } else {
-          const errText = await response.text();
-          result.failed.push({ id: subId, error: `${response.status}: ${errText}` });
-          console.error(`[bepaid-cancel-subs] Failed to cancel ${subId}:`, response.status, errText);
+        } else if (failReason) {
+          result.failed.push({ id: subId, error: failReason });
+          // Note: DO NOT update auto_renew on failed cancellation
         }
       } catch (e: any) {
         result.failed.push({ id: subId, error: e.message });
-        console.error(`[bepaid-cancel-subs] Error cancelling ${subId}:`, e);
+        console.error(`[bepaid-cancel-subs] Error cancelling ${subId}`);
       }
     }
 

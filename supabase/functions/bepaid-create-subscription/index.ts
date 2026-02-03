@@ -27,18 +27,35 @@ async function getBepaidCredentials(supabase: any): Promise<BepaidConfig | null>
   const shopIdFromInstance = instance?.config?.shop_id;
   const secretFromInstance = instance?.config?.secret_key;
   if (shopIdFromInstance && secretFromInstance) {
-    console.log(`[bepaid-create-sub] Using creds from integration_instances: shop_id=${shopIdFromInstance}`);
+    console.log(`[bepaid-create-sub] Using creds from integration_instances`);
     return { shop_id: String(shopIdFromInstance), secret_key: String(secretFromInstance) };
   }
 
   const shopId = Deno.env.get('BEPAID_SHOP_ID');
   const secretKey = Deno.env.get('BEPAID_SECRET_KEY');
   if (shopId && secretKey) {
-    console.log(`[bepaid-create-sub] Using creds from env vars: shop_id=${shopId}`);
+    console.log(`[bepaid-create-sub] Using creds from env vars`);
     return { shop_id: shopId, secret_key: secretKey };
   }
 
   return null;
+}
+
+// PATCH-3: Safe name parsing - handles 0/1/2/3+ tokens correctly
+function safeParseFullName(fullName: string | null | undefined): { firstName: string | undefined; lastName: string | undefined } {
+  if (!fullName?.trim()) return { firstName: undefined, lastName: undefined };
+  
+  const parts = fullName.trim().split(/\s+/);
+  
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: undefined };
+  }
+  
+  // Standard format: first token is first name, rest is last name
+  return {
+    firstName: parts[0] || undefined,
+    lastName: parts.slice(1).join(' ') || undefined,
+  };
 }
 
 Deno.serve(async (req) => {
@@ -220,6 +237,9 @@ Deno.serve(async (req) => {
     const successReturnUrl = `${baseUrl}?bepaid_sub=success&sub_id=${subscription_v2_id}`;
     const failReturnUrl = `${baseUrl}?bepaid_sub=failed&sub_id=${subscription_v2_id}`;
 
+    // PATCH-3: Use safe name parsing
+    const parsedName = safeParseFullName(profile.full_name);
+
     const bepaidPayload = {
       subscription: {
         notification_url: notificationUrl,
@@ -229,8 +249,8 @@ Deno.serve(async (req) => {
         language: 'ru',
         customer: {
           email: customerEmail,
-          first_name: profile.full_name?.split(' ')[1] || undefined,
-          last_name: profile.full_name?.split(' ')[0] || undefined,
+          first_name: parsedName.firstName,
+          last_name: parsedName.lastName,
         },
         plan: {
           currency,
@@ -244,7 +264,15 @@ Deno.serve(async (req) => {
       },
     };
 
-    console.log('[bepaid-create-sub] Creating bePaid subscription:', JSON.stringify(bepaidPayload, null, 2));
+    // PATCH-2: NO PII logging - only safe fields
+    console.log('[bepaid-create-sub] Creating bePaid subscription:', {
+      subscription_v2_id,
+      amount_cents: amountCents,
+      currency,
+      interval_days: intervalDays,
+      product_id: product?.id,
+      tracking_id: trackingId,
+    });
 
     const authString = btoa(`${credentials.shop_id}:${credentials.secret_key}`);
     const bepaidResponse = await fetch('https://api.bepaid.by/subscriptions', {
@@ -258,7 +286,13 @@ Deno.serve(async (req) => {
     });
 
     const bepaidResult = await bepaidResponse.json();
-    console.log('[bepaid-create-sub] bePaid response:', JSON.stringify(bepaidResult, null, 2));
+    
+    // PATCH-2: NO PII logging - only safe fields from response
+    console.log('[bepaid-create-sub] bePaid response:', {
+      status: bepaidResponse.status,
+      bepaid_subscription_id: bepaidResult?.subscription?.id || bepaidResult?.id || null,
+      has_redirect_url: !!(bepaidResult?.subscription?.checkout_url || bepaidResult?.subscription?.redirect_url),
+    });
 
     if (!bepaidResponse.ok || bepaidResult.errors) {
       console.error('[bepaid-create-sub] bePaid error:', bepaidResult);

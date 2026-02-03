@@ -529,48 +529,33 @@ Deno.serve(async (req) => {
     console.log('Webhook signature header:', signatureHeader ? 'present' : 'missing', 
       'Headers checked: Content-Signature, X-Signature, X-Webhook-Signature');
     
-    // SIGNATURE VERIFICATION with graceful fallback
-    // bePaid subscription webhooks often come without signature or with different format
-    // We verify when possible, but allow processing with audit logging if verification fails
-    // and the webhook contains valid tracking_id matching our order format
+    // SIGNATURE VERIFICATION - STRICT MODE (NO FALLBACK)
+    // Per security policy: If signature verification fails → 401 + orphan only
+    // NO changes to payments/orders/subscriptions/provider_subscriptions
     
     let signatureVerified = false;
     let signatureSkipReason: string | null = null;
     
-    // Parse body early to validate tracking_id BEFORE signature check
+    // Parse body early
     let body: any;
     try {
       body = JSON.parse(bodyText);
     } catch (e) {
-      console.error('[WEBHOOK-ERROR] Failed to parse webhook body:', e);
+      console.error('[WEBHOOK-ERROR] Failed to parse webhook body');
       return new Response(
         JSON.stringify({ error: 'Invalid JSON body' }),
         { status: 400, headers: corsHeaders }
       );
     }
     
-    // Extract tracking_id for validation
+    // Extract tracking_id for logging only (NOT for security bypass)
     const rawTrackingIdEarly = body.tracking_id || 
                                body.additional_data?.order_id ||
                                body.transaction?.tracking_id ||
                                body.last_transaction?.tracking_id ||
                                null;
     
-    // Check if tracking_id contains valid UUID (our order format)
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-    const hasValidTrackingId = rawTrackingIdEarly && uuidPattern.test(rawTrackingIdEarly);
-    
-    // Extract transaction status and amount for validation
-    const txStatus = body.transaction?.status || body.status || '';
-    const txAmount = body.transaction?.amount || body.amount || 0;
-    const isSuccessfulPayment = txStatus === 'successful' && txAmount > 0;
-    
-    // RELAXED SIGNATURE VERIFICATION:
-    // Accept webhook if EITHER:
-    // 1. Signature is valid
-    // 2. OR tracking_id matches our UUID format (meaning it's from our system)
-    // 3. OR it's a successful payment with amount > 0 (legitimate bePaid callback)
-    
+    // STRICT SIGNATURE VERIFICATION - NO FALLBACK
     if (bepaidWebhookSecret && signatureHeader) {
       const customPublicKey = bepaidInstance?.config?.public_key || undefined;
       signatureVerified = await verifyWebhookSignature(bodyText, signatureHeader, customPublicKey);
@@ -579,90 +564,51 @@ Deno.serve(async (req) => {
         console.log('[WEBHOOK-OK] bePaid webhook signature verified successfully');
       } else {
         signatureSkipReason = 'invalid_signature';
-        console.warn('[WEBHOOK-WARN] Signature verification failed, checking fallback conditions...');
-        
-        // FALLBACK: Accept if tracking_id is valid UUID or it's a successful payment
-        if (hasValidTrackingId) {
-          console.log('[WEBHOOK-FALLBACK] Accepting webhook due to valid tracking_id UUID format');
-          signatureVerified = true; // Treat as verified
-          signatureSkipReason = 'accepted_by_tracking_id';
-        } else if (isSuccessfulPayment) {
-          console.log('[WEBHOOK-FALLBACK] Accepting webhook due to successful payment status');
-          signatureVerified = true; // Treat as verified  
-          signatureSkipReason = 'accepted_by_payment_status';
-        }
+        console.error('[WEBHOOK-SECURITY] Signature verification FAILED - rejecting webhook');
       }
     } else if (!bepaidWebhookSecret) {
       signatureSkipReason = 'no_secret_configured';
       console.warn('[WEBHOOK-WARN] BEPAID_SECRET_KEY not configured - accepting all webhooks');
-      signatureVerified = true; // Accept when no secret configured
+      signatureVerified = true; // Accept when no secret configured (dev mode)
     } else {
       signatureSkipReason = 'no_signature_header';
-      console.warn('[WEBHOOK-WARN] No signature header present');
-      
-      // FALLBACK for missing header: accept if valid tracking_id or successful payment
-      if (hasValidTrackingId || isSuccessfulPayment) {
-        console.log('[WEBHOOK-FALLBACK] Accepting webhook without signature due to valid data');
-        signatureVerified = true;
-      }
+      console.error('[WEBHOOK-SECURITY] No signature header present - rejecting webhook');
     }
     
-    console.log(`[WEBHOOK-SIGNATURE] verified=${signatureVerified}, reason=${signatureSkipReason}, hasValidTrackingId=${hasValidTrackingId}, isSuccessfulPayment=${isSuccessfulPayment}`);
+    console.log(`[WEBHOOK-SIGNATURE] verified=${signatureVerified}, reason=${signatureSkipReason}`);
     
-    // If signature not verified and no valid tracking_id, save to queue for manual review
-    if (!signatureVerified && !hasValidTrackingId) {
-      console.error('[WEBHOOK-ERROR] No signature and no valid tracking_id - saving to queue');
+    // STRICT: If signature not verified → save to orphans and return 401
+    // NO FALLBACK by tracking_id or payment status - this is a security violation
+    if (!signatureVerified) {
+      console.error('[WEBHOOK-REJECT] Invalid/missing signature - saving to orphans only');
       
-      const transaction = body.transaction || body.last_transaction || {};
-      const additionalData = body.additional_data || {};
-      
-      // Extract reference/parent UID for refund linking
-      const referenceUid = transaction.parent_uid || body.parent_uid || null;
-      const transactionType = transaction.type || body.type || null;
-      
-      await supabase.from('payment_reconcile_queue').insert({
-        bepaid_uid: transaction.uid || null,
-        tracking_id: rawTrackingIdEarly || null,
-        amount: transaction.amount ? transaction.amount / 100 : (body.plan?.amount ? body.plan.amount / 100 : null),
-        currency: transaction.currency || body.plan?.currency || 'BYN',
-        customer_email: transaction.customer?.email || body.customer?.email || additionalData.customer_email || null,
-        raw_payload: body,
-        source: 'webhook',
-        status: 'pending',
-        last_error: signatureSkipReason || 'no_tracking_id',
-        transaction_type: transactionType === 'refund' ? 'Возврат средств' : transactionType,
-        reference_transaction_uid: referenceUid,
+      // Save to provider_webhook_orphans for investigation (NOT to working tables)
+      await supabase.from('provider_webhook_orphans').insert({
+        provider: 'bepaid',
+        provider_subscription_id: body?.id || body?.subscription?.id || null,
+        provider_payment_id: body?.transaction?.uid || body?.last_transaction?.uid || null,
+        reason: signatureSkipReason || 'invalid_signature',
+        raw_data: body,
+        processed: false,
       });
       
+      // Audit log for security tracking
       await supabase.from('audit_logs').insert({
         actor_user_id: null,
         actor_type: 'system',
-        actor_label: 'bepaid-webhook',
-        action: 'webhook.queued_for_review',
-        meta: { reason: signatureSkipReason, tracking_id: rawTrackingIdEarly, body_preview: bodyText.substring(0, 500) },
-      });
-      
-      return new Response(
-        JSON.stringify({ error: 'Queued for manual review', queued: true }),
-        { status: 202, headers: corsHeaders }
-      );
-    }
-    
-    // Log if processing without signature but with valid tracking_id
-    if (!signatureVerified && hasValidTrackingId) {
-      console.log('[WEBHOOK-INFO] Processing without signature verification - valid tracking_id found:', rawTrackingIdEarly);
-      
-      await supabase.from('audit_logs').insert({
-        actor_user_id: null,
-        actor_type: 'system',
-        actor_label: 'bepaid-webhook',
-        action: 'webhook.processed_without_signature',
+        actor_label: 'bepaid-webhook-security',
+        action: 'webhook.rejected_invalid_signature',
         meta: { 
           reason: signatureSkipReason, 
           tracking_id: rawTrackingIdEarly,
-          transaction_uid: body.transaction?.uid || body.last_transaction?.uid,
+          transaction_uid: body?.transaction?.uid || body?.last_transaction?.uid,
         },
       });
+      
+      return new Response(
+        JSON.stringify({ error: 'Invalid signature', reason: signatureSkipReason }),
+        { status: 401, headers: corsHeaders }
+      );
     }
 
     // body already parsed above

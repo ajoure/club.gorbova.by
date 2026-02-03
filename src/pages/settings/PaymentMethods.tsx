@@ -53,6 +53,34 @@ export default function PaymentMethodsSettings() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const tokenizeStatus = params.get('tokenize');
+    const bepaidSubStatus = params.get('bepaid_sub');
+    
+    // PATCH-4: Handle pending cancel after successful provider subscription creation
+    const pendingCancel = sessionStorage.getItem('pending_cancel_provider_sub');
+    if (bepaidSubStatus === 'success' && pendingCancel) {
+      // Cancel the old provider subscription after new one was successfully created
+      supabase.functions.invoke('bepaid-cancel-subscriptions', {
+        body: { subscription_ids: [pendingCancel], source: 'user_card_change' }
+      }).then(() => {
+        sessionStorage.removeItem('pending_cancel_provider_sub');
+        queryClient.invalidateQueries({ queryKey: ['user-provider-subscriptions'] });
+        toast.success('Карта успешно изменена');
+      }).catch((err) => {
+        console.error('Failed to cancel old provider subscription:', err);
+        sessionStorage.removeItem('pending_cancel_provider_sub');
+      });
+      navigate(location.pathname, { replace: true });
+      return;
+    } else if (bepaidSubStatus === 'success') {
+      toast.success('Подписка активирована');
+      queryClient.invalidateQueries({ queryKey: ['user-provider-subscriptions'] });
+      navigate(location.pathname, { replace: true });
+      return;
+    } else if (bepaidSubStatus === 'failed') {
+      toast.error('Не удалось оформить подписку');
+      navigate(location.pathname, { replace: true });
+      return;
+    }
     
     if (tokenizeStatus === 'rejected') {
       const reason = params.get('reason');
@@ -332,13 +360,11 @@ export default function PaymentMethodsSettings() {
     },
   });
 
-  // PATCH-7: Change card for provider subscription (cancel + create new)
+  // PATCH-4: Change card for provider subscription - SAFE FLOW
+  // Create new subscription FIRST, cancel old AFTER successful return
   const handleChangeProviderCard = async (providerSubId: string, subscriptionV2Id: string) => {
     try {
-      // 1. Cancel current provider subscription
-      await cancelProviderSubMutation.mutateAsync(providerSubId);
-      
-      // 2. Create new provider subscription (redirect)
+      // 1. FIRST create new provider subscription (redirect)
       const { data, error } = await supabase.functions.invoke('bepaid-create-subscription', {
         body: { subscription_v2_id: subscriptionV2Id }
       });
@@ -346,6 +372,8 @@ export default function PaymentMethodsSettings() {
       if (error) throw error;
       
       if (data?.redirect_url) {
+        // 2. Save old subscription ID for cancellation AFTER successful return
+        sessionStorage.setItem('pending_cancel_provider_sub', providerSubId);
         window.location.href = data.redirect_url;
       } else {
         toast.error('Не удалось создать сессию подписки');
