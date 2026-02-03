@@ -291,18 +291,17 @@ export default function BusinessTraining() {
                   </Button>
                 ) : (
                   <>
-                    {/* Pay Now buttons from tariff_offers (API already filters by is_active) */}
-                    {payNowOffers.map((offer) => (
+                    {/* Single primary Pay Now button */}
+                    {primaryPayOffer && (
                       <Button 
-                        key={offer.id}
                         size="lg" 
                         className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
                         onClick={() => setShowPayment(true)}
                       >
                         <ShoppingCart className="mr-2 h-4 w-4" />
-                        {offer.button_label}
+                        {primaryPayOffer.button_label}
                       </Button>
-                    ))}
+                    )}
                     
                     {existingAccess?.hasPreregistration ? (
                       // Has preregistration - show cancel button
@@ -441,18 +440,17 @@ export default function BusinessTraining() {
                   </Button>
                 ) : (
                   <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                    {/* Pay Now buttons from tariff_offers */}
-                    {payNowOffers.map((offer) => (
+                    {/* Single primary Pay Now button */}
+                    {primaryPayOffer && (
                       <Button 
-                        key={offer.id}
                         size="lg" 
                         className="px-12 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
                         onClick={() => setShowPayment(true)}
                       >
                         <ShoppingCart className="mr-2 h-4 w-4" />
-                        {offer.button_label}
+                        {primaryPayOffer.button_label}
                       </Button>
-                    ))}
+                    )}
                     
                     {/* Preregistration buttons (only if has active offers and user has no existing booking) */}
                     {!existingAccess?.hasPreregistration && preregOffers.map((offer) => (
