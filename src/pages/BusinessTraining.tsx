@@ -499,9 +499,9 @@ export default function BusinessTraining() {
           price={`${primaryPayOffer.amount} BYN`}
           isSubscription={true}
           subscriptionMessage={{
-            title: "Ежемесячная подписка",
+            title: "Квест «Бухгалтерия как бизнес»",
             startDate: dynamicSettings.startDate,
-            nextChargeInfo: `Следующее автоматическое списание произойдёт через месяц (${dynamicSettings.chargeWindowStart}-${dynamicSettings.chargeWindowEnd} числа).`,
+            nextChargeInfo: "Это пошаговый квест с ежемесячным автосписанием. Присоединиться можно только в начале — присоединяться с середины нельзя. Если вы покупаете сейчас, вы начинаете с 1-го модуля. Каждый оплаченный месяц = новый модуль. Вы можете отменить подписку в любой момент в личном кабинете — без звонков и обязательств.",
           }}
         />
       )}
