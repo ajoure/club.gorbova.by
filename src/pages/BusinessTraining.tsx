@@ -75,9 +75,24 @@ export default function BusinessTraining() {
   // Fetch dynamic product data from API
   const { data: productData } = usePublicProduct("business-training.gorbova.by", user?.id);
 
+  // Extract tariff and dynamic offers from product data
+  const tariff = productData?.tariffs?.[0];
+  
+  // Filter offers by type (API already filters by is_active)
+  const payNowOffers = useMemo(() => 
+    tariff?.offers?.filter(o => o.offer_type === "pay_now") || [], 
+    [tariff]
+  );
+  const preregOffers = useMemo(() => 
+    tariff?.offers?.filter(o => o.offer_type === "preregistration") || [], 
+    [tariff]
+  );
+  
+  const primaryPayOffer = payNowOffers.find(o => o.is_primary) || payNowOffers[0];
+
   // Extract dynamic settings from product data
   const dynamicSettings = useMemo(() => {
-    if (!productData?.tariffs?.[0]) {
+    if (!tariff) {
       return {
         startDate: "5 февраля 2026",
         price: 250,
@@ -88,7 +103,6 @@ export default function BusinessTraining() {
       };
     }
 
-    const tariff = productData.tariffs[0];
     const preregOffer = tariff.offers.find(o => o.offer_type === "preregistration");
     const payNowOffer = tariff.offers.find(o => o.offer_type === "pay_now" && o.is_primary);
     
@@ -112,7 +126,7 @@ export default function BusinessTraining() {
       notifyDays: preregMeta?.notify_before_days || 1,
       tariffName: tariff.name || "Ежемесячный доступ",
     };
-  }, [productData]);
+  }, [tariff]);
 
   // Dynamic payment terms based on product settings
   const paymentTerms = useMemo(() => [
@@ -182,12 +196,6 @@ export default function BusinessTraining() {
       cancelBookingMutation.mutate(existingAccess.preregistrationId);
     }
   };
-
-  // Get payment offer for dialog
-  const payNowOffer = productData?.tariffs?.[0]?.offers?.find(
-    (o) => o.offer_type === "pay_now" && o.is_primary
-  );
-  const tariff = productData?.tariffs?.[0];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex flex-col">
@@ -269,7 +277,7 @@ export default function BusinessTraining() {
                 </div>
               )}
 
-              {/* CTA - Always show Pay Now, conditionally show other buttons */}
+              {/* CTA - Dynamically render buttons from tariff_offers */}
               <div className="flex flex-col sm:flex-row gap-3 pt-4">
                 {existingAccess?.hasActiveSubscription ? (
                   // Active subscription - go to content
@@ -283,15 +291,18 @@ export default function BusinessTraining() {
                   </Button>
                 ) : (
                   <>
-                    {/* Pay Now - always available */}
-                    <Button 
-                      size="lg" 
-                      className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
-                      onClick={() => setShowPayment(true)}
-                    >
-                      <ShoppingCart className="mr-2 h-4 w-4" />
-                      Оплатить — {dynamicSettings.price} BYN
-                    </Button>
+                    {/* Pay Now buttons from tariff_offers (API already filters by is_active) */}
+                    {payNowOffers.map((offer) => (
+                      <Button 
+                        key={offer.id}
+                        size="lg" 
+                        className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+                        onClick={() => setShowPayment(true)}
+                      >
+                        <ShoppingCart className="mr-2 h-4 w-4" />
+                        {offer.button_label}
+                      </Button>
+                    ))}
                     
                     {existingAccess?.hasPreregistration ? (
                       // Has preregistration - show cancel button
@@ -310,15 +321,18 @@ export default function BusinessTraining() {
                         Отменить бронь
                       </Button>
                     ) : (
-                      // No preregistration - show book button
-                      <Button 
-                        variant="outline" 
-                        size="lg"
-                        onClick={() => setShowPreregistration(true)}
-                      >
-                        Забронировать место
-                        <ArrowRight className="ml-2 h-4 w-4" />
-                      </Button>
+                      // Preregistration buttons (only if any exist from API = is_active: true)
+                      preregOffers.map((offer) => (
+                        <Button 
+                          key={offer.id}
+                          variant="outline" 
+                          size="lg"
+                          onClick={() => setShowPreregistration(true)}
+                        >
+                          {offer.button_label}
+                          <ArrowRight className="ml-2 h-4 w-4" />
+                        </Button>
+                      ))
                     )}
                   </>
                 )}
@@ -414,8 +428,8 @@ export default function BusinessTraining() {
                 </div>
               </div>
 
-              {/* CTA */}
-              <div className="text-center space-y-4">
+              {/* CTA - Dynamically render buttons from tariff_offers */}
+              <div className="text-center space-y-4" id="pricing">
                 {existingAccess?.hasActiveSubscription ? (
                   <Button 
                     size="lg" 
@@ -427,25 +441,32 @@ export default function BusinessTraining() {
                   </Button>
                 ) : (
                   <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                    <Button 
-                      size="lg" 
-                      className="px-12 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
-                      onClick={() => setShowPayment(true)}
-                    >
-                      <ShoppingCart className="mr-2 h-4 w-4" />
-                      Оплатить — {dynamicSettings.price} BYN
-                    </Button>
-                    {!existingAccess?.hasPreregistration && (
+                    {/* Pay Now buttons from tariff_offers */}
+                    {payNowOffers.map((offer) => (
                       <Button 
+                        key={offer.id}
+                        size="lg" 
+                        className="px-12 bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+                        onClick={() => setShowPayment(true)}
+                      >
+                        <ShoppingCart className="mr-2 h-4 w-4" />
+                        {offer.button_label}
+                      </Button>
+                    ))}
+                    
+                    {/* Preregistration buttons (only if has active offers and user has no existing booking) */}
+                    {!existingAccess?.hasPreregistration && preregOffers.map((offer) => (
+                      <Button 
+                        key={offer.id}
                         variant="outline"
                         size="lg" 
                         className="px-8"
                         onClick={() => setShowPreregistration(true)}
                       >
-                        Забронировать место
+                        {offer.button_label}
                         <ArrowRight className="ml-2 h-4 w-4" />
                       </Button>
-                    )}
+                    ))}
                   </div>
                 )}
                 <p className="text-xs text-muted-foreground">
@@ -469,15 +490,15 @@ export default function BusinessTraining() {
       />
 
       {/* Payment Dialog */}
-      {productData?.product && payNowOffer && tariff && (
+      {productData?.product && primaryPayOffer && tariff && (
         <PaymentDialog
           open={showPayment}
           onOpenChange={setShowPayment}
           productId={productData.product.id}
           productName={productData.product.name}
-          offerId={payNowOffer.id}
+          offerId={primaryPayOffer.id}
           tariffCode={tariff.code}
-          price={`${payNowOffer.amount} BYN`}
+          price={`${primaryPayOffer.amount} BYN`}
           isSubscription={true}
           subscriptionMessage={{
             title: "Ежемесячная подписка",
