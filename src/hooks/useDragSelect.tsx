@@ -165,20 +165,22 @@ export function useDragSelect<T>({ items, getItemId, onSelectionChange }: DragSe
 
     const handleMouseUp = () => {
       if (hasDragStartedRef.current && selectionBox) {
-        // Find items that intersect with selection box
-        const intersectingIds: string[] = [];
-        
-        itemRefs.current.forEach((element, id) => {
-          const rect = element.getBoundingClientRect();
-          if (doRectsIntersect(rect, selectionBox)) {
-            intersectingIds.push(id);
-          }
-        });
+        // Find items that intersect with selection box (wrapped in rAF to prevent forced reflow)
+        requestAnimationFrame(() => {
+          const intersectingIds: string[] = [];
+          
+          itemRefs.current.forEach((element, id) => {
+            const rect = element.getBoundingClientRect();
+            if (doRectsIntersect(rect, selectionBox)) {
+              intersectingIds.push(id);
+            }
+          });
 
-        setSelectedIds((prev) => {
-          const next = new Set(prev);
-          intersectingIds.forEach((id) => next.add(id));
-          return next;
+          setSelectedIds((prev) => {
+            const next = new Set(prev);
+            intersectingIds.forEach((id) => next.add(id));
+            return next;
+          });
         });
       }
 

@@ -32,10 +32,13 @@ export function TicketChat({ ticketId, isAdmin, isClosed }: TicketChatProps) {
     }
   }, [ticketId, isAdmin]);
 
-  // Scroll to bottom on new messages
+  // Scroll to bottom on new messages (wrapped in rAF to prevent forced reflow)
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      const el = scrollRef.current;
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
     }
   }, [messages]);
 
