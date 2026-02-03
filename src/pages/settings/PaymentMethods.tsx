@@ -66,7 +66,10 @@ export default function PaymentMethodsSettings() {
         queryClient.invalidateQueries({ queryKey: ['user-provider-subscriptions'] });
         toast.success('Карта успешно изменена');
       }).catch((err) => {
-        console.error('Failed to cancel old provider subscription:', err);
+        console.error('Failed to cancel old provider subscription', {
+          message: err?.message,
+          name: err?.name,
+        });
         sessionStorage.removeItem('pending_cancel_provider_sub');
       });
       navigate(location.pathname, { replace: true });
