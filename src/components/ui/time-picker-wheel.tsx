@@ -26,29 +26,38 @@ function WheelColumn({ items, value, onChange, disabled }: WheelColumnProps) {
   
   const currentIndex = items.indexOf(value);
   
-  // Scroll to current value on mount and value change
+  // Scroll to current value on mount and value change - use RAF to avoid forced reflow
   React.useEffect(() => {
     if (containerRef.current && currentIndex >= 0) {
-      containerRef.current.scrollTop = currentIndex * itemHeight;
+      requestAnimationFrame(() => {
+        if (containerRef.current) {
+          containerRef.current.scrollTop = currentIndex * itemHeight;
+        }
+      });
     }
   }, [currentIndex]);
 
   const handleScrollEnd = React.useCallback(() => {
     if (!containerRef.current || disabled) return;
     
-    const scrollTop = containerRef.current.scrollTop;
-    const newIndex = Math.round(scrollTop / itemHeight);
-    const clampedIndex = Math.max(0, Math.min(items.length - 1, newIndex));
-    
-    // Snap to nearest item
-    containerRef.current.scrollTo({
-      top: clampedIndex * itemHeight,
-      behavior: "smooth"
+    // Use RAF to batch read/write operations and avoid forced reflow
+    requestAnimationFrame(() => {
+      if (!containerRef.current) return;
+      
+      const scrollTop = containerRef.current.scrollTop;
+      const newIndex = Math.round(scrollTop / itemHeight);
+      const clampedIndex = Math.max(0, Math.min(items.length - 1, newIndex));
+      
+      // Snap to nearest item
+      containerRef.current.scrollTo({
+        top: clampedIndex * itemHeight,
+        behavior: "smooth"
+      });
+      
+      if (items[clampedIndex] !== value) {
+        onChange(items[clampedIndex]);
+      }
     });
-    
-    if (items[clampedIndex] !== value) {
-      onChange(items[clampedIndex]);
-    }
   }, [items, value, onChange, disabled]);
 
   // Debounced scroll handler
@@ -64,12 +73,15 @@ function WheelColumn({ items, value, onChange, disabled }: WheelColumnProps) {
   const handleItemClick = (item: string, index: number) => {
     if (disabled) return;
     onChange(item);
-    if (containerRef.current) {
-      containerRef.current.scrollTo({
-        top: index * itemHeight,
-        behavior: "smooth"
-      });
-    }
+    // Use RAF to avoid forced reflow
+    requestAnimationFrame(() => {
+      if (containerRef.current) {
+        containerRef.current.scrollTo({
+          top: index * itemHeight,
+          behavior: "smooth"
+        });
+      }
+    });
   };
 
   // Handle wheel event for mouse scrolling
