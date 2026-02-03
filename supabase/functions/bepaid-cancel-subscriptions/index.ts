@@ -11,8 +11,14 @@ interface CancelResult {
   total_requested: number;
 }
 
+interface CancelRequest {
+  subscription_ids?: string[];           // bePaid subscription IDs
+  provider_subscription_ids?: string[];  // Alias for subscription_ids
+  subscription_v2_id?: string;           // Our subscription ID - will find and cancel linked provider sub
+  source?: string;                       // 'user_self_cancel' | 'admin_cancel'
+}
+
 async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; secretKey: string } | null> {
-  // Check both 'active' and 'connected' statuses
   const { data: instance } = await supabase
     .from('integration_instances')
     .select('config, status')
@@ -23,7 +29,7 @@ async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; se
   const shopIdFromInstance = instance?.config?.shop_id;
   const secretFromInstance = instance?.config?.secret_key;
   if (shopIdFromInstance && secretFromInstance) {
-    console.log(`[bepaid-cancel-subs] Using creds from integration_instances: shop_id=${shopIdFromInstance}, status=${instance?.status}`);
+    console.log(`[bepaid-cancel-subs] Using creds from integration_instances: shop_id=${shopIdFromInstance}`);
     return { shopId: String(shopIdFromInstance), secretKey: String(secretFromInstance) };
   }
 
@@ -65,16 +71,68 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Check if user is admin
     const { data: hasAdminRole } = await supabase.rpc('has_role', {
       _user_id: user.id,
       _role: 'admin',
     });
 
-    if (!hasAdminRole) {
-      return new Response(JSON.stringify({ error: 'Admin access required' }), {
-        status: 403,
+    const body: CancelRequest = await req.json();
+    const source = body.source || (hasAdminRole ? 'admin_cancel' : 'user_self_cancel');
+    
+    // Collect subscription IDs to cancel
+    let subscriptionIds: string[] = [];
+    let targetUserId: string | null = null;
+
+    // Option 1: Direct bePaid subscription IDs
+    if (body.subscription_ids?.length) {
+      subscriptionIds = body.subscription_ids;
+    } else if (body.provider_subscription_ids?.length) {
+      subscriptionIds = body.provider_subscription_ids;
+    }
+    
+    // Option 2: Find by subscription_v2_id
+    if (body.subscription_v2_id) {
+      const { data: provSubs } = await supabase
+        .from('provider_subscriptions')
+        .select('provider_subscription_id, user_id')
+        .eq('subscription_v2_id', body.subscription_v2_id)
+        .in('state', ['active', 'pending', 'trial']);
+
+      if (provSubs?.length) {
+        subscriptionIds.push(...provSubs.map((s: any) => s.provider_subscription_id));
+        targetUserId = provSubs[0].user_id;
+      }
+    }
+
+    if (subscriptionIds.length === 0) {
+      return new Response(JSON.stringify({ error: 'No subscription IDs provided or found' }), {
+        status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // RBAC: Non-admins can only cancel their own subscriptions
+    if (!hasAdminRole) {
+      // Verify ownership of all subscriptions
+      const { data: ownedSubs } = await supabase
+        .from('provider_subscriptions')
+        .select('provider_subscription_id')
+        .in('provider_subscription_id', subscriptionIds)
+        .eq('user_id', user.id);
+
+      const ownedIds = new Set(ownedSubs?.map((s: any) => s.provider_subscription_id) || []);
+      const notOwnedIds = subscriptionIds.filter(id => !ownedIds.has(id));
+
+      if (notOwnedIds.length > 0) {
+        console.error(`[bepaid-cancel-subs] User ${user.id} tried to cancel unowned subscriptions:`, notOwnedIds);
+        return new Response(JSON.stringify({ 
+          error: 'Access denied: Cannot cancel subscriptions you do not own' 
+        }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     const credentials = await getBepaidCredentials(supabase);
@@ -82,22 +140,8 @@ Deno.serve(async (req) => {
       console.error('[bepaid-cancel-subs] No credentials found');
       return new Response(JSON.stringify({ 
         error: 'bePaid credentials not configured',
-        debug: {
-          checked_statuses: ['active', 'connected'],
-          integration_found: false
-        }
       }), {
         status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const body = await req.json();
-    const subscriptionIds: string[] = body.subscription_ids || [];
-
-    if (!Array.isArray(subscriptionIds) || subscriptionIds.length === 0) {
-      return new Response(JSON.stringify({ error: 'subscription_ids array is required' }), {
-        status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -112,6 +156,7 @@ Deno.serve(async (req) => {
 
     for (const subId of subscriptionIds) {
       try {
+        // Call bePaid cancel API
         const response = await fetch(`https://api.bepaid.by/subscriptions/${subId}/cancel`, {
           method: 'POST',
           headers: {
@@ -119,54 +164,83 @@ Deno.serve(async (req) => {
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },
-          body: JSON.stringify({ cancel_reason: 'cancelled_by_admin' }),
+          body: JSON.stringify({ cancel_reason: source === 'user_self_cancel' ? 'cancelled_by_customer' : 'cancelled_by_admin' }),
         });
 
-        if (response.ok) {
+        if (response.ok || response.status === 404) {
+          // 404 means already canceled - treat as success
           result.cancelled.push(subId);
-          console.log(`Cancelled subscription ${subId}`);
+          console.log(`[bepaid-cancel-subs] Cancelled subscription ${subId}`);
 
+          // Update provider_subscriptions
+          await supabase
+            .from('provider_subscriptions')
+            .update({
+              state: 'canceled',
+            })
+            .eq('provider_subscription_id', subId);
+
+          // Update linked subscriptions_v2
           const { data: linkedSubs } = await supabase
-            .from('subscriptions_v2')
-            .select('id, meta')
-            .eq('meta->bepaid_subscription_id', subId);
+            .from('provider_subscriptions')
+            .select('subscription_v2_id, user_id')
+            .eq('provider_subscription_id', subId);
 
           for (const linked of linkedSubs || []) {
-            await supabase
-              .from('subscriptions_v2')
-              .update({
-                auto_renew: false,
-                status: 'cancelled',
-                canceled_at: new Date().toISOString(),
-                meta: {
-                  ...((linked.meta as object) || {}),
-                  bepaid_cancelled_at: new Date().toISOString(),
-                  bepaid_cancelled_by: user.id,
-                },
-              })
-              .eq('id', linked.id);
+            if (linked.subscription_v2_id) {
+              const { data: subV2 } = await supabase
+                .from('subscriptions_v2')
+                .select('meta')
+                .eq('id', linked.subscription_v2_id)
+                .single();
+
+              await supabase
+                .from('subscriptions_v2')
+                .update({
+                  auto_renew: false,
+                  canceled_at: new Date().toISOString(),
+                  meta: {
+                    ...((subV2?.meta as object) || {}),
+                    bepaid_cancelled_at: new Date().toISOString(),
+                    bepaid_cancelled_by: user.id,
+                    bepaid_cancel_source: source,
+                  },
+                })
+                .eq('id', linked.subscription_v2_id);
+            }
+
+            // Set targetUserId for audit
+            if (!targetUserId && linked.user_id) {
+              targetUserId = linked.user_id;
+            }
           }
         } else {
           const errText = await response.text();
           result.failed.push({ id: subId, error: `${response.status}: ${errText}` });
-          console.error(`Failed to cancel ${subId}:`, response.status, errText);
+          console.error(`[bepaid-cancel-subs] Failed to cancel ${subId}:`, response.status, errText);
         }
       } catch (e: any) {
         result.failed.push({ id: subId, error: e.message });
-        console.error(`Error cancelling ${subId}:`, e);
+        console.error(`[bepaid-cancel-subs] Error cancelling ${subId}:`, e);
       }
     }
 
+    // Audit log
     await supabase.from('audit_logs').insert({
-      actor_user_id: user.id,
-      action: 'bepaid_subscriptions.bulk_cancel',
-      actor_type: 'admin',
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'bepaid-cancel-subscription',
+      action: 'bepaid.subscription.cancel',
+      target_user_id: targetUserId || user.id,
       meta: {
         requested: subscriptionIds.length,
         cancelled: result.cancelled.length,
         failed: result.failed.length,
         cancelled_ids: result.cancelled,
         failed_details: result.failed,
+        source,
+        initiator_user_id: user.id,
+        is_admin: hasAdminRole,
       },
     });
 
@@ -174,7 +248,7 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (e: any) {
-    console.error('Error cancelling subscriptions:', e);
+    console.error('[bepaid-cancel-subs] Error:', e);
     return new Response(JSON.stringify({ error: e.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -530,8 +530,21 @@ async function chargeSubscription(
   subscription: any,
   bepaidConfig: any
 ): Promise<ChargeResult> {
-  const { id, user_id, payment_token, payment_method_id, tariffs, next_charge_at, is_trial, order_id, tariff_id, meta: subMeta } = subscription;
+  const { id, user_id, payment_token, payment_method_id, tariffs, next_charge_at, is_trial, order_id, tariff_id, meta: subMeta, billing_type } = subscription;
   const now = new Date();
+
+  // ========== PROVIDER-MANAGED CHECK (PATCH-6) ==========
+  // Skip charge for subscriptions managed by bePaid Subscriptions
+  if (billing_type === 'provider_managed') {
+    console.log(`Subscription ${id}: billing_type=provider_managed, skipping (managed by bePaid)`);
+    return {
+      subscription_id: id,
+      success: true,
+      skipped: true,
+      skip_reason: 'provider_managed',
+    };
+  }
+  // ========== END PROVIDER-MANAGED CHECK ==========
 
   // ========== GRACE PERIOD CHECKS (MUST BE FIRST) ==========
   

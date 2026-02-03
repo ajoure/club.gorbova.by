@@ -3669,6 +3669,8 @@ export type Database = {
           pricing_stage_id: string | null
           product_id: string | null
           profile_id: string | null
+          provider: string | null
+          provider_payment_id: string | null
           purchase_snapshot: Json | null
           reconcile_source: string | null
           status: Database["public"]["Enums"]["order_status"]
@@ -3702,6 +3704,8 @@ export type Database = {
           pricing_stage_id?: string | null
           product_id?: string | null
           profile_id?: string | null
+          provider?: string | null
+          provider_payment_id?: string | null
           purchase_snapshot?: Json | null
           reconcile_source?: string | null
           status?: Database["public"]["Enums"]["order_status"]
@@ -3735,6 +3739,8 @@ export type Database = {
           pricing_stage_id?: string | null
           product_id?: string | null
           profile_id?: string | null
+          provider?: string | null
+          provider_payment_id?: string | null
           purchase_snapshot?: Json | null
           reconcile_source?: string | null
           status?: Database["public"]["Enums"]["order_status"]
@@ -5385,6 +5391,123 @@ export type Database = {
           },
         ]
       }
+      provider_subscriptions: {
+        Row: {
+          amount_cents: number | null
+          card_brand: string | null
+          card_last4: string | null
+          card_token: string | null
+          created_at: string
+          currency: string | null
+          id: string
+          interval_days: number | null
+          last_charge_at: string | null
+          next_charge_at: string | null
+          profile_id: string | null
+          provider: string
+          provider_subscription_id: string
+          raw_data: Json | null
+          state: string
+          subscription_v2_id: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          amount_cents?: number | null
+          card_brand?: string | null
+          card_last4?: string | null
+          card_token?: string | null
+          created_at?: string
+          currency?: string | null
+          id?: string
+          interval_days?: number | null
+          last_charge_at?: string | null
+          next_charge_at?: string | null
+          profile_id?: string | null
+          provider?: string
+          provider_subscription_id: string
+          raw_data?: Json | null
+          state?: string
+          subscription_v2_id?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          amount_cents?: number | null
+          card_brand?: string | null
+          card_last4?: string | null
+          card_token?: string | null
+          created_at?: string
+          currency?: string | null
+          id?: string
+          interval_days?: number | null
+          last_charge_at?: string | null
+          next_charge_at?: string | null
+          profile_id?: string | null
+          provider?: string
+          provider_subscription_id?: string
+          raw_data?: Json | null
+          state?: string
+          subscription_v2_id?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provider_subscriptions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "provider_subscriptions_subscription_v2_id_fkey"
+            columns: ["subscription_v2_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      provider_webhook_orphans: {
+        Row: {
+          created_at: string
+          id: string
+          processed: boolean | null
+          processed_at: string | null
+          provider: string
+          provider_payment_id: string | null
+          provider_subscription_id: string | null
+          raw_data: Json
+          reason: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          processed?: boolean | null
+          processed_at?: string | null
+          provider?: string
+          provider_payment_id?: string | null
+          provider_subscription_id?: string | null
+          raw_data: Json
+          reason: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          processed?: boolean | null
+          processed_at?: string | null
+          provider?: string
+          provider_payment_id?: string | null
+          provider_subscription_id?: string | null
+          raw_data?: Json
+          reason?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       quest_lessons: {
         Row: {
           created_at: string
@@ -5850,6 +5973,7 @@ export type Database = {
           auto_renew_disabled_at: string | null
           auto_renew_disabled_by: string | null
           auto_renew_disabled_by_user_id: string | null
+          billing_type: string
           cancel_at: string | null
           cancel_reason: string | null
           canceled_at: string | null
@@ -5884,6 +6008,7 @@ export type Database = {
           auto_renew_disabled_at?: string | null
           auto_renew_disabled_by?: string | null
           auto_renew_disabled_by_user_id?: string | null
+          billing_type?: string
           cancel_at?: string | null
           cancel_reason?: string | null
           canceled_at?: string | null
@@ -5918,6 +6043,7 @@ export type Database = {
           auto_renew_disabled_at?: string | null
           auto_renew_disabled_by?: string | null
           auto_renew_disabled_by_user_id?: string | null
+          billing_type?: string
           cancel_at?: string | null
           cancel_reason?: string | null
           canceled_at?: string | null
