@@ -1045,7 +1045,7 @@ export function PaymentDialog({
                     <p className="text-muted-foreground">
                       Это даёт вам мгновенный доступ к материалам после старта {subscriptionMessage.startDate}.
                     </p>
-                    <p className="text-muted-foreground">
+                    <p className="text-muted-foreground whitespace-pre-line">
                       {subscriptionMessage.nextChargeInfo || "Следующее автоматическое списание произойдёт через месяц."}
                     </p>
                   </>
