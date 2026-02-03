@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Upload, Sparkles, Loader2, X, CalendarIcon, Plus, Video, HelpCircle } from "lucide-react";
+import { Upload, Sparkles, Loader2, X, CalendarIcon, Plus, Video, HelpCircle, Clock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -13,10 +13,13 @@ import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { KbQuestionInput, KbQuestionInputData } from "./KbQuestionInput";
 import { generateLessonSlug } from "./LessonFormFieldsSimple";
+import { TimezoneSelector } from "@/components/admin/payments/TimezoneSelector";
 
 export interface KbLessonFormData {
   episode_number: number;
   answer_date?: Date;
+  answer_time?: string;      // "HH:mm" format
+  answer_timezone?: string;  // IANA timezone, default "Europe/Minsk"
   kinescope_url?: string;
   thumbnail_url?: string;
   questions: KbQuestionInputData[];
@@ -188,21 +191,25 @@ export const KbLessonFormFields = memo(function KbLessonFormFields({
             placeholder="101"
           />
         </div>
-        <div className="space-y-2">
-          <Label>Дата ответа</Label>
+      </div>
+
+      {/* Date, Time & Timezone */}
+      <div className="space-y-2">
+        <Label>Дата выпуска</Label>
+        <div className="flex flex-wrap gap-2">
           <Popover>
             <PopoverTrigger asChild>
               <Button
                 variant="outline"
                 className={cn(
-                  "w-full justify-start text-left font-normal",
+                  "flex-1 min-w-[140px] justify-start text-left font-normal",
                   !formData.answer_date && "text-muted-foreground"
                 )}
               >
                 <CalendarIcon className="mr-2 h-4 w-4" />
                 {formData.answer_date
                   ? format(formData.answer_date, "dd.MM.yyyy", { locale: ru })
-                  : "Выберите дату"}
+                  : "Дата"}
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
@@ -214,7 +221,29 @@ export const KbLessonFormFields = memo(function KbLessonFormFields({
               />
             </PopoverContent>
           </Popover>
+          
+          <div className="relative min-w-[100px]">
+            <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              type="time"
+              value={formData.answer_time || "00:00"}
+              onChange={(e) => onChange({ ...formData, answer_time: e.target.value })}
+              className="pl-9 w-full"
+            />
+          </div>
+          
+          <TimezoneSelector
+            value={formData.answer_timezone || "Europe/Minsk"}
+            onValueChange={(tz) => onChange({ ...formData, answer_timezone: tz })}
+          />
         </div>
+        
+        {formData.answer_date && formData.answer_date > new Date() && (
+          <p className="text-xs text-amber-600 flex items-center gap-1 mt-1">
+            <Clock className="h-3 w-3" />
+            Урок будет показан со статусом «Скоро» до указанной даты
+          </p>
+        )}
       </div>
 
       {/* Kinescope URL */}
@@ -329,7 +358,10 @@ export const KbLessonFormFields = memo(function KbLessonFormFields({
             </AlertDescription>
           </Alert>
         ) : (
-          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+          <div 
+            className="space-y-3 pr-2 border rounded-md p-2 bg-muted/20"
+            style={{ maxHeight: '240px', overflowY: 'auto' }}
+          >
             {formData.questions.map((q, index) => (
               <KbQuestionInput
                 key={index}

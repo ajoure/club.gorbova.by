@@ -21,7 +21,7 @@ interface LessonsBySectionResult {
  * Fetches lessons from container modules (is_container = true)
  * These lessons display as standalone cards in their sections
  */
-export function useContainerLessons(): LessonsBySectionResult {
+export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: boolean } {
   const { user } = useAuth();
   const { isAdmin } = usePermissions();
   const isAdminUser = isAdmin();
@@ -120,6 +120,14 @@ export function useContainerLessons(): LessonsBySectionResult {
       const container = containerMap.get(lesson.module_id);
       if (!container) continue;
 
+      // Filter out scheduled lessons for non-admins
+      if (!isAdminUser && lesson.published_at) {
+        const publishDate = new Date(lesson.published_at);
+        if (publishDate > new Date()) {
+          continue; // Skip scheduled lessons for regular users
+        }
+      }
+
       const sectionKey = container.sectionKey;
       if (!lessonsBySection[sectionKey]) {
         lessonsBySection[sectionKey] = {
@@ -163,5 +171,6 @@ export function useContainerLessons(): LessonsBySectionResult {
     containerModules,
     restrictedTariffs: Array.from(restrictedTariffIds),
     isLoading,
+    isAdminUser,
   };
 }

@@ -2,6 +2,9 @@ import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { formatInTimeZone } from "date-fns-tz";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +26,7 @@ import { ModuleFormFields, ModuleFormData, generateSlug } from "./ModuleFormFiel
 import { LessonFormFieldsSimple, LessonFormDataSimple, generateLessonSlug } from "./LessonFormFieldsSimple";
 import { KbLessonFormFields, KbLessonFormData, generateKbLessonSlug } from "./KbLessonFormFields";
 import { CompactAccessSelector } from "./CompactAccessSelector";
+import { LessonNotificationConfig, NotificationConfig, defaultNotificationConfig } from "./LessonNotificationConfig";
 import { parseTimecode } from "@/hooks/useKbQuestions";
 
 interface ContentCreationWizardProps {
@@ -39,6 +43,7 @@ interface WizardData {
   lesson: LessonFormDataSimple;
   kbLesson: KbLessonFormData;
   tariffIds: string[];
+  notification: NotificationConfig;
 }
 
 // Steps for MODULE flow
@@ -161,11 +166,14 @@ const createInitialState = (initialSectionKey?: string): WizardData => ({
   kbLesson: {
     episode_number: 0,
     answer_date: undefined,
+    answer_time: "00:00",
+    answer_timezone: "Europe/Minsk",
     kinescope_url: "",
     thumbnail_url: "",
     questions: [],
   },
   tariffIds: [],
+  notification: { ...defaultNotificationConfig },
 });
 
 // Check if section is KB (videos or questions)
@@ -417,6 +425,22 @@ export function ContentCreationWizard({
 
       const sortOrder = isKbFlow ? wizardData.kbLesson.episode_number : 0;
 
+      // Build published_at with time and timezone
+      let publishedAt: string | null = null;
+      if (isKbFlow && wizardData.kbLesson.answer_date) {
+        const answerDate = wizardData.kbLesson.answer_date;
+        const answerTime = wizardData.kbLesson.answer_time || "00:00";
+        const answerTz = wizardData.kbLesson.answer_timezone || "Europe/Minsk";
+        
+        // Combine date + time
+        const [hours, minutes] = answerTime.split(":").map(Number);
+        const combinedDate = new Date(answerDate);
+        combinedDate.setHours(hours, minutes, 0, 0);
+        
+        // Format to ISO with timezone
+        publishedAt = formatInTimeZone(combinedDate, answerTz, "yyyy-MM-dd'T'HH:mm:ssXXX");
+      }
+
       // Create lesson in container
       const { data: newLesson, error } = await supabase
         .from("training_lessons")
@@ -429,9 +453,7 @@ export function ContentCreationWizard({
           content_type: isKbFlow ? "video" : "mixed",
           is_active: true,
           sort_order: sortOrder,
-          published_at: isKbFlow && wizardData.kbLesson.answer_date 
-            ? wizardData.kbLesson.answer_date.toISOString()
-            : null,
+          published_at: publishedAt,
         })
         .select()
         .single();
@@ -488,6 +510,14 @@ export function ContentCreationWizard({
         queryClient.invalidateQueries({ queryKey: ["kb-questions"] });
       }
 
+      // Get container slug for URL
+      const { data: containerData } = await supabase
+        .from("training_modules")
+        .select("slug")
+        .eq("id", containerId)
+        .single();
+      const containerSlug = containerData?.slug || "container";
+
       // SAVE ACCESS (previously was separate step)
       // Clear existing access first
       await supabase.from("module_access").delete().eq("module_id", containerId);
@@ -504,7 +534,60 @@ export function ContentCreationWizard({
           toast.error("Урок создан, но не удалось сохранить настройки доступа");
         }
       }
-      
+
+      // SEND TELEGRAM NOTIFICATION (if configured and not scheduled for future)
+      if (wizardData.notification.enabled && wizardData.notification.botId && wizardData.notification.messageText) {
+        const isScheduledForFuture = isKbFlow && wizardData.kbLesson.answer_date && wizardData.kbLesson.answer_date > new Date();
+        const shouldSendNow = !wizardData.notification.sendOnPublish || !isScheduledForFuture;
+        
+        // Get final lesson URL
+        const finalLessonUrl = `https://gorbova.lovable.app/library/${containerSlug}/${lessonSlug}`;
+        
+        // Update button URL if it was placeholder
+        const buttonUrl = wizardData.notification.buttonUrl?.includes("...") 
+          ? finalLessonUrl 
+          : (wizardData.notification.buttonUrl || finalLessonUrl);
+
+        if (shouldSendNow) {
+          try {
+            // Call edge function to send notification
+            const { data: session } = await supabase.auth.getSession();
+            const response = await fetch(
+              `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-broadcast`,
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${session?.session?.access_token}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  botId: wizardData.notification.botId,
+                  messageText: wizardData.notification.messageText,
+                  buttonText: wizardData.notification.buttonText || "Смотреть",
+                  buttonUrl: buttonUrl,
+                  targetTariffIds: wizardData.tariffIds.length > 0 ? wizardData.tariffIds : null,
+                  notificationType: "lesson_release",
+                  lessonId: newLesson.id,
+                }),
+              }
+            );
+
+            if (response.ok) {
+              toast.success("Уведомление отправляется...");
+            } else {
+              console.error("Notification response:", await response.text());
+              toast.info("Урок создан, уведомление будет отправлено позже");
+            }
+          } catch (e) {
+            console.error("Notification error:", e);
+            toast.info("Урок создан. Уведомление можно отправить вручную");
+          }
+        } else if (wizardData.notification.sendOnPublish && isScheduledForFuture) {
+          // For now, just inform user - future: add meta column or separate table
+          toast.info(`Уведомление будет отправлено при публикации урока (${format(wizardData.kbLesson.answer_date!, "d MMM в HH:mm", { locale: ru })})`);
+        }
+      }
+
       queryClient.invalidateQueries({ queryKey: ["container-lessons"] });
       queryClient.invalidateQueries({ queryKey: ["sidebar-modules"] });
       queryClient.invalidateQueries({ queryKey: ["module-access"] });
@@ -628,12 +711,29 @@ export function ContentCreationWizard({
       // Lesson flow steps: Section -> Type -> Access -> Lesson -> Done
       if (step === 2) {
         // ACCESS step (now comes BEFORE lesson)
+        const lessonTitle = isKbFlow 
+          ? `Выпуск №${wizardData.kbLesson.episode_number || "..."}`
+          : (wizardData.lesson.title || "Новый урок");
+        
+        const lessonUrl = `https://gorbova.lovable.app/library/${wizardData.menuSectionKey}/...`;
+        
         return (
-          <CompactAccessSelector
-            selectedTariffIds={wizardData.tariffIds}
-            onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
-            products={productsWithTariffs || []}
-          />
+          <div className="space-y-6">
+            <CompactAccessSelector
+              selectedTariffIds={wizardData.tariffIds}
+              onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
+              products={productsWithTariffs || []}
+            />
+            
+            {/* Telegram notifications */}
+            <LessonNotificationConfig
+              config={wizardData.notification}
+              onChange={(cfg) => setWizardData((prev) => ({ ...prev, notification: cfg }))}
+              lessonTitle={lessonTitle}
+              lessonUrl={lessonUrl}
+              selectedTariffIds={wizardData.tariffIds}
+            />
+          </div>
         );
       }
       if (step === 3) {

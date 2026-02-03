@@ -1,9 +1,10 @@
 import { useNavigate } from "react-router-dom";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/badge";
-import { Play, Clock, Calendar, Lock, Video } from "lucide-react";
+import { Play, Clock, Calendar, Lock, Video, Timer } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
+import { format, isFuture } from "date-fns";
+import { ru } from "date-fns/locale";
 
 export interface LessonCardData {
   id: string;
@@ -23,6 +24,7 @@ interface LessonCardProps {
   moduleSlug: string;
   variant?: "default" | "compact";
   episodeNumber?: number;
+  isAdmin?: boolean;  // Admin can click even if scheduled
 }
 
 function formatDuration(seconds: number): string {
@@ -35,12 +37,21 @@ export function LessonCard({
   lesson, 
   moduleSlug, 
   variant = "default",
-  episodeNumber 
+  episodeNumber,
+  isAdmin = false 
 }: LessonCardProps) {
   const navigate = useNavigate();
   const hasAccess = lesson.has_access !== false;
+  
+  // Check if lesson is scheduled for future
+  const isScheduled = lesson.published_at && isFuture(new Date(lesson.published_at));
+  const scheduledDate = isScheduled ? new Date(lesson.published_at!) : null;
 
   const handleClick = () => {
+    // If scheduled and not admin - don't navigate
+    if (isScheduled && !isAdmin) {
+      return;
+    }
     navigate(`/library/${moduleSlug}/${lesson.slug}`);
   };
 
@@ -55,7 +66,9 @@ export function LessonCard({
     <GlassCard
       className={cn(
         "overflow-hidden group relative bg-background/60 backdrop-blur-xl border border-border/30 transition-all duration-300",
-        "hover:border-primary/40 hover:shadow-xl cursor-pointer",
+        !isScheduled && "hover:border-primary/40 hover:shadow-xl cursor-pointer",
+        isScheduled && !isAdmin && "cursor-not-allowed",
+        isScheduled && isAdmin && "hover:border-amber-500/40 cursor-pointer",
         !hasAccess && "opacity-80"
       )}
       onClick={handleClick}
@@ -95,8 +108,18 @@ export function LessonCard({
           </div>
         )}
 
-        {/* Access badge */}
-        {!hasAccess && (
+        {/* Scheduled badge - "Скоро" */}
+        {isScheduled && scheduledDate && (
+          <div className="absolute top-3 right-3">
+            <Badge className="gap-1 bg-amber-500 hover:bg-amber-600 text-white">
+              <Timer className="h-3 w-3" />
+              Скоро: {format(scheduledDate, "d MMM в HH:mm", { locale: ru })}
+            </Badge>
+          </div>
+        )}
+
+        {/* Access badge - only show if not scheduled */}
+        {!hasAccess && !isScheduled && (
           <div className="absolute top-3 right-3">
             <Badge variant="secondary" className="gap-1 bg-background/80 backdrop-blur-sm">
               <Lock className="h-3 w-3" />
