@@ -168,9 +168,9 @@ const createInitialState = (initialSectionKey?: string): WizardData => ({
   tariffIds: [],
 });
 
-// Check if section is KB videos
-const isKbVideoSection = (sectionKey: string): boolean => {
-  return sectionKey === "knowledge-videos";
+// Check if section is KB (videos or questions)
+const isKbSection = (sectionKey: string): boolean => {
+  return sectionKey === "knowledge-videos" || sectionKey === "knowledge-questions";
 };
 
 export function ContentCreationWizard({
@@ -194,7 +194,7 @@ export function ContentCreationWizard({
 
   // Determine which flow we're in
   const isLessonFlow = wizardData.contentType === "lesson";
-  const isKbFlow = isLessonFlow && isKbVideoSection(wizardData.menuSectionKey);
+  const isKbFlow = isLessonFlow && isKbSection(wizardData.menuSectionKey);
   const steps = isLessonFlow ? LESSON_STEPS : MODULE_STEPS;
   const hints = isKbFlow ? KB_LESSON_HINTS : (isLessonFlow ? LESSON_HINTS : MODULE_HINTS);
   const maxStep = steps.length - 1;
@@ -426,7 +426,7 @@ export function ContentCreationWizard({
           slug: lessonSlug,
           description: isKbFlow ? null : (wizardData.lesson.description || null),
           thumbnail_url: thumbnailUrl || null,
-          content_type: "mixed",
+          content_type: isKbFlow ? "video" : "mixed",
           is_active: true,
           sort_order: sortOrder,
           published_at: isKbFlow && wizardData.kbLesson.answer_date 
@@ -777,8 +777,8 @@ export function ContentCreationWizard({
         </div>
 
         {/* Step content with scroll */}
-        <ScrollArea className="flex-1 px-6">
-          <div className="py-4 min-h-[300px]">
+        <ScrollArea className="flex-1 min-h-0 px-6">
+          <div className="py-4">
             {/* Slug warning */}
             {slugWarning && (
               <Alert className="mb-4 border-yellow-500/50 bg-yellow-500/10">
