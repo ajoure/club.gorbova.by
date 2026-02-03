@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { Loader2, Wand2, BookOpen, FileText, CheckCircle2, ArrowLeft, ArrowRight, SkipForward, ExternalLink, Plus, AlertTriangle, Video } from "lucide-react";
 import { toast } from "sonner";
 
@@ -27,6 +27,7 @@ import { LessonFormFieldsSimple, LessonFormDataSimple, generateLessonSlug } from
 import { KbLessonFormFields, KbLessonFormData, generateKbLessonSlug } from "./KbLessonFormFields";
 import { CompactAccessSelector } from "./CompactAccessSelector";
 import { LessonNotificationConfig, NotificationConfig, defaultNotificationConfig } from "./LessonNotificationConfig";
+import { LessonSaleConfig, SaleConfig, defaultSaleConfig } from "./LessonSaleConfig";
 import { parseTimecode } from "@/hooks/useKbQuestions";
 
 interface ContentCreationWizardProps {
@@ -44,6 +45,7 @@ interface WizardData {
   kbLesson: KbLessonFormData;
   tariffIds: string[];
   notification: NotificationConfig;
+  saleConfig: SaleConfig;
 }
 
 // Steps for MODULE flow
@@ -174,6 +176,7 @@ const createInitialState = (initialSectionKey?: string): WizardData => ({
   },
   tariffIds: [],
   notification: { ...defaultNotificationConfig },
+  saleConfig: { ...defaultSaleConfig },
 });
 
 // Check if section is KB (videos or questions)
@@ -535,6 +538,96 @@ export function ContentCreationWizard({
         }
       }
 
+      // CREATE PRODUCT FOR LESSON MONETIZATION (if enabled)
+      if (wizardData.saleConfig.enabled && wizardData.saleConfig.basePrice > 0) {
+        try {
+          const productCode = `lesson-${lessonSlug}`;
+          const productName = isKbFlow 
+            ? `Выпуск №${wizardData.kbLesson.episode_number}`
+            : wizardData.lesson.title;
+          
+          // 1. Create product
+          const { data: newProduct, error: productError } = await supabase
+            .from("products_v2")
+            .insert({
+              code: productCode,
+              name: `Урок: ${productName}`,
+              slug: lessonSlug,
+              category: 'lesson',
+              status: 'active',
+              is_active: true,
+              currency: 'BYN',
+            })
+            .select()
+            .single();
+          
+          if (productError) {
+            console.error("Error creating product:", productError);
+            toast.error("Урок создан, но не удалось создать продукт для продажи");
+          } else {
+            // 2. Create tariff
+            const accessDays = 
+              wizardData.saleConfig.accessDuration === 'forever' ? 36500 :
+              wizardData.saleConfig.accessDuration === 'days' ? (wizardData.saleConfig.accessDays || 30) :
+              30; // 'period' handled in grant-access
+            
+            const { data: newTariff, error: tariffError } = await supabase
+              .from("tariffs")
+              .insert({
+                product_id: newProduct.id,
+                code: `${productCode}-base`,
+                name: 'Доступ к уроку',
+                access_days: accessDays,
+                is_active: true,
+              })
+              .select()
+              .single();
+            
+            if (tariffError) {
+              console.error("Error creating tariff:", tariffError);
+            } else {
+              // 3. Create offer (payment button)
+              await supabase.from("tariff_offers").insert({
+                tariff_id: newTariff.id,
+                offer_type: 'pay_now',
+                button_label: 'Купить',
+                amount: wizardData.saleConfig.basePrice,
+                is_active: true,
+                is_primary: true,
+                sort_order: 0,
+              });
+              
+              // 4. Save price rules
+              if (wizardData.saleConfig.priceRules.length > 0) {
+                const priceRules = wizardData.saleConfig.priceRules
+                  .filter(r => r.tariffId && r.price > 0)
+                  .map((r, idx) => ({
+                    lesson_id: newLesson.id,
+                    tariff_id: r.tariffId,
+                    price: r.price,
+                    sort_order: idx,
+                  }));
+                
+                if (priceRules.length > 0) {
+                  await supabase.from("lesson_price_rules").insert(priceRules);
+                }
+              }
+              
+              // 5. Update lesson with product_id
+              await supabase
+                .from("training_lessons")
+                .update({ product_id: newProduct.id })
+                .eq("id", newLesson.id);
+              
+              toast.success("Продукт для продажи урока создан");
+            }
+          }
+        } catch (e) {
+          console.error("Error creating lesson product:", e);
+          toast.info("Урок создан, но продукт для продажи не удалось создать");
+        }
+      }
+
       // SEND TELEGRAM NOTIFICATION (if configured and not scheduled for future)
       if (wizardData.notification.enabled && wizardData.notification.botId && wizardData.notification.messageText) {
         const isScheduledForFuture = isKbFlow && wizardData.kbLesson.answer_date && wizardData.kbLesson.answer_date > new Date();
@@ -725,26 +818,46 @@ export function ContentCreationWizard({
               products={productsWithTariffs || []}
             />
             
-            {/* Telegram notifications */}
-            <LessonNotificationConfig
-              config={wizardData.notification}
-              onChange={(cfg) => setWizardData((prev) => ({ ...prev, notification: cfg }))}
-              lessonTitle={lessonTitle}
-              lessonUrl={lessonUrl}
-              selectedTariffIds={wizardData.tariffIds}
+            {/* Lesson monetization */}
+            <LessonSaleConfig
+              config={wizardData.saleConfig}
+              onChange={(cfg) => setWizardData((prev) => ({ ...prev, saleConfig: cfg }))}
             />
           </div>
         );
       }
       if (step === 3) {
-        // LESSON step
+        // LESSON step - now includes notifications AFTER lesson data
+        const lessonTitle = isKbFlow 
+          ? `Выпуск №${wizardData.kbLesson.episode_number || "..."}`
+          : (wizardData.lesson.title || "Новый урок");
+        
+        const containerSlug = wizardData.menuSectionKey === "knowledge-videos" 
+          ? "container-knowledge-videos" 
+          : "container-knowledge-questions";
+        const lessonSlug = isKbFlow
+          ? generateKbLessonSlug(wizardData.kbLesson.episode_number || 0)
+          : (wizardData.lesson.slug || generateLessonSlug(wizardData.lesson.title));
+        const lessonUrl = `https://gorbova.lovable.app/library/${containerSlug}/${lessonSlug}`;
+        
         // Check if KB flow - show special KB form
         if (isKbFlow) {
           return (
-            <div className="space-y-4">
+            <div className="space-y-6">
               <KbLessonFormFields
                 formData={wizardData.kbLesson}
                 onChange={handleKbLessonChange}
+              />
+              
+              {/* Telegram notifications - NOW AFTER lesson data */}
+              <LessonNotificationConfig
+                config={wizardData.notification}
+                onChange={(cfg) => setWizardData((prev) => ({ ...prev, notification: cfg }))}
+                lessonTitle={lessonTitle}
+                lessonUrl={lessonUrl}
+                selectedTariffIds={wizardData.tariffIds}
+                episodeNumber={wizardData.kbLesson.episode_number}
+                questions={wizardData.kbLesson.questions}
               />
             </div>
           );
@@ -752,7 +865,7 @@ export function ContentCreationWizard({
 
         // Regular lesson form
         return (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <LessonFormFieldsSimple
               formData={wizardData.lesson}
               onChange={handleLessonChange}
@@ -763,6 +876,15 @@ export function ContentCreationWizard({
                 Этот урок появится как отдельная карточка в разделе. Видео и контент добавляются в редакторе блоков.
               </AlertDescription>
             </Alert>
+            
+            {/* Telegram notifications */}
+            <LessonNotificationConfig
+              config={wizardData.notification}
+              onChange={(cfg) => setWizardData((prev) => ({ ...prev, notification: cfg }))}
+              lessonTitle={lessonTitle}
+              lessonUrl={lessonUrl}
+              selectedTariffIds={wizardData.tariffIds}
+            />
           </div>
         );
       }
@@ -899,9 +1021,9 @@ export function ContentCreationWizard({
           <WizardStepIndicator steps={steps} currentStep={step} />
         </div>
 
-        {/* Step content with scroll */}
-        <ScrollArea className="flex-1 min-h-0 px-6">
-          <div className="py-4">
+        {/* Step content with native scroll */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-6">
+          <div className="py-4 max-h-[calc(70vh-180px)]">
             {/* Slug warning */}
             {slugWarning && (
               <Alert className="mb-4 border-yellow-500/50 bg-yellow-500/10">
@@ -914,7 +1036,7 @@ export function ContentCreationWizard({
 
             {renderStepContent()}
           </div>
-        </ScrollArea>
+        </div>
 
         {/* Footer navigation */}
         <DialogFooter className="px-6 py-4 border-t shrink-0 flex-col sm:flex-row gap-2 sm:gap-0">

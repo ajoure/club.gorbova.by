@@ -2968,6 +2968,48 @@ export type Database = {
           },
         ]
       }
+      lesson_price_rules: {
+        Row: {
+          created_at: string | null
+          id: string
+          lesson_id: string
+          price: number
+          sort_order: number | null
+          tariff_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          lesson_id: string
+          price: number
+          sort_order?: number | null
+          tariff_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          lesson_id?: string
+          price?: number
+          sort_order?: number | null
+          tariff_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lesson_price_rules_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "training_lessons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lesson_price_rules_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lesson_progress: {
         Row: {
           completed_at: string
@@ -7571,6 +7613,7 @@ export type Database = {
           id: string
           is_active: boolean | null
           module_id: string
+          product_id: string | null
           published_at: string | null
           slug: string
           sort_order: number | null
@@ -7589,6 +7632,7 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           module_id: string
+          product_id?: string | null
           published_at?: string | null
           slug: string
           sort_order?: number | null
@@ -7607,6 +7651,7 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           module_id?: string
+          product_id?: string | null
           published_at?: string | null
           slug?: string
           sort_order?: number | null
@@ -7621,6 +7666,13 @@ export type Database = {
             columns: ["module_id"]
             isOneToOne: false
             referencedRelation: "training_modules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "training_lessons_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
             referencedColumns: ["id"]
           },
         ]

@@ -44,6 +44,8 @@ interface LessonNotificationConfigProps {
   lessonDescription?: string;
   lessonUrl?: string;
   selectedTariffIds?: string[];  // Which tariffs have access
+  episodeNumber?: number;        // For KB flow
+  questions?: { title: string }[];  // Questions list for AI generation
 }
 
 /**
@@ -57,17 +59,19 @@ export function LessonNotificationConfig({
   lessonDescription,
   lessonUrl,
   selectedTariffIds = [],
+  episodeNumber,
+  questions = [],
 }: LessonNotificationConfigProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   
-  // Fetch available Telegram bots
+  // Fetch available Telegram bots - include both "ok" and "active" statuses
   const { data: bots, isLoading: botsLoading } = useQuery({
     queryKey: ["telegram-bots-active"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("telegram_bots")
         .select("id, bot_username, bot_name, status")
-        .eq("status", "ok")
+        .in("status", ["ok", "active"])
         .order("bot_name");
       
       if (error) throw error;
@@ -101,26 +105,55 @@ export function LessonNotificationConfig({
     setIsGenerating(true);
     
     try {
-      // Simple template-based generation (can be replaced with AI later)
-      const title = lessonTitle || "новый урок";
-      const desc = lessonDescription || "";
+      const { data: session } = await supabase.auth.getSession();
       
-      // Create engaging message
-      let message = `🎬 Новый выпуск уже доступен!\n\n`;
-      message += `📚 ${title}\n\n`;
-      
-      if (desc) {
-        message += `${desc.slice(0, 200)}${desc.length > 200 ? '...' : ''}\n\n`;
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-lesson-notification`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${session?.session?.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            lessonTitle: lessonTitle || `Выпуск №${episodeNumber}`,
+            episodeNumber,
+            questions: questions.filter(q => q.title.trim()),
+            lessonUrl,
+          }),
+        }
+      );
+
+      if (response.ok) {
+        const { messageText, buttonText } = await response.json();
+        onChange({
+          ...config,
+          messageText: messageText || config.messageText,
+          buttonText: buttonText || "Смотреть",
+          buttonUrl: lessonUrl || "",
+        });
+      } else {
+        // Fallback to simple template
+        const title = lessonTitle || `Выпуск №${episodeNumber}`;
+        const message = `🎬 Новый выпуск уже доступен!\n\n📚 ${title}\n\nПереходите по ссылке, чтобы посмотреть 👇\n\nКатерина 🤍`;
+        
+        onChange({
+          ...config,
+          messageText: message,
+          buttonText: "Смотреть",
+          buttonUrl: lessonUrl || "",
+        });
       }
-      
-      message += `Переходите по ссылке, чтобы посмотреть 👇`;
-      
-      const buttonText = "Смотреть";
+    } catch (e) {
+      console.error("Generate message error:", e);
+      // Fallback
+      const title = lessonTitle || `Выпуск №${episodeNumber}`;
+      const message = `🎬 Новый выпуск уже доступен!\n\n📚 ${title}\n\nПереходите по ссылке, чтобы посмотреть 👇\n\nКатерина 🤍`;
       
       onChange({
         ...config,
         messageText: message,
-        buttonText,
+        buttonText: "Смотреть",
         buttonUrl: lessonUrl || "",
       });
     } finally {
