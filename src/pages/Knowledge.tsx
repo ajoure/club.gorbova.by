@@ -9,6 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { usePageSections } from "@/hooks/usePageSections";
 import { useSidebarModules } from "@/hooks/useSidebarModules";
 import { useContainerLessons } from "@/hooks/useContainerLessons";
@@ -22,7 +28,7 @@ import {
   Scale, 
   Play, 
   Clock, 
-  Filter,
+  ArrowUpDown,
   Calendar,
   BookOpen,
   Folder,
@@ -31,6 +37,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { format } from "date-fns";
+
+type SortOrder = "newest" | "oldest";
 
 // Icon mapping for dynamic icons
 const ICONS: Record<string, LucideIcon> = {
@@ -51,12 +59,30 @@ interface QuestionsContentProps {
   searchQuery: string;
   hasAccess: boolean;
   restrictedTariffs: string[];
+  sortOrder: SortOrder;
 }
 
-function QuestionsContent({ searchQuery, hasAccess, restrictedTariffs }: QuestionsContentProps) {
-  const { data: questions, isLoading } = useKbQuestions({ searchQuery, limit: 200 });
+function QuestionsContent({ searchQuery, hasAccess, restrictedTariffs, sortOrder }: QuestionsContentProps) {
+  const { data: questionsRaw, isLoading } = useKbQuestions({ searchQuery, limit: 200 });
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
+
+  // Sort questions based on sortOrder
+  const questions = useMemo(() => {
+    if (!questionsRaw) return [];
+    return [...questionsRaw].sort((a, b) => {
+      // Primary: episode_number
+      const orderA = a.episode_number ?? 0;
+      const orderB = b.episode_number ?? 0;
+      if (orderA !== orderB) {
+        return sortOrder === "newest" ? orderB - orderA : orderA - orderB;
+      }
+      // Secondary: question_number within same episode
+      const qNumA = a.question_number ?? 0;
+      const qNumB = b.question_number ?? 0;
+      return sortOrder === "newest" ? qNumA - qNumB : qNumB - qNumA;
+    });
+  }, [questionsRaw, sortOrder]);
 
   const toggleExpand = (id: string) => {
     setExpandedIds(prev => {
@@ -219,14 +245,40 @@ function RestrictedAccessBanner({ accessibleTariffs }: { accessibleTariffs: stri
   );
 }
 
-// Map of tab keys to content components (mock данные удалены, кроме questions и laws)
-const MOCK_CONTENT_MAP: Record<string, React.ComponentType<{ searchQuery?: string }>> = {
-  "knowledge-questions": QuestionsContent,
-  "knowledge-laws": LegislationContent,
-};
+// Sort toggle component for consistent UX
+function SortToggle({ 
+  value, 
+  onChange 
+}: { 
+  value: SortOrder; 
+  onChange: (value: SortOrder) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" className="gap-2 rounded-xl border-border/50 bg-background/60 backdrop-blur-sm">
+          <ArrowUpDown className="h-4 w-4" />
+          <span className="hidden sm:inline">
+            {value === "newest" ? "Сначала новые" : "Сначала старые"}
+          </span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => onChange("newest")}>
+          Сначала новые
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onChange("oldest")}>
+          Сначала старые
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 const Knowledge = () => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [questionSortOrder, setQuestionSortOrder] = useState<SortOrder>("newest");
+  const [videoSortOrder, setVideoSortOrder] = useState<SortOrder>("newest");
   
   // Fetch tabs dynamically from database
   const { tabs, isLoading: tabsLoading } = usePageSections("knowledge");
@@ -311,8 +363,15 @@ const Knowledge = () => {
             
             // Standalone lessons from container modules
             const containerData = lessonsBySection[tab.key];
-            const standaloneLessons = containerData?.lessons || [];
+            const standaloneLessonsRaw = containerData?.lessons || [];
             const containerModuleSlug = containerData?.moduleSlug || "";
+            
+            // Sort lessons based on videoSortOrder
+            const standaloneLessons = [...standaloneLessonsRaw].sort((a, b) => {
+              const orderA = a.sort_order ?? 0;
+              const orderB = b.sort_order ?? 0;
+              return videoSortOrder === "newest" ? orderB - orderA : orderA - orderB;
+            });
             
             // Check if any container lessons have no access
             const hasRestrictedContainerLessons = standaloneLessons.some((l: any) => l.has_access === false);
@@ -325,14 +384,18 @@ const Knowledge = () => {
             
             const hasRestrictedContent = restrictedModules.length > 0 || hasRestrictedContainerLessons;
             
-            const MockContent = MOCK_CONTENT_MAP[tab.key];
-            const hasAccessibleContent = accessibleModules.length > 0 || standaloneLessons.some((l: any) => l.has_access !== false) || MockContent;
-            const hasSomeContent = allModules.length > 0 || standaloneLessons.length > 0 || MockContent;
+            const hasAccessibleContent = accessibleModules.length > 0 || standaloneLessons.some((l: any) => l.has_access !== false);
+            const hasSomeContent = allModules.length > 0 || standaloneLessons.length > 0;
+            
+            // Determine if this is a special tab with custom content
+            const isQuestionsTab = tab.key === "knowledge-questions";
+            const isLawsTab = tab.key === "knowledge-laws";
+            const isVideosTab = tab.key === "knowledge-videos";
             
             return (
               <TabsContent key={tab.key} value={tab.key} className="mt-6 space-y-6">
-                {/* Search and filters for questions tab */}
-                {tab.key === "knowledge-questions" && (
+                {/* Search and sort for questions tab */}
+                {isQuestionsTab && (
                   <div className="flex flex-col sm:flex-row gap-3">
                     <div className="relative flex-1">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -343,10 +406,14 @@ const Knowledge = () => {
                         className="pl-10 bg-background/60 backdrop-blur-sm border-border/50 rounded-xl"
                       />
                     </div>
-                    <Button variant="outline" className="gap-2 rounded-xl border-border/50 bg-background/60 backdrop-blur-sm">
-                      <Filter className="h-4 w-4" />
-                      <span className="hidden sm:inline">Фильтр по дате</span>
-                    </Button>
+                    <SortToggle value={questionSortOrder} onChange={setQuestionSortOrder} />
+                  </div>
+                )}
+
+                {/* Sort toggle for videos tab */}
+                {isVideosTab && standaloneLessons.length > 0 && (
+                  <div className="flex justify-end">
+                    <SortToggle value={videoSortOrder} onChange={setVideoSortOrder} />
                   </div>
                 )}
 
@@ -367,52 +434,49 @@ const Knowledge = () => {
                 )}
 
                 {/* Standalone Lessons from container modules */}
-                {standaloneLessons.length > 0 && (
+                {standaloneLessons.length > 0 && !isQuestionsTab && !isLawsTab && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {standaloneLessons.map((lesson) => (
                       <LessonCard 
                         key={lesson.id} 
                         lesson={lesson} 
                         moduleSlug={containerModuleSlug}
-                        // episodeNumber убран - будет отображаться только если задан в настройках урока
                       />
                     ))}
                   </div>
                 )}
 
-                {/* Mock content (preserved for backwards compatibility) */}
-                {MockContent && (() => {
-                  // Для вкладки "Вопросы" вычисляем доступ на основе контейнера knowledge-videos
-                  if (tab.key === "knowledge-questions") {
-                    const videoContainerData = lessonsBySection["knowledge-videos"];
-                    let questionsHasAccess = true;
-                    let questionsRestrictedTariffs: string[] = [];
-                    
-                    if (videoContainerData?.lessons?.length) {
-                      questionsHasAccess = videoContainerData.lessons.some(
-                        (l: any) => l.has_access === true
-                      );
-                      
-                      if (!questionsHasAccess) {
-                        questionsRestrictedTariffs = containerRestrictedTariffs;
-                      }
-                    }
-                    
-                    return (
-                      <QuestionsContent
-                        searchQuery={searchQuery}
-                        hasAccess={questionsHasAccess}
-                        restrictedTariffs={questionsRestrictedTariffs}
-                      />
+                {/* Questions tab content */}
+                {isQuestionsTab && (() => {
+                  const videoContainerData = lessonsBySection["knowledge-videos"];
+                  let questionsHasAccess = true;
+                  let questionsRestrictedTariffs: string[] = [];
+                  
+                  if (videoContainerData?.lessons?.length) {
+                    questionsHasAccess = videoContainerData.lessons.some(
+                      (l: any) => l.has_access === true
                     );
+                    
+                    if (!questionsHasAccess) {
+                      questionsRestrictedTariffs = containerRestrictedTariffs;
+                    }
                   }
                   
-                  // Для остальных вкладок с MockContent (например, laws)
-                  return <MockContent searchQuery={searchQuery} />;
+                  return (
+                    <QuestionsContent
+                      searchQuery={searchQuery}
+                      hasAccess={questionsHasAccess}
+                      restrictedTariffs={questionsRestrictedTariffs}
+                      sortOrder={questionSortOrder}
+                    />
+                  );
                 })()}
 
+                {/* Laws tab content */}
+                {isLawsTab && <LegislationContent />}
+
                 {/* Empty state - only if NO content exists at all (not just access issues) */}
-                {!hasSomeContent && (
+                {!hasSomeContent && !isQuestionsTab && !isLawsTab && (
                   <GlassCard className="text-center py-16">
                     <Folder className="h-16 w-16 text-muted-foreground/30 mx-auto mb-6" />
                     <h3 className="text-xl font-semibold text-foreground mb-2">
