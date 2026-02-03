@@ -43,6 +43,7 @@ import {
   Wrench,
   ChevronUp,
   ChevronDown,
+  Activity,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -367,6 +368,10 @@ export function AdminSidebar() {
               <DropdownMenuItem onClick={() => navigate("/admin/system/audit")} className="gap-2">
                 <Wrench className="h-4 w-4" />
                 Аудит системы
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/admin/system-health")} className="gap-2">
+                <Activity className="h-4 w-4" />
+                Здоровье системы
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleSignOut} className="gap-2 text-destructive focus:text-destructive">
