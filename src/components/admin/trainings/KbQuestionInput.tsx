@@ -5,6 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Trash2 } from "lucide-react";
+import { TimecodeInput } from "./TimecodeInput";
 
 export interface KbQuestionInputData {
   question_number: number;
@@ -59,11 +60,9 @@ export const KbQuestionInput = memo(function KbQuestionInput({
         </div>
         <div className="space-y-1.5 w-28">
           <Label htmlFor={`q-timecode-${index}`}>Таймкод</Label>
-          <Input
-            id={`q-timecode-${index}`}
+          <TimecodeInput
             value={data.timecode || ""}
-            onChange={(e) => onChange({ ...data, timecode: e.target.value })}
-            placeholder="чч:мм:сс"
+            onChange={(v) => onChange({ ...data, timecode: v })}
           />
         </div>
       </div>

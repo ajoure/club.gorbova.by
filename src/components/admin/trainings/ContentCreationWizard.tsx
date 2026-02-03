@@ -92,7 +92,7 @@ const KB_LESSON_HINTS = [
   "Отлично! Выпуск создан и готов к редактированию",
 ];
 
-// Check if slug exists in database
+// Check if slug exists in database (for modules)
 const checkSlugExists = async (slug: string): Promise<boolean> => {
   const { data } = await supabase
     .from("training_modules")
@@ -102,12 +102,36 @@ const checkSlugExists = async (slug: string): Promise<boolean> => {
   return !!(data && data.length > 0);
 };
 
-// Generate unique slug with suffix if needed
+// Generate unique slug with suffix if needed (for modules)
 const ensureUniqueSlug = async (baseSlug: string): Promise<string> => {
   let slug = baseSlug;
   let suffix = 2;
   
   while (await checkSlugExists(slug)) {
+    slug = `${baseSlug}-${suffix}`;
+    suffix++;
+  }
+  
+  return slug;
+};
+
+// Check if lesson slug exists in a module
+const checkLessonSlugExists = async (moduleId: string, slug: string): Promise<boolean> => {
+  const { data } = await supabase
+    .from("training_lessons")
+    .select("id")
+    .eq("module_id", moduleId)
+    .eq("slug", slug)
+    .limit(1);
+  return !!(data && data.length > 0);
+};
+
+// Generate unique lesson slug with suffix if needed
+const ensureUniqueLessonSlug = async (moduleId: string, baseSlug: string): Promise<string> => {
+  let slug = baseSlug;
+  let suffix = 2;
+  
+  while (await checkLessonSlugExists(moduleId, slug)) {
     slug = `${baseSlug}-${suffix}`;
     suffix++;
   }
@@ -418,9 +442,12 @@ export function ContentCreationWizard({
         ? `Выпуск №${wizardData.kbLesson.episode_number}`
         : wizardData.lesson.title;
       
-      const lessonSlug = isKbFlow
+      const baseSlug = isKbFlow
         ? generateKbLessonSlug(wizardData.kbLesson.episode_number)
         : (wizardData.lesson.slug || generateLessonSlug(wizardData.lesson.title));
+      
+      // Ensure unique slug to prevent duplicate key error
+      const lessonSlug = await ensureUniqueLessonSlug(containerId, baseSlug);
       
       const thumbnailUrl = isKbFlow
         ? wizardData.kbLesson.thumbnail_url
@@ -633,8 +660,8 @@ export function ContentCreationWizard({
         const isScheduledForFuture = isKbFlow && wizardData.kbLesson.answer_date && wizardData.kbLesson.answer_date > new Date();
         const shouldSendNow = !wizardData.notification.sendOnPublish || !isScheduledForFuture;
         
-        // Get final lesson URL
-        const finalLessonUrl = `https://gorbova.lovable.app/library/${containerSlug}/${lessonSlug}`;
+        // Get final lesson URL - use production domain
+        const finalLessonUrl = `https://club.gorbova.by/library/${containerSlug}/${lessonSlug}`;
         
         // Update button URL if it was placeholder
         const buttonUrl = wizardData.notification.buttonUrl?.includes("...") 
@@ -808,7 +835,7 @@ export function ContentCreationWizard({
           ? `Выпуск №${wizardData.kbLesson.episode_number || "..."}`
           : (wizardData.lesson.title || "Новый урок");
         
-        const lessonUrl = `https://gorbova.lovable.app/library/${wizardData.menuSectionKey}/...`;
+        const lessonUrl = `https://club.gorbova.by/library/${wizardData.menuSectionKey}/...`;
         
         return (
           <div className="space-y-6">
@@ -838,7 +865,7 @@ export function ContentCreationWizard({
         const lessonSlug = isKbFlow
           ? generateKbLessonSlug(wizardData.kbLesson.episode_number || 0)
           : (wizardData.lesson.slug || generateLessonSlug(wizardData.lesson.title));
-        const lessonUrl = `https://gorbova.lovable.app/library/${containerSlug}/${lessonSlug}`;
+        const lessonUrl = `https://club.gorbova.by/library/${containerSlug}/${lessonSlug}`;
         
         // Check if KB flow - show special KB form
         if (isKbFlow) {

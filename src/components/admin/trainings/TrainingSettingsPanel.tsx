@@ -14,7 +14,9 @@ import {
   LayoutGrid,
   LayoutList,
   SlidersHorizontal,
+  ImageIcon,
 } from "lucide-react";
+import { OwnerPhotosUploader } from "./OwnerPhotosUploader";
 
 export type ViewDensity = 'compact' | 'comfortable';
 
@@ -109,6 +111,15 @@ export default function TrainingSettingsPanel({
                 checked={showAdvanced}
                 onCheckedChange={onShowAdvancedChange}
               />
+            </div>
+            
+            {/* Owner photos for AI cover generation */}
+            <div className="pt-4 border-t border-border/30 space-y-3">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                <Label className="font-normal">Фото для генерации обложек</Label>
+              </div>
+              <OwnerPhotosUploader />
             </div>
           </div>
         </CollapsibleContent>

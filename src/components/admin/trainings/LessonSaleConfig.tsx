@@ -116,7 +116,11 @@ export function LessonSaleConfig({ config, onChange }: LessonSaleConfigProps) {
   };
 
   return (
-    <div className="space-y-4 rounded-lg border p-4 bg-muted/20">
+    <div className={cn(
+      "space-y-4 rounded-xl border border-border/40 p-4",
+      "backdrop-blur-xl bg-card/40 dark:bg-card/30",
+      "shadow-sm"
+    )}>
       {/* Enable toggle */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -166,7 +170,7 @@ export function LessonSaleConfig({ config, onChange }: LessonSaleConfigProps) {
                 ...config, 
                 accessDuration: v as SaleConfig['accessDuration']
               })}
-              className="space-y-2"
+              className="space-y-1.5"
             >
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="forever" id="forever" />
@@ -226,7 +230,7 @@ export function LessonSaleConfig({ config, onChange }: LessonSaleConfigProps) {
                 {config.priceRules.map((rule) => (
                   <div
                     key={rule.id}
-                    className="flex items-center gap-2 p-2 rounded-md bg-background/50"
+                    className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/30 border border-border/30 backdrop-blur-sm"
                   >
                     <Select
                       value={rule.tariffId}

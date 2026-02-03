@@ -64,27 +64,91 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Generate prompt - thematic imagery based on content, NO TEXT
-    const prompt = `Create a professional cover image for an educational video lesson about accounting and law.
+    // Check for owner reference photos
+    let referenceImageUrl: string | null = null;
+    let imageEditMode = false;
+    
+    try {
+      const { data: ownerPhotos } = await supabase.storage
+        .from('owner-photos')
+        .list('', { limit: 10 });
 
-Topics: "${title}"
+      if (ownerPhotos && ownerPhotos.length > 0) {
+        // Filter out hidden files and pick random photo
+        const validPhotos = ownerPhotos.filter(f => !f.name.startsWith('.'));
+        if (validPhotos.length > 0) {
+          const randomIndex = Math.floor(Math.random() * validPhotos.length);
+          const { data: urlData } = supabase.storage
+            .from('owner-photos')
+            .getPublicUrl(validPhotos[randomIndex].name);
+          referenceImageUrl = urlData.publicUrl;
+          imageEditMode = true;
+          console.log("Using reference photo:", referenceImageUrl);
+        }
+      }
+    } catch (e) {
+      console.log("No owner photos available, using text-only generation");
+    }
+
+    // Generate prompt based on whether we have reference photo
+    const prompt = imageEditMode
+      ? `Create a professional, elegant cover image for an educational video about: "${title}"
+${description ? `Details: ${description}` : ""}
+
+Using the provided portrait photo as base:
+- Keep the person clearly visible and recognizable
+- Add a subtle, modern gradient overlay (soft purple/blue/gold tones)
+- Minimal, clean design — NO visual clutter
+- NO icons, NO stamps, NO scales, NO buildings, NO weights
+- NO documents, NO clipart-style elements
+- NO text, NO watermarks, NO logos whatsoever
+- Premium, expensive, magazine-quality look
+- 16:9 aspect ratio, high quality
+- Soft professional lighting effect`
+
+      : `Create a premium, minimalist cover image for educational content about: "${title}"
 ${description ? `Details: ${description}` : ""}
 
 CRITICAL REQUIREMENTS:
-- NO TEXT whatsoever - absolutely no letters, numbers, words, or any written content on the image
-- NO logos, NO watermarks, NO captions, NO titles
-- Only meaningful visual imagery that represents the topic
-- Use symbolic icons and illustrations: documents, calculators, coins, charts, scales of justice, buildings, computers, folders, contracts, stamps, office desk items
-- Professional business illustration style
-- Clean, modern aesthetic with soft gradients
-- Light, professional color palette (blues, teals, soft purples, whites)
+- Clean, modern aesthetic with elegant gradients
+- Abstract geometric shapes, soft light effects, bokeh
+- Color palette: sophisticated purples, soft golds, deep blues, warm gradients
+- NO scales, NO court buildings, NO stamps, NO weights
+- NO documents pile, NO calculators, NO clipart-style icons
+- NO generic business symbols - this is NOT a stock image
+- Maximum 1-2 subtle abstract elements if needed
+- NO text, NO logos, NO watermarks
+- Ultra-premium, expensive magazine cover feel
 - 16:9 aspect ratio (1200x630 pixels)
-- High quality, sharp imagery
-- Ultra high resolution
-
-The image should convey the topic through visual symbols only, without any text.`;
+- Ultra high resolution, sharp imagery`;
 
     console.log("Generating cover with prompt:", prompt.slice(0, 100) + "...");
+    console.log("Image edit mode:", imageEditMode);
+
+    // Build request based on mode
+    let aiRequestBody: any;
+    
+    if (imageEditMode && referenceImageUrl) {
+      // Image editing mode - provide reference photo
+      aiRequestBody = {
+        model: "google/gemini-2.5-flash-image",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: referenceImageUrl } }
+          ]
+        }],
+        modalities: ["image", "text"],
+      };
+    } else {
+      // Text-only generation
+      aiRequestBody = {
+        model: "google/gemini-2.5-flash-image",
+        messages: [{ role: "user", content: prompt }],
+        modalities: ["image", "text"],
+      };
+    }
 
     // Call Lovable AI
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -93,11 +157,7 @@ The image should convey the topic through visual symbols only, without any text.
         Authorization: `Bearer ${lovableApiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash-image",
-        messages: [{ role: "user", content: prompt }],
-        modalities: ["image", "text"],
-      }),
+      body: JSON.stringify(aiRequestBody),
     });
 
     if (!aiResponse.ok) {
@@ -200,6 +260,7 @@ The image should convey the topic through visual symbols only, without any text.
     return new Response(JSON.stringify({ 
       success: true,
       url: urlData.publicUrl,
+      usedReference: imageEditMode,
     }), { 
       status: 200, 
       headers: { ...corsHeaders, "Content-Type": "application/json" } 

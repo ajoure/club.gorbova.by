@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Label } from "@/components/ui/label";
@@ -14,8 +14,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { 
-  Send, 
   Bot, 
   Sparkles, 
   AlertTriangle, 
@@ -23,9 +23,14 @@ import {
   RefreshCw,
   MessageCircle,
   Users,
-  Lock 
+  Lock,
+  Send,
+  Loader2,
+  Clock,
+  Megaphone
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 export interface NotificationConfig {
   enabled: boolean;
@@ -34,7 +39,9 @@ export interface NotificationConfig {
   buttonText: string;
   buttonUrl: string;
   sendToClubMembers: boolean;
-  sendOnPublish: boolean; // Send when published_at is reached
+  sendOnPublish: boolean;
+  audienceType: 'with_access' | 'all_users';
+  sendTiming: 'now' | 'on_publish' | 'announcement';
 }
 
 interface LessonNotificationConfigProps {
@@ -43,14 +50,13 @@ interface LessonNotificationConfigProps {
   lessonTitle: string;
   lessonDescription?: string;
   lessonUrl?: string;
-  selectedTariffIds?: string[];  // Which tariffs have access
-  episodeNumber?: number;        // For KB flow
-  questions?: { title: string }[];  // Questions list for AI generation
+  selectedTariffIds?: string[];
+  episodeNumber?: number;
+  questions?: { title: string }[];
 }
 
 /**
  * Component for configuring Telegram notifications about lesson release
- * Auto-generates message text from lesson title/description
  */
 export function LessonNotificationConfig({
   config,
@@ -63,8 +69,9 @@ export function LessonNotificationConfig({
   questions = [],
 }: LessonNotificationConfigProps) {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSendingTest, setIsSendingTest] = useState(false);
   
-  // Fetch available Telegram bots - include both "ok" and "active" statuses
+  // Fetch available Telegram bots
   const { data: bots, isLoading: botsLoading } = useQuery({
     queryKey: ["telegram-bots-active"],
     queryFn: async () => {
@@ -97,10 +104,9 @@ export function LessonNotificationConfig({
     enabled: !!config.botId,
   });
 
-  // Calculate total members to notify
   const totalMembers = clubs?.reduce((sum, c) => sum + (c.members_count_chat || 0), 0) || 0;
 
-  // Generate AI message based on lesson content
+  // Generate AI message
   const generateMessage = async () => {
     setIsGenerating(true);
     
@@ -132,8 +138,9 @@ export function LessonNotificationConfig({
           buttonText: buttonText || "Смотреть",
           buttonUrl: lessonUrl || "",
         });
+        toast.success("Текст сгенерирован");
       } else {
-        // Fallback to simple template
+        // Fallback
         const title = lessonTitle || `Выпуск №${episodeNumber}`;
         const message = `🎬 Новый выпуск уже доступен!\n\n📚 ${title}\n\nПереходите по ссылке, чтобы посмотреть 👇\n\nКатерина 🤍`;
         
@@ -146,7 +153,6 @@ export function LessonNotificationConfig({
       }
     } catch (e) {
       console.error("Generate message error:", e);
-      // Fallback
       const title = lessonTitle || `Выпуск №${episodeNumber}`;
       const message = `🎬 Новый выпуск уже доступен!\n\n📚 ${title}\n\nПереходите по ссылке, чтобы посмотреть 👇\n\nКатерина 🤍`;
       
@@ -161,14 +167,60 @@ export function LessonNotificationConfig({
     }
   };
 
-  // Auto-generate when first enabled or lesson title changes
+  // Send test message to current user
+  const handleSendTest = async () => {
+    if (!config.botId || !config.messageText) {
+      toast.error("Выберите бота и введите текст сообщения");
+      return;
+    }
+    
+    setIsSendingTest(true);
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/telegram-send-test`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${session?.session?.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            botId: config.botId,
+            messageText: config.messageText,
+            buttonText: config.buttonText,
+            buttonUrl: config.buttonUrl,
+          }),
+        }
+      );
+
+      const result = await response.json();
+      
+      if (response.ok) {
+        toast.success("Тестовое сообщение отправлено в ваш Telegram");
+      } else {
+        toast.error(result.error || "Не удалось отправить тест");
+        if (result.details) {
+          console.error("Test send details:", result.details);
+        }
+      }
+    } catch (e) {
+      console.error("Test send error:", e);
+      toast.error("Ошибка отправки теста");
+    } finally {
+      setIsSendingTest(false);
+    }
+  };
+
+  // Auto-generate when first enabled
   useEffect(() => {
     if (config.enabled && !config.messageText && lessonTitle) {
       generateMessage();
     }
   }, [config.enabled, lessonTitle]);
 
-  // Auto-select first bot if none selected
+  // Auto-select first bot if only one exists
   useEffect(() => {
     if (config.enabled && !config.botId && bots && bots.length > 0) {
       onChange({ ...config, botId: bots[0].id });
@@ -178,7 +230,11 @@ export function LessonNotificationConfig({
   const selectedBot = bots?.find(b => b.id === config.botId);
 
   return (
-    <div className="space-y-4 rounded-lg border p-4 bg-muted/20">
+    <div className={cn(
+      "space-y-4 rounded-xl border border-border/40 p-4",
+      "backdrop-blur-xl bg-card/40 dark:bg-card/30",
+      "shadow-sm"
+    )}>
       {/* Enable toggle */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -205,7 +261,7 @@ export function LessonNotificationConfig({
               >
                 <SelectTrigger>
                   <Bot className="h-4 w-4 mr-2 text-muted-foreground" />
-                  <SelectValue placeholder="Выберите бота" />
+                  <SelectValue placeholder={bots.length === 1 ? (bots[0].bot_name || `@${bots[0].bot_username}`) : "Выберите бота"} />
                 </SelectTrigger>
                 <SelectContent>
                   {bots.map((bot) => (
@@ -228,6 +284,34 @@ export function LessonNotificationConfig({
             )}
           </div>
 
+          {/* Audience selector */}
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Кому отправить</Label>
+            <RadioGroup
+              value={config.audienceType || 'with_access'}
+              onValueChange={(v) => onChange({ ...config, audienceType: v as 'with_access' | 'all_users' })}
+              className="flex gap-4"
+            >
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="with_access" id="audience-access" />
+                <Label htmlFor="audience-access" className="text-sm font-normal cursor-pointer">
+                  Только с доступом
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="all_users" id="audience-all" />
+                <Label htmlFor="audience-all" className="text-sm font-normal cursor-pointer">
+                  Всем пользователям
+                </Label>
+              </div>
+            </RadioGroup>
+            {config.audienceType === 'all_users' && (
+              <p className="text-xs text-muted-foreground">
+                Для пользователей без доступа будет показана кнопка покупки
+              </p>
+            )}
+          </div>
+
           {/* Audience info */}
           {selectedBot && totalMembers > 0 && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -236,16 +320,6 @@ export function LessonNotificationConfig({
                 Получат уведомление: <strong>{totalMembers}</strong> участников
               </span>
             </div>
-          )}
-
-          {/* Access restriction warning */}
-          {selectedTariffIds.length > 0 && (
-            <Alert className="border-primary/30 bg-primary/5">
-              <Lock className="h-4 w-4 text-primary" />
-              <AlertDescription className="text-sm">
-                Уведомление получат только участники с доступом. Остальные увидят кнопку покупки.
-              </AlertDescription>
-            </Alert>
           )}
 
           {/* Message text */}
@@ -292,7 +366,7 @@ export function LessonNotificationConfig({
                 <Input
                   value={config.buttonUrl}
                   onChange={(e) => onChange({ ...config, buttonUrl: e.target.value })}
-                  placeholder="https://..."
+                  placeholder="https://club.gorbova.by/..."
                   className="pr-8"
                 />
                 {config.buttonUrl && (
@@ -310,22 +384,59 @@ export function LessonNotificationConfig({
           </div>
 
           {/* Send timing */}
-          <div className="flex items-center gap-3 pt-2 border-t">
-            <Switch
-              id="send-on-publish"
-              checked={config.sendOnPublish}
-              onCheckedChange={(v) => onChange({ ...config, sendOnPublish: v })}
-            />
-            <Label htmlFor="send-on-publish" className="text-sm font-normal cursor-pointer">
-              Отправить автоматически при публикации урока
+          <div className="space-y-2 pt-2 border-t">
+            <Label className="text-xs text-muted-foreground flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              Когда отправить
             </Label>
+            <RadioGroup
+              value={config.sendTiming || 'on_publish'}
+              onValueChange={(v) => onChange({ ...config, sendTiming: v as NotificationConfig['sendTiming'] })}
+              className="space-y-1.5"
+            >
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="now" id="timing-now" />
+                <Label htmlFor="timing-now" className="text-sm font-normal cursor-pointer">
+                  Сразу после создания урока
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="on_publish" id="timing-publish" />
+                <Label htmlFor="timing-publish" className="text-sm font-normal cursor-pointer">
+                  При открытии доступа к уроку
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="announcement" id="timing-announce" />
+                <Label htmlFor="timing-announce" className="text-sm font-normal cursor-pointer flex items-center gap-1">
+                  <Megaphone className="h-3 w-3" />
+                  Анонс (сообщить заранее о дате выхода)
+                </Label>
+              </div>
+            </RadioGroup>
           </div>
 
-          {/* Preview hint */}
-          <p className="text-xs text-muted-foreground">
-            💡 Сообщение будет отправлено участникам клуба через выбранного бота.
-            {!config.sendOnPublish && " Отправка произойдёт после создания урока."}
-          </p>
+          {/* Test send button */}
+          <div className="flex items-center justify-between pt-2 border-t">
+            <p className="text-xs text-muted-foreground">
+              💡 Проверьте сообщение перед отправкой
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleSendTest}
+              disabled={isSendingTest || !config.messageText || !config.botId}
+              className="gap-1.5 h-8"
+            >
+              {isSendingTest ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Send className="h-3 w-3" />
+              )}
+              Тест себе
+            </Button>
+          </div>
         </div>
       )}
     </div>
@@ -343,4 +454,6 @@ export const defaultNotificationConfig: NotificationConfig = {
   buttonUrl: "",
   sendToClubMembers: true,
   sendOnPublish: true,
+  audienceType: 'with_access',
+  sendTiming: 'on_publish',
 };
