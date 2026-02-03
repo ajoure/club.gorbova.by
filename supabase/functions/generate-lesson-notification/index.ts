@@ -6,6 +6,20 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+interface StyleProfile {
+  tone?: string;
+  tone_details?: string;
+  writing_guidelines?: string[];
+  characteristic_phrases?: string[];
+  emojis?: {
+    used?: boolean;
+    frequency?: string;
+    examples?: string[];
+  };
+  vocabulary_level?: string;
+  communication_patterns?: string[];
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -29,6 +43,7 @@ Deno.serve(async (req: Request) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
 
     if (!lovableApiKey) {
@@ -42,6 +57,9 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } },
     });
+
+    // Admin client for reading style profile
+    const adminClient = createClient(supabaseUrl, supabaseServiceKey);
 
     // Verify user
     const { data: userData, error: authError } = await supabase.auth.getUser();
@@ -62,19 +80,68 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    // Fetch Katerina's style profile from telegram_publish_channels
+    let styleProfile: StyleProfile | null = null;
+    try {
+      const { data: channels } = await adminClient
+        .from("telegram_publish_channels")
+        .select("settings")
+        .not("settings->style_profile", "is", null)
+        .limit(1);
+
+      if (channels && channels.length > 0 && channels[0].settings?.style_profile) {
+        styleProfile = channels[0].settings.style_profile as StyleProfile;
+        console.log("Found Katerina's style profile:", Object.keys(styleProfile));
+      }
+    } catch (e) {
+      console.warn("Could not fetch style profile:", e);
+    }
+
     // Build context for AI
     const title = lessonTitle || `Выпуск №${episodeNumber}`;
     const questionsList = questions?.slice(0, 5)?.map((q: { title: string }) => q.title).join("\n- ") || "";
     
-    const prompt = `Ты — Катерина Горбова, эксперт по бухгалтерии и юридическим вопросам для предпринимателей. 
+    // Build style instructions from profile
+    let styleInstructions = "";
+    if (styleProfile) {
+      const parts: string[] = [];
+      
+      if (styleProfile.tone_details) {
+        parts.push(`Стиль общения: ${styleProfile.tone_details}`);
+      } else if (styleProfile.tone) {
+        parts.push(`Тон: ${styleProfile.tone}`);
+      }
+      
+      if (styleProfile.writing_guidelines && styleProfile.writing_guidelines.length > 0) {
+        parts.push(`\nКлючевые правила написания:\n${styleProfile.writing_guidelines.slice(0, 5).map((g, i) => `${i + 1}. ${g}`).join("\n")}`);
+      }
+      
+      if (styleProfile.characteristic_phrases && styleProfile.characteristic_phrases.length > 0) {
+        parts.push(`\nХарактерные фразы (используй подобные): ${styleProfile.characteristic_phrases.slice(0, 5).join(", ")}`);
+      }
+      
+      if (styleProfile.emojis?.used) {
+        const freq = styleProfile.emojis.frequency || "умеренно";
+        const examples = styleProfile.emojis.examples?.slice(0, 5).join(" ") || "💡 📌 🔥";
+        parts.push(`\nЭмодзи: использовать ${freq}, примеры: ${examples}`);
+      }
+      
+      if (styleProfile.communication_patterns && styleProfile.communication_patterns.length > 0) {
+        parts.push(`\nПаттерны общения:\n${styleProfile.communication_patterns.slice(0, 3).map(p => `- ${p}`).join("\n")}`);
+      }
+      
+      styleInstructions = parts.join("\n");
+    }
+    
+    const prompt = `Ты — Екатерина Горбова, эксперт по бухгалтерии и юридическим вопросам для предпринимателей.
 Напиши теплое и искреннее уведомление для Telegram о выходе нового видеоответа.
 
-Данные урока:
+${styleInstructions ? `=== ТВОЙ СТИЛЕВОЙ ПРОФИЛЬ ===\n${styleInstructions}\n\n` : ""}Данные урока:
 - Название: ${title}
 ${questionsList ? `- Вопросы в этом выпуске:\n- ${questionsList}` : ""}
 
 Требования к тексту:
-1. Стиль: теплый, искренний, современный, как от подруги-эксперта
+1. Пиши в своём стиле${styleProfile?.tone ? ` (${styleProfile.tone})` : " — теплом, искреннем, современном"}
 2. Начать с эмодзи (🎬, 📚, 💡 или подобные)
 3. Кратко анонсировать содержание (2-3 предложения)
 4. НЕ использовать официальный или сухой тон
@@ -84,7 +151,7 @@ ${questionsList ? `- Вопросы в этом выпуске:\n- ${questionsLi
 
 Верни ТОЛЬКО текст сообщения, без кавычек и пояснений.`;
 
-    console.log("Generating notification with AI...");
+    console.log("Generating notification with AI using style profile...");
 
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -95,6 +162,7 @@ ${questionsList ? `- Вопросы в этом выпуске:\n- ${questionsLi
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
         messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
       }),
     });
 
@@ -132,11 +200,13 @@ ${questionsList ? `- Вопросы в этом выпуске:\n- ${questionsLi
     }
 
     console.log("Generated notification:", messageText.slice(0, 100) + "...");
+    console.log("Used style profile:", !!styleProfile);
 
     return new Response(JSON.stringify({ 
       messageText,
       buttonText: "Смотреть",
-      source: "ai"
+      source: styleProfile ? "ai_with_style" : "ai",
+      styleProfileUsed: !!styleProfile
     }), { 
       status: 200, 
       headers: { ...corsHeaders, "Content-Type": "application/json" } 
