@@ -39,7 +39,7 @@ export function LandingHero() {
             </div>
           </AnimatedSection>
 
-          <AnimatedSection animation="fade-up" delay={100}>
+          <AnimatedSection animation="fade-up" instant>
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-foreground leading-tight mb-6">
               Бухгалтер, которого{" "}
               <span className="text-primary">ценит директор</span>

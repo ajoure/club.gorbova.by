@@ -7,19 +7,26 @@ interface AnimatedSectionProps {
   className?: string;
   animation?: "fade-up" | "fade-left" | "fade-right" | "scale" | "fade";
   delay?: number;
+  /** Set to true for LCP elements to render immediately without animation delay */
+  instant?: boolean;
 }
 
 export const AnimatedSection = forwardRef<HTMLDivElement, AnimatedSectionProps>(
-  ({ children, className, animation = "fade-up", delay = 0 }, _ref) => {
+  ({ children, className, animation = "fade-up", delay = 0, instant = false }, _ref) => {
     const [ref, isVisible] = useScrollAnimation<HTMLDivElement>({
       threshold: 0.1,
       rootMargin: "0px 0px -50px 0px",
     });
 
+    // For LCP elements, show immediately without waiting for intersection
+    const shouldShow = instant || isVisible;
+
     const getAnimationClasses = () => {
-      const baseClasses = "transition-all duration-700 ease-out";
+      const baseClasses = instant 
+        ? "" // No transition for instant elements
+        : "transition-all duration-700 ease-out";
       
-      if (!isVisible) {
+      if (!shouldShow) {
         switch (animation) {
           case "fade-up":
             return `${baseClasses} opacity-0 translate-y-8`;
@@ -42,7 +49,7 @@ export const AnimatedSection = forwardRef<HTMLDivElement, AnimatedSectionProps>(
       <div
         ref={ref}
         className={cn(getAnimationClasses(), className)}
-        style={{ transitionDelay: `${delay}ms` }}
+        style={instant ? undefined : { transitionDelay: `${delay}ms` }}
       >
         {children}
       </div>
