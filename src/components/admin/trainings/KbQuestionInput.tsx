@@ -63,7 +63,7 @@ export const KbQuestionInput = memo(function KbQuestionInput({
             id={`q-timecode-${index}`}
             value={data.timecode || ""}
             onChange={(e) => onChange({ ...data, timecode: e.target.value })}
-            placeholder="01:23"
+            placeholder="чч:мм:сс"
           />
         </div>
       </div>

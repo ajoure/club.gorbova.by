@@ -1,347 +1,251 @@
+# План: Улучшение работы с уроками в Базе знаний + Монетизация контента
 
+## Статус: Фаза 1 — ✅ Выполнено
 
-# План: Улучшение работы с уроками в Базе знаний
-
-## Обзор задач
-
-1. **Исправить сортировку уроков (видеоответов)** — новые выпуски вверху, старые внизу
-2. **Добавить фильтр-кнопку для сортировки** — переключение от новых к старым / от старых к новым
-3. **Исправить нерабочую кнопку "Фильтр по дате"** — в вопросах
-4. **Расширить мастер добавления урока** — для Базы знаний с вводом вопросов/ответов как в импорте
+### Исправлены баги мастера:
+1. ✅ Скролл для списка вопросов — добавлен `max-h-[300px] overflow-y-auto`
+2. ✅ Placeholder таймкода изменён на `чч:мм:сс`
+3. ✅ Порядок шагов изменён: **Доступ → Урок** (вместо Урок → Доступ)
+4. ✅ Создание урока отложено до финального шага — никаких мусорных записей при закрытии мастера
+5. ✅ Мастер активируется для `knowledge-videos` И `knowledge-questions`
 
 ---
 
-## Часть 1: Исправление сортировки уроков
+## Фаза 2: Монетизация контента (следующий спринт)
 
-### Проблема
-Выпуск №101 (созданный сегодня) отображается в конце списка рядом с Выпуском №1, а не в начале. Причина: `sort_order = 100` (такой же как у Выпуска №100), и `published_at = NULL`.
+### Архитектура: Универсальные правила цен
 
-### Текущая логика сортировки в `useContainerLessons.ts`:
+**Концепция:** Не привязываемся к конкретному продукту (например, Club). Можно задать цену для ЛЮБОГО продукта/тарифа.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ПРАВИЛА ЦЕН ДЛЯ УРОКА                        │
+├─────────────────────────────────────────────────────────────────┤
+│ ☑️ Продавать этот урок отдельно                                  │
+│                                                                 │
+│ Базовая цена (для всех без подписки): [300] BYN                 │
+│                                                                 │
+│ ➕ Добавить правило цены:                                        │
+│   ┌──────────────────────────────────────────────────────────┐  │
+│   │ Продукт: [Gorbow Club ▼]                                 │  │
+│   │ Тариф:   [CHAT ▼]                                        │  │
+│   │ Цена:    [100] BYN                                       │  │
+│   └──────────────────────────────────────────────────────────┘  │
+│   ┌──────────────────────────────────────────────────────────┐  │
+│   │ Продукт: [Gorbow Club ▼]                                 │  │
+│   │ Тариф:   [FULL ▼]                                        │  │
+│   │ Цена:    [50] BYN                                        │  │
+│   └──────────────────────────────────────────────────────────┘  │
+│   ┌──────────────────────────────────────────────────────────┐  │
+│   │ Продукт: [Курс "Бухгалтерия как бизнес" ▼]               │  │
+│   │ Тариф:   [Любой тариф ▼]                                 │  │
+│   │ Цена:    [75] BYN                                        │  │
+│   └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│ Длительность доступа:                                           │
+│   ○ Навсегда                                                    │
+│   ○ На [ N ] дней                                               │
+│   ○ До конца периода подписки                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Структура данных
+
+```typescript
+interface LessonSaleConfig {
+  enabled: boolean;              // Переключатель "Продавать отдельно"
+  basePrice: number;             // Цена для всех без подписки
+  
+  accessDuration: 'forever' | 'days' | 'period';
+  accessDays?: number;           // Если 'days'
+  
+  priceRules: {                  // Универсальные правила по любым продуктам/тарифам
+    productId: string;           // UUID продукта (или '*' для любого)
+    tariffId: string;            // UUID тарифа (или '*' для любого тарифа продукта)
+    price: number;               // Цена для этого тарифа
+  }[];
+  
+  // Опционально для полноценного продукта
+  productName?: string;          // Название (автогенерация из названия урока)
+  productSlug?: string;          // Slug (автогенерация)
+  createFullProduct?: boolean;   // Создавать полноценный продукт с лендингом
+}
+```
+
+### База данных
+
+**Миграция 1: Добавить product_id в training_lessons**
 ```sql
-ORDER BY published_at DESC NULLS LAST, sort_order DESC, created_at DESC
+ALTER TABLE training_lessons 
+  ADD COLUMN IF NOT EXISTS product_id uuid REFERENCES products_v2(id);
+
+CREATE INDEX IF NOT EXISTS idx_training_lessons_product_id 
+  ON training_lessons(product_id);
 ```
 
-### Решение
-Изменить сортировку: использовать `sort_order DESC` как первичный ключ (номер выпуска = номер сортировки).
-
-Для выпуска №101: нужно установить `sort_order = 101`.
-
-**Файл: `src/hooks/useContainerLessons.ts` (строка 61-63)**
-
-```tsx
-// Было:
-.order("published_at", { ascending: false, nullsFirst: false })
-.order("sort_order", { ascending: false })
-.order("created_at", { ascending: false });
-
-// Станет:
-.order("sort_order", { ascending: false })
-.order("published_at", { ascending: false, nullsFirst: false })
-.order("created_at", { ascending: false });
+**Миграция 2: Расширить RLS lesson_blocks**
+```sql
+-- Добавить проверку entitlement/subscription на product_id урока
+CREATE POLICY "Access via lesson product" ON lesson_blocks FOR SELECT
+USING (
+  EXISTS (
+    SELECT 1 FROM training_lessons tl
+    JOIN products_v2 p ON p.id = tl.product_id
+    JOIN entitlements e ON e.product_code = p.code
+    WHERE tl.id = lesson_blocks.lesson_id
+      AND tl.product_id IS NOT NULL
+      AND e.user_id = auth.uid()
+      AND e.status = 'active'
+  )
+);
 ```
 
-Также при создании нового урока через мастер/импорт: автоматически вычислять `sort_order` на основе номера выпуска в названии.
+### Логика определения цены для пользователя
 
----
-
-## Часть 2: Добавление переключателя сортировки
-
-### Где
-Вкладка "Видеоответы" на странице `/knowledge` (компонент `Knowledge.tsx`).
-
-### Реализация
-
-Добавить state `sortOrder: 'newest' | 'oldest'` и UI-переключатель (кнопка или dropdown).
-
-**Изменения в `Knowledge.tsx`:**
-
-1. Добавить состояние:
-```tsx
-const [videoSortOrder, setVideoSortOrder] = useState<'newest' | 'oldest'>('newest');
+```typescript
+// Хук useLessonPrice(lessonId, userId)
+async function getLessonPriceForUser(lessonId: string, userId: string) {
+  // 1. Получить product_id урока и его offers
+  const lesson = await getLesson(lessonId);
+  if (!lesson.product_id) return null; // Урок не продаётся
+  
+  const offers = await getOffersForProduct(lesson.product_id);
+  
+  // 2. Получить текущие подписки пользователя по ВСЕМ продуктам
+  const userSubscriptions = await getUserActiveSubscriptions(userId);
+  
+  // 3. Найти offer с минимальной ценой, соответствующий подписке
+  let bestOffer = offers.find(o => o.is_primary); // Базовая цена
+  
+  for (const sub of userSubscriptions) {
+    const matchingOffer = offers.find(o => 
+      o.meta?.for_existing_tariff_id === sub.tariff_id
+    );
+    if (matchingOffer && matchingOffer.amount < bestOffer.amount) {
+      bestOffer = matchingOffer;
+    }
+  }
+  
+  return bestOffer;
+}
 ```
 
-2. Добавить UI под табами для вкладки видеоответов:
-```tsx
-{tab.key === "knowledge-videos" && (
-  <div className="flex gap-2 items-center">
-    <Button 
-      variant={videoSortOrder === 'newest' ? 'default' : 'outline'} 
-      size="sm"
-      onClick={() => setVideoSortOrder('newest')}
-    >
-      Сначала новые
-    </Button>
-    <Button 
-      variant={videoSortOrder === 'oldest' ? 'default' : 'outline'} 
-      size="sm"
-      onClick={() => setVideoSortOrder('oldest')}
-    >
-      Сначала старые
-    </Button>
-  </div>
-)}
-```
+### Создание продукта при сохранении мастера
 
-3. Сортировать `standaloneLessons` на клиенте:
-```tsx
-const sortedLessons = useMemo(() => {
-  if (!standaloneLessons.length) return [];
-  return [...standaloneLessons].sort((a, b) => {
-    const orderA = a.sort_order ?? 0;
-    const orderB = b.sort_order ?? 0;
-    return videoSortOrder === 'newest' 
-      ? orderB - orderA 
-      : orderA - orderB;
+```typescript
+// При wizardData.saleConfig.enabled === true
+async function createLessonProduct(lessonId: string, saleConfig: LessonSaleConfig) {
+  // 1. Создать продукт
+  const productCode = `lesson-${lessonSlug}`;
+  const { data: newProduct } = await supabase
+    .from("products_v2")
+    .insert({
+      code: productCode,
+      name: saleConfig.productName || `Урок: ${lessonTitle}`,
+      category: 'lesson',
+      status: 'active',
+      is_active: true,
+      currency: 'BYN',
+    })
+    .select()
+    .single();
+  
+  // 2. Создать тариф с длительностью
+  const accessDays = saleConfig.accessDuration === 'forever' 
+    ? 36500  // ~100 лет
+    : (saleConfig.accessDays || 30);
+  
+  const { data: newTariff } = await supabase
+    .from("tariffs")
+    .insert({
+      product_id: newProduct.id,
+      code: `${productCode}-base`,
+      name: 'Доступ к уроку',
+      access_days: accessDays,
+      is_active: true,
+    })
+    .select()
+    .single();
+  
+  // 3. Создать кнопку оплаты — базовая цена
+  await supabase.from("tariff_offers").insert({
+    tariff_id: newTariff.id,
+    offer_type: 'pay_now',
+    button_label: 'Купить',
+    amount: saleConfig.basePrice,
+    is_active: true,
+    is_primary: true,
+    sort_order: 0,
   });
-}, [standaloneLessons, videoSortOrder]);
-```
-
----
-
-## Часть 3: Фильтр по дате в вопросах
-
-### Проблема
-Кнопка "Фильтр по дате" в вопросах (`knowledge-questions`) неактивна — просто декоративная.
-
-### Решение
-Добавить dropdown с выбором периода или переключатель сортировки (аналогично видеоответам).
-
-**Изменения в `Knowledge.tsx`:**
-
-1. Добавить state:
-```tsx
-const [questionSortOrder, setQuestionSortOrder] = useState<'newest' | 'oldest'>('newest');
-```
-
-2. Заменить декоративную кнопку на рабочий переключатель:
-```tsx
-<DropdownMenu>
-  <DropdownMenuTrigger asChild>
-    <Button variant="outline" className="gap-2">
-      <Filter className="h-4 w-4" />
-      {questionSortOrder === 'newest' ? 'Сначала новые' : 'Сначала старые'}
-    </Button>
-  </DropdownMenuTrigger>
-  <DropdownMenuContent>
-    <DropdownMenuItem onClick={() => setQuestionSortOrder('newest')}>
-      Сначала новые
-    </DropdownMenuItem>
-    <DropdownMenuItem onClick={() => setQuestionSortOrder('oldest')}>
-      Сначала старые
-    </DropdownMenuItem>
-  </DropdownMenuContent>
-</DropdownMenu>
-```
-
-3. Передать `sortOrder` в `QuestionsContent` и применить сортировку.
-
----
-
-## Часть 4: Расширенный мастер для Базы знаний
-
-### Текущее поведение мастера
-Мастер (`ContentCreationWizard`) создаёт:
-- **Модуль** (с уроком опционально)
-- **Урок** (standalone в контейнере)
-
-Поля: название, slug, описание, превью.
-
-### Требования для Базы знаний
-При создании урока в разделе `knowledge-videos`:
-1. Добавить поля: **дата выпуска**, **номер выпуска**, **ссылка на Kinescope**
-2. Добавить возможность ввода **вопросов** с таймкодами (как в Excel-импорте)
-3. Автоматически вычислять `sort_order` из номера выпуска
-4. Сохранять вопросы в `kb_questions`
-
-### Реализация
-
-#### A. Расширить `LessonFormDataSimple` (или создать `KbLessonFormData`)
-
-```tsx
-interface KbLessonFormData extends LessonFormDataSimple {
-  episode_number?: number;
-  answer_date?: string;
-  kinescope_url?: string;
-  questions?: KbQuestionInput[];
-}
-
-interface KbQuestionInput {
-  question_number: number;
-  title: string;           // Суть вопроса
-  full_question?: string;  // Полный текст
-  timecode_seconds?: number;
+  
+  // 4. Создать доп. кнопки для каждого правила цены
+  for (const rule of saleConfig.priceRules) {
+    await supabase.from("tariff_offers").insert({
+      tariff_id: newTariff.id,
+      offer_type: 'pay_now',
+      button_label: `Специальная цена`,
+      amount: rule.price,
+      is_active: true,
+      is_primary: false,
+      sort_order: 1,
+      meta: { 
+        for_existing_product_id: rule.productId,
+        for_existing_tariff_id: rule.tariffId 
+      },
+    });
+  }
+  
+  // 5. Обновить урок с product_id
+  await supabase
+    .from("training_lessons")
+    .update({ product_id: newProduct.id })
+    .eq("id", lessonId);
 }
 ```
 
-#### B. Создать компонент `KbLessonFormFields`
+### UI компоненты
 
-Поля:
-- Номер выпуска (number input)
-- Дата ответа (date picker)
-- Ссылка на видео Kinescope
-- Динамический список вопросов (можно добавлять/удалять)
+1. **LessonSaleConfig.tsx** — форма настройки продажи в мастере:
+   - Переключатель "Продавать отдельно"
+   - Базовая цена
+   - Динамический список правил цен (продукт → тариф → цена)
+   - Выбор длительности доступа
 
-#### C. Модифицировать логику в `ContentCreationWizard`
+2. **LessonPurchaseButton.tsx** — кнопка покупки в карточке урока:
+   - Показывает персонализированную цену
+   - Открывает PaymentDialog с product_id урока
 
-При `menuSectionKey === 'knowledge-videos'`:
-1. Показывать расширенную форму `KbLessonFormFields` вместо `LessonFormFieldsSimple`
-2. После создания урока — сохранять вопросы в `kb_questions`
-3. Автоматически создавать блок видео в `lesson_blocks`
-
-#### D. Изменить логику `handleCreateStandaloneLesson`
-
-```tsx
-// При создании урока в KB:
-const lessonData = {
-  module_id: containerId,
-  title: `Выпуск №${wizardData.kbLesson.episode_number}`,
-  slug: `episode-${wizardData.kbLesson.episode_number}`,
-  sort_order: wizardData.kbLesson.episode_number,
-  // ...
-};
-
-// Создать блок видео
-await supabase.from("lesson_blocks").insert({
-  lesson_id: newLesson.id,
-  type: "video",
-  content: {
-    url: wizardData.kbLesson.kinescope_url,
-    provider: "kinescope",
-  },
-});
-
-// Сохранить вопросы
-for (const q of wizardData.kbLesson.questions) {
-  await supabase.from("kb_questions").insert({
-    lesson_id: newLesson.id,
-    episode_number: wizardData.kbLesson.episode_number,
-    question_number: q.question_number,
-    title: q.title,
-    full_question: q.full_question,
-    timecode_seconds: q.timecode_seconds,
-    answer_date: wizardData.kbLesson.answer_date,
-    kinescope_url: wizardData.kbLesson.kinescope_url,
-  });
-}
-```
+3. **RestrictedLessonBanner.tsx** — баннер для пользователей без доступа:
+   - Показывает превью урока
+   - Цена и кнопка покупки
 
 ---
 
-## Технические изменения
+## Файлы для изменения
 
-### Файлы для модификации
-
-| Файл | Изменения |
-|------|-----------|
-| `src/hooks/useContainerLessons.ts` | Изменить порядок сортировки |
-| `src/pages/Knowledge.tsx` | Добавить состояние и UI сортировки |
-| `src/components/admin/trainings/ContentCreationWizard.tsx` | Расширить логику для KB |
-| **НОВЫЙ** `src/components/admin/trainings/KbLessonFormFields.tsx` | Форма для уроков KB |
-
-### Новые компоненты
-
-1. **`KbLessonFormFields.tsx`** — расширенная форма с полями:
-   - Номер выпуска
-   - Дата ответа  
-   - Kinescope URL
-   - Список вопросов (динамический)
-
-2. **`KbQuestionInput.tsx`** — компонент ввода одного вопроса:
-   - Номер вопроса
-   - Суть (title)
-   - Полный текст (full_question)
-   - Таймкод
+| Файл | Статус | Описание |
+|------|--------|----------|
+| `ContentCreationWizard.tsx` | ✅ Done | Порядок шагов, атомарное создание |
+| `KbLessonFormFields.tsx` | ✅ Done | Скролл вопросов, sticky header |
+| `KbQuestionInput.tsx` | ✅ Done | Placeholder таймкода `чч:мм:сс` |
+| **НОВЫЙ** `LessonSaleConfig.tsx` | 🔜 Todo | UI конфигурации продажи |
+| **НОВЫЙ** `LessonPurchaseButton.tsx` | 🔜 Todo | Кнопка покупки |
+| **МИГРАЦИЯ** | 🔜 Todo | product_id + RLS |
+| `useLessonPrice.tsx` | 🔜 Todo | Хук определения цены |
 
 ---
 
-## Визуальный результат
+## Ранее реализовано (Фаза 0)
 
-### Видеоответы с сортировкой:
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Вопросы │ Видеоответы │ Законодательство                   │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│ [Сначала новые ✓] [Сначала старые]                          │  ← НОВОЕ
-│                                                             │
-│ ┌─────────┐ ┌─────────┐ ┌─────────┐                         │
-│ │ Вып.101 │ │ Вып.100 │ │ Вып.99  │  ...                    │
-│ └─────────┘ └─────────┘ └─────────┘                         │
-└─────────────────────────────────────────────────────────────┘
-```
+### Сортировка уроков
+- ✅ Изменен порядок ORDER BY: `sort_order DESC` как первичный ключ
+- ✅ Добавлен UI-переключатель "Сначала новые / Сначала старые"
 
-### Мастер для Базы знаний (шаг "Урок"):
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Мастер добавления контента                                 │
-├─────────────────────────────────────────────────────────────┤
-│  [1] Раздел  [2] Тип  [3] Урок  [4] Вопросы  [5] ✓         │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  Номер выпуска:  [101_________]                             │
-│  Дата ответа:    [03.02.2026__]                             │
-│  Kinescope URL:  [https://kinescope.io/xxxxx]               │
-│                                                             │
-│  ─────────────────────────────────────────────              │
-│  Превью:   [📷 Загрузить] [✨ AI]                            │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│                                    [Назад] [Далее →]        │
-└─────────────────────────────────────────────────────────────┘
-```
+### Фильтр по дате в вопросах
+- ✅ Кнопка "Фильтр по дате" сделана рабочей
 
-### Мастер — шаг "Вопросы":
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Вопросы к выпуску №101                                     │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  Вопрос 1:                                                  │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │ Суть: [Как рассчитать НДС при импорте?__________]    │   │
-│  │ Полный текст: [____________________________...]      │   │
-│  │ Таймкод: [01:22____]                                 │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                                                             │
-│  Вопрос 2:                                                  │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │ Суть: [Нужна ли касса для ИП?___________________]    │   │
-│  │ ...                                                  │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                                                             │
-│  [+ Добавить вопрос]                                        │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│  Нет вопросов? [Пропустить]          [Назад] [Завершить]   │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Порядок реализации
-
-1. **Фаза 1: Сортировка**
-   - Исправить `useContainerLessons.ts` (порядок ORDER BY)
-   - Добавить UI-переключатель сортировки в `Knowledge.tsx`
-   - Сделать кнопку "Фильтр по дате" рабочей
-
-2. **Фаза 2: Мастер KB**
-   - Создать `KbLessonFormFields.tsx`
-   - Создать `KbQuestionInput.tsx`
-   - Модифицировать `ContentCreationWizard.tsx` для обнаружения раздела KB
-   - Добавить шаг "Вопросы" в wizard flow
-
-3. **Фаза 3: Интеграция**
-   - Логика сохранения в `kb_questions`
-   - Автоматическое создание блока видео
-   - Генерация превью через AI
-
----
-
-## SQL-миграция (не требуется)
-
-Существующие таблицы `training_lessons` и `kb_questions` уже содержат все необходимые поля:
-- `sort_order` — для номера выпуска
-- `published_at` — для даты публикации
-- `episode_number`, `question_number`, `timecode_seconds` — в `kb_questions`
-
+### Мастер для Базы знаний
+- ✅ Создан `KbLessonFormFields.tsx`
+- ✅ Создан `KbQuestionInput.tsx`
+- ✅ Модифицирован `ContentCreationWizard.tsx` для KB
+- ✅ Автоматическое создание video block + kb_questions

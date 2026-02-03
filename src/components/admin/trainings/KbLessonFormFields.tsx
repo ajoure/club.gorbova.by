@@ -305,7 +305,7 @@ export const KbLessonFormFields = memo(function KbLessonFormFields({
 
       {/* Questions Section */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between sticky top-0 bg-background z-10 py-2 -mt-2">
           <div className="flex items-center gap-2">
             <HelpCircle className="h-4 w-4 text-primary" />
             <Label className="text-base font-medium">Вопросы к выпуску</Label>
@@ -329,7 +329,7 @@ export const KbLessonFormFields = memo(function KbLessonFormFields({
             </AlertDescription>
           </Alert>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
             {formData.questions.map((q, index) => (
               <KbQuestionInput
                 key={index}
