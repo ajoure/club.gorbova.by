@@ -278,6 +278,7 @@ Deno.serve(async (req) => {
 
     // Create order
     const orderNumber = generateOrderNumber();
+    const amountMoney = amountCents / 100;
     const { data: order, error: orderError } = await supabase
       .from('orders_v2')
       .insert({
@@ -287,12 +288,18 @@ Deno.serve(async (req) => {
         tariff_id: tariff.id,
         offer_id: effectiveOfferId || null,
         order_number: orderNumber,
-        paid_amount: amountCents / 100,
+        // NOT NULL fields required by schema
+        base_price: amountMoney,
+        final_price: amountMoney,
+        is_trial: false,
+        // paid_amount = 0 until webhook confirms payment
+        paid_amount: 0,
         currency,
         status: 'pending',
         meta: {
           payment_flow: 'provider_managed_checkout',
           source: 'bepaid-create-subscription-checkout',
+          expected_amount: amountMoney,
         },
       })
       .select('id')
