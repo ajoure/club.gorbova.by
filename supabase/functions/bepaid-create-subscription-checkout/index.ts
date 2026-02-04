@@ -377,7 +377,12 @@ Deno.serve(async (req) => {
     const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
     const successReturnUrl = `${baseUrl}?bepaid_sub=success&sub_id=${subscription.id}&order=${order.id}`;
 
-    // bePaid: language is passed under settings, and when creating a plan inline you must provide plan.shop_id.
+    // bePaid Subscriptions API docs: https://docs.bepaid.by/ru/payment_management/subscriptions/subscriptions/
+    // Key points from docs:
+    // 1. plan.shop_id must be a number
+    // 2. plan.plan.amount is in MINOR currency units (e.g., 2000 = 20.00 BYN)
+    // 3. settings.language for localization
+    // 4. customer.ip is REQUIRED
     const bepaidPayload = {
       notification_url: notificationUrl,
       return_url: successReturnUrl,
@@ -386,11 +391,12 @@ Deno.serve(async (req) => {
         email: customerEmail,
         first_name: customerFirstName || undefined,
         last_name: customerLastName || undefined,
+        ip: '127.0.0.1',  // Required by bePaid - will be replaced by actual checkout
       },
       plan: {
         shop_id: Number(credentials.shop_id),
         currency,
-        title: `${product.name || 'Подписка'} — Каждые ${intervalDays} дней`,
+        title: `${product.name || 'Подписка'}`,
         plan: {
           amount: amountCents,
           interval: intervalDays,
@@ -431,8 +437,12 @@ Deno.serve(async (req) => {
     });
 
     if (!bepaidResponse.ok || bepaidResult.errors) {
-      // PATCH-2: Log error status only, no PII
-      console.error('[bepaid-sub-checkout] bePaid error: status=', bepaidResponse.status);
+      // PATCH-2: Log error details for debugging (no PII - just error message)
+      console.error('[bepaid-sub-checkout] bePaid error:', {
+        status: bepaidResponse.status,
+        message: bepaidResult.message || 'unknown',
+        errors: bepaidResult.errors || {},
+      });
       // Update order status to failed
       await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
       // subscription_status enum uses 'canceled' (one L)
@@ -440,7 +450,7 @@ Deno.serve(async (req) => {
       
       return new Response(JSON.stringify({ 
         error: 'Failed to create bePaid subscription',
-        // PATCH-2: Don't expose raw bePaid response to client
+        details: bepaidResult.message || bepaidResult.errors?.base?.[0] || 'Unknown error',
       }), {
         status: bepaidResponse.status || 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
