@@ -102,6 +102,9 @@ import { QuizSequenceBlock } from "./blocks/QuizSequenceBlock";
 import { QuizHotspotBlock } from "./blocks/QuizHotspotBlock";
 import { GalleryBlock } from "./blocks/GalleryBlock";
 import { QuizSurveyBlock } from "./blocks/QuizSurveyBlock";
+import { VideoUnskippableBlock } from "./blocks/VideoUnskippableBlock";
+import { DiagnosticTableBlock } from "./blocks/DiagnosticTableBlock";
+import { SequentialFormBlock } from "./blocks/SequentialFormBlock";
 
 // Block configuration with categories
 interface BlockConfig {
@@ -157,6 +160,11 @@ const blockTypeConfig: Record<BlockType, BlockConfig> = {
   container: { icon: Box, label: "Контейнер", color: "bg-gray-500/10 text-gray-600", category: 'meta' },
   columns: { icon: Columns, label: "Колонки", color: "bg-gray-500/10 text-gray-600", category: 'meta' },
   condition: { icon: GitBranch, label: "Условие", color: "bg-gray-500/10 text-gray-600", category: 'meta' },
+  
+  // Kvest blocks — Блоки квеста
+  video_unskippable: { icon: Video, label: "Видео (обязат.)", color: "bg-red-500/10 text-red-600", category: 'media' },
+  diagnostic_table: { icon: Table, label: "Диагн. таблица", color: "bg-emerald-500/10 text-emerald-600", category: 'input' },
+  sequential_form: { icon: List, label: "Пошаговая форма", color: "bg-indigo-500/10 text-indigo-600", category: 'input' },
 };
 
 const categoryConfig = {
@@ -168,13 +176,14 @@ const categoryConfig = {
   meta: { icon: Box, label: "Структура", color: "text-gray-600" },
 };
 
-// Blocks available (Iteration 1 + 2 + survey)
+// Blocks available (Iteration 1 + 2 + survey + kvest)
 const availableBlocks: BlockType[] = [
   'heading', 'text', 'accordion', 'tabs', 'spoiler', 'callout', 'quote',
   'video', 'audio', 'image', 'gallery', 'file',
   'button', 'embed', 'divider', 'timeline', 'steps',
   'quiz_single', 'quiz_multiple', 'quiz_true_false', 'quiz_fill_blank',
   'quiz_matching', 'quiz_sequence', 'quiz_hotspot', 'quiz_survey',
+  'video_unskippable', 'diagnostic_table', 'sequential_form',
 ];
 
 function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
@@ -227,6 +236,12 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
       return { items: [], layout: 'grid', columns: 3 };
     case 'quiz_survey':
       return { title: "", instruction: "", questions: [], results: [], mixedResults: [], buttonText: "Узнать результат" };
+    case 'video_unskippable':
+      return { url: "", provider: 'kinescope', title: "", threshold_percent: 95, required: true };
+    case 'diagnostic_table':
+      return { title: "Диагностика точки А", instruction: "", columns: [], minRows: 1, showAggregates: true, submitButtonText: "Диагностика завершена" };
+    case 'sequential_form':
+      return { title: "Формула точки B", steps: [], submitButtonText: "Формула сформирована" };
     case 'divider':
     default:
       return {};
@@ -310,6 +325,12 @@ function SortableBlockItem({ block, onUpdate, onDelete }: SortableBlockItemProps
         return <GalleryBlock content={block.content as any} onChange={onUpdate} />;
       case 'quiz_survey':
         return <QuizSurveyBlock content={block.content as any} onChange={onUpdate} />;
+      case 'video_unskippable':
+        return <VideoUnskippableBlock content={block.content as any} onChange={onUpdate} />;
+      case 'diagnostic_table':
+        return <DiagnosticTableBlock content={block.content as any} onChange={onUpdate} />;
+      case 'sequential_form':
+        return <SequentialFormBlock content={block.content as any} onChange={onUpdate} />;
       default:
         return (
           <div className="text-center py-8 text-muted-foreground">

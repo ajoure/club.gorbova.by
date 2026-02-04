@@ -3039,6 +3039,44 @@ export type Database = {
           },
         ]
       }
+      lesson_progress_state: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          id: string
+          lesson_id: string
+          state_json: Json
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          lesson_id: string
+          state_json?: Json
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          lesson_id?: string
+          state_json?: Json
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lesson_progress_state_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "training_lessons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       marketing_insights: {
         Row: {
           content: string
@@ -7734,6 +7772,7 @@ export type Database = {
       training_lessons: {
         Row: {
           audio_url: string | null
+          completion_mode: string | null
           content: string | null
           content_type: string
           created_at: string
@@ -7744,6 +7783,7 @@ export type Database = {
           module_id: string
           product_id: string | null
           published_at: string | null
+          require_previous: boolean | null
           slug: string
           sort_order: number | null
           thumbnail_url: string | null
@@ -7753,6 +7793,7 @@ export type Database = {
         }
         Insert: {
           audio_url?: string | null
+          completion_mode?: string | null
           content?: string | null
           content_type?: string
           created_at?: string
@@ -7763,6 +7804,7 @@ export type Database = {
           module_id: string
           product_id?: string | null
           published_at?: string | null
+          require_previous?: boolean | null
           slug: string
           sort_order?: number | null
           thumbnail_url?: string | null
@@ -7772,6 +7814,7 @@ export type Database = {
         }
         Update: {
           audio_url?: string | null
+          completion_mode?: string | null
           content?: string | null
           content_type?: string
           created_at?: string
@@ -7782,6 +7825,7 @@ export type Database = {
           module_id?: string
           product_id?: string | null
           published_at?: string | null
+          require_previous?: boolean | null
           slug?: string
           sort_order?: number | null
           thumbnail_url?: string | null
@@ -7819,6 +7863,7 @@ export type Database = {
           is_container: boolean | null
           menu_section_key: string | null
           product_id: string | null
+          published_at: string | null
           slug: string
           sort_order: number | null
           title: string
@@ -7836,6 +7881,7 @@ export type Database = {
           is_container?: boolean | null
           menu_section_key?: string | null
           product_id?: string | null
+          published_at?: string | null
           slug: string
           sort_order?: number | null
           title: string
@@ -7853,6 +7899,7 @@ export type Database = {
           is_container?: boolean | null
           menu_section_key?: string | null
           product_id?: string | null
+          published_at?: string | null
           slug?: string
           sort_order?: number | null
           title?: string
