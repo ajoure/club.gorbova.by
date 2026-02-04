@@ -89,16 +89,25 @@ export function LessonBlockRenderer({
     maxScore: number
   ) => {
     await saveBlockResponse(blockId, answer, isCorrect, score, maxScore);
-    // For quiz_survey in kvest mode, extract role and call onRoleSelected
-    if (kvestProps?.onRoleSelected && answer?.selectedCategory) {
-      const categoryToRole: Record<string, string> = {
-        'A': 'executor',
-        'B': 'freelancer', 
-        'C': 'entrepreneur',
-      };
-      const role = categoryToRole[answer.selectedCategory as string];
-      if (role) {
-        kvestProps.onRoleSelected(role);
+    // PATCH-A: For quiz_survey in kvest mode, extract role from dominantCategories
+    if (kvestProps?.onRoleSelected) {
+      // dominantCategories — массив категорий, берём первую
+      const categories = answer?.dominantCategories as string[] | undefined;
+      const primaryCategory = categories?.[0];
+      
+      if (primaryCategory) {
+        const categoryToRole: Record<string, string> = {
+          'A': 'executor',
+          'А': 'executor',  // Cyrillic
+          'B': 'freelancer', 
+          'Б': 'freelancer', // Cyrillic
+          'C': 'entrepreneur',
+          'В': 'entrepreneur', // Cyrillic
+        };
+        const role = categoryToRole[primaryCategory];
+        if (role) {
+          kvestProps.onRoleSelected(role);
+        }
       }
     }
   };

@@ -51,6 +51,8 @@ export function VideoUnskippableBlock({
   const [fallbackTimer, setFallbackTimer] = useState<number | null>(null);
   const [fallbackElapsed, setFallbackElapsed] = useState(0);
   const fallbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // PATCH-B/E: Track if Kinescope API is working (to disable fallback)
+  const [apiWorking, setApiWorking] = useState(false);
 
   const threshold = content.threshold_percent || 95;
   const isThresholdReached = localWatched >= threshold;
@@ -114,6 +116,16 @@ export function VideoUnskippableBlock({
     if (isEditing || isCompleted) return;
 
     const handleMessage = (event: MessageEvent) => {
+      // PATCH-B: Проверка origin для Kinescope
+      const trustedOrigins = [
+        'https://kinescope.io',
+        window.location.origin // Для локальной разработки
+      ];
+      
+      if (!trustedOrigins.some(origin => event.origin.startsWith(origin))) {
+        return; // Игнорируем сообщения от недоверенных источников
+      }
+      
       // Kinescope sends events via postMessage
       if (!event.data) return;
       
@@ -122,6 +134,9 @@ export function VideoUnskippableBlock({
         
         // Kinescope event types
         if (data.type === 'player:timeupdate' || data.event === 'timeupdate') {
+          // PATCH-E: Mark API as working, fallback not needed
+          setApiWorking(true);
+          
           const currentTime = data.data?.currentTime ?? data.currentTime ?? 0;
           const duration = data.data?.duration ?? data.duration ?? 0;
           
@@ -134,12 +149,14 @@ export function VideoUnskippableBlock({
         }
         
         if (data.type === 'player:ended' || data.event === 'ended') {
+          setApiWorking(true);
           setLocalWatched(100);
           setVideoStarted(true);
           onProgress?.(100);
         }
         
         if (data.type === 'player:play' || data.event === 'play') {
+          setApiWorking(true);
           setVideoStarted(true);
         }
       } catch {
@@ -344,8 +361,8 @@ export function VideoUnskippableBlock({
             allowFullScreen
           />
           
-          {/* Overlay for starting fallback timer if no API events received */}
-          {!videoStarted && content.duration_seconds && (
+          {/* PATCH-E: Overlay for starting fallback timer ONLY if API is not working */}
+          {!videoStarted && content.duration_seconds && !apiWorking && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50">
               <Button
                 variant="secondary"

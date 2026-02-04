@@ -95,12 +95,20 @@ export function DiagnosticTableBlock({
   // PATCH-1: Local state for rows to prevent focus loss
   const [localRows, setLocalRows] = useState<Record<string, unknown>[]>([]);
   
-  // Initialize local rows from props
+  // PATCH-C: Initialize local rows from props OR create first empty row
   useEffect(() => {
-    if (rows.length > 0 && localRows.length === 0) {
+    // Если нет строк и не completed — создать первую пустую строку
+    if (rows.length === 0 && localRows.length === 0 && !isCompleted) {
+      const newRow: Record<string, unknown> = { _id: genId() };
+      columns.forEach(col => {
+        newRow[col.id] = col.type === 'number' ? 0 : col.type === 'slider' ? 5 : '';
+      });
+      setLocalRows([newRow]);
+      onRowsChange?.([newRow]);
+    } else if (rows.length > 0 && localRows.length === 0) {
       setLocalRows(rows);
     }
-  }, [rows]);
+  }, [rows, isCompleted]);
 
   // Commit local rows to parent
   const commitRows = useCallback(() => {
