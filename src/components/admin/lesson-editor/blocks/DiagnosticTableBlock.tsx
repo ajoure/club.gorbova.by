@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -95,20 +95,38 @@ export function DiagnosticTableBlock({
   // PATCH-1: Local state for rows to prevent focus loss
   const [localRows, setLocalRows] = useState<Record<string, unknown>[]>([]);
   
-  // PATCH-C: Initialize local rows from props OR create first empty row
+  // PATCH-C: Refs for stable dependencies (avoid infinite loops)
+  const columnsRef = useRef(columns);
+  columnsRef.current = columns;
+  
+  const onRowsChangeRef = useRef(onRowsChange);
+  onRowsChangeRef.current = onRowsChange;
+  
+  // PATCH-C: Flag to ensure one-time initialization
+  const initDoneRef = useRef(false);
+  
+  // Generate unique ID (stable function outside render)
+  const genId = useCallback(() => Math.random().toString(36).substring(2, 9), []);
+  
+  // PATCH-C: Initialize local rows from props OR create first empty row (one-time)
   useEffect(() => {
-    // Если нет строк и не completed — создать первую пустую строку
-    if (rows.length === 0 && localRows.length === 0 && !isCompleted) {
+    // Одноразовая инициализация — предотвращает "размножение" строк
+    if (initDoneRef.current) return;
+    
+    if (rows.length === 0 && !isCompleted) {
+      // Создать первую пустую строку
       const newRow: Record<string, unknown> = { _id: genId() };
-      columns.forEach(col => {
+      columnsRef.current.forEach(col => {
         newRow[col.id] = col.type === 'number' ? 0 : col.type === 'slider' ? 5 : '';
       });
       setLocalRows([newRow]);
-      onRowsChange?.([newRow]);
-    } else if (rows.length > 0 && localRows.length === 0) {
+      onRowsChangeRef.current?.([newRow]);
+      initDoneRef.current = true;
+    } else if (rows.length > 0) {
       setLocalRows(rows);
+      initDoneRef.current = true;
     }
-  }, [rows, isCompleted]);
+  }, [rows, isCompleted, genId]);
 
   // Commit local rows to parent
   const commitRows = useCallback(() => {
@@ -116,9 +134,6 @@ export function DiagnosticTableBlock({
       onRowsChange?.(localRows);
     }
   }, [localRows, onRowsChange]);
-
-  // Generate unique ID
-  const genId = () => Math.random().toString(36).substring(2, 9);
 
   // Calculate computed columns
   const calculateComputed = useCallback((row: Record<string, unknown>, col: DiagnosticTableColumn): string | number => {

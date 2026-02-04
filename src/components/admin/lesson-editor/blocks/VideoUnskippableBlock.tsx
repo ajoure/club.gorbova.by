@@ -51,8 +51,11 @@ export function VideoUnskippableBlock({
   const [fallbackTimer, setFallbackTimer] = useState<number | null>(null);
   const [fallbackElapsed, setFallbackElapsed] = useState(0);
   const fallbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
   // PATCH-B/E: Track if Kinescope API is working (to disable fallback)
   const [apiWorking, setApiWorking] = useState(false);
+  const [apiDetectionDone, setApiDetectionDone] = useState(false);
+  const apiDetectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const threshold = content.threshold_percent || 95;
   const isThresholdReached = localWatched >= threshold;
@@ -111,19 +114,32 @@ export function VideoUnskippableBlock({
     return url;
   }, [content.url]);
 
+  // PATCH-B: Жёсткие домены Kinescope для postMessage security
+  const KINESCOPE_ORIGINS = [
+    'https://kinescope.io',
+    'https://player.kinescope.io',
+  ];
+  
+  // PATCH-B: Белый список событий Kinescope
+  const ALLOWED_EVENTS = [
+    'player:timeupdate', 'player:ended', 'player:play', 'player:pause',
+    'timeupdate', 'ended', 'play', 'pause'
+  ];
+
   // Kinescope Player API integration via postMessage
   useEffect(() => {
     if (isEditing || isCompleted) return;
 
     const handleMessage = (event: MessageEvent) => {
-      // PATCH-B: Проверка origin для Kinescope
-      const trustedOrigins = [
-        'https://kinescope.io',
-        window.location.origin // Для локальной разработки
-      ];
+      // PATCH-B: Строгая проверка origin — только домены Kinescope
+      const originValid = KINESCOPE_ORIGINS.some(o => event.origin === o);
+      if (!originValid) {
+        return; // Игнорируем недоверенные источники
+      }
       
-      if (!trustedOrigins.some(origin => event.origin.startsWith(origin))) {
-        return; // Игнорируем сообщения от недоверенных источников
+      // PATCH-B: Проверка source — сообщение должно быть от нашего iframe
+      if (iframeRef.current && event.source !== iframeRef.current.contentWindow) {
+        return; // Сообщение не от нашего iframe
       }
       
       // Kinescope sends events via postMessage
@@ -132,10 +148,28 @@ export function VideoUnskippableBlock({
       try {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
         
+        // PATCH-B: Проверка формата события
+        const eventType = data.type || data.event;
+        if (!eventType || typeof eventType !== 'string') {
+          return; // Неверный формат
+        }
+        
+        // PATCH-B: Белый список событий
+        if (!ALLOWED_EVENTS.includes(eventType)) {
+          return; // Неизвестное событие
+        }
+        
         // Kinescope event types
-        if (data.type === 'player:timeupdate' || data.event === 'timeupdate') {
-          // PATCH-E: Mark API as working, fallback not needed
+        if (eventType === 'player:timeupdate' || eventType === 'timeupdate') {
+          // PATCH-E: Mark API as working + stop fallback if running
           setApiWorking(true);
+          
+          // Остановить fallback таймер если был запущен
+          if (fallbackIntervalRef.current) {
+            clearInterval(fallbackIntervalRef.current);
+            fallbackIntervalRef.current = null;
+            setFallbackTimer(null);
+          }
           
           const currentTime = data.data?.currentTime ?? data.currentTime ?? 0;
           const duration = data.data?.duration ?? data.duration ?? 0;
@@ -148,14 +182,14 @@ export function VideoUnskippableBlock({
           }
         }
         
-        if (data.type === 'player:ended' || data.event === 'ended') {
+        if (eventType === 'player:ended' || eventType === 'ended') {
           setApiWorking(true);
           setLocalWatched(100);
           setVideoStarted(true);
           onProgress?.(100);
         }
         
-        if (data.type === 'player:play' || data.event === 'play') {
+        if (eventType === 'player:play' || eventType === 'play') {
           setApiWorking(true);
           setVideoStarted(true);
         }
@@ -167,6 +201,26 @@ export function VideoUnskippableBlock({
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, [isEditing, isCompleted, onProgress]);
+  
+  // PATCH-E: Автодетекция API — 5 сек ожидания, потом показываем fallback
+  useEffect(() => {
+    if (isEditing || isCompleted || apiWorking) return;
+    
+    const embedUrl = getEmbedUrl();
+    if (embedUrl && content.duration_seconds) {
+      apiDetectionTimeoutRef.current = setTimeout(() => {
+        if (!apiWorking) {
+          setApiDetectionDone(true); // API не ответил за 5 сек
+        }
+      }, 5000);
+    }
+    
+    return () => {
+      if (apiDetectionTimeoutRef.current) {
+        clearTimeout(apiDetectionTimeoutRef.current);
+      }
+    };
+  }, [isEditing, isCompleted, apiWorking, getEmbedUrl, content.duration_seconds]);
 
   // Fallback timer when Kinescope API doesn't work
   const startFallbackTimer = useCallback(() => {
@@ -361,8 +415,8 @@ export function VideoUnskippableBlock({
             allowFullScreen
           />
           
-          {/* PATCH-E: Overlay for starting fallback timer ONLY if API is not working */}
-          {!videoStarted && content.duration_seconds && !apiWorking && (
+          {/* PATCH-E: Overlay for starting fallback timer ONLY if API is not working AND detection done */}
+          {!videoStarted && content.duration_seconds && !apiWorking && apiDetectionDone && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50">
               <Button
                 variant="secondary"
