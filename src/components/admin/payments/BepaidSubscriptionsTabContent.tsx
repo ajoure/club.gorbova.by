@@ -1,11 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import {
@@ -29,6 +27,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Loader2,
   RefreshCw,
   Ban,
@@ -47,13 +51,33 @@ import {
   ShieldAlert,
   Info,
   HelpCircle,
+  Settings,
+  GripVertical,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useHasRole } from "@/hooks/useHasRole";
-import { ClickableContactName } from "@/components/admin/ClickableContactName";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { cn } from "@/lib/utils";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  horizontalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 interface BepaidSubscription {
   id: string;
@@ -103,7 +127,6 @@ interface ReconcileResult {
   sample_ids: string[];
 }
 
-// PATCH-I++: Enhanced Debug info interface
 interface DebugInfo {
   creds_source?: 'integration_instance_only' | 'none';
   integration_status?: string | null;
@@ -121,7 +144,32 @@ interface DebugInfo {
   result_count?: number;
 }
 
-// PATCH-J+O: Russian status labels dictionary with all bePaid statuses
+// Column configuration for DnD + visibility
+interface ColumnConfig {
+  key: string;
+  label: string;
+  visible: boolean;
+  width: number;
+  order: number;
+}
+
+const DEFAULT_COLUMNS: ColumnConfig[] = [
+  { key: "checkbox", label: "", visible: true, width: 40, order: 0 },
+  { key: "id", label: "ID", visible: true, width: 130, order: 1 },
+  { key: "status", label: "Статус", visible: true, width: 100, order: 2 },
+  { key: "customer", label: "Клиент", visible: true, width: 160, order: 3 },
+  { key: "plan", label: "План", visible: true, width: 150, order: 4 },
+  { key: "amount", label: "Сумма", visible: true, width: 90, order: 5 },
+  { key: "next_billing", label: "Списание", visible: true, width: 110, order: 6 },
+  { key: "card", label: "Карта", visible: false, width: 100, order: 7 },
+  { key: "created", label: "Создано", visible: false, width: 100, order: 8 },
+  { key: "connection", label: "Связь", visible: true, width: 100, order: 9 },
+  { key: "actions", label: "", visible: true, width: 80, order: 10 },
+];
+
+const COLUMNS_STORAGE_KEY = 'admin_bepaid_subscriptions_columns_v2';
+
+// Russian status labels dictionary
 const STATUS_LABELS: Record<string, string> = {
   active: 'Активна',
   trial: 'Пробный период',
@@ -132,7 +180,6 @@ const STATUS_LABELS: Record<string, string> = {
   paused: 'Приостановлена',
   unknown: 'Неизвестно',
   legacy: 'Устаревшая',
-  // PATCH-O: Additional statuses from bePaid
   redirecting: 'Перенаправление',
   failed: 'Ошибка',
   expired: 'Истекла',
@@ -149,8 +196,86 @@ function normalizeStatus(status: string): string {
   return status;
 }
 
+// Sortable resizable header component
+function SortableResizableHeader({ 
+  column, 
+  onResize, 
+  children 
+}: { 
+  column: ColumnConfig; 
+  onResize: (key: string, width: number) => void; 
+  children: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: column.key });
+  
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = column.width;
+    
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientX - startX;
+      const newWidth = Math.max(50, startWidth + delta);
+      onResize(column.key, newWidth);
+    };
+    
+    const handleMouseUp = () => {
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+  
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    width: column.width,
+    minWidth: 50,
+    position: 'relative' as const,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  
+  // Non-draggable columns
+  if (column.key === 'checkbox' || column.key === 'actions') {
+    return (
+      <TableHead className="py-2 px-2" style={{ width: column.width, minWidth: 50 }}>
+        {children}
+      </TableHead>
+    );
+  }
+  
+  return (
+    <TableHead ref={setNodeRef} style={style} className="py-2 px-2">
+      <div className="flex items-center gap-1">
+        <div 
+          {...attributes} 
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing p-0.5 hover:bg-muted rounded opacity-50 hover:opacity-100"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <GripVertical className="w-3 h-3" />
+        </div>
+        <div className="flex-1 truncate text-xs font-medium">{children}</div>
+      </div>
+      <div
+        className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/50 active:bg-primary transition-colors"
+        onMouseDown={handleMouseDown}
+      />
+    </TableHead>
+  );
+}
+
 export function BepaidSubscriptionsTabContent() {
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  // Default filter is now "active"
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [linkFilter, setLinkFilter] = useState<LinkFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("next_billing_at");
@@ -167,8 +292,36 @@ export function BepaidSubscriptionsTabContent() {
   
   const [refreshingSnapshotIds, setRefreshingSnapshotIds] = useState<Set<string>>(new Set());
   
+  // Contact sheet state
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
+  const [selectedContact, setSelectedContact] = useState<any>(null);
+  
+  // Columns state with localStorage
+  const [columns, setColumns] = useState<ColumnConfig[]>(() => {
+    const saved = localStorage.getItem(COLUMNS_STORAGE_KEY);
+    if (saved) {
+      try { return JSON.parse(saved); } catch { return DEFAULT_COLUMNS; }
+    }
+    return DEFAULT_COLUMNS;
+  });
+  
+  useEffect(() => {
+    localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(columns));
+  }, [columns]);
+  
   const queryClient = useQueryClient();
   const { hasRole: isSuperAdmin } = useHasRole('superadmin');
+  
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+  
+  const sortedVisibleColumns = useMemo(() => 
+    [...columns].filter(c => c.visible).sort((a, b) => a.order - b.order),
+    [columns]
+  );
 
   const { data, isLoading, refetch, isRefetching, error: fetchError } = useQuery({
     queryKey: ["bepaid-subscriptions-admin"],
@@ -280,6 +433,7 @@ export function BepaidSubscriptionsTabContent() {
     return result;
   }, [subscriptions, statusFilter, linkFilter, searchQuery, sortField, sortDir]);
 
+  // Mutations
   const reconcileMutation = useMutation({
     mutationFn: async (execute: boolean) => {
       const { data, error } = await supabase.functions.invoke("admin-reconcile-bepaid-legacy", {
@@ -429,7 +583,7 @@ export function BepaidSubscriptionsTabContent() {
   const formatDate = (dateStr: string | undefined) => {
     if (!dateStr) return "—";
     try {
-      return format(new Date(dateStr), "dd.MM.yy HH:mm", { locale: ru });
+      return format(new Date(dateStr), "dd.MM.yy", { locale: ru });
     } catch {
       return dateStr;
     }
@@ -438,515 +592,652 @@ export function BepaidSubscriptionsTabContent() {
   const getDaysUntilCharge = (dateStr: string | undefined) => {
     if (!dateStr) return null;
     try {
-      const days = differenceInDays(new Date(dateStr), new Date());
-      return days;
+      return differenceInDays(new Date(dateStr), new Date());
     } catch {
       return null;
     }
   };
 
-  // PATCH-J: Get status badge with Russian label
   const getStatusBadge = (status: string) => {
     const label = STATUS_LABELS[status] || status;
     switch (status) {
       case "active":
-        return <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">{label}</Badge>;
+        return <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-xs">{label}</Badge>;
       case "trial":
-        return <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">{label}</Badge>;
+        return <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-xs">{label}</Badge>;
       case "pending":
-        return <Badge className="bg-purple-500/10 text-purple-600 border-purple-500/20">{label}</Badge>;
+        return <Badge className="bg-purple-500/10 text-purple-600 border-purple-500/20 text-xs">{label}</Badge>;
       case "past_due":
-        return <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">{label}</Badge>;
+        return <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20 text-xs">{label}</Badge>;
       case "canceled":
       case "terminated":
-        return <Badge variant="secondary">{label}</Badge>;
+        return <Badge variant="secondary" className="text-xs">{label}</Badge>;
       default:
-        return <Badge variant="outline">{label}</Badge>;
+        return <Badge variant="outline" className="text-xs">{label}</Badge>;
+    }
+  };
+  
+  // Open contact sheet without navigation
+  const openContactSheet = async (profileId: string) => {
+    try {
+      const { data: contact, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", profileId)
+        .single();
+      
+      if (error) throw error;
+      
+      setSelectedContact(contact);
+      setContactSheetOpen(true);
+    } catch (e) {
+      console.error("Failed to load contact:", e);
+      toast.error("Не удалось загрузить контакт");
+    }
+  };
+  
+  // DnD handlers
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    
+    const oldIndex = columns.findIndex(c => c.key === active.id);
+    const newIndex = columns.findIndex(c => c.key === over.id);
+    
+    const reordered = arrayMove(columns, oldIndex, newIndex).map((col, index) => ({
+      ...col,
+      order: index,
+    }));
+    
+    setColumns(reordered);
+  };
+  
+  const handleResize = (key: string, width: number) => {
+    setColumns(columns.map(c => c.key === key ? { ...c, width } : c));
+  };
+  
+  const toggleColumnVisibility = (key: string) => {
+    setColumns(columns.map(c => c.key === key ? { ...c, visible: !c.visible } : c));
+  };
+  
+  // Render cell based on column key
+  const renderCell = (sub: BepaidSubscription, columnKey: string) => {
+    const daysUntil = getDaysUntilCharge(sub.next_billing_at);
+    const isUrgent = daysUntil !== null && daysUntil <= 7 && daysUntil >= 0 && sub.is_orphan;
+    const isRefreshingSnapshot = refreshingSnapshotIds.has(sub.id);
+    
+    switch (columnKey) {
+      case 'checkbox':
+        return (
+          <Checkbox
+            checked={selectedIds.has(sub.id)}
+            onCheckedChange={() => handleSelectOne(sub.id)}
+            disabled={sub.status === "canceled"}
+          />
+        );
+        
+      case 'id':
+        return (
+          <div>
+            <button
+              onClick={() => copyId(sub.id)}
+              className="font-mono text-xs hover:text-primary flex items-center gap-1"
+              title="Скопировать ID"
+            >
+              {sub.id.slice(0, 12)}...
+              {copiedId === sub.id ? (
+                <Check className="h-3 w-3 text-emerald-500" />
+              ) : (
+                <Copy className="h-3 w-3 opacity-50" />
+              )}
+            </button>
+            {sub.needs_support && (
+              <Badge variant="destructive" className="mt-0.5 text-[10px] py-0">
+                Помощь
+              </Badge>
+            )}
+            {sub.details_missing && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="outline" className="mt-0.5 text-[10px] py-0 text-amber-600 border-amber-500/30 cursor-help">
+                    Нет деталей
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-xs text-xs">
+                  bePaid API не вернул информацию по этой подписке.
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+        );
+        
+      case 'status':
+        return (
+          <div>
+            {getStatusBadge(sub.status)}
+            {sub.snapshot_state && sub.snapshot_state !== sub.status && (
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                bePaid: {STATUS_LABELS[sub.snapshot_state] || sub.snapshot_state}
+              </div>
+            )}
+          </div>
+        );
+        
+      case 'customer':
+        return (
+          <div>
+            {sub.linked_user_id ? (
+              <button
+                onClick={() => openContactSheet(sub.linked_user_id!)}
+                className="text-xs font-medium hover:underline hover:text-primary text-left truncate block max-w-[150px]"
+              >
+                {sub.linked_profile_name || sub.customer_name || sub.customer_email || "—"}
+              </button>
+            ) : (
+              <span className="text-xs truncate block max-w-[150px]">
+                {sub.customer_name || sub.customer_email || "—"}
+              </span>
+            )}
+            {sub.customer_name && sub.customer_email && !sub.linked_user_id && (
+              <div className="text-[10px] text-muted-foreground truncate max-w-[150px]">{sub.customer_email}</div>
+            )}
+          </div>
+        );
+        
+      case 'plan':
+        return (
+          <span className="text-xs truncate block max-w-[140px]" title={sub.plan_title}>
+            {sub.plan_title || "—"}
+          </span>
+        );
+        
+      case 'amount':
+        return (
+          <span className="text-xs font-medium tabular-nums">
+            {sub.plan_amount.toFixed(2)} {sub.plan_currency}
+          </span>
+        );
+        
+      case 'next_billing':
+        return sub.next_billing_at ? (
+          <div className="flex items-center gap-1">
+            <Calendar className="h-3 w-3 text-muted-foreground" />
+            <span className={cn("text-xs", isUrgent && "text-amber-600 font-medium")}>
+              {formatDate(sub.next_billing_at)}
+            </span>
+            {isUrgent && daysUntil !== null && (
+              <span className="text-[10px] text-amber-600">({daysUntil}д)</span>
+            )}
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        );
+        
+      case 'card':
+        return sub.card_last4 ? (
+          <span className="text-xs text-muted-foreground">
+            {sub.card_brand} •••• {sub.card_last4}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        );
+        
+      case 'created':
+        return (
+          <span className="text-xs text-muted-foreground">
+            {formatDate(sub.created_at)}
+          </span>
+        );
+        
+      case 'connection':
+        return sub.is_orphan ? (
+          <Badge variant="outline" className="text-[10px] text-red-600 border-red-500/30">
+            <Link2Off className="h-2.5 w-2.5 mr-1" />
+            Сирота
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px] text-emerald-600 border-emerald-500/30">
+            <Link2 className="h-2.5 w-2.5 mr-1" />
+            Связана
+          </Badge>
+        );
+        
+      case 'actions':
+        return (
+          <div className="flex items-center gap-0.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => window.open(`https://app.bepaid.by/en/subscriptions/${sub.id}`, '_blank')}
+                >
+                  <ExternalLink className="h-3 w-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Открыть в bePaid</TooltipContent>
+            </Tooltip>
+            
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => handleRefreshSnapshot(sub.id)}
+                  disabled={isRefreshingSnapshot}
+                >
+                  {isRefreshingSnapshot ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <RotateCcw className="h-3 w-3" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Обновить статус</TooltipContent>
+            </Tooltip>
+            
+            {!sub.is_orphan && (
+              canUnlink(sub) ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => {
+                    setTargetEmergencyUnlinkId(sub.id);
+                    setShowEmergencyUnlinkDialog(true);
+                  }}
+                >
+                  <Unlink className="h-3 w-3" />
+                </Button>
+              ) : isSuperAdmin ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-destructive hover:text-destructive"
+                  onClick={() => {
+                    setTargetEmergencyUnlinkId(sub.id);
+                    setShowEmergencyUnlinkDialog(true);
+                  }}
+                >
+                  <ShieldAlert className="h-3 w-3" />
+                </Button>
+              ) : null
+            )}
+          </div>
+        );
+        
+      default:
+        return null;
     }
   };
 
   return (
     <div className="space-y-4">
-      {/* PATCH-P: Compact stats row */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/50 rounded-full text-sm">
+      {/* Clickable stats row - glassmorphism style */}
+      <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-card/20 backdrop-blur-md border border-border/20">
+        <button
+          onClick={() => setStatusFilter("all")}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all cursor-pointer",
+            statusFilter === "all" 
+              ? "bg-muted/80 ring-2 ring-primary/30" 
+              : "bg-muted/50 hover:bg-muted/70"
+          )}
+        >
           <span className="font-semibold">{rawStats.total}</span>
           <span className="text-muted-foreground text-xs">всего</span>
-        </div>
-        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-600 rounded-full text-sm">
+        </button>
+        
+        <button
+          onClick={() => setStatusFilter("active")}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all cursor-pointer",
+            statusFilter === "active" 
+              ? "bg-emerald-500/20 text-emerald-600 ring-2 ring-emerald-500/30" 
+              : "bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
+          )}
+        >
           <span className="font-semibold">{rawStats.active}</span>
           <span className="text-xs">активных</span>
-        </div>
-        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 text-blue-600 rounded-full text-sm">
+        </button>
+        
+        <button
+          onClick={() => setStatusFilter("trial")}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all cursor-pointer",
+            statusFilter === "trial" 
+              ? "bg-blue-500/20 text-blue-600 ring-2 ring-blue-500/30" 
+              : "bg-blue-500/10 text-blue-600 hover:bg-blue-500/20"
+          )}
+        >
           <span className="font-semibold">{rawStats.trial}</span>
           <span className="text-xs">пробных</span>
-        </div>
+        </button>
+        
         {pendingCount > 0 && (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 text-purple-600 rounded-full text-sm">
+          <button
+            onClick={() => setStatusFilter("pending")}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all cursor-pointer",
+              statusFilter === "pending" 
+                ? "bg-purple-500/20 text-purple-600 ring-2 ring-purple-500/30" 
+                : "bg-purple-500/10 text-purple-600 hover:bg-purple-500/20"
+            )}
+          >
             <span className="font-semibold">{pendingCount}</span>
             <span className="text-xs">ожидает</span>
-          </div>
+          </button>
         )}
+        
         {canceledCount > 0 && (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/30 rounded-full text-sm text-muted-foreground">
+          <button
+            onClick={() => setStatusFilter("canceled")}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all cursor-pointer",
+              statusFilter === "canceled" 
+                ? "bg-muted/60 ring-2 ring-muted-foreground/30" 
+                : "bg-muted/30 hover:bg-muted/50 text-muted-foreground"
+            )}
+          >
             <span className="font-semibold">{canceledCount}</span>
             <span className="text-xs">отменённых</span>
-          </div>
+          </button>
         )}
+        
         {rawStats.orphans > 0 && (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 text-red-600 rounded-full text-sm">
+          <button
+            onClick={() => setLinkFilter(linkFilter === "orphan" ? "all" : "orphan")}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all cursor-pointer",
+              linkFilter === "orphan" 
+                ? "bg-red-500/20 text-red-600 ring-2 ring-red-500/30" 
+                : "bg-red-500/10 text-red-600 hover:bg-red-500/20"
+            )}
+          >
             <span className="font-semibold">{rawStats.orphans}</span>
             <span className="text-xs">сирот</span>
-          </div>
+          </button>
         )}
-        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-600 rounded-full text-sm">
-          <span className="font-semibold">{rawStats.linked}</span>
-          <span className="text-xs">связанных</span>
-        </div>
+        
         {urgentCount > 0 && (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 text-amber-600 rounded-full text-sm">
+          <button
+            onClick={() => setLinkFilter(linkFilter === "urgent" ? "all" : "urgent")}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all cursor-pointer",
+              linkFilter === "urgent" 
+                ? "bg-amber-500/20 text-amber-600 ring-2 ring-amber-500/30" 
+                : "bg-amber-500/10 text-amber-600 hover:bg-amber-500/20"
+            )}
+          >
             <AlertTriangle className="h-3 w-3" />
             <span className="font-semibold">{urgentCount}</span>
             <span className="text-xs">≤7 дней</span>
-          </div>
+          </button>
         )}
+        
         {needsSupportCount > 0 && (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 text-amber-600 rounded-full text-sm">
+          <button
+            onClick={() => setLinkFilter(linkFilter === "needs_support" ? "all" : "needs_support")}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-all cursor-pointer",
+              linkFilter === "needs_support" 
+                ? "bg-amber-500/20 text-amber-600 ring-2 ring-amber-500/30" 
+                : "bg-amber-500/10 text-amber-600 hover:bg-amber-500/20"
+            )}
+          >
             <HelpCircle className="h-3 w-3" />
             <span className="font-semibold">{needsSupportCount}</span>
-            <span className="text-xs">нужна помощь</span>
-          </div>
+            <span className="text-xs">помощь</span>
+          </button>
         )}
       </div>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <ExternalLink className="h-5 w-5" />
-                Подписки bePaid
-              </CardTitle>
-              <CardDescription className="mt-1">
-                Управление подписками с автосписанием
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              {/* PATCH-I++: Enhanced debug info popover */}
-              {debugInfo && (
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                      <Info className="h-4 w-4" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-80 text-xs space-y-2">
-                    <div className="font-medium mb-2">Диагностика интеграции</div>
-                    <div className="space-y-1">
-                      <div><span className="text-muted-foreground">Источник данных:</span> {debugInfo.creds_source === 'integration_instance_only' ? 'Интеграция' : 'Не настроено'}</div>
-                      <div><span className="text-muted-foreground">Статус интеграции:</span> {debugInfo.integration_status || '—'}</div>
-                      <div><span className="text-muted-foreground">Shop ID:</span> {debugInfo.shop_id_present ? '✓' : '✗'}</div>
-                      <div><span className="text-muted-foreground">Secret Key:</span> {debugInfo.secret_present ? '✓' : '✗'}</div>
-                    </div>
-                    <div className="border-t pt-2 space-y-1">
-                      <div><span className="text-muted-foreground">Хосты проверены:</span> {debugInfo.hosts_tried?.join(', ') || '—'}</div>
-                      <div><span className="text-muted-foreground">Список из API:</span> {debugInfo.api_list_count ?? 0}</div>
-                      <div><span className="text-muted-foreground">В БД:</span> {debugInfo.provider_subscriptions_count ?? 0}</div>
-                      <div><span className="text-muted-foreground">Детали получены:</span> {debugInfo.details_fetched_count ?? 0}</div>
-                      <div><span className="text-muted-foreground">Детали не получены:</span> {debugInfo.details_failed_count ?? 0}</div>
-                    </div>
-                    {debugInfo.detail_errors_by_status && Object.keys(debugInfo.detail_errors_by_status).length > 0 && (
-                      <div className="border-t pt-2">
-                        <div className="text-muted-foreground mb-1">Ошибки по статусу:</div>
-                        {Object.entries(debugInfo.detail_errors_by_status).map(([status, count]) => (
-                          <div key={status} className="text-amber-600">HTTP {status}: {count}</div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="border-t pt-2">
-                      <div><span className="text-muted-foreground">Итого в таблице:</span> {debugInfo.result_count ?? 0}</div>
-                    </div>
-                  </PopoverContent>
-                </Popover>
+      {/* Toolbar - glassmorphism */}
+      <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-card/20 backdrop-blur-md border border-border/20">
+        <div className="flex items-center gap-2">
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Поиск..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-40 h-8 bg-background/50"
+          />
+        </div>
+        
+        <Select value={linkFilter} onValueChange={(v) => setLinkFilter(v as LinkFilter)}>
+          <SelectTrigger className="w-36 h-8 bg-background/50">
+            <SelectValue placeholder="Связь" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="linked">Связанные</SelectItem>
+            <SelectItem value="orphan">Сироты</SelectItem>
+            <SelectItem value="urgent">Срочные (≤7д)</SelectItem>
+            <SelectItem value="needs_support">Нужна помощь</SelectItem>
+          </SelectContent>
+        </Select>
+        
+        <Select value={`${sortField}-${sortDir}`} onValueChange={(v) => {
+          const [field, dir] = v.split("-") as [SortField, SortDir];
+          setSortField(field);
+          setSortDir(dir);
+        }}>
+          <SelectTrigger className="w-40 h-8 bg-background/50">
+            <SelectValue placeholder="Сортировка" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="next_billing_at-asc">Списание ↑</SelectItem>
+            <SelectItem value="next_billing_at-desc">Списание ↓</SelectItem>
+            <SelectItem value="created_at-desc">Создано ↓</SelectItem>
+            <SelectItem value="created_at-asc">Создано ↑</SelectItem>
+            <SelectItem value="plan_amount-desc">Сумма ↓</SelectItem>
+            <SelectItem value="plan_amount-asc">Сумма ↑</SelectItem>
+          </SelectContent>
+        </Select>
+        
+        {/* Column visibility dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 bg-background/50">
+              <Settings className="h-3.5 w-3.5 mr-1" />
+              Колонки
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {columns.filter(c => c.key !== 'checkbox' && c.key !== 'actions').map(col => (
+              <DropdownMenuCheckboxItem
+                key={col.key}
+                checked={col.visible}
+                onCheckedChange={() => toggleColumnVisibility(col.key)}
+              >
+                {col.label}
+              </DropdownMenuCheckboxItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        
+        <div className="flex-1" />
+        
+        {/* Debug info */}
+        {debugInfo && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Info className="h-4 w-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 text-xs space-y-2">
+              <div className="font-medium mb-2">Диагностика интеграции</div>
+              <div className="space-y-1">
+                <div><span className="text-muted-foreground">Источник:</span> {debugInfo.creds_source === 'integration_instance_only' ? 'Интеграция' : 'Не настроено'}</div>
+                <div><span className="text-muted-foreground">Shop ID:</span> {debugInfo.shop_id_present ? '✓' : '✗'}</div>
+                <div><span className="text-muted-foreground">Secret:</span> {debugInfo.secret_present ? '✓' : '✗'}</div>
+              </div>
+              <div className="border-t pt-2 space-y-1">
+                <div><span className="text-muted-foreground">API:</span> {debugInfo.api_list_count ?? 0}</div>
+                <div><span className="text-muted-foreground">БД:</span> {debugInfo.provider_subscriptions_count ?? 0}</div>
+                <div><span className="text-muted-foreground">Детали:</span> {debugInfo.details_fetched_count ?? 0}</div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
+        
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="h-8 bg-background/50"
+              onClick={() => {
+                setReconcileResult(null);
+                setShowReconcileDialog(true);
+                reconcileMutation.mutate(false);
+              }}
+              disabled={reconcileMutation.isPending}
+            >
+              {reconcileMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Database className="h-4 w-4" />
               )}
-              {/* PATCH-K: Renamed button with tooltip */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => {
-                      setReconcileResult(null);
-                      setShowReconcileDialog(true);
-                      reconcileMutation.mutate(false);
-                    }}
-                    disabled={reconcileMutation.isPending}
-                  >
-                    {reconcileMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Database className="h-4 w-4 mr-2" />
-                    )}
-                    Синхронизация
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-xs">
-                  Загружает старые подписки из заказов и создаёт записи в системе. Деньги НЕ списывает.
-                </TooltipContent>
-              </Tooltip>
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => refetch()}
-                disabled={isRefetching}
-              >
-                {isRefetching ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                )}
-                Обновить
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Filters - PATCH-J: All Russian */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Search className="h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Поиск..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-48 h-8"
-              />
-            </div>
-            
-            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
-              <SelectTrigger className="w-36 h-8">
-                <SelectValue placeholder="Статус" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Все статусы</SelectItem>
-                <SelectItem value="active">Активные</SelectItem>
-                <SelectItem value="trial">Пробные</SelectItem>
-                <SelectItem value="pending">Ожидают</SelectItem>
-                <SelectItem value="past_due">Просроченные</SelectItem>
-                <SelectItem value="canceled">Отменённые</SelectItem>
-              </SelectContent>
-            </Select>
-            
-            <Select value={linkFilter} onValueChange={(v) => setLinkFilter(v as LinkFilter)}>
-              <SelectTrigger className="w-40 h-8">
-                <SelectValue placeholder="Связь" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Все</SelectItem>
-                <SelectItem value="linked">Связанные</SelectItem>
-                <SelectItem value="orphan">Сироты</SelectItem>
-                <SelectItem value="urgent">Срочные (≤7д)</SelectItem>
-                <SelectItem value="needs_support">Нужна помощь</SelectItem>
-              </SelectContent>
-            </Select>
-            
-            <Select value={`${sortField}-${sortDir}`} onValueChange={(v) => {
-              const [field, dir] = v.split("-") as [SortField, SortDir];
-              setSortField(field);
-              setSortDir(dir);
-            }}>
-              <SelectTrigger className="w-44 h-8">
-                <SelectValue placeholder="Сортировка" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="next_billing_at-asc">След. списание ↑</SelectItem>
-                <SelectItem value="next_billing_at-desc">След. списание ↓</SelectItem>
-                <SelectItem value="created_at-desc">Дата создания ↓</SelectItem>
-                <SelectItem value="created_at-asc">Дата создания ↑</SelectItem>
-                <SelectItem value="plan_amount-desc">Сумма ↓</SelectItem>
-                <SelectItem value="plan_amount-asc">Сумма ↑</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Bulk actions */}
-          {selectedIds.size > 0 && (
-            <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-              <span className="text-sm">
-                Выбрано: <strong>{selectedIds.size}</strong>
-              </span>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setShowCancelDialog(true)}
-                disabled={cancelMutation.isPending}
-              >
-                {cancelMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Ban className="h-4 w-4 mr-2" />
-                )}
-                Отменить выбранные
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedIds(new Set())}
-              >
-                Сбросить
-              </Button>
-            </div>
-          )}
-
-          {/* Error banner */}
-          {fetchError && (
-            <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
-              <div className="flex items-center gap-2 text-destructive font-medium">
-                <AlertTriangle className="h-4 w-4" />
-                Ошибка загрузки подписок
-              </div>
-              <div className="text-sm text-muted-foreground mt-1">
-                {(fetchError as Error).message || 'Неизвестная ошибка'}
-              </div>
-            </div>
-          )}
-
-          {/* Table */}
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : fetchError ? (
-            <div className="text-center py-12 text-muted-foreground">
-              Не удалось загрузить подписки. Попробуйте обновить страницу.
-            </div>
-          ) : filteredSubscriptions.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              {subscriptions.length === 0 
-                ? "Подписки не найдены" 
-                : "Нет подписок по выбранным фильтрам"}
-            </div>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Синхронизация</TooltipContent>
+        </Tooltip>
+        
+        <Button 
+          variant="outline" 
+          size="sm"
+          className="h-8 bg-background/50"
+          onClick={() => refetch()}
+          disabled={isRefetching}
+        >
+          {isRefetching ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
-            <ScrollArea className="h-[500px]">
-              <Table>
+            <RefreshCw className="h-4 w-4" />
+          )}
+        </Button>
+      </div>
+
+      {/* Bulk actions */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 p-3 bg-muted/50 backdrop-blur-md rounded-xl border border-border/20">
+          <span className="text-sm">
+            Выбрано: <strong>{selectedIds.size}</strong>
+          </span>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setShowCancelDialog(true)}
+            disabled={cancelMutation.isPending}
+          >
+            {cancelMutation.isPending ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Ban className="h-4 w-4 mr-2" />
+            )}
+            Отменить
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSelectedIds(new Set())}
+          >
+            Сбросить
+          </Button>
+        </div>
+      )}
+
+      {/* Error banner */}
+      {fetchError && (
+        <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl">
+          <div className="flex items-center gap-2 text-destructive font-medium">
+            <AlertTriangle className="h-4 w-4" />
+            Ошибка загрузки подписок
+          </div>
+          <div className="text-sm text-muted-foreground mt-1">
+            {(fetchError as Error).message || 'Неизвестная ошибка'}
+          </div>
+        </div>
+      )}
+
+      {/* Table - glassmorphism with horizontal scroll */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : fetchError ? (
+        <div className="text-center py-12 text-muted-foreground">
+          Не удалось загрузить подписки.
+        </div>
+      ) : filteredSubscriptions.length === 0 ? (
+        <div className="text-center py-12 text-muted-foreground rounded-xl bg-card/20 backdrop-blur-md border border-border/20">
+          {subscriptions.length === 0 
+            ? "Подписки не найдены" 
+            : "Нет подписок по выбранным фильтрам"}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-border/30 bg-card/30 backdrop-blur-xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <Table className="min-w-[900px]">
                 <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={selectedIds.size === filteredSubscriptions.filter((s: BepaidSubscription) => s.status !== 'canceled').length && filteredSubscriptions.length > 0}
-                        onCheckedChange={handleSelectAll}
-                      />
-                    </TableHead>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Статус</TableHead>
-                    <TableHead>Клиент</TableHead>
-                    <TableHead>План / Сумма</TableHead>
-                    <TableHead>След. списание</TableHead>
-                    <TableHead>Связь</TableHead>
-                    <TableHead>Действия</TableHead>
-                  </TableRow>
+                  <SortableContext items={sortedVisibleColumns.map(c => c.key)} strategy={horizontalListSortingStrategy}>
+                    <TableRow className="hover:bg-transparent">
+                      {sortedVisibleColumns.map(col => (
+                        <SortableResizableHeader key={col.key} column={col} onResize={handleResize}>
+                          {col.key === 'checkbox' ? (
+                            <Checkbox
+                              checked={selectedIds.size === filteredSubscriptions.filter((s: BepaidSubscription) => s.status !== 'canceled').length && filteredSubscriptions.length > 0}
+                              onCheckedChange={handleSelectAll}
+                            />
+                          ) : col.label}
+                        </SortableResizableHeader>
+                      ))}
+                    </TableRow>
+                  </SortableContext>
                 </TableHeader>
                 <TableBody>
                   {filteredSubscriptions.map((sub: BepaidSubscription) => {
                     const daysUntil = getDaysUntilCharge(sub.next_billing_at);
                     const isUrgent = daysUntil !== null && daysUntil <= 7 && daysUntil >= 0 && sub.is_orphan;
-                    const isRefreshingSnapshot = refreshingSnapshotIds.has(sub.id);
                     
                     return (
                       <TableRow 
                         key={sub.id} 
-                        className={isUrgent ? "bg-amber-500/5 border-l-2 border-l-amber-500" : sub.is_orphan ? "bg-red-500/5" : ""}
+                        className={cn(
+                          "h-10 hover:bg-muted/30 transition-colors",
+                          isUrgent && "bg-amber-500/5 border-l-2 border-l-amber-500",
+                          sub.is_orphan && !isUrgent && "bg-red-500/5"
+                        )}
                       >
-                        <TableCell>
-                          <Checkbox
-                            checked={selectedIds.has(sub.id)}
-                            onCheckedChange={() => handleSelectOne(sub.id)}
-                            disabled={sub.status === "canceled"}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <button
-                            onClick={() => copyId(sub.id)}
-                            className="font-mono text-xs hover:text-primary flex items-center gap-1"
-                            title="Скопировать ID"
-                          >
-                            {sub.id.slice(0, 16)}...
-                            {copiedId === sub.id ? (
-                              <Check className="h-3 w-3 text-emerald-500" />
-                            ) : (
-                              <Copy className="h-3 w-3 opacity-50" />
-                            )}
-                          </button>
-                          {sub.needs_support && (
-                            <Badge variant="destructive" className="mt-1 text-xs">
-                              Нужна помощь
-                            </Badge>
-                          )}
-                          {/* PATCH-H/K: Badge for records without API details with tooltip */}
-                          {sub.details_missing && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Badge variant="outline" className="mt-1 text-xs text-amber-600 border-amber-500/30 cursor-help">
-                                  Нет деталей
-                                  <HelpCircle className="h-3 w-3 ml-1" />
-                                </Badge>
-                              </TooltipTrigger>
-                              <TooltipContent side="right" className="max-w-xs">
-                                bePaid API не вернул информацию по этой подписке. 
-                                Возможно, подписка создана в другом магазине или удалена.
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {getStatusBadge(sub.status)}
-                          {sub.snapshot_state && sub.snapshot_state !== sub.status && (
-                            <div className="text-xs text-muted-foreground mt-1">
-                              bePaid: {STATUS_LABELS[sub.snapshot_state] || sub.snapshot_state}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm font-medium">
-                            {sub.customer_name || sub.customer_email || "—"}
-                          </div>
-                          {sub.customer_name && sub.customer_email && (
-                            <div className="text-xs text-muted-foreground">{sub.customer_email}</div>
-                          )}
-                          {sub.card_last4 && (
-                            <div className="text-xs text-muted-foreground">
-                              {sub.card_brand} •••• {sub.card_last4}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">{sub.plan_title}</div>
-                          <div className="text-sm font-medium">
-                            {sub.plan_amount.toFixed(2)} {sub.plan_currency}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {sub.next_billing_at ? (
-                            <div className="flex items-center gap-1">
-                              <Calendar className="h-3 w-3 text-muted-foreground" />
-                              <span className={`text-xs ${isUrgent ? 'text-amber-600 font-medium' : ''}`}>
-                                {formatDate(sub.next_billing_at)}
-                              </span>
-                              {daysUntil !== null && daysUntil <= 7 && (
-                                <Badge variant={daysUntil <= 3 ? "destructive" : "outline"} className="ml-1 text-xs">
-                                  {daysUntil}д
-                                </Badge>
-                              )}
-                            </div>
-                          ) : "—"}
-                        </TableCell>
-                        <TableCell>
-                          {sub.is_orphan ? (
-                            <Badge variant="destructive" className="flex items-center gap-1 w-fit">
-                              <Link2Off className="h-3 w-3" />
-                              Сирота
-                            </Badge>
-                          ) : sub.linked_user_id ? (
-                            <ClickableContactName
-                              userId={sub.linked_user_id}
-                              name={sub.linked_profile_name}
-                              email={sub.customer_email}
-                              fromPage="bepaid-subscriptions"
-                              className="text-sm"
-                            />
-                          ) : (
-                            <Badge variant="outline" className="flex items-center gap-1 w-fit bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
-                              <Link2 className="h-3 w-3" />
-                              Связана
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              onClick={() => handleRefreshSnapshot(sub.id)}
-                              disabled={isRefreshingSnapshot}
-                              title="Обновить статус"
-                            >
-                              {isRefreshingSnapshot ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <RotateCcw className="h-3.5 w-3.5" />
-                              )}
-                            </Button>
-                            
-                            {sub.status !== 'canceled' && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                onClick={() => {
-                                  setSelectedIds(new Set([sub.id]));
-                                  setShowCancelDialog(true);
-                                }}
-                                title="Отменить подписку"
-                              >
-                                <Ban className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                            
-                            {!sub.is_orphan && (
-                              <>
-                                {canUnlink(sub) ? (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7"
-                                    onClick={() => {
-                                      setTargetEmergencyUnlinkId(sub.id);
-                                      setShowEmergencyUnlinkDialog(true);
-                                    }}
-                                    title="Отвязать (доступно после отмены)"
-                                  >
-                                    <Unlink className="h-3.5 w-3.5" />
-                                  </Button>
-                                ) : (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 opacity-30 cursor-not-allowed"
-                                    disabled
-                                    title="Сначала отмените подписку"
-                                  >
-                                    <Unlink className="h-3.5 w-3.5" />
-                                  </Button>
-                                )}
-                              </>
-                            )}
-                            
-                            {!sub.is_orphan && !canUnlink(sub) && isSuperAdmin && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-destructive hover:text-destructive"
-                                onClick={() => {
-                                  setTargetEmergencyUnlinkId(sub.id);
-                                  setShowEmergencyUnlinkDialog(true);
-                                }}
-                                title="Аварийная отвязка (superadmin)"
-                              >
-                                <ShieldAlert className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
+                        {sortedVisibleColumns.map(col => (
+                          <TableCell key={col.key} className="py-1.5 px-2" style={{ width: col.width }}>
+                            {renderCell(sub, col.key)}
+                          </TableCell>
+                        ))}
                       </TableRow>
                     );
                   })}
                 </TableBody>
               </Table>
-            </ScrollArea>
-          )}
-        </CardContent>
-      </Card>
+            </DndContext>
+          </div>
+          <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border/20 bg-muted/20">
+            Показано {filteredSubscriptions.length} из {subscriptions.length}
+          </div>
+        </div>
+      )}
+
+      {/* Contact Detail Sheet */}
+      <ContactDetailSheet
+        contact={selectedContact}
+        open={contactSheetOpen}
+        onOpenChange={setContactSheetOpen}
+      />
 
       {/* Cancel confirmation dialog */}
       <AlertDialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
@@ -961,10 +1252,8 @@ export function BepaidSubscriptionsTabContent() {
                 Вы собираетесь отменить <strong>{selectedIds.size}</strong> подписок в bePaid.
               </p>
               <p className="text-amber-600">
-                ⚠️ Автоматические списания прекратятся. Если bePaid откажет в отмене 
-                (например, при задолженности), подписка останется активной и будет помечена «Нужна помощь».
+                ⚠️ Автоматические списания прекратятся. При отказе bePaid подписка будет помечена «Нужна помощь».
               </p>
-              <p>После успешной отмены статус будет автоматически обновлён.</p>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -979,7 +1268,7 @@ export function BepaidSubscriptionsTabContent() {
               ) : (
                 <Ban className="h-4 w-4 mr-2" />
               )}
-              Отменить {selectedIds.size} подписок
+              Отменить {selectedIds.size}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1004,12 +1293,9 @@ export function BepaidSubscriptionsTabContent() {
             <AlertDialogDescription asChild>
               <div className="space-y-3">
                 {!canUnlink(filteredSubscriptions.find(s => s.id === targetEmergencyUnlinkId) || {} as BepaidSubscription) && (
-                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive">
-                    <p className="font-medium">⚠️ ВНИМАНИЕ: Подписка НЕ отменена в bePaid!</p>
-                    <p className="text-sm mt-1">
-                      Автосписания могут продолжаться. Используйте это только если отмена невозможна 
-                      и вы понимаете последствия.
-                    </p>
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-sm">
+                    <p className="font-medium">⚠️ Подписка НЕ отменена в bePaid!</p>
+                    <p className="mt-1">Автосписания могут продолжаться.</p>
                   </div>
                 )}
                 <p>
@@ -1038,7 +1324,7 @@ export function BepaidSubscriptionsTabContent() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* PATCH-L: Improved Reconcile dialog */}
+      {/* Reconcile dialog */}
       <AlertDialog open={showReconcileDialog} onOpenChange={setShowReconcileDialog}>
         <AlertDialogContent className="max-w-lg">
           <AlertDialogHeader>
@@ -1048,11 +1334,9 @@ export function BepaidSubscriptionsTabContent() {
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3">
-                {/* PATCH-L: Explanation text */}
                 <div className="text-sm text-muted-foreground">
-                  Эта функция находит подписки bePaid из старых заказов и создаёт 
-                  для них записи в системе. Деньги <strong>НЕ</strong> списываются, 
-                  подписки <strong>НЕ</strong> создаются в bePaid — только синхронизация данных.
+                  Находит подписки bePaid из старых заказов и создаёт записи в системе. 
+                  Деньги <strong>НЕ</strong> списываются.
                 </div>
                 
                 {reconcileMutation.isPending && !reconcileResult && (
@@ -1067,13 +1351,13 @@ export function BepaidSubscriptionsTabContent() {
                     <div className="grid grid-cols-2 gap-2 text-sm">
                       <div className="p-2 bg-muted rounded">
                         <div className="font-medium">{reconcileResult.distinct_sbs_ids_total}</div>
-                        <div className="text-xs text-muted-foreground">Найдено в заказах</div>
+                        <div className="text-xs text-muted-foreground">Найдено</div>
                       </div>
                       <div className="p-2 bg-muted rounded">
                         <div className="font-medium">{reconcileResult.already_present}</div>
-                        <div className="text-xs text-muted-foreground">Уже синхронизировано</div>
+                        <div className="text-xs text-muted-foreground">Уже есть</div>
                       </div>
-                      <div className="p-2 bg-muted rounded border-emerald-500/30 border">
+                      <div className="p-2 bg-emerald-500/10 rounded border border-emerald-500/20">
                         <div className="font-medium text-emerald-600">
                           {reconcileResult.dry_run ? reconcileResult.would_insert : reconcileResult.inserted}
                         </div>
@@ -1081,50 +1365,21 @@ export function BepaidSubscriptionsTabContent() {
                           {reconcileResult.dry_run ? "Будет создано" : "Создано"}
                         </div>
                       </div>
-                      <div className="p-2 bg-muted rounded">
-                        <div className="font-medium text-blue-600">{reconcileResult.linked_to_subscription_v2}</div>
-                        <div className="text-xs text-muted-foreground">Со связью</div>
-                      </div>
-                      <div className="p-2 bg-muted rounded border-amber-500/30 border">
+                      <div className="p-2 bg-amber-500/10 rounded border border-amber-500/20">
                         <div className="font-medium text-amber-600">{reconcileResult.still_unlinked}</div>
-                        <div className="text-xs text-muted-foreground">Без связи (сироты)</div>
-                      </div>
-                      <div className="p-2 bg-muted rounded">
-                        <div className="font-medium">{reconcileResult.missing_provider_subscriptions_count}</div>
-                        <div className="text-xs text-muted-foreground">Отсутствует в системе</div>
+                        <div className="text-xs text-muted-foreground">Сироты</div>
                       </div>
                     </div>
 
-                    {reconcileResult.still_missing_after_execute !== undefined && !reconcileResult.dry_run && (
-                      <div className={`p-2 rounded text-sm ${reconcileResult.still_missing_after_execute === 0 ? 'bg-emerald-500/10' : 'bg-amber-500/10'}`}>
-                        Осталось несинхронизировано: <strong>{reconcileResult.still_missing_after_execute}</strong>
-                      </div>
-                    )}
-
-                    {reconcileResult.sample_ids.length > 0 && (
-                      <div className="text-xs">
-                        <div className="font-medium mb-1">Примеры ID:</div>
-                        <div className="font-mono text-muted-foreground break-all">
-                          {reconcileResult.sample_ids.slice(0, 5).join(', ')}
-                          {reconcileResult.sample_ids.length > 5 && '...'}
-                        </div>
-                      </div>
-                    )}
-
                     {reconcileResult.dry_run && reconcileResult.would_insert > 0 && (
                       <div className="p-2 bg-amber-500/10 rounded border border-amber-500/20 text-sm">
-                        ⚠️ Это предварительный просмотр. Нажмите «Выполнить» чтобы создать записи.
-                        {!isSuperAdmin && (
-                          <div className="text-xs text-muted-foreground mt-1">
-                            Выполнение доступно только для суперадминов.
-                          </div>
-                        )}
+                        ⚠️ Предварительный просмотр. Нажмите «Выполнить».
                       </div>
                     )}
 
                     {!reconcileResult.dry_run && (
                       <div className="p-2 bg-emerald-500/10 rounded border border-emerald-500/20 text-sm">
-                        ✅ Синхронизация завершена. Создано {reconcileResult.inserted} записей.
+                        ✅ Создано {reconcileResult.inserted} записей.
                       </div>
                     )}
                   </div>
@@ -1144,7 +1399,7 @@ export function BepaidSubscriptionsTabContent() {
                 ) : (
                   <Play className="h-4 w-4 mr-2" />
                 )}
-                Выполнить синхронизацию
+                Выполнить
               </Button>
             )}
           </AlertDialogFooter>
