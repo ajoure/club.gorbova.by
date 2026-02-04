@@ -578,10 +578,10 @@ export function PaymentDialog({
     }
   };
 
-  // Admin test payment
+  // Admin test payment - SECURITY: only super_admin can use this
   const handleTestPayment = async () => {
-    if (!isSuperAdmin() && !isAdmin()) {
-      toast.error("Только администраторы могут использовать эту функцию");
+    if (!isSuperAdmin()) {
+      toast.error("Только super admin может использовать эту функцию");
       return;
     }
 
@@ -1184,8 +1184,8 @@ export function PaymentDialog({
               </Button>
             </div>
 
-            {/* Admin test payment button */}
-            {(isSuperAdmin() || isAdmin()) && (
+            {/* Admin test payment button - SECURITY: only super_admin */}
+            {isSuperAdmin() && (
               <div className="border-t pt-4 mt-4">
                 <Button
                   type="button"
