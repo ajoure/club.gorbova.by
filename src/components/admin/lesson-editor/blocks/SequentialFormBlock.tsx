@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -84,35 +84,53 @@ export function SequentialFormBlock({
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   
+  // PATCH-1: Local state for inputs to prevent focus loss
+  const [localAnswers, setLocalAnswers] = useState<Record<string, string>>({});
+  
   const steps = content.steps || DEFAULT_STEPS;
   const totalSteps = steps.length;
   const currentStep = steps[currentStepIndex];
   const progressPercent = totalSteps > 0 ? ((currentStepIndex + 1) / totalSteps) * 100 : 0;
 
-  // Count filled answers
+  // Initialize local answers from props (only once or when answers reset)
+  useEffect(() => {
+    if (Object.keys(answers).length > 0 && Object.keys(localAnswers).length === 0) {
+      setLocalAnswers(answers);
+    }
+  }, [answers]);
+
+  // Commit local answers to parent (on blur, navigation, or completion)
+  const commitAnswers = useCallback(() => {
+    if (Object.keys(localAnswers).length > 0) {
+      onAnswersChange?.(localAnswers);
+    }
+  }, [localAnswers, onAnswersChange]);
+
+  // Count filled answers (use local state for responsiveness)
   const filledCount = useMemo(() => {
     return steps.filter(step => {
-      const answer = answers[step.id];
+      const answer = localAnswers[step.id];
       return answer !== undefined && answer !== '';
     }).length;
-  }, [steps, answers]);
+  }, [steps, localAnswers]);
 
   const allFilled = filledCount === totalSteps;
-  const currentAnswerFilled = answers[currentStep?.id] !== undefined && answers[currentStep?.id] !== '';
+  const currentAnswerFilled = localAnswers[currentStep?.id] !== undefined && localAnswers[currentStep?.id] !== '';
 
   // Generate ID
   const genId = () => Math.random().toString(36).substring(2, 9);
 
-  // Navigate between steps
+  // Navigate between steps - commit on navigation
   const goToStep = (index: number) => {
     if (index >= 0 && index < totalSteps) {
+      commitAnswers();
       setCurrentStepIndex(index);
     }
   };
 
-  // Update answer
-  const updateAnswer = (stepId: string, value: string) => {
-    onAnswersChange?.({ ...answers, [stepId]: value });
+  // Update local answer only (no parent call on every keystroke)
+  const updateLocalAnswer = (stepId: string, value: string) => {
+    setLocalAnswers(prev => ({ ...prev, [stepId]: value }));
   };
 
   // Add step (editing mode)
@@ -324,8 +342,9 @@ export function SequentialFormBlock({
 
           {currentStep.inputType === 'textarea' ? (
             <Textarea
-              value={answers[currentStep.id] || ''}
-              onChange={(e) => updateAnswer(currentStep.id, e.target.value)}
+              value={localAnswers[currentStep.id] || ''}
+              onChange={(e) => updateLocalAnswer(currentStep.id, e.target.value)}
+              onBlur={commitAnswers}
               placeholder="Ваш ответ..."
               rows={4}
               disabled={isCompleted}
@@ -333,15 +352,17 @@ export function SequentialFormBlock({
           ) : currentStep.inputType === 'number' ? (
             <Input
               type="number"
-              value={answers[currentStep.id] || ''}
-              onChange={(e) => updateAnswer(currentStep.id, e.target.value)}
+              value={localAnswers[currentStep.id] || ''}
+              onChange={(e) => updateLocalAnswer(currentStep.id, e.target.value)}
+              onBlur={commitAnswers}
               placeholder="0"
               disabled={isCompleted}
             />
           ) : (
             <Input
-              value={answers[currentStep.id] || ''}
-              onChange={(e) => updateAnswer(currentStep.id, e.target.value)}
+              value={localAnswers[currentStep.id] || ''}
+              onChange={(e) => updateLocalAnswer(currentStep.id, e.target.value)}
+              onBlur={commitAnswers}
               placeholder="Ваш ответ..."
               disabled={isCompleted}
             />
@@ -371,7 +392,10 @@ export function SequentialFormBlock({
             </Button>
           ) : (
             <Button
-              onClick={onComplete}
+              onClick={() => {
+                commitAnswers();
+                onComplete?.();
+              }}
               disabled={!allFilled}
               variant="default"
             >

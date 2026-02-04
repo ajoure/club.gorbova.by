@@ -19,7 +19,9 @@ export type BlockType =
   // Мета (Итерация 4)
   | 'container' | 'columns' | 'condition'
   // Kvest blocks (Итерация 5)
-  | 'video_unskippable' | 'diagnostic_table' | 'sequential_form';
+  | 'video_unskippable' | 'diagnostic_table' | 'sequential_form'
+  // Role description block
+  | 'role_description';
 
 export interface HeadingContent {
   text: string;
@@ -233,6 +235,7 @@ export type BlockContent =
   | VideoUnskippableContentData
   | DiagnosticTableContentData
   | SequentialFormContentData
+  | RoleDescriptionContentData
   | Record<string, unknown>;
 
 // Kvest block content types
@@ -257,6 +260,14 @@ export interface SequentialFormContentData {
   title?: string;
   steps: { id: string; title: string; description: string; inputType: string; required: boolean }[];
   submitButtonText: string;
+}
+
+// Role description block content type
+export interface RoleDescriptionContentData {
+  executor_html: string;
+  freelancer_html: string;
+  entrepreneur_html: string;
+  buttonText: string;
 }
 
 // Quiz Survey content type

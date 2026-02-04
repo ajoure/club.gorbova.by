@@ -28,6 +28,7 @@ import { QuizSurveyBlock } from "@/components/admin/lesson-editor/blocks/QuizSur
 import { VideoUnskippableBlock } from "@/components/admin/lesson-editor/blocks/VideoUnskippableBlock";
 import { DiagnosticTableBlock } from "@/components/admin/lesson-editor/blocks/DiagnosticTableBlock";
 import { SequentialFormBlock } from "@/components/admin/lesson-editor/blocks/SequentialFormBlock";
+import { RoleDescriptionBlock } from "@/components/admin/lesson-editor/blocks/RoleDescriptionBlock";
 
 interface LessonBlockRendererProps {
   blocks: LessonBlock[];
@@ -271,6 +272,14 @@ export function LessonBlockRenderer({ blocks, lessonId, activeTimecode, autoplay
       case 'sequential_form':
         return (
           <SequentialFormBlock 
+            content={block.content as any} 
+            onChange={() => {}} 
+            isEditing={false}
+          />
+        );
+      case 'role_description':
+        return (
+          <RoleDescriptionBlock 
             content={block.content as any} 
             onChange={() => {}} 
             isEditing={false}

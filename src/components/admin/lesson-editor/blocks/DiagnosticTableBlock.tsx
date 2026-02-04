@@ -1,11 +1,12 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Slider } from "@/components/ui/slider";
 import { 
   Select, 
   SelectContent, 
@@ -26,11 +27,13 @@ import { Plus, Trash2, CheckCircle2, Settings2 } from "lucide-react";
 export interface DiagnosticTableColumn {
   id: string;
   name: string;
-  type: 'text' | 'number' | 'select' | 'computed';
+  type: 'text' | 'number' | 'select' | 'computed' | 'slider';
   options?: string[];
   formula?: string;
   width?: number;
   required?: boolean;
+  min?: number;
+  max?: number;
 }
 
 export interface DiagnosticTableContent {
@@ -53,7 +56,7 @@ interface DiagnosticTableBlockProps {
   isCompleted?: boolean;
 }
 
-// Default columns for Point A diagnostic
+// Default columns for Point A diagnostic (updated per spec)
 const DEFAULT_COLUMNS: DiagnosticTableColumn[] = [
   { id: 'source', name: 'Источник дохода', type: 'text', required: true },
   { id: 'type', name: 'Тип', type: 'select', options: ['найм', 'клиент'] },
@@ -64,7 +67,7 @@ const DEFAULT_COLUMNS: DiagnosticTableColumn[] = [
   { id: 'legal_risk', name: 'Юр. риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
   { id: 'financial_risk', name: 'Фин. риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
   { id: 'reputation_risk', name: 'Реп. риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
-  { id: 'emotional_load', name: 'Эмоц. (1-10)', type: 'number' },
+  { id: 'emotional_load', name: 'Эмоц. (1-10)', type: 'slider', min: 1, max: 10 },
   { id: 'comment', name: 'Комментарий', type: 'text' },
 ];
 
@@ -88,6 +91,23 @@ export function DiagnosticTableBlock({
 }: DiagnosticTableBlockProps) {
   const [showColumnSettings, setShowColumnSettings] = useState(false);
   const columns = content.columns || DEFAULT_COLUMNS;
+
+  // PATCH-1: Local state for rows to prevent focus loss
+  const [localRows, setLocalRows] = useState<Record<string, unknown>[]>([]);
+  
+  // Initialize local rows from props
+  useEffect(() => {
+    if (rows.length > 0 && localRows.length === 0) {
+      setLocalRows(rows);
+    }
+  }, [rows]);
+
+  // Commit local rows to parent
+  const commitRows = useCallback(() => {
+    if (localRows.length > 0) {
+      onRowsChange?.(localRows);
+    }
+  }, [localRows, onRowsChange]);
 
   // Generate unique ID
   const genId = () => Math.random().toString(36).substring(2, 9);
@@ -115,50 +135,48 @@ export function DiagnosticTableBlock({
     }
   }, [columns]);
 
-  // Calculate aggregates
-  const aggregates = useMemo(() => {
-    if (!content.showAggregates || rows.length === 0) return null;
+  // PATCH-5: Calculate aggregates per spec (4 values)
+  const totalAggregates = useMemo(() => {
+    if (localRows.length === 0) return null;
     
-    const numericColumns = columns.filter(c => c.type === 'number' || c.type === 'computed');
-    const result: Record<string, number> = {};
+    const total_income = localRows.reduce((sum, r) => sum + (Number(r.income) || 0), 0);
+    const total_work_hours = localRows.reduce((sum, r) => sum + (Number(r.work_hours) || 0), 0);
+    const total_overhead_hours = localRows.reduce((sum, r) => sum + (Number(r.overhead_hours) || 0), 0);
+    const total_hours = total_work_hours + total_overhead_hours;
+    const avg_hourly_rate = total_hours > 0 ? Math.round((total_income / total_hours) * 100) / 100 : 0;
     
-    numericColumns.forEach(col => {
-      const values = rows.map(row => {
-        if (col.type === 'computed') {
-          return Number(calculateComputed(row, col)) || 0;
-        }
-        return Number(row[col.id]) || 0;
-      });
-      result[col.id] = values.reduce((a, b) => a + b, 0);
-    });
-    
-    return result;
-  }, [rows, columns, content.showAggregates, calculateComputed]);
+    return { total_income, total_work_hours, total_overhead_hours, avg_hourly_rate };
+  }, [localRows]);
 
-  // Add new row
+  // Add new row - commit first then add
   const addRow = () => {
     const newRow: Record<string, unknown> = { _id: genId() };
     columns.forEach(col => {
-      newRow[col.id] = col.type === 'number' ? 0 : '';
+      newRow[col.id] = col.type === 'number' ? 0 : col.type === 'slider' ? 5 : '';
     });
-    onRowsChange?.([...rows, newRow]);
-  };
-
-  // Update row
-  const updateRow = (index: number, colId: string, value: unknown) => {
-    const newRows = [...rows];
-    newRows[index] = { ...newRows[index], [colId]: value };
+    const newRows = [...localRows, newRow];
+    setLocalRows(newRows);
     onRowsChange?.(newRows);
   };
 
-  // Delete row
+  // Update local row only (no parent call on every keystroke)
+  const updateLocalRow = (index: number, colId: string, value: unknown) => {
+    setLocalRows(prev => {
+      const newRows = [...prev];
+      newRows[index] = { ...newRows[index], [colId]: value };
+      return newRows;
+    });
+  };
+
+  // Delete row - commit immediately
   const deleteRow = (index: number) => {
-    const newRows = rows.filter((_, i) => i !== index);
+    const newRows = localRows.filter((_, i) => i !== index);
+    setLocalRows(newRows);
     onRowsChange?.(newRows);
   };
 
   // Check if can complete
-  const canComplete = rows.length >= (content.minRows || 1);
+  const canComplete = localRows.length >= (content.minRows || 1);
 
   if (isEditing) {
     return (
@@ -279,7 +297,7 @@ export function DiagnosticTableBlock({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((row, rowIndex) => (
+            {localRows.map((row, rowIndex) => (
               <TableRow key={row._id as string || rowIndex}>
                 <TableCell className="text-muted-foreground">{rowIndex + 1}</TableCell>
                 {columns.map(col => (
@@ -291,7 +309,11 @@ export function DiagnosticTableBlock({
                     ) : col.type === 'select' && col.options ? (
                       <Select
                         value={String(row[col.id] || '')}
-                        onValueChange={(v) => updateRow(rowIndex, col.id, v)}
+                        onValueChange={(v) => {
+                          updateLocalRow(rowIndex, col.id, v);
+                          // Commit select changes immediately
+                          setTimeout(commitRows, 0);
+                        }}
                         disabled={isCompleted}
                       >
                         <SelectTrigger className="h-8 text-xs">
@@ -303,13 +325,30 @@ export function DiagnosticTableBlock({
                           ))}
                         </SelectContent>
                       </Select>
+                    ) : col.type === 'slider' ? (
+                      <div className="flex items-center gap-2 min-w-[100px]">
+                        <Slider
+                          value={[Number(row[col.id]) || 5]}
+                          onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
+                          onValueCommit={() => commitRows()}
+                          min={col.min || 1}
+                          max={col.max || 10}
+                          step={1}
+                          disabled={isCompleted}
+                          className="w-16"
+                        />
+                        <Badge variant="outline" className="w-6 text-center text-xs">
+                          {String(row[col.id] || 5)}
+                        </Badge>
+                      </div>
                     ) : (
                       <Input
                         type={col.type === 'number' ? 'number' : 'text'}
                         value={String(row[col.id] || '')}
-                        onChange={(e) => updateRow(rowIndex, col.id, 
+                        onChange={(e) => updateLocalRow(rowIndex, col.id, 
                           col.type === 'number' ? Number(e.target.value) : e.target.value
                         )}
+                        onBlur={commitRows}
                         className="h-8 text-xs"
                         disabled={isCompleted}
                       />
@@ -341,21 +380,27 @@ export function DiagnosticTableBlock({
         </Button>
       )}
 
-      {/* Aggregates */}
-      {content.showAggregates && aggregates && rows.length > 0 && (
+      {/* PATCH-5: Aggregates per spec - 4 values */}
+      {content.showAggregates && totalAggregates && localRows.length > 0 && (
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="py-3">
-            <div className="flex flex-wrap gap-4 text-sm">
-              {Object.entries(aggregates).map(([colId, value]) => {
-                const col = columns.find(c => c.id === colId);
-                if (!col || value === 0) return null;
-                return (
-                  <div key={colId}>
-                    <span className="text-muted-foreground">{col.name}:</span>{' '}
-                    <span className="font-semibold">{value}</span>
-                  </div>
-                );
-              })}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div className="text-center">
+                <p className="text-muted-foreground text-xs">Общий доход</p>
+                <p className="font-bold text-lg">{totalAggregates.total_income.toLocaleString()} BYN/мес</p>
+              </div>
+              <div className="text-center">
+                <p className="text-muted-foreground text-xs">Часы по задачам</p>
+                <p className="font-semibold">{totalAggregates.total_work_hours} ч</p>
+              </div>
+              <div className="text-center">
+                <p className="text-muted-foreground text-xs">Часы переписки</p>
+                <p className="font-semibold">{totalAggregates.total_overhead_hours} ч</p>
+              </div>
+              <div className="text-center bg-primary/10 rounded-lg py-1">
+                <p className="text-muted-foreground text-xs">Средний доход/час</p>
+                <p className="font-bold text-lg text-primary">{totalAggregates.avg_hourly_rate} BYN</p>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -364,7 +409,10 @@ export function DiagnosticTableBlock({
       {/* Complete button */}
       {!isCompleted ? (
         <Button
-          onClick={onComplete}
+          onClick={() => {
+            commitRows();
+            onComplete?.();
+          }}
           disabled={!canComplete}
           variant="default"
           className="w-full"

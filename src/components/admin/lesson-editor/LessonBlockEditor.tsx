@@ -75,6 +75,7 @@ import {
   GitBranch,
   LayoutGrid,
   ClipboardList,
+  User,
 } from "lucide-react";
 import { LessonBlock, BlockType, useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { HeadingBlock } from "./blocks/HeadingBlock";
@@ -105,6 +106,7 @@ import { QuizSurveyBlock } from "./blocks/QuizSurveyBlock";
 import { VideoUnskippableBlock } from "./blocks/VideoUnskippableBlock";
 import { DiagnosticTableBlock } from "./blocks/DiagnosticTableBlock";
 import { SequentialFormBlock } from "./blocks/SequentialFormBlock";
+import { RoleDescriptionBlock } from "./blocks/RoleDescriptionBlock";
 
 // Block configuration with categories
 interface BlockConfig {
@@ -165,6 +167,7 @@ const blockTypeConfig: Record<BlockType, BlockConfig> = {
   video_unskippable: { icon: Video, label: "Видео (обязат.)", color: "bg-red-500/10 text-red-600", category: 'media' },
   diagnostic_table: { icon: Table, label: "Диагн. таблица", color: "bg-emerald-500/10 text-emerald-600", category: 'input' },
   sequential_form: { icon: List, label: "Пошаговая форма", color: "bg-indigo-500/10 text-indigo-600", category: 'input' },
+  role_description: { icon: User, label: "Описание роли", color: "bg-amber-500/10 text-amber-600", category: 'text' },
 };
 
 const categoryConfig = {
@@ -183,7 +186,7 @@ const availableBlocks: BlockType[] = [
   'button', 'embed', 'divider', 'timeline', 'steps',
   'quiz_single', 'quiz_multiple', 'quiz_true_false', 'quiz_fill_blank',
   'quiz_matching', 'quiz_sequence', 'quiz_hotspot', 'quiz_survey',
-  'video_unskippable', 'diagnostic_table', 'sequential_form',
+  'video_unskippable', 'diagnostic_table', 'sequential_form', 'role_description',
 ];
 
 function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
@@ -242,6 +245,8 @@ function getDefaultContent(blockType: BlockType): LessonBlock['content'] {
       return { title: "Диагностика точки А", instruction: "", columns: [], minRows: 1, showAggregates: true, submitButtonText: "Диагностика завершена" };
     case 'sequential_form':
       return { title: "Формула точки B", steps: [], submitButtonText: "Формула сформирована" };
+    case 'role_description':
+      return { executor_html: "", freelancer_html: "", entrepreneur_html: "", buttonText: "Перейти к видео" };
     case 'divider':
     default:
       return {};
@@ -331,6 +336,8 @@ function SortableBlockItem({ block, onUpdate, onDelete }: SortableBlockItemProps
         return <DiagnosticTableBlock content={block.content as any} onChange={onUpdate} />;
       case 'sequential_form':
         return <SequentialFormBlock content={block.content as any} onChange={onUpdate} />;
+      case 'role_description':
+        return <RoleDescriptionBlock content={block.content as any} onChange={onUpdate} />;
       default:
         return (
           <div className="text-center py-8 text-muted-foreground">
