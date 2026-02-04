@@ -256,83 +256,92 @@ export function KvestLessonView({
       lessonId: lesson.id,
     };
 
-    // For completed blocks, render as read-only
-    if (isCompleted && !isCurrent) {
-      return (
-        <div className="opacity-80 pointer-events-none">
-          <LessonBlockRenderer {...commonProps} />
-        </div>
-      );
-    }
+    // isReadOnly: завершённые блоки, но НЕ текущие — read-only режим с данными
+    const isReadOnly = isCompleted && !isCurrent;
 
     // Render with specific props based on block type
+    // ВАЖНО: kvestProps передаются ВСЕГДА, даже для read-only блоков!
     switch (blockType) {
       case 'quiz_survey':
         return (
-          <LessonBlockRenderer 
-            {...commonProps}
-            kvestProps={{
-              onRoleSelected: handleRoleSelected,
-              isCompleted: isCompleted,
-            }}
-          />
+          <div className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
+            <LessonBlockRenderer 
+              {...commonProps}
+              kvestProps={{
+                onRoleSelected: isReadOnly ? undefined : handleRoleSelected,
+                isCompleted: isCompleted,
+              }}
+            />
+          </div>
         );
       
       case 'role_description':
         return (
-          <LessonBlockRenderer 
-            {...commonProps}
-            kvestProps={{
-              role: userRole,
-              onComplete: () => handleRoleDescriptionComplete(blockId),
-              isCompleted: isCompleted,
-            }}
-          />
+          <div className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
+            <LessonBlockRenderer 
+              {...commonProps}
+              kvestProps={{
+                role: userRole,  // ← КРИТИЧЕСКИ: роль передаётся ВСЕГДА
+                onComplete: isReadOnly ? undefined : () => handleRoleDescriptionComplete(blockId),
+                isCompleted: isCompleted,
+              }}
+            />
+          </div>
         );
       
       case 'video_unskippable':
         const videoProgress = state?.videoProgress?.[blockId] ?? 0;
         return (
-          <LessonBlockRenderer 
-            {...commonProps}
-            kvestProps={{
-              watchedPercent: videoProgress,
-              onProgress: (percent: number) => handleVideoProgress(blockId, percent),
-              onComplete: () => handleVideoComplete(blockId),
-              isCompleted: isCompleted,
-              allowBypassEmptyVideo: allowBypassEmptyVideo,
-            }}
-          />
+          <div className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
+            <LessonBlockRenderer 
+              {...commonProps}
+              kvestProps={{
+                watchedPercent: videoProgress,
+                onProgress: isReadOnly ? undefined : (percent: number) => handleVideoProgress(blockId, percent),
+                onComplete: isReadOnly ? undefined : () => handleVideoComplete(blockId),
+                isCompleted: isCompleted,
+                allowBypassEmptyVideo: allowBypassEmptyVideo,
+              }}
+            />
+          </div>
         );
       
       case 'diagnostic_table':
         return (
-          <LessonBlockRenderer 
-            {...commonProps}
-            kvestProps={{
-              rows: pointARows,
-              onRowsChange: handleDiagnosticTableUpdate,
-              onComplete: () => handleDiagnosticTableComplete(blockId),
-              isCompleted: state?.pointA_completed || false,
-            }}
-          />
+          <div className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
+            <LessonBlockRenderer 
+              {...commonProps}
+              kvestProps={{
+                rows: pointARows,  // ← КРИТИЧЕСКИ: данные передаются ВСЕГДА
+                onRowsChange: isReadOnly ? undefined : handleDiagnosticTableUpdate,
+                onComplete: isReadOnly ? undefined : () => handleDiagnosticTableComplete(blockId),
+                isCompleted: state?.pointA_completed || false,
+              }}
+            />
+          </div>
         );
       
       case 'sequential_form':
         return (
-          <LessonBlockRenderer 
-            {...commonProps}
-            kvestProps={{
-              answers: pointBAnswers,
-              onAnswersChange: handleSequentialFormUpdate,
-              onComplete: () => handleSequentialFormComplete(blockId),
-              isCompleted: state?.pointB_completed || false,
-            }}
-          />
+          <div className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
+            <LessonBlockRenderer 
+              {...commonProps}
+              kvestProps={{
+                answers: pointBAnswers,  // ← КРИТИЧЕСКИ: ответы передаются ВСЕГДА
+                onAnswersChange: isReadOnly ? undefined : handleSequentialFormUpdate,
+                onComplete: isReadOnly ? undefined : () => handleSequentialFormComplete(blockId),
+                isCompleted: state?.pointB_completed || false,
+              }}
+            />
+          </div>
         );
       
       default:
-        return <LessonBlockRenderer {...commonProps} />;
+        return (
+          <div className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
+            <LessonBlockRenderer {...commonProps} />
+          </div>
+        );
     }
   }, [
     lesson.id, 
