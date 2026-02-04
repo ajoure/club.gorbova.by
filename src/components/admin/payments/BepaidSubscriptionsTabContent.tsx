@@ -69,6 +69,8 @@ interface BepaidSubscription {
   snapshot_at?: string;
   cancellation_capability?: 'can_cancel_now' | 'cannot_cancel_until_paid' | 'unknown';
   needs_support?: boolean;
+  // PATCH-H: Flag for missing details from provider
+  details_missing?: boolean;
 }
 
 interface SubscriptionStats {
@@ -95,15 +97,16 @@ interface ReconcileResult {
   sample_ids: string[];
 }
 
-// PATCH-F: Debug info interface
+// PATCH-H: Updated Debug info interface with all fields
 interface DebugInfo {
   creds_source?: 'integration_instance' | 'env_vars';
   integration_status?: string | null;
   statuses_tried?: string[];
-  pages_fetched?: string;
-  fallback_ids_count?: number;
+  api_list_count?: number;
+  provider_subscriptions_count?: number;
+  details_fetched_count?: number;
+  details_failed_count?: number;
   result_count?: number;
-  from_provider_subscriptions?: number;
 }
 
 // Normalized status filter - always use 'canceled'
@@ -503,7 +506,7 @@ export function BepaidSubscriptionsTabContent() {
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              {/* PATCH-F: Debug info popover */}
+              {/* PATCH-H: Updated debug info popover */}
               {debugInfo && (
                 <Popover>
                   <PopoverTrigger asChild>
@@ -511,13 +514,15 @@ export function BepaidSubscriptionsTabContent() {
                       <Info className="h-4 w-4" />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-64 text-xs space-y-1">
+                  <PopoverContent className="w-72 text-xs space-y-1">
                     <div className="font-medium mb-2">Диагностика</div>
                     <div><span className="text-muted-foreground">Источник creds:</span> {debugInfo.creds_source || 'N/A'}</div>
                     <div><span className="text-muted-foreground">Статус интеграции:</span> {debugInfo.integration_status || 'N/A'}</div>
-                    <div><span className="text-muted-foreground">Результатов:</span> {debugInfo.result_count ?? 0}</div>
-                    <div><span className="text-muted-foreground">Fallback IDs:</span> {debugInfo.fallback_ids_count ?? 0}</div>
-                    <div><span className="text-muted-foreground">Из provider_subs:</span> {debugInfo.from_provider_subscriptions ?? 0}</div>
+                    <div><span className="text-muted-foreground">API list:</span> {debugInfo.api_list_count ?? 'N/A'}</div>
+                    <div><span className="text-muted-foreground">В provider_subscriptions:</span> {debugInfo.provider_subscriptions_count ?? 'N/A'}</div>
+                    <div><span className="text-muted-foreground">Details получены:</span> {debugInfo.details_fetched_count ?? 'N/A'}</div>
+                    <div><span className="text-muted-foreground">Details failed:</span> {debugInfo.details_failed_count ?? 'N/A'}</div>
+                    <div><span className="text-muted-foreground">Итого результат:</span> {debugInfo.result_count ?? 0}</div>
                   </PopoverContent>
                 </Popover>
               )}
@@ -723,6 +728,12 @@ export function BepaidSubscriptionsTabContent() {
                           {sub.needs_support && (
                             <Badge variant="destructive" className="mt-1 text-xs">
                               Needs support
+                            </Badge>
+                          )}
+                          {/* PATCH-H: Show badge for records without API details */}
+                          {sub.details_missing && (
+                            <Badge variant="outline" className="mt-1 text-xs text-amber-600 border-amber-500/30">
+                              Нет деталей
                             </Badge>
                           )}
                         </TableCell>

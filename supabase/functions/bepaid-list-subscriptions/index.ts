@@ -36,6 +36,8 @@ interface BepaidSubscription {
     first_name?: string;
     last_name?: string;
   };
+  // PATCH-H: Flag for records from DB without API details
+  _details_missing?: boolean;
 }
 
 interface SubscriptionWithLink {
@@ -59,6 +61,8 @@ interface SubscriptionWithLink {
   snapshot_at?: string;
   cancellation_capability?: string;
   needs_support?: boolean;
+  // PATCH-H: Flag for missing details
+  details_missing?: boolean;
 }
 
 interface CredentialsResult {
@@ -175,10 +179,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Also get provider_subscriptions for extended data
+    // PATCH-H: Get provider_subscriptions as PRIMARY fallback source
     const { data: providerSubs } = await supabase
       .from('provider_subscriptions')
-      .select('provider_subscription_id, subscription_v2_id, user_id, meta, state')
+      .select('provider_subscription_id, subscription_v2_id, user_id, profile_id, meta, state')
       .eq('provider', 'bepaid');
 
     const providerSubsMap = new Map<string, any>();
@@ -189,7 +193,12 @@ Deno.serve(async (req) => {
     const allSubscriptions: BepaidSubscription[] = [];
     const fetchedIds = new Set<string>();
 
-    // 2) Try listing
+    // PATCH-H: Track counts for debug
+    let apiListCount = 0;
+    let detailsFetched = 0;
+    let detailsFailed = 0;
+
+    // 2) Try listing from bePaid API
     const statuses = ['active', 'trial', 'cancelled', 'past_due'];  // bePaid uses 'cancelled'
     for (const status of statuses) {
       let page = 1;
@@ -222,6 +231,7 @@ Deno.serve(async (req) => {
             if (sub?.id && !fetchedIds.has(sub.id)) {
               fetchedIds.add(sub.id);
               allSubscriptions.push(sub);
+              apiListCount++;
             }
           }
           page++;
@@ -231,60 +241,96 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 3) Fallback: fetch individual known IDs
-    if (allSubscriptions.length === 0) {
-      console.log('Listing API returned nothing, trying individual lookups...');
-
-      for (const [bepaidId] of bepaidIdToOurSub) {
-        if (fetchedIds.has(bepaidId)) continue;
-
-        const url = `https://api.bepaid.by/subscriptions/${bepaidId}`;
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: {
-            Authorization: `Basic ${authString}`,
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-        });
-
-        if (!response.ok) {
-          const text = await response.text();
-          console.warn(`[bepaid-list-subscriptions] get ${bepaidId} failed: ${response.status} ${text}`);
-          continue;
+    // PATCH-H: MANDATORY fallback to provider_subscriptions when API list is empty
+    if (allSubscriptions.length === 0 && (providerSubs?.length || 0) > 0) {
+      console.log(`[bepaid-list-subs] API list empty, using provider_subscriptions fallback (${providerSubs?.length} records)`);
+      
+      for (const ps of providerSubs || []) {
+        const psId = ps.provider_subscription_id;
+        if (!psId || fetchedIds.has(psId)) continue;
+        
+        // Try to get details from bePaid API
+        let gotDetails = false;
+        try {
+          const url = `https://api.bepaid.by/subscriptions/${psId}`;
+          const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+              Authorization: `Basic ${authString}`,
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            if (data?.subscription) {
+              detailsFetched++;
+              fetchedIds.add(psId);
+              allSubscriptions.push({
+                id: psId,
+                status: data.subscription.state || data.subscription.status || ps.state || 'unknown',
+                state: data.subscription.state,
+                plan: data.subscription.plan,
+                created_at: data.subscription.created_at,
+                next_billing_at: data.subscription.next_billing_at,
+                credit_card: data.subscription.credit_card,
+                customer: data.subscription.customer,
+              });
+              gotDetails = true;
+            }
+          } else {
+            console.warn(`[bepaid-list-subs] get ${psId} failed: ${response.status}`);
+          }
+        } catch (e) {
+          console.warn(`[bepaid-list-subs] Failed to fetch details for ${psId}: ${e}`);
         }
-
-        const data = await response.json();
-        if (data?.subscription) {
-          fetchedIds.add(bepaidId);
+        
+        // PATCH-H CRITICAL: Add placeholder from DB even if API failed
+        if (!gotDetails) {
+          detailsFailed++;
+          fetchedIds.add(psId);
           allSubscriptions.push({
-            id: bepaidId,
-            status: data.subscription.state || data.subscription.status,
-            state: data.subscription.state,
-            plan: data.subscription.plan,
-            created_at: data.subscription.created_at,
-            next_billing_at: data.subscription.next_billing_at,
-            credit_card: data.subscription.credit_card,
-            customer: data.subscription.customer,
+            id: psId,
+            status: ps.state || 'unknown',
+            state: ps.state,
+            plan: undefined,
+            created_at: undefined,
+            next_billing_at: undefined,
+            credit_card: undefined,
+            customer: undefined,
+            _details_missing: true,
           });
         }
       }
+      
+      console.log(`[bepaid-list-subs] Fallback complete: ${detailsFetched} fetched, ${detailsFailed} failed (placeholders created)`);
     }
 
     // 4) Map profile names
     const userIds = [...new Set([...bepaidIdToOurSub.values()].map((s) => s.user_id).filter(Boolean))];
+    // Also include user_ids from provider_subscriptions
+    for (const ps of providerSubs || []) {
+      if (ps.user_id) userIds.push(ps.user_id);
+    }
+    
     const { data: profiles } = await supabase
       .from('profiles')
       .select('user_id, full_name, email')
-      .in('user_id', userIds);
+      .in('user_id', [...new Set(userIds)]);
 
     const userIdToProfile = new Map(profiles?.map((p) => [p.user_id, { name: p.full_name, email: p.email }]) || []);
 
-    // 5) Build result with PATCH-H: Normalize status
+    // 5) Build result with PATCH-H: Normalize status and include details_missing flag
     const result: SubscriptionWithLink[] = allSubscriptions.map((sub) => {
       const ourSub = sub.id ? bepaidIdToOurSub.get(String(sub.id)) : undefined;
-      const profile = ourSub ? userIdToProfile.get(ourSub.user_id) : null;
       const providerSub = providerSubsMap.get(String(sub.id));
+      
+      // Use provider_subscriptions data for linking if available
+      const linkedUserId = ourSub?.user_id || providerSub?.user_id || null;
+      const linkedSubId = ourSub?.id || providerSub?.subscription_v2_id || null;
+      
+      const profile = linkedUserId ? userIdToProfile.get(linkedUserId) : null;
 
       const planAmountRaw = sub.plan?.amount ?? 0;
       const planAmount = planAmountRaw > 1000 ? planAmountRaw / 100 : planAmountRaw; // defensive
@@ -310,15 +356,17 @@ Deno.serve(async (req) => {
         card_brand: sub.credit_card?.brand || '',
         created_at: sub.created_at || '',
         next_billing_at: sub.next_billing_at || '',
-        linked_subscription_id: ourSub?.id || null,
-        linked_user_id: ourSub?.user_id || null,
+        linked_subscription_id: linkedSubId,
+        linked_user_id: linkedUserId,
         linked_profile_name: profile?.name || profile?.email || null,
-        is_orphan: !ourSub,
+        is_orphan: !linkedSubId && !linkedUserId,
         // Extended snapshot data
         snapshot_state: snapshot?.state ? normalizeStatus(snapshot.state) : undefined,
         snapshot_at: providerMeta?.snapshot_at,
         cancellation_capability: providerMeta?.cancellation_capability,
         needs_support: providerMeta?.needs_support,
+        // PATCH-H: Flag for missing details
+        details_missing: !!(sub as any)._details_missing,
       };
     });
 
@@ -333,7 +381,7 @@ Deno.serve(async (req) => {
 
     console.log(`Found ${result.length} total subscriptions, ${result.filter((s) => s.is_orphan).length} orphans`);
 
-    // PATCH-A/F: Use 'canceled' in stats + add debug object (no PII)
+    // PATCH-H: Updated debug object with all required fields
     return new Response(
       JSON.stringify({
         subscriptions: result,
@@ -349,10 +397,11 @@ Deno.serve(async (req) => {
           creds_source: credentials.source,
           integration_status: credentials.instanceStatus || null,
           statuses_tried: ['active', 'trial', 'cancelled', 'past_due'],
-          pages_fetched: allSubscriptions.length > 0 ? 'multiple' : 'fallback',
-          fallback_ids_count: bepaidIdToOurSub.size,
+          api_list_count: apiListCount,
+          provider_subscriptions_count: providerSubs?.length || 0,
+          details_fetched_count: detailsFetched,
+          details_failed_count: detailsFailed,
           result_count: result.length,
-          from_provider_subscriptions: providerSubs?.length || 0,
         },
       }),
       {
