@@ -127,12 +127,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { data: hasAdminRole } = await supabase.rpc('has_role', {
-      _user_id: user.id,
-      _role: 'admin',
-    });
+    // PATCH-A: Check both admin and superadmin (correct enum values)
+    const [{ data: hasAdmin }, { data: hasSuperAdmin }] = await Promise.all([
+      supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' }),
+      supabase.rpc('has_role', { _user_id: user.id, _role: 'superadmin' }),
+    ]);
 
-    if (!hasAdminRole) {
+    const isAdmin = hasAdmin === true || hasSuperAdmin === true;
+    if (!isAdmin) {
       return new Response(JSON.stringify({ error: 'Admin access required' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -331,7 +333,7 @@ Deno.serve(async (req) => {
 
     console.log(`Found ${result.length} total subscriptions, ${result.filter((s) => s.is_orphan).length} orphans`);
 
-    // PATCH-A: Use 'canceled' in stats (not 'cancelled')
+    // PATCH-A/F: Use 'canceled' in stats + add debug object (no PII)
     return new Response(
       JSON.stringify({
         subscriptions: result,
@@ -339,9 +341,18 @@ Deno.serve(async (req) => {
           total: result.length,
           active: result.filter((s) => s.status === 'active').length,
           trial: result.filter((s) => s.status === 'trial').length,
-          canceled: result.filter((s) => s.status === 'canceled').length,  // Correct spelling
+          canceled: result.filter((s) => s.status === 'canceled').length,
           orphans: result.filter((s) => s.is_orphan).length,
           linked: result.filter((s) => !s.is_orphan).length,
+        },
+        debug: {
+          creds_source: credentials.source,
+          integration_status: credentials.instanceStatus || null,
+          statuses_tried: ['active', 'trial', 'cancelled', 'past_due'],
+          pages_fetched: allSubscriptions.length > 0 ? 'multiple' : 'fallback',
+          fallback_ids_count: bepaidIdToOurSub.size,
+          result_count: result.length,
+          from_provider_subscriptions: providerSubs?.length || 0,
         },
       }),
       {

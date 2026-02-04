@@ -33,19 +33,17 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Check super_admin role
-    const { data: hasSuperAdmin } = await supabase.rpc('has_role', {
-      _user_id: user.id,
-      _role: 'super_admin',
-    });
+    // PATCH-A: Check roles with correct enum values (superadmin, not super_admin)
+    const [{ data: hasAdmin }, { data: hasSuperAdmin }] = await Promise.all([
+      supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' }),
+      supabase.rpc('has_role', { _user_id: user.id, _role: 'superadmin' }),
+    ]);
 
-    const { data: hasAdmin } = await supabase.rpc('has_role', {
-      _user_id: user.id,
-      _role: 'admin',
-    });
+    const isAdmin = hasAdmin === true || hasSuperAdmin === true;
+    const isSuperAdmin = hasSuperAdmin === true;
 
-    // Must have at least admin to access
-    if (!hasSuperAdmin && !hasAdmin) {
+    // Must have at least admin to access (for dry-run)
+    if (!isAdmin) {
       return new Response(JSON.stringify({ error: 'Admin access required' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -56,10 +54,10 @@ Deno.serve(async (req) => {
     const dryRun = body.dry_run !== false; // default true
     const limit = Math.min(body.limit || 500, 1000); // max 1000
 
-    // PATCH-E: super_admin required for execute mode
-    if (!dryRun && !hasSuperAdmin) {
+    // PATCH-A/E: superadmin required for execute mode
+    if (!dryRun && !isSuperAdmin) {
       return new Response(JSON.stringify({ 
-        error: 'Super admin access required for execute mode',
+        error: 'Superadmin access required for execute mode',
         dry_run_allowed: true 
       }), {
         status: 403,

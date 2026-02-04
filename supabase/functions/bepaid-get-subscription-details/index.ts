@@ -69,12 +69,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { data: hasAdmin } = await supabase.rpc('has_role', {
-      _user_id: user.id,
-      _role: 'admin',
-    });
+    // PATCH-A: Check both admin and superadmin (correct enum values)
+    const [{ data: hasAdmin }, { data: hasSuperAdmin }] = await Promise.all([
+      supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' }),
+      supabase.rpc('has_role', { _user_id: user.id, _role: 'superadmin' }),
+    ]);
 
-    if (!hasAdmin) {
+    const isAdmin = hasAdmin === true || hasSuperAdmin === true;
+    if (!isAdmin) {
       return new Response(JSON.stringify({ error: 'Admin access required' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -105,11 +105,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Check if user is admin
-    const { data: hasAdminRole } = await supabase.rpc('has_role', {
-      _user_id: user.id,
-      _role: 'admin',
-    });
+    // PATCH-A: Check both admin and superadmin (correct enum values)
+    const [{ data: hasAdmin }, { data: hasSuperAdmin }] = await Promise.all([
+      supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' }),
+      supabase.rpc('has_role', { _user_id: user.id, _role: 'superadmin' }),
+    ]);
+    const hasAdminRole = hasAdmin === true || hasSuperAdmin === true;
 
     const body: CancelRequest = await req.json();
     const source = body.source || (hasAdminRole ? 'admin_cancel' : 'user_self_cancel');

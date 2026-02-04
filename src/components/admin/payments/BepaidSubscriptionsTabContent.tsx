@@ -9,6 +9,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -35,6 +40,7 @@ import {
   RotateCcw,
   Unlink,
   ShieldAlert,
+  Info,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -89,6 +95,17 @@ interface ReconcileResult {
   sample_ids: string[];
 }
 
+// PATCH-F: Debug info interface
+interface DebugInfo {
+  creds_source?: 'integration_instance' | 'env_vars';
+  integration_status?: string | null;
+  statuses_tried?: string[];
+  pages_fetched?: string;
+  fallback_ids_count?: number;
+  result_count?: number;
+  from_provider_subscriptions?: number;
+}
+
 // Normalized status filter - always use 'canceled'
 type StatusFilter = "all" | "active" | "trial" | "canceled" | "past_due";
 type LinkFilter = "all" | "linked" | "orphan" | "urgent" | "needs_support";
@@ -124,12 +141,22 @@ export function BepaidSubscriptionsTabContent() {
   const queryClient = useQueryClient();
   const { hasRole: isSuperAdmin } = useHasRole('superadmin');
 
-  // Fetch subscriptions from bePaid
-  const { data, isLoading, refetch, isRefetching } = useQuery({
+  // PATCH-E: Fetch subscriptions with proper error handling
+  const { data, isLoading, refetch, isRefetching, error: fetchError } = useQuery({
     queryKey: ["bepaid-subscriptions-admin"],
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke("bepaid-list-subscriptions");
-      if (error) throw error;
+      
+      // PATCH-E: Transport error
+      if (error) throw new Error(error.message || 'Edge function error');
+      
+      // PATCH-E: Edge payload error (even if 200)
+      if (data?.error) throw new Error(data.error);
+      
+      // PATCH-E: Strict shape validation
+      if (!data || !Array.isArray(data.subscriptions)) {
+        throw new Error('Invalid response: subscriptions[] missing');
+      }
       
       // Normalize status for all subscriptions
       const subs = (data.subscriptions || []).map((s: BepaidSubscription) => ({
@@ -140,13 +167,16 @@ export function BepaidSubscriptionsTabContent() {
       
       return { 
         subscriptions: subs, 
-        stats: data.stats as SubscriptionStats 
+        stats: data.stats as SubscriptionStats,
+        debug: data.debug as DebugInfo | undefined,
       };
     },
     staleTime: 60000,
   });
 
   const subscriptions = data?.subscriptions || [];
+  const debugInfo = data?.debug;
+  
   // PATCH-A: Backward compatible stats - use canceled ?? cancelled
   const rawStats = data?.stats || { total: 0, active: 0, trial: 0, canceled: 0, cancelled: 0, orphans: 0, linked: 0 };
   const canceledCount = rawStats.canceled ?? rawStats.cancelled ?? 0;
@@ -330,30 +360,20 @@ export function BepaidSubscriptionsTabContent() {
     }
   };
 
-  // Emergency Unlink (super_admin only)
+  // PATCH-B: Emergency Unlink via Edge Function (no direct DB calls)
   const handleEmergencyUnlink = async () => {
     if (!targetEmergencyUnlinkId || emergencyUnlinkConfirm !== "UNLINK") return;
     
     try {
-      // Update provider_subscriptions to remove subscription_v2_id
-      await supabase
-        .from('provider_subscriptions')
-        .update({ subscription_v2_id: null })
-        .eq('provider_subscription_id', targetEmergencyUnlinkId);
-      
-      // Audit log
-      const { data: { user } } = await supabase.auth.getUser();
-      await supabase.from('audit_logs').insert({
-        actor_type: 'user',
-        actor_user_id: user?.id,
-        actor_label: 'admin',
-        action: 'bepaid.subscription.emergency_unlink',
-        meta: {
+      const { data, error } = await supabase.functions.invoke('admin-bepaid-emergency-unlink', {
+        body: { 
           provider_subscription_id: targetEmergencyUnlinkId,
-          reason: 'admin_emergency_unlink',
-          confirmed_with: 'UNLINK',
-        },
+          confirm_text: emergencyUnlinkConfirm
+        }
       });
+      
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
       
       toast.success('Подписка аварийно отвязана');
       setShowEmergencyUnlinkDialog(false);
@@ -483,6 +503,24 @@ export function BepaidSubscriptionsTabContent() {
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
+              {/* PATCH-F: Debug info popover */}
+              {debugInfo && (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                      <Info className="h-4 w-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 text-xs space-y-1">
+                    <div className="font-medium mb-2">Диагностика</div>
+                    <div><span className="text-muted-foreground">Источник creds:</span> {debugInfo.creds_source || 'N/A'}</div>
+                    <div><span className="text-muted-foreground">Статус интеграции:</span> {debugInfo.integration_status || 'N/A'}</div>
+                    <div><span className="text-muted-foreground">Результатов:</span> {debugInfo.result_count ?? 0}</div>
+                    <div><span className="text-muted-foreground">Fallback IDs:</span> {debugInfo.fallback_ids_count ?? 0}</div>
+                    <div><span className="text-muted-foreground">Из provider_subs:</span> {debugInfo.from_provider_subscriptions ?? 0}</div>
+                  </PopoverContent>
+                </Popover>
+              )}
               <Button 
                 variant="outline" 
                 size="sm"
@@ -603,10 +641,27 @@ export function BepaidSubscriptionsTabContent() {
             </div>
           )}
 
+          {/* PATCH-E: Error banner */}
+          {fetchError && (
+            <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
+              <div className="flex items-center gap-2 text-destructive font-medium">
+                <AlertTriangle className="h-4 w-4" />
+                Ошибка загрузки подписок
+              </div>
+              <div className="text-sm text-muted-foreground mt-1">
+                {(fetchError as Error).message || 'Неизвестная ошибка'}
+              </div>
+            </div>
+          )}
+
           {/* Table */}
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : fetchError ? (
+            <div className="text-center py-12 text-muted-foreground">
+              Не удалось загрузить подписки. Попробуйте обновить страницу.
             </div>
           ) : filteredSubscriptions.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
