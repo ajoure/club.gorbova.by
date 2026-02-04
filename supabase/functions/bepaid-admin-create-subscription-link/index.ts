@@ -113,8 +113,7 @@ Deno.serve(async (req) => {
       .select(`
         *,
         products_v2(id, name, code),
-        tariffs(id, name, code, access_days),
-        profiles!subscriptions_v2_user_id_fkey(id, email, full_name)
+        tariffs(id, name, code, access_days)
       `)
       .eq('id', subscription_v2_id)
       .single();
@@ -167,6 +166,12 @@ Deno.serve(async (req) => {
     let intervalDays = 30;
     let amountCents = 0;
     const currency = 'BYN';
+
+    console.log('[bepaid-admin-link] subMeta:', { 
+      offer_id: subMeta.offer_id, 
+      recurring_amount: subMeta.recurring_amount,
+      has_recurring_snapshot: !!subMeta.recurring_snapshot
+    });
 
     const effectiveOfferId = subMeta.offer_id;
     if (effectiveOfferId) {
@@ -222,13 +227,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get owner profile info (NOT admin)
-    const profile = subscription.profiles || {};
-    const product = subscription.products_v2 || {};
+    // Get owner profile info (NOT admin) - separate query since no FK
     const ownerId = subscription.user_id;
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id, email, full_name')
+      .eq('id', ownerId)
+      .maybeSingle();
+    
+    const product = subscription.products_v2 || {};
 
-    // Get owner email
-    let customerEmail = profile.email;
+    // Get owner email - fallback to auth.users
+    let customerEmail = profile?.email;
     if (!customerEmail) {
       const { data: authUser } = await supabase.auth.admin.getUserById(ownerId);
       customerEmail = authUser?.user?.email;
@@ -241,28 +251,29 @@ Deno.serve(async (req) => {
     const successReturnUrl = `${baseUrl}?bepaid_sub=success&sub_id=${subscription_v2_id}`;
     const failReturnUrl = `${baseUrl}?bepaid_sub=failed&sub_id=${subscription_v2_id}`;
 
-    const parsedName = safeParseFullName(profile.full_name);
+    const parsedName = safeParseFullName(profile?.full_name);
 
     const bepaidPayload = {
-      subscription: {
-        notification_url: notificationUrl,
-        return_url: successReturnUrl,
-        decline_url: failReturnUrl,
-        tracking_id: trackingId,
+      notification_url: notificationUrl,
+      return_url: successReturnUrl,
+      decline_url: failReturnUrl,
+      tracking_id: trackingId,
+      settings: {
         language: 'ru',
-        customer: {
-          email: customerEmail,
-          first_name: parsedName.firstName,
-          last_name: parsedName.lastName,
-        },
+      },
+      customer: {
+        email: customerEmail,
+        first_name: parsedName.firstName,
+        last_name: parsedName.lastName,
+        ip: '127.0.0.1', // Admin-initiated, no real client IP available
+      },
+      plan: {
+        currency,
+        title: `${product.name || 'Подписка'} — Каждые ${intervalDays} дней`,
         plan: {
-          currency,
-          title: `${product.name || 'Подписка'} — Каждые ${intervalDays} дней`,
-          plan: {
-            amount: amountCents,
-            interval: intervalDays,
-            interval_unit: 'day',
-          },
+          amount: amountCents,
+          interval: intervalDays,
+          interval_unit: 'day',
         },
       },
     };
@@ -328,7 +339,7 @@ Deno.serve(async (req) => {
         provider_subscription_id: bepaidSubId,
         user_id: ownerId, // CRITICAL: Owner, not admin!
         subscription_v2_id: subscription_v2_id,
-        profile_id: profile.id || null,
+        profile_id: profile?.id || null,
         state: 'pending',
         amount_cents: amountCents,
         currency,
