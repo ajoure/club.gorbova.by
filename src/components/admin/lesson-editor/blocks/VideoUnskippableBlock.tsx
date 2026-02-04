@@ -445,9 +445,16 @@ export function VideoUnskippableBlock({
           )}
         </div>
       ) : (
-        <Card className="py-12 text-center">
-          <Video className="h-12 w-12 mx-auto text-muted-foreground mb-2" />
+        <Card className="py-12 text-center space-y-4">
+          <Video className="h-12 w-12 mx-auto text-muted-foreground" />
           <p className="text-muted-foreground">Видео не настроено</p>
+          {/* PATCH: Кнопка продолжения при пустом URL (dev/admin preview) */}
+          {onComplete && !isCompleted && (
+            <Button onClick={onComplete} variant="outline" className="mt-4">
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Продолжить без видео
+            </Button>
+          )}
         </Card>
       )}
 

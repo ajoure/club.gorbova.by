@@ -85,6 +85,10 @@ export function KvestLessonView({ lesson, blocks, moduleSlug, onComplete }: Kves
         return isBlockCompleted(block.id);
       
       case 'video_unskippable':
+        // PATCH: Если URL пустой — gate открыт (для dev/preview режима)
+        const videoUrl = (block.content as any)?.url;
+        if (!videoUrl) return true;
+        
         const videoProgress = state?.videoProgress?.[block.id] ?? 0;
         const threshold = (block.content as any)?.threshold_percent ?? 95;
         return videoProgress >= threshold;
