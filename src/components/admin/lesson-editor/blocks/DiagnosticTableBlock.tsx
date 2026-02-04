@@ -139,28 +139,31 @@ export function DiagnosticTableBlock({
     }
   }, [localRows, onRowsChange]);
 
-  // Calculate computed columns
-  const calculateComputed = useCallback((row: Record<string, unknown>, col: DiagnosticTableColumn): string | number => {
-    if (col.type !== 'computed' || !col.formula) return '';
+  // PATCH-V3: Calculate computed columns SAFELY (no eval!)
+  // Hardcoded support for known computed fields only
+  const calculateComputed = useCallback((row: Record<string, unknown>, col: DiagnosticTableColumn): number => {
+    if (col.type !== 'computed') return 0;
     
-    try {
-      // Simple formula parser: replace column IDs with values
-      let formula = col.formula;
-      columns.forEach(c => {
-        const val = Number(row[c.id]) || 0;
-        formula = formula.replace(new RegExp(c.id, 'g'), String(val));
-      });
+    // SAFE: Only support known computed field IDs with hardcoded logic
+    if (col.id === 'hourly_rate') {
+      const income = Number(row.income) || 0;
+      const workHours = Number(row.work_hours) || 0;
+      const overheadHours = Number(row.overhead_hours) || 0;
+      const totalHours = workHours + overheadHours;
       
-      // Prevent division by zero
-      if (formula.includes('/ 0') || formula.includes('/0')) return 0;
+      // Prevent division by zero or negative hours
+      if (totalHours <= 0) return 0;
       
-      // eslint-disable-next-line no-eval
-      const result = eval(formula);
-      return typeof result === 'number' && isFinite(result) ? Math.round(result * 100) / 100 : 0;
-    } catch {
-      return 0;
+      const result = income / totalHours;
+      // Ensure result is finite and positive
+      if (!Number.isFinite(result) || result < 0) return 0;
+      
+      return Math.round(result * 100) / 100;
     }
-  }, [columns]);
+    
+    // Unknown computed field — return 0 (no arbitrary formula execution)
+    return 0;
+  }, []);
 
   // PATCH-5: Calculate aggregates per spec (4 values)
   const totalAggregates = useMemo(() => {

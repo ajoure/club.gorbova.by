@@ -52,6 +52,9 @@ export interface KvestBlockProps {
   onComplete?: () => void;
   isCompleted?: boolean;
   userRole?: string | null;
+  
+  // PATCH-V1/V2: Admin bypass for empty video URL
+  allowBypassEmptyVideo?: boolean;
 }
 
 export interface LessonBlockRendererProps {
@@ -317,6 +320,7 @@ export function LessonBlockRenderer({
             onProgress={kvestProps?.onProgress}
             onComplete={kvestProps?.onComplete}
             isCompleted={kvestProps?.isCompleted}
+            allowBypassEmptyVideo={kvestProps?.allowBypassEmptyVideo}
           />
         );
       case 'diagnostic_table':

@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useParams, useNavigate, Link, useLocation } from "react-router-dom";
+import { useParams, useNavigate, Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useTrainingLessons, TrainingLesson } from "@/hooks/useTrainingLessons";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
+import { usePermissions } from "@/hooks/usePermissions";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
 import { KvestLessonView } from "@/components/lesson/KvestLessonView";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,6 +62,14 @@ export default function LibraryLesson() {
   const { moduleSlug, lessonSlug } = useParams<{ moduleSlug: string; lessonSlug: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  
+  // PATCH-V4: Admin/Preview mode detection
+  const { isAdmin } = usePermissions();
+  const isAdminMode = isAdmin();
+  const isPreviewMode = searchParams.get('preview') === '1';
+  // allowBypassEmptyVideo = bypass only if admin AND preview mode is active
+  const allowBypassEmptyVideo = isAdminMode && isPreviewMode;
   
   // State for internal timecode seeking
   const [activeTimecode, setActiveTimecode] = useState<number | null>(null);
@@ -247,6 +256,8 @@ export default function LibraryLesson() {
             onComplete={async () => {
               await markCompleted(currentLesson.id);
             }}
+            isAdminMode={isAdminMode}
+            allowBypassEmptyVideo={allowBypassEmptyVideo}
           />
         ) : (
           <>

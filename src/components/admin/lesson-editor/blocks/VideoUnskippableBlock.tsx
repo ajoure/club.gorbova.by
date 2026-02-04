@@ -34,6 +34,8 @@ interface VideoUnskippableBlockProps {
   onProgress?: (percent: number) => void;
   onComplete?: () => void;
   isCompleted?: boolean;
+  /** PATCH-V2: Allow bypass when URL is empty (admin + preview only) */
+  allowBypassEmptyVideo?: boolean;
 }
 
 export function VideoUnskippableBlock({ 
@@ -43,7 +45,8 @@ export function VideoUnskippableBlock({
   watchedPercent = 0,
   onProgress,
   onComplete,
-  isCompleted = false
+  isCompleted = false,
+  allowBypassEmptyVideo = false
 }: VideoUnskippableBlockProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [localWatched, setLocalWatched] = useState(watchedPercent);
@@ -448,12 +451,20 @@ export function VideoUnskippableBlock({
         <Card className="py-12 text-center space-y-4">
           <Video className="h-12 w-12 mx-auto text-muted-foreground" />
           <p className="text-muted-foreground">Видео не настроено</p>
-          {/* PATCH: Кнопка продолжения при пустом URL (dev/admin preview) */}
-          {onComplete && !isCompleted && (
+          
+          {/* PATCH-V2: Кнопка продолжения ТОЛЬКО для admin + preview */}
+          {allowBypassEmptyVideo && onComplete && !isCompleted && (
             <Button onClick={onComplete} variant="outline" className="mt-4">
               <CheckCircle2 className="mr-2 h-4 w-4" />
-              Продолжить без видео
+              Продолжить без видео (админ)
             </Button>
+          )}
+          
+          {/* Обычный пользователь — заблокирован */}
+          {!allowBypassEmptyVideo && !isCompleted && (
+            <p className="text-sm text-destructive mt-4">
+              Видео не настроено. Обратитесь к администратору.
+            </p>
           )}
         </Card>
       )}

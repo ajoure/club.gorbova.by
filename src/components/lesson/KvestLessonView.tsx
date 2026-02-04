@@ -40,9 +40,20 @@ interface KvestLessonViewProps {
   blocks: LessonBlock[];
   moduleSlug: string;
   onComplete: () => Promise<void>;
+  /** User is admin (for UI hints) */
+  isAdminMode?: boolean;
+  /** Admin in preview mode — can bypass empty video URL */
+  allowBypassEmptyVideo?: boolean;
 }
 
-export function KvestLessonView({ lesson, blocks, moduleSlug, onComplete }: KvestLessonViewProps) {
+export function KvestLessonView({ 
+  lesson, 
+  blocks, 
+  moduleSlug, 
+  onComplete,
+  isAdminMode = false,
+  allowBypassEmptyVideo = false
+}: KvestLessonViewProps) {
   const navigate = useNavigate();
   const { state, updateState, markBlockCompleted, isBlockCompleted, markLessonCompleted } = useLessonProgressState(lesson.id);
   const blockRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -84,14 +95,19 @@ export function KvestLessonView({ lesson, blocks, moduleSlug, onComplete }: Kves
         // Gate opens when button clicked (block marked completed)
         return isBlockCompleted(block.id);
       
-      case 'video_unskippable':
-        // PATCH: Если URL пустой — gate открыт (для dev/preview режима)
-        const videoUrl = (block.content as any)?.url;
-        if (!videoUrl) return true;
+      case 'video_unskippable': {
+        // PATCH-V1: Если URL пустой — bypass ТОЛЬКО для admin + preview
+        const videoUrl = ((block.content as any)?.url || '').trim();
+        if (!videoUrl) {
+          // Admin + preview mode = bypass allowed
+          // Regular user = blocked (gate closed)
+          return allowBypassEmptyVideo === true;
+        }
         
         const videoProgress = state?.videoProgress?.[block.id] ?? 0;
         const threshold = (block.content as any)?.threshold_percent ?? 95;
         return videoProgress >= threshold;
+      }
       
       case 'video':
         return true;
@@ -284,6 +300,7 @@ export function KvestLessonView({ lesson, blocks, moduleSlug, onComplete }: Kves
               onProgress: (percent: number) => handleVideoProgress(blockId, percent),
               onComplete: () => handleVideoComplete(blockId),
               isCompleted: isCompleted,
+              allowBypassEmptyVideo: allowBypassEmptyVideo,
             }}
           />
         );
