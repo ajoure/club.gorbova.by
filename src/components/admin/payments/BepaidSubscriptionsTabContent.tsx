@@ -114,6 +114,7 @@ interface BepaidSubscription {
   linked_order_id?: string | null;
   linked_order_number?: string | null;
   linked_payment_id?: string | null;
+  linked_provider_payment_id?: string | null; // PATCH-U4: bePaid UID
   canceled_at?: string | null;
 }
 
@@ -150,12 +151,14 @@ interface DebugInfo {
   hosts_tried?: string[];
   paths_tried?: string[];
   api_list_count?: number;
+  db_records_count?: number;  // PATCH-U3: DB-first count
+  db_enriched_count?: number; // PATCH-U3: DB-enriched count
   list_attempts?: Array<{ host: string; path: string; status: number; items_count?: number }>;
   provider_subscriptions_count?: number;
   details_fetched_count?: number;
   details_failed_count?: number;
   detail_errors_by_status?: Record<number, number>;
-  detail_attempts_sample?: Array<{ host: string; path: string; status: number }>;
+  upserted_count?: number; // PATCH-U3: saved to DB
   result_count?: number;
 }
 
@@ -177,7 +180,7 @@ const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "amount", label: "Сумма", visible: true, width: 90, order: 5 },
   { key: "next_billing", label: "Списание", visible: true, width: 110, order: 6 },
   { key: "card", label: "Карта", visible: true, width: 100, order: 7 },
-  { key: "payment_id", label: "ID платежа", visible: false, width: 130, order: 8 },
+  { key: "payment_id", label: "ID платежа", visible: true, width: 130, order: 8 }, // PATCH-U2: visible by default
   { key: "deal", label: "Сделка", visible: true, width: 100, order: 9 },
   { key: "created", label: "Создано", visible: false, width: 100, order: 10 },
   { key: "canceled_at", label: "Отменено", visible: false, width: 100, order: 11 },
@@ -185,7 +188,8 @@ const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "actions", label: "", visible: true, width: 100, order: 13 },
 ];
 
-const COLUMNS_STORAGE_KEY = 'admin_bepaid_subscriptions_columns_v2';
+const COLUMNS_STORAGE_KEY = 'admin_bepaid_subscriptions_columns_v3'; // PATCH-U2: reset columns
+const PAYLOAD_STORAGE_KEY = 'admin_bepaid_subscriptions_last_payload_v1'; // PATCH-U1: persist data
 
 // Russian status labels dictionary
 const STATUS_LABELS: Record<string, string> = {
@@ -348,7 +352,21 @@ export function BepaidSubscriptionsTabContent() {
     [columns]
   );
 
-  // PATCH-T6: Improved caching
+  // PATCH-U1: Load cached data from localStorage for instant display after F5
+  const getCachedPayload = () => {
+    try {
+      const cached = localStorage.getItem(PAYLOAD_STORAGE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed?.subscriptions && Array.isArray(parsed.subscriptions)) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return null;
+  };
+
+  // PATCH-T6 + PATCH-U1: Improved caching with localStorage persist
   const { data, isLoading, refetch, isRefetching, error: fetchError } = useQuery({
     queryKey: ["bepaid-subscriptions-admin"],
     queryFn: async () => {
@@ -366,14 +384,23 @@ export function BepaidSubscriptionsTabContent() {
         snapshot_state: s.snapshot_state ? normalizeStatus(s.snapshot_state) : undefined,
       }));
       
-      return { 
+      const result = { 
         subscriptions: subs, 
         stats: data.stats as SubscriptionStats,
         debug: data.debug as DebugInfo | undefined,
       };
+      
+      // PATCH-U1: Save to localStorage for instant display after F5
+      try {
+        localStorage.setItem(PAYLOAD_STORAGE_KEY, JSON.stringify(result));
+      } catch {}
+      
+      return result;
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 24 * 60 * 60 * 1000, // 24 hours cache retention
     refetchOnWindowFocus: false,
+    placeholderData: getCachedPayload, // PATCH-U1: Show cached data immediately
   });
 
   const subscriptions = data?.subscriptions || [];
@@ -1202,8 +1229,10 @@ export function BepaidSubscriptionsTabContent() {
               </div>
               <div className="border-t pt-2 space-y-1">
                 <div><span className="text-muted-foreground">API:</span> {debugInfo.api_list_count ?? 0}</div>
-                <div><span className="text-muted-foreground">БД:</span> {debugInfo.provider_subscriptions_count ?? 0}</div>
-                <div><span className="text-muted-foreground">Детали:</span> {debugInfo.details_fetched_count ?? 0}</div>
+                <div><span className="text-muted-foreground">БД записей:</span> {debugInfo.db_records_count ?? debugInfo.provider_subscriptions_count ?? 0}</div>
+                <div><span className="text-muted-foreground">Из БД:</span> {debugInfo.db_enriched_count ?? 0}</div>
+                <div><span className="text-muted-foreground">Детали:</span> {debugInfo.details_fetched_count ?? 0} / {debugInfo.details_failed_count ?? 0}</div>
+                <div><span className="text-muted-foreground">Сохранено:</span> {debugInfo.upserted_count ?? 0}</div>
               </div>
             </PopoverContent>
           </Popover>
