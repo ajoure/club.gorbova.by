@@ -313,7 +313,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Create subscription with pending status
+    // Create subscription (pre-payment) with a valid enum status
     const accessDays = tariff.access_days || 30;
     const { data: subscription, error: subError } = await supabase
       .from('subscriptions_v2')
@@ -322,7 +322,9 @@ Deno.serve(async (req) => {
         profile_id: profileId,
         product_id: productId,
         tariff_id: tariff.id,
-        status: 'pending',
+        // subscription_status enum: active, trial, past_due, canceled, expired
+        // Pre-payment state should NOT grant access; use past_due until webhook confirms payment.
+        status: 'past_due',
         billing_type: 'provider_managed',
         auto_renew: true,
         is_trial: false,
@@ -407,7 +409,8 @@ Deno.serve(async (req) => {
       console.error('[bepaid-sub-checkout] bePaid error: status=', bepaidResponse.status);
       // Update order status to failed
       await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
-      await supabase.from('subscriptions_v2').update({ status: 'cancelled' }).eq('id', subscription.id);
+      // subscription_status enum uses 'canceled' (one L)
+      await supabase.from('subscriptions_v2').update({ status: 'canceled' }).eq('id', subscription.id);
       
       return new Response(JSON.stringify({ 
         error: 'Failed to create bePaid subscription',
