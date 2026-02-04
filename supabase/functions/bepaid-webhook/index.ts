@@ -415,35 +415,44 @@ function normalizeErrorCategory(message: string | null, declineCode?: string | n
   return 'unknown';
 }
 
-// bePaid public key for webhook signature verification (RSA-SHA256)
-// This is the official bePaid public key for production webhooks
-const BEPAID_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvjgDf0vOQMjhg47pSYKn
-r1Ms4k3SWGZBGpVX/FBo/gzwfIBKJ84y+YMnc7sdS3PZ0b0wldeoAqoyEVN/e0k0
-sF/j/tO9mM0VFXHX6VPk3w8CZIjPXV/kDj37B0BnECVKmYwIFG7IIVjBfWJqFmQh
-Pq0+Oe8wRg5e7h0rh/D2ClLh/x8PB8NwdMOSI7AyKQ4Q9VF8EuQKe9JVXqZDVLu5
-WrHvfQ4L4VJMCq3I36D/j8epOL8MHq0QU6PY7li7AO+O9n7BClf8ZFNDlN2N7Rrp
-GN8gKxPKKPaGVyKf+8EJrJE2aJsDoWpGKD7wP5jmMbPfVMg56+j0MXQKVX3mJgDf
-WwIDAQAB
------END PUBLIC KEY-----`;
+// PATCH-1.1: Normalize public_key from integration_instances to proper PEM format
+// Handles keys stored without headers/footers or without line breaks
+function normalizePemPublicKey(rawKey: string | null | undefined): string | null {
+  if (!rawKey) return null;
 
-// Verify webhook signature using RSA-SHA256 (bePaid official method)
-async function verifyWebhookSignature(body: string, signature: string | null, publicKeyPem?: string): Promise<boolean> {
+  let key = rawKey.trim();
+
+  // Remove existing PEM headers/footers if present
+  key = key
+    .replace(/-----BEGIN PUBLIC KEY-----/g, '')
+    .replace(/-----END PUBLIC KEY-----/g, '')
+    .replace(/[\r\n\s]/g, ''); // Remove all whitespace
+
+  if (key.length === 0) return null;
+
+  // Split base64 into 64-character lines (PEM standard)
+  const lines: string[] = [];
+  for (let i = 0; i < key.length; i += 64) {
+    lines.push(key.substring(i, i + 64));
+  }
+
+  // Reconstruct proper PEM format
+  return `-----BEGIN PUBLIC KEY-----\n${lines.join('\n')}\n-----END PUBLIC KEY-----`;
+}
+
+// PATCH-1.3: Verify webhook signature using RSA-SHA256 (bePaid official method)
+// NO FALLBACK to hardcoded key - ONLY uses provided publicKeyPem
+async function verifyWebhookSignature(
+  body: string,
+  signature: string | null,
+  publicKeyPem: string
+): Promise<boolean> {
   if (!signature) {
-    console.log('Signature verification: missing signature');
+    console.log('[SIGNATURE] Missing Content-Signature header');
     return false;
   }
   
-  // Use provided key or fallback to default bePaid key
-  let keyPem = publicKeyPem || BEPAID_PUBLIC_KEY;
-  
-  // Add PEM wrapper if missing
-  if (!keyPem.includes('-----BEGIN')) {
-    keyPem = `-----BEGIN PUBLIC KEY-----\n${keyPem}\n-----END PUBLIC KEY-----`;
-  }
-  
-  console.log('Using public key (first 50 chars):', keyPem.substring(0, 50));
-  console.log('Signature length:', signature.length);
+  // publicKeyPem is already normalized by caller - no fallback allowed
   
   try {
     // Decode base64 signature
@@ -452,11 +461,8 @@ async function verifyWebhookSignature(body: string, signature: string | null, pu
     // Parse PEM to get raw key bytes
     const pemHeader = '-----BEGIN PUBLIC KEY-----';
     const pemFooter = '-----END PUBLIC KEY-----';
-    const pemContents = keyPem.replace(pemHeader, '').replace(pemFooter, '').replace(/\s/g, '');
+    const pemContents = publicKeyPem.replace(pemHeader, '').replace(pemFooter, '').replace(/\s/g, '');
     const keyBytes = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
-    
-    console.log('Key bytes length:', keyBytes.length);
-    console.log('Signature bytes length:', signatureBytes.length);
     
     // Import public key for RSA-SHA256 verification
     const cryptoKey = await crypto.subtle.importKey(
@@ -467,7 +473,7 @@ async function verifyWebhookSignature(body: string, signature: string | null, pu
       ['verify']
     );
     
-    // Verify signature
+    // Verify signature against RAW body
     const encoder = new TextEncoder();
     const isValid = await crypto.subtle.verify(
       'RSASSA-PKCS1-v1_5',
@@ -476,12 +482,34 @@ async function verifyWebhookSignature(body: string, signature: string | null, pu
       encoder.encode(body)
     );
     
-    console.log('RSA-SHA256 signature verification result:', isValid);
+    console.log('[SIGNATURE] RSA-SHA256 verification result:', isValid);
     return isValid;
   } catch (error) {
-    console.error('RSA signature verification error:', error);
+    console.error('[SIGNATURE] RSA verification error:', error);
     return false;
   }
+}
+
+// Helper to create safe subset of webhook body for orphans (NO PII/card data)
+function createSafeOrphanData(body: any, trackingId: string | null): Record<string, any> {
+  return {
+    id: body?.id,
+    state: body?.state,
+    event: body?.event,
+    tracking_id: trackingId || body?.tracking_id,
+    last_transaction: body?.last_transaction ? {
+      uid: body.last_transaction.uid,
+      status: body.last_transaction.status,
+    } : (body?.transaction ? {
+      uid: body.transaction.uid,
+      status: body.transaction.status,
+    } : null),
+    plan: body?.plan ? {
+      id: body.plan.id,
+      amount: body.plan.amount,
+      currency: body.plan.currency,
+    } : null,
+  };
 }
 
 Deno.serve(async (req) => {
@@ -555,40 +583,132 @@ Deno.serve(async (req) => {
                                body.last_transaction?.tracking_id ||
                                null;
     
-    // STRICT SIGNATURE VERIFICATION - NO FALLBACK
-    if (bepaidWebhookSecret && signatureHeader) {
-      const customPublicKey = bepaidInstance?.config?.public_key || undefined;
-      signatureVerified = await verifyWebhookSignature(bodyText, signatureHeader, customPublicKey);
+    // PATCH-1.0: STRICT SIGNATURE VERIFICATION - NO FALLBACK
+    // Order of checks:
+    // 1. Try BasicAuth (Authorization: Basic shop_id:secret_key)
+    // 2. Try RSA signature (Content-Signature + public_key)
+    // 3. If neither works → 401/500 + orphan (safe subset)
+    
+    const authHeader = req.headers.get('Authorization');
+    
+    // PATCH-1.4/1.5: Check for misconfig FIRST
+    const rawPublicKey = bepaidInstance?.config?.public_key;
+    const normalizedPublicKey = normalizePemPublicKey(rawPublicKey);
+    const secretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
+    const shopId = bepaidInstance?.config?.shop_id || Deno.env.get('BEPAID_SHOP_ID');
+    
+    // If no auth method available at all → 500 misconfig
+    if (!normalizedPublicKey && !secretKey) {
+      console.error('[WEBHOOK-CRITICAL] No public_key AND no secret_key - cannot verify webhook');
+      
+      await supabase.from('provider_webhook_orphans').insert({
+        provider: 'bepaid',
+        provider_subscription_id: body?.id || body?.subscription?.id || null,
+        provider_payment_id: body?.transaction?.uid || body?.last_transaction?.uid || null,
+        reason: 'missing_credentials',
+        raw_data: createSafeOrphanData(body, rawTrackingIdEarly),
+        processed: false,
+      });
+      
+      // Alert admins
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseServiceKey}` },
+          body: JSON.stringify({
+            message: '🚨 КРИТИЧНО: Webhook bePaid отклонён — нет public_key и нет secret_key в конфигурации!',
+            source: 'bepaid-webhook-misconfig',
+          }),
+        });
+      } catch (_) {}
+      
+      return new Response(
+        JSON.stringify({ error: 'Server misconfiguration: missing credentials' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Try BasicAuth first (Authorization: Basic base64(shop_id:secret_key))
+    if (authHeader?.startsWith('Basic ') && secretKey && shopId) {
+      try {
+        const base64Creds = authHeader.replace('Basic ', '');
+        const decoded = atob(base64Creds);
+        const [providedShopId, providedSecret] = decoded.split(':');
+        
+        if (providedShopId === String(shopId) && providedSecret === secretKey) {
+          signatureVerified = true;
+          console.log('[WEBHOOK-OK] BasicAuth verified successfully');
+        } else {
+          console.warn('[WEBHOOK-SECURITY] BasicAuth credentials mismatch');
+        }
+      } catch (e) {
+        console.warn('[WEBHOOK-SECURITY] Failed to decode BasicAuth:', e);
+      }
+    }
+    
+    // If BasicAuth didn't work, try RSA signature
+    if (!signatureVerified && signatureHeader) {
+      if (!normalizedPublicKey) {
+        // Have signature but no public_key to verify → 500 misconfig
+        console.error('[WEBHOOK-CRITICAL] Have Content-Signature but no public_key to verify');
+        
+        await supabase.from('provider_webhook_orphans').insert({
+          provider: 'bepaid',
+          provider_subscription_id: body?.id || body?.subscription?.id || null,
+          provider_payment_id: body?.transaction?.uid || body?.last_transaction?.uid || null,
+          reason: 'missing_public_key',
+          raw_data: createSafeOrphanData(body, rawTrackingIdEarly),
+          processed: false,
+        });
+        
+        // Alert admins
+        try {
+          await fetch(`${supabaseUrl}/functions/v1/telegram-notify-admins`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseServiceKey}` },
+            body: JSON.stringify({
+              message: '🚨 КРИТИЧНО: Webhook bePaid отклонён — есть Content-Signature, но отсутствует public_key!',
+              source: 'bepaid-webhook-misconfig',
+            }),
+          });
+        } catch (_) {}
+        
+        return new Response(
+          JSON.stringify({ error: 'Server misconfiguration: missing public_key' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      // Verify RSA signature using RAW body and normalized public key
+      signatureVerified = await verifyWebhookSignature(bodyText, signatureHeader, normalizedPublicKey);
       
       if (signatureVerified) {
-        console.log('[WEBHOOK-OK] bePaid webhook signature verified successfully');
+        console.log('[WEBHOOK-OK] RSA signature verified successfully');
       } else {
         signatureSkipReason = 'invalid_signature';
-        console.error('[WEBHOOK-SECURITY] Signature verification FAILED - rejecting webhook');
+        console.error('[WEBHOOK-SECURITY] RSA signature verification FAILED');
       }
-    } else if (!bepaidWebhookSecret) {
-      signatureSkipReason = 'no_secret_configured';
-      console.warn('[WEBHOOK-WARN] BEPAID_SECRET_KEY not configured - accepting all webhooks');
-      signatureVerified = true; // Accept when no secret configured (dev mode)
-    } else {
-      signatureSkipReason = 'no_signature_header';
-      console.error('[WEBHOOK-SECURITY] No signature header present - rejecting webhook');
+    }
+    
+    // If no signature header and BasicAuth also failed → check if we even have a way to verify
+    if (!signatureVerified && !signatureHeader && !authHeader?.startsWith('Basic ')) {
+      signatureSkipReason = 'no_auth_method';
+      console.error('[WEBHOOK-SECURITY] No Content-Signature and no BasicAuth provided');
     }
     
     console.log(`[WEBHOOK-SIGNATURE] verified=${signatureVerified}, reason=${signatureSkipReason}`);
     
-    // STRICT: If signature not verified → save to orphans and return 401
-    // NO FALLBACK by tracking_id or payment status - this is a security violation
+    // PATCH-1.7: STRICT - If signature not verified → 401 + orphan (safe subset)
     if (!signatureVerified) {
       console.error('[WEBHOOK-REJECT] Invalid/missing signature - saving to orphans only');
       
-      // Save to provider_webhook_orphans for investigation (NOT to working tables)
+      // Save to provider_webhook_orphans with SAFE SUBSET (no PII)
       await supabase.from('provider_webhook_orphans').insert({
         provider: 'bepaid',
         provider_subscription_id: body?.id || body?.subscription?.id || null,
         provider_payment_id: body?.transaction?.uid || body?.last_transaction?.uid || null,
         reason: signatureSkipReason || 'invalid_signature',
-        raw_data: body,
+        raw_data: createSafeOrphanData(body, rawTrackingIdEarly),
         processed: false,
       });
       
@@ -736,7 +856,7 @@ Deno.serve(async (req) => {
           provider_subscription_id: subscriptionId,
           provider_payment_id: transactionUid,
           reason: 'bad_tracking_id',
-          raw_data: body,
+          raw_data: createSafeOrphanData(body, rawTrackingId),
           processed: false,
         });
         return new Response(JSON.stringify({ error: 'Bad tracking_id format' }), {
@@ -780,7 +900,7 @@ Deno.serve(async (req) => {
           provider_subscription_id: subscriptionId,
           provider_payment_id: transactionUid,
           reason: 'subscription_not_found',
-          raw_data: body,
+          raw_data: createSafeOrphanData(body, rawTrackingId),
           processed: false,
         });
         return new Response(JSON.stringify({ error: 'Subscription not found' }), {
@@ -1032,7 +1152,7 @@ Deno.serve(async (req) => {
         provider_subscription_id: subscriptionId,
         provider_payment_id: transactionUid,
         reason: 'unknown_state',
-        raw_data: body,
+        raw_data: createSafeOrphanData(body, rawTrackingId),
         processed: false,
       });
       
