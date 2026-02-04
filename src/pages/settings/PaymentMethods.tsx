@@ -845,16 +845,20 @@ export default function PaymentMethodsSettings() {
           </CardContent>
         </Card>
 
-        {/* PATCH-7: Provider-managed subscriptions (bePaid) */}
+        {/* PATCH-4: Provider-managed subscriptions (bePaid) with better UX */}
         {providerSubscriptions && providerSubscriptions.length > 0 && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <RefreshCw className="h-5 w-5" />
-                Подписки с автопродлением
+                Подписки bePaid (каждые 30 дней)
               </CardTitle>
-              <CardDescription>
-                Автоматическое списание каждые 30 дней через платёжную систему
+              <CardDescription className="space-y-1">
+                <p>Автоматическое списание через платёжную систему bePaid</p>
+                <p className="text-xs text-amber-600 flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  Списание ровно через 30 дней — даты платежей могут смещаться
+                </p>
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -883,14 +887,27 @@ export default function PaymentMethodsSettings() {
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={() => handleChangeProviderCard(sub.provider_subscription_id, subscriptionV2Id)}
-                        disabled={cancelProviderSubMutation.isPending}
-                      >
-                        Изменить карту
-                      </Button>
+                      {/* PATCH-4: Tooltip explaining card change process */}
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              onClick={() => handleChangeProviderCard(sub.provider_subscription_id, subscriptionV2Id)}
+                              disabled={cancelProviderSubMutation.isPending}
+                            >
+                              Изменить карту
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p>Будет создана новая подписка с другой картой.</p>
+                            <p className="text-muted-foreground text-xs mt-1">
+                              Неиспользованные дни добавятся к новому периоду.
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <Button 

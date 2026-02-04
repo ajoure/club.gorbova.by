@@ -425,8 +425,8 @@ export function PaymentDialog({
     console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType });
 
     try {
-      // If user selected provider_managed flow (bePaid subscription) for recurring products
-      if (paymentFlowType === 'provider_managed' && isSubscription && !isTrial && !savedCard) {
+      // PATCH-3: If user selected provider_managed flow - no savedCard restriction
+      if (paymentFlowType === 'provider_managed' && isSubscription && !isTrial) {
         console.log("Using provider_managed flow (bePaid subscription checkout)");
         const { data, error } = await supabase.functions.invoke("bepaid-create-subscription-checkout", {
           body: {
@@ -1113,8 +1113,8 @@ export function PaymentDialog({
               </div>
             )}
 
-            {/* Payment Flow Choice - only for recurring, non-trial */}
-            {isSubscription && !isTrial && !savedCard && (
+            {/* PATCH-3: Payment Flow Choice - always show for recurring, non-trial */}
+            {isSubscription && !isTrial && (
               <div className="rounded-lg border border-border/50 p-4 space-y-3">
                 <p className="font-medium text-sm flex items-center gap-2">
                   <Shield className="h-4 w-4 text-primary" />

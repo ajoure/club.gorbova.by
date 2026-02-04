@@ -110,12 +110,17 @@ Deno.serve(async (req) => {
     let profileId: string | null = null;
 
     if (!userId) {
-      // Check if user exists by email
-      const { data: existingUser } = await supabase.auth.admin.listUsers();
-      const found = existingUser?.users?.find((u: any) => u.email?.toLowerCase() === customerEmail.toLowerCase());
-      
-      if (found) {
-        userId = found.id;
+      // PATCH-2: Use profiles table instead of listUsers() (faster, no memory issues)
+      const { data: profileByEmail } = await supabase
+        .from('profiles')
+        .select('user_id, id')
+        .ilike('email', customerEmail.trim())
+        .maybeSingle();
+
+      if (profileByEmail?.user_id) {
+        userId = profileByEmail.user_id;
+        profileId = profileByEmail.id;
+        console.log('[bepaid-sub-checkout] Found existing user via profiles');
       } else {
         // Create new user
         const tempPassword = Math.random().toString(36).slice(-12) + 'Aa1!';
@@ -290,7 +295,7 @@ Deno.serve(async (req) => {
         product_id: productId,
         tariff_id: tariff.id,
         status: 'pending',
-        billing_type: 'mit', // Will be changed to provider_managed after bePaid success
+        billing_type: 'provider_managed', // Provider-managed from start
         auto_renew: true,
         is_trial: false,
         access_days: accessDays,
@@ -328,7 +333,7 @@ Deno.serve(async (req) => {
         email: customerEmail,
         first_name: customerFirstName || undefined,
         last_name: customerLastName || undefined,
-        ip: '127.0.0.1',
+        // PATCH-2: Remove hardcoded IP - let bePaid detect or use real client IP
       },
       plan: {
         currency,
@@ -341,13 +346,12 @@ Deno.serve(async (req) => {
       },
     };
 
+    // PATCH-2: Log without PII
     console.log('[bepaid-sub-checkout] Creating bePaid subscription:', {
       subscription_v2_id: subscription.id,
       order_id: order.id,
       amount_cents: amountCents,
-      currency,
       interval_days: intervalDays,
-      tracking_id: trackingId,
     });
 
     const authString = btoa(`${credentials.shop_id}:${credentials.secret_key}`);
@@ -363,21 +367,23 @@ Deno.serve(async (req) => {
 
     const bepaidResult = await bepaidResponse.json();
     
+    // PATCH-2: Log without PII - safe subset only
     console.log('[bepaid-sub-checkout] bePaid response:', {
-      status: bepaidResponse.status,
-      bepaid_subscription_id: bepaidResult?.subscription?.id || bepaidResult?.id || null,
-      has_redirect_url: !!(bepaidResult?.subscription?.checkout_url || bepaidResult?.subscription?.redirect_url),
+      http_status: bepaidResponse.status,
+      subscription_id: bepaidResult?.subscription?.id || bepaidResult?.id || null,
+      has_redirect: !!(bepaidResult?.subscription?.checkout_url || bepaidResult?.subscription?.redirect_url),
     });
 
     if (!bepaidResponse.ok || bepaidResult.errors) {
-      console.error('[bepaid-sub-checkout] bePaid error:', bepaidResult);
+      // PATCH-2: Log error status only, no PII
+      console.error('[bepaid-sub-checkout] bePaid error: status=', bepaidResponse.status);
       // Update order status to failed
       await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
       await supabase.from('subscriptions_v2').update({ status: 'cancelled' }).eq('id', subscription.id);
       
       return new Response(JSON.stringify({ 
         error: 'Failed to create bePaid subscription',
-        details: bepaidResult.errors || bepaidResult 
+        // PATCH-2: Don't expose raw bePaid response to client
       }), {
         status: bepaidResponse.status || 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -397,6 +403,7 @@ Deno.serve(async (req) => {
     }
 
     // Create provider_subscriptions record
+    // PATCH-2: Store safe subset only, no PII
     const { error: provSubError } = await supabase
       .from('provider_subscriptions')
       .upsert({
@@ -409,7 +416,12 @@ Deno.serve(async (req) => {
         amount_cents: amountCents,
         currency,
         interval_days: intervalDays,
-        raw_data: bepaidResult,
+        raw_data: {
+          subscription_id: bepaidSubId,
+          state: bepaidSubscription.state,
+          created_at: bepaidSubscription.created_at,
+          checkout_url_present: !!redirectUrl,
+        },
       }, { 
         onConflict: 'provider,provider_subscription_id',
         ignoreDuplicates: false 
