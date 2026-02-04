@@ -1,459 +1,275 @@
-# PATCH-A..G: Исправление bePaid Subscriptions (Lovable Plan)
 
-## Диагностика проблем
+# PATCH-H (BLOCKER): Обязательный Fallback из `provider_subscriptions`
 
-### Подтверждённые факты
+## Проблема
 
-| Проблема | Доказательство |
-|----------|----------------|
-| Role enum = `superadmin` (без underscore) | `SELECT enumlabel FROM pg_enum` → `[user, admin, superadmin]` |
-| Edge functions проверяют `super_admin` (с underscore) | `admin-reconcile-bepaid-legacy/index.ts:39` → `_role: 'super_admin'` |
-| UI показывает 0 подписок при реальных 8 в БД | Скриншот + edge logs: "Found 0 total subscriptions" |
-| bePaid API возвращает пустой список | Logs: "Listing API returned nothing" |
-| UI делает прямые записи в БД | `BepaidSubscriptionsTabContent.tsx:339-356` → `supabase.from().update()` |
+| Факт | Значение |
+|------|----------|
+| Записей в `provider_subscriptions` (provider='bepaid') | **9** |
+| UI показывает | **0** ("Подписки не найдены") |
+| bePaid list API возвращает | Пустой список |
+| Текущий fallback источник | `subscriptions_v2.meta.bepaid_subscription_id` (37 записей) |
 
-### Корневая причина RBAC-проблемы
+### Корневая причина
+
+1. bePaid list API возвращает пустой список (возможно, устаревшие creds или подписки в другом shop_id)
+2. Fallback делает `GET /subscriptions/{id}` для 37 ID из `subscriptions_v2.meta`
+3. bePaid возвращает 404 для большинства этих ID (они старые/несуществующие)
+4. Результат: 0 подписок в UI, хотя в `provider_subscriptions` есть 9 актуальных записей
+
+### Требование
+
+UI должен показывать **минимум 9 записей** (из `provider_subscriptions`), даже если bePaid API недоступен.
+
+---
+
+## Решение: Алгоритм fallback в `bepaid-list-subscriptions`
 
 ```text
-Edge Function проверяет: has_role(user, 'super_admin')
-Enum в БД содержит:      'superadmin'
-Результат:               ВСЕГДА false → 403 Forbidden
+1. Попробовать bePaid list API по статусам
+   ├── Успех → использовать результат
+   └── Пустой/ошибка → fallback:
 
+2. FALLBACK (обязательный):
+   a) Загрузить ВСЕ записи из provider_subscriptions (provider='bepaid')
+   b) Для каждой записи: попробовать GET /subscriptions/{id} (батчами, limit 20)
+   c) Если details получен → merge с данными из provider_subscriptions
+   d) Если details НЕ получен → всё равно вернуть запись с флагом details_missing=true
 
-⸻
+3. Результат:
+   - subscriptions[]: ВСЕ записи из provider_subscriptions (минимум 9)
+   - stats.total = 9 (а не 0)
+   - debug: api_list_count, provider_subscriptions_count, details_fetched_count, details_failed_count
+```
 
-PATCH-A (RBAC UNIFY): Единый guard доступа + единый helper
+---
 
-Проблема
+## Технические изменения
 
-Edge Functions используют super_admin (с underscore), но в enum только superadmin.
+### Файл: `supabase/functions/bepaid-list-subscriptions/index.ts`
 
-Файлы к изменению
+#### 1. Изменить источник fallback IDs
 
-Edge Function	Текущее	Исправление
-bepaid-list-subscriptions	_role: 'admin' только	Добавить OR superadmin
-bepaid-get-subscription-details	_role: 'admin' только	Добавить OR superadmin
-admin-reconcile-bepaid-legacy	_role: 'super_admin'	→ 'superadmin' + unified helper
-bepaid-cancel-subscriptions	_role: 'admin' только	Добавить OR superadmin
+Текущий код (строки 165-176):
+```typescript
+// Collect subscription IDs we know about (for linking)
+const { data: dbSubs } = await supabase
+  .from('subscriptions_v2')
+  .select('id, user_id, meta, status')
+  .not('meta->bepaid_subscription_id', 'is', null);
+```
 
-Решение — единый паттерн проверки (с helper)
+Нужно добавить использование `provider_subscriptions` как ОСНОВНОГО fallback источника.
 
-Требование: во всех admin Edge функций сделать единый helper:
-	•	assertAdminOrSuperadmin() — допускает admin OR superadmin
-	•	assertSuperadminOnly() — допускает только superadmin (для emergency unlink и любых “опасных” execute-операций)
+#### 2. Новый алгоритм fallback (заменить строки 234-272)
 
-async function assertAdminOrSuperadmin(supabase, user) {
-  const [{ data: hasAdmin }, { data: hasSuperAdmin }] = await Promise.all([
-    supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' }),
-    supabase.rpc('has_role', { _user_id: user.id, _role: 'superadmin' }), // correct enum value
-  ]);
-
-  const isAdmin = hasAdmin === true || hasSuperAdmin === true;
-  if (!isAdmin) {
-    return new Response(JSON.stringify({ error: 'Admin access required' }), {
-      status: 403,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-  return null;
-}
-
-async function assertSuperadminOnly(supabase, user) {
-  const { data: isSuperAdmin } = await supabase.rpc('has_role', {
-    _user_id: user.id,
-    _role: 'superadmin',
-  });
-  if (isSuperAdmin !== true) {
-    return new Response(JSON.stringify({ error: 'Superadmin access required' }), {
-      status: 403,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-  return null;
-}
-
-
-⸻
-
-PATCH-B (UI БЕЗ ПРЯМЫХ ЗАПИСЕЙ): Убрать прямые DB-операции
-
-Проблема
-
-BepaidSubscriptionsTabContent.tsx строки 339-356 делают:
-
-await supabase.from('provider_subscriptions').update(...)
-await supabase.from('audit_logs').insert(...)
-
-Решение
-
-UI должен вызывать только Edge Function admin-bepaid-emergency-unlink.
-
-Удалить:
-	•	Строки 339-342: supabase.from('provider_subscriptions').update()
-	•	Строки 346-356: supabase.from('audit_logs').insert()
-
-Заменить на:
-
-const { data, error } = await supabase.functions.invoke('admin-bepaid-emergency-unlink', {
-  body: { 
-    provider_subscription_id: targetEmergencyUnlinkId,
-    confirm_text: emergencyUnlinkConfirm
-  }
-});
-if (error) throw new Error(error.message);
-if (data?.error) throw new Error(data.error);
-
-
-⸻
-
-PATCH-C (NEW EDGE): admin-bepaid-emergency-unlink (superadmin-only)
-
-Спецификация
-
-// Input
-interface EmergencyUnlinkRequest {
-  provider_subscription_id: string;
-  confirm_text: string;  // Must be exactly "UNLINK"
-}
-
-// Guards
-1. Authorization required
-2. Role: ONLY superadmin (not admin)
-3. confirm_text === "UNLINK" (иначе 400)
-
-// Action
-1. Find provider_subscriptions record by:
-   provider='bepaid' AND provider_subscription_id = input.provider_subscription_id
-
-2. Capture "before" for return (no PII):
-   before_subscription_v2_id = existing.subscription_v2_id
-   target_user_id = existing.user_id
-
-3. UPDATE provider_subscriptions:
-   SET subscription_v2_id = NULL,
-       meta = merged_meta
-   WHERE provider='bepaid' AND provider_subscription_id = input.provider_subscription_id
-
-4. Merge meta (без PII):
-   emergency_unlink_at: now()
-   emergency_unlink_reason: 'admin_emergency_unlink'
-   emergency_unlink_initiator_user_id: actor.id
-
-5. INSERT audit_logs (SYSTEM ACTOR):
-   actor_type: 'system'
-   actor_user_id: NULL
-   actor_label: 'admin-bepaid-emergency-unlink'
-   action: 'bepaid.subscription.emergency_unlink'
-   target_user_id: existing.user_id
-   meta: { 
-     provider_subscription_id, 
-     confirmed_with: 'UNLINK',
-     initiator_user_id: actor.id,
-     before_subscription_v2_id
-   }
-
-// Return (include diff, no PII)
-{
-  success: true,
-  message: 'Subscription unlinked',
-  provider_subscription_id,
-  target_user_id,
-  before_subscription_v2_id,
-  after_subscription_v2_id: null
-}
-
-
-⸻
-
-PATCH-D (UX GUARDS): Ограничение Unlink без cancel
-
-Текущее состояние (уже реализовано частично)
-
-const canUnlink = (sub: BepaidSubscription): boolean => {
-  const state = sub.snapshot_state || sub.status;
-  return state === 'canceled' || state === 'terminated';
-};
-
-Дополнения
-	1.	Обычный Unlink:
-	•	Кнопка отображается только если canUnlink(sub) === true (уже ок)
-	2.	Emergency Unlink:
-	•	Показывать только isSuperAdmin (уже ок)
-	•	Вызов только через Edge Function (PATCH-B)
-
-⸻
-
-PATCH-E (ERROR HANDLING): Не маскировать ошибки + строгая валидация ответа
-
-Проблема
-
-При ошибке от edge (403/401/creds missing) UI показывает “Подписки не найдены” вместо ошибки.
-
-Решение
-
-В BepaidSubscriptionsTabContent.tsx модифицировать useQuery:
-
-const { data, isLoading, refetch, isRefetching, error } = useQuery({
-  queryKey: ["bepaid-subscriptions-admin"],
-  queryFn: async () => {
-    const { data, error } = await supabase.functions.invoke("bepaid-list-subscriptions");
-
-    // 1) transport error
-    if (error) throw new Error(error.message || 'Edge function error');
-
-    // 2) edge payload error (even if 200)
-    if (data?.error) throw new Error(data.error);
-
-    // 3) strict shape validation (avoid silent "0 subscriptions")
-    if (!data || !Array.isArray(data.subscriptions)) {
-      throw new Error('Invalid response: subscriptions[] missing');
+```typescript
+// PATCH-H: MANDATORY fallback to provider_subscriptions
+if (allSubscriptions.length === 0 && (providerSubs?.length || 0) > 0) {
+  console.log(`[bepaid-list-subs] API list empty, using provider_subscriptions fallback (${providerSubs?.length} records)`);
+  
+  let detailsFetched = 0;
+  let detailsFailed = 0;
+  
+  for (const ps of providerSubs || []) {
+    const psId = ps.provider_subscription_id;
+    if (!psId || fetchedIds.has(psId)) continue;
+    
+    // Try to get details from bePaid API
+    try {
+      const url = `https://api.bepaid.by/subscriptions/${psId}`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Basic ${authString}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data?.subscription) {
+          detailsFetched++;
+          fetchedIds.add(psId);
+          allSubscriptions.push({
+            id: psId,
+            status: data.subscription.state || data.subscription.status || ps.state || 'unknown',
+            state: data.subscription.state,
+            plan: data.subscription.plan,
+            created_at: data.subscription.created_at,
+            next_billing_at: data.subscription.next_billing_at,
+            credit_card: data.subscription.credit_card,
+            customer: data.subscription.customer,
+          });
+          continue; // Got details, skip placeholder
+        }
+      }
+    } catch (e) {
+      console.warn(`[bepaid-list-subs] Failed to fetch details for ${psId}: ${e}`);
     }
+    
+    // CRITICAL: Add placeholder from DB even if API failed
+    detailsFailed++;
+    fetchedIds.add(psId);
+    allSubscriptions.push({
+      id: psId,
+      status: ps.state || 'unknown',
+      state: ps.state,
+      plan: undefined,
+      created_at: undefined,
+      next_billing_at: undefined,
+      credit_card: undefined,
+      customer: undefined,
+      // Mark as details_missing for UI
+      _details_missing: true,
+    });
+  }
+  
+  console.log(`[bepaid-list-subs] Fallback complete: ${detailsFetched} fetched, ${detailsFailed} failed (placeholders created)`);
+}
+```
 
-    return data;
-  },
-});
+#### 3. Добавить флаг `details_missing` в интерфейс SubscriptionWithLink
 
-UI для отображения ошибки (как у тебя) — оставить.
+```typescript
+interface SubscriptionWithLink {
+  // ... existing fields ...
+  details_missing?: boolean;  // True if bePaid API didn't return details
+}
+```
 
-⸻
+#### 4. Передавать флаг в result (строки 284-323)
 
-PATCH-F (DEBUG INFO): Debug-объект без PII + UI popover
+```typescript
+// In result mapping:
+details_missing: !!(sub as any)._details_missing,
+```
 
-Edge: модификация bepaid-list-subscriptions
+#### 5. Исправить debug объект (строки 348-356)
 
-Добавить в response debug (без PII):
-
+Текущий:
+```typescript
 debug: {
-  creds_source: credentials.source,  // 'integration_instance' | 'env_vars'
-  integration_status: credentials.instanceStatus,
-  statuses_tried: ['active', 'trial', 'cancelled', 'past_due'],
-  pages_fetched: totalPagesFetched,
-  api_errors: apiErrors.map(e => ({ status: e.status, count: e.count })),
-  fallback_ids_count: fallbackIdsFetched,
-  result_count: result.length,
-  from_provider_subscriptions: providerSubs?.length || 0,
+  pages_fetched: allSubscriptions.length > 0 ? 'multiple' : 'fallback',  // ПЛОХО: string
+  fallback_ids_count: bepaidIdToOurSub.size,  // НЕВЕРНО: не provider_subscriptions
 }
+```
 
-UI: добавить popover для debug (как у тебя) — ок.
+Исправить на:
+```typescript
+debug: {
+  creds_source: credentials.source,
+  integration_status: credentials.instanceStatus || null,
+  statuses_tried: ['active', 'trial', 'cancelled', 'past_due'],
+  api_list_count: apiListCount,  // NEW: сколько получили из list API
+  provider_subscriptions_count: providerSubs?.length || 0,  // NEW
+  details_fetched_count: detailsFetched,  // NEW
+  details_failed_count: detailsFailed,  // NEW
+  result_count: result.length,
+}
+```
 
-⸻
+---
 
-PATCH-G (CANCEL CONSTRAINTS): Улучшение reason_code + расширенный лог без PII
+### Файл: `src/components/admin/payments/BepaidSubscriptionsTabContent.tsx`
 
-Текущее состояние
+#### 1. Добавить `details_missing` в интерфейс
 
-bepaid-cancel-subscriptions уже возвращает reason_code и сохраняет meta.
+```typescript
+interface BepaidSubscription {
+  // ... existing fields ...
+  details_missing?: boolean;
+}
+```
 
-Дополнения
-	1.	Добавить в response/лог (без PII):
-	•	http_status
-	•	provider_error (sanitized, без токенов/PII)
-	2.	UI: проверить, что badge “Needs support” отображается стабильно.
+#### 2. Показывать badge для записей без деталей
 
-⸻
+В таблице добавить индикатор:
+```typescript
+{sub.details_missing && (
+  <Badge variant="outline" className="text-xs text-amber-600">
+    Нет деталей
+  </Badge>
+)}
+```
 
-Техническая секция
+#### 3. Обновить DebugInfo интерфейс
 
-Файлы к изменению
+```typescript
+interface DebugInfo {
+  creds_source?: 'integration_instance' | 'env_vars';
+  integration_status?: string | null;
+  statuses_tried?: string[];
+  api_list_count?: number;  // NEW
+  provider_subscriptions_count?: number;  // NEW
+  details_fetched_count?: number;  // NEW
+  details_failed_count?: number;  // NEW
+  result_count?: number;
+}
+```
 
-Файл	Изменение
-supabase/functions/bepaid-list-subscriptions/index.ts	PATCH-A: admin OR superadmin + PATCH-F debug
-supabase/functions/bepaid-get-subscription-details/index.ts	PATCH-A: admin OR superadmin
-supabase/functions/admin-reconcile-bepaid-legacy/index.ts	PATCH-A: super_admin → superadmin + helper
-supabase/functions/bepaid-cancel-subscriptions/index.ts	PATCH-A: admin OR superadmin
-supabase/functions/admin-bepaid-emergency-unlink/index.ts	PATCH-C: NEW FILE (superadmin-only)
-src/components/admin/payments/BepaidSubscriptionsTabContent.tsx	PATCH-B remove direct DB + PATCH-E error handling + PATCH-F popover
+#### 4. Обновить debug popover
 
+```typescript
+<PopoverContent className="w-80">
+  <div className="text-xs space-y-1">
+    <div><strong>Источник creds:</strong> {debugInfo?.creds_source}</div>
+    <div><strong>Статус интеграции:</strong> {debugInfo?.integration_status || 'N/A'}</div>
+    <div><strong>API list:</strong> {debugInfo?.api_list_count ?? 'N/A'}</div>
+    <div><strong>В provider_subscriptions:</strong> {debugInfo?.provider_subscriptions_count}</div>
+    <div><strong>Details получены:</strong> {debugInfo?.details_fetched_count}</div>
+    <div><strong>Details failed:</strong> {debugInfo?.details_failed_count}</div>
+    <div><strong>Итого результат:</strong> {debugInfo?.result_count}</div>
+  </div>
+</PopoverContent>
+```
 
-⸻
+---
 
-Новый Edge Function: admin-bepaid-emergency-unlink
+## Ключевое правило
 
-Реализация ниже — reference. Важно: используем assertSuperadminOnly() и возвращаем diff.
+**Даже если bePaid API полностью недоступен, UI должен показывать записи из `provider_subscriptions` с пометкой "Нет деталей".**
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+---
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+## DoD (Definition of Done)
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+### DoD-H1: SQL пруф
+```sql
+SELECT count(*) FROM provider_subscriptions WHERE provider = 'bepaid';
+-- Expected: 9
+```
+
+### DoD-H2: Edge response
+```json
+{
+  "subscriptions": [ /* 9 items */ ],
+  "stats": { "total": 9, ... },
+  "debug": {
+    "api_list_count": 0,
+    "provider_subscriptions_count": 9,
+    "details_fetched_count": X,
+    "details_failed_count": Y,
+    "result_count": 9
   }
+}
+```
 
-  try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+### DoD-H3: UI proof
+- Карточка "Всего" показывает **9** (не 0)
+- Таблица содержит 9 строк
+- Записи без деталей помечены "Нет деталей"
 
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+### DoD-H4: Edge logs
+```
+[bepaid-list-subs] API list empty, using provider_subscriptions fallback (9 records)
+[bepaid-list-subs] Fallback complete: X fetched, Y failed (placeholders created)
+Found 9 total subscriptions, Z orphans
+```
 
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid token' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+---
 
-    // Superadmin-only
-    const { data: isSuperAdmin } = await supabase.rpc('has_role', {
-      _user_id: user.id,
-      _role: 'superadmin',
-    });
+## Приоритет
 
-    if (isSuperAdmin !== true) {
-      return new Response(JSON.stringify({ error: 'Superadmin access required' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const { provider_subscription_id, confirm_text } = await req.json();
-
-    if (confirm_text !== 'UNLINK') {
-      return new Response(JSON.stringify({ error: 'Confirmation required: enter UNLINK' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    if (!provider_subscription_id) {
-      return new Response(JSON.stringify({ error: 'provider_subscription_id required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Fetch existing (include subscription_v2_id for diff)
-    const { data: existing } = await supabase
-      .from('provider_subscriptions')
-      .select('user_id, meta, subscription_v2_id')
-      .eq('provider', 'bepaid')
-      .eq('provider_subscription_id', provider_subscription_id)
-      .maybeSingle();
-
-    if (!existing) {
-      return new Response(JSON.stringify({ error: 'Subscription not found' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const before_subscription_v2_id = existing.subscription_v2_id ?? null;
-
-    // Merge meta (safe)
-    const oldMeta = (existing.meta as Record<string, unknown>) || {};
-    const newMeta = {
-      ...oldMeta,
-      emergency_unlink_at: new Date().toISOString(),
-      emergency_unlink_reason: 'admin_emergency_unlink',
-      emergency_unlink_initiator_user_id: user.id,
-    };
-
-    const { error: updateError } = await supabase
-      .from('provider_subscriptions')
-      .update({
-        subscription_v2_id: null,
-        meta: newMeta,
-      })
-      .eq('provider', 'bepaid')
-      .eq('provider_subscription_id', provider_subscription_id);
-
-    if (updateError) {
-      console.error('[admin-bepaid-emergency-unlink] Update error:', updateError);
-      return new Response(JSON.stringify({ error: updateError.message }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // SYSTEM ACTOR audit log
-    await supabase.from('audit_logs').insert({
-      actor_type: 'system',
-      actor_user_id: null,
-      actor_label: 'admin-bepaid-emergency-unlink',
-      action: 'bepaid.subscription.emergency_unlink',
-      target_user_id: existing.user_id,
-      meta: {
-        provider_subscription_id,
-        confirmed_with: 'UNLINK',
-        initiator_user_id: user.id,
-        before_subscription_v2_id,
-      },
-    });
-
-    return new Response(JSON.stringify({
-      success: true,
-      message: 'Subscription unlinked',
-      provider_subscription_id,
-      target_user_id: existing.user_id,
-      before_subscription_v2_id,
-      after_subscription_v2_id: null,
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-
-  } catch (e: any) {
-    console.error('[admin-bepaid-emergency-unlink] Error:', e);
-    return new Response(JSON.stringify({ error: e.message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-});
-
-
-⸻
-
-DoD (Definition of Done)
-
-DoD-A: RBAC унифицирован (и helper реально используется)
-	•	superadmin имеет доступ к bepaid-list-subscriptions и не получает 403
-	•	admin-reconcile-bepaid-legacy больше нигде не использует 'super_admin'
-
-DoD-B: Нет прямых DB записей в UI
-
-grep -n "supabase.from('provider_subscriptions').update" BepaidSubscriptionsTabContent.tsx
-# Expected: 0 matches
-
-grep -n "supabase.from('audit_logs').insert" BepaidSubscriptionsTabContent.tsx
-# Expected: 0 matches
-
-DoD-C: SYSTEM ACTOR proof (обязательно)
-
-SELECT created_at, action, actor_type, actor_user_id, actor_label, meta
-FROM audit_logs
-WHERE action = 'bepaid.subscription.emergency_unlink'
-  AND actor_type = 'system'
-  AND actor_user_id IS NULL
-ORDER BY created_at DESC LIMIT 5;
--- Expected: actor_label='admin-bepaid-emergency-unlink' + meta.before_subscription_v2_id
-
-DoD-E: Ошибки отображаются в UI (и не маскируются “0 results”)
-	•	При 403/401 — баннер с причиной
-	•	При creds not configured — отдельное сообщение
-	•	При некорректном shape ответа — “Invalid response…”
-
-DoD-F: Debug info в UI
-	•	Popover с creds_source, integration_status, result_count, fallback_ids_count
-
-⸻
-
-Приоритеты
-	1.	CRITICAL: PATCH-A (RBAC + helper) — без этого superadmin получает 403
-	2.	CRITICAL: PATCH-C (Edge Function) — без этого PATCH-B не работает
-	3.	HIGH: PATCH-B (убрать прямые DB записи)
-	4.	HIGH: PATCH-E (показывать ошибки + shape validation)
-	5.	MEDIUM: PATCH-F (debug info)
-	6.	LOW: PATCH-D, PATCH-G (уже частично реализованы)
-
+**BLOCKER** — без этого исправления UI бесполезен (показывает 0 при 9 реальных записях).
