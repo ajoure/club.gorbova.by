@@ -17,7 +17,9 @@ export type BlockType =
   // Ввод (Итерация 3)
   | 'input_short' | 'input_long' | 'checklist' | 'table_input' | 'file_upload' | 'rating'
   // Мета (Итерация 4)
-  | 'container' | 'columns' | 'condition';
+  | 'container' | 'columns' | 'condition'
+  // Kvest blocks (Итерация 5)
+  | 'video_unskippable' | 'diagnostic_table' | 'sequential_form';
 
 export interface HeadingContent {
   text: string;
@@ -228,7 +230,34 @@ export type BlockContent =
   | QuizSequenceContentData
   | QuizHotspotContentData
   | QuizSurveyContentData
-  | Record<string, never>;
+  | VideoUnskippableContentData
+  | DiagnosticTableContentData
+  | SequentialFormContentData
+  | Record<string, unknown>;
+
+// Kvest block content types
+export interface VideoUnskippableContentData {
+  url: string;
+  provider?: 'youtube' | 'vimeo' | 'kinescope' | 'other';
+  title?: string;
+  threshold_percent: number;
+  required: boolean;
+}
+
+export interface DiagnosticTableContentData {
+  title?: string;
+  instruction?: string;
+  columns: { id: string; name: string; type: string; options?: string[]; formula?: string }[];
+  minRows: number;
+  showAggregates: boolean;
+  submitButtonText: string;
+}
+
+export interface SequentialFormContentData {
+  title?: string;
+  steps: { id: string; title: string; description: string; inputType: string; required: boolean }[];
+  submitButtonText: string;
+}
 
 // Quiz Survey content type
 export interface QuizSurveyContentData {
