@@ -26,6 +26,7 @@ import { ModuleFormFields, ModuleFormData, generateSlug } from "./ModuleFormFiel
 import { LessonFormFieldsSimple, LessonFormDataSimple, generateLessonSlug } from "./LessonFormFieldsSimple";
 import { KbLessonFormFields, KbLessonFormData, generateKbLessonSlug } from "./KbLessonFormFields";
 import { UniversalLessonFormFields } from "./UniversalLessonFormFields";
+import { ModuleSelector } from "./ModuleSelector";
 import { CompactAccessSelector } from "./CompactAccessSelector";
 import { LessonNotificationConfig, NotificationConfig, defaultNotificationConfig } from "./LessonNotificationConfig";
 import { LessonSaleConfig, SaleConfig, defaultSaleConfig } from "./LessonSaleConfig";
@@ -47,6 +48,7 @@ interface WizardData {
   tariffIds: string[];
   notification: NotificationConfig;
   saleConfig: SaleConfig;
+  targetModuleId: string | null; // null = standalone (container), UUID = existing module
 }
 
 // Steps for MODULE flow
@@ -59,12 +61,13 @@ const MODULE_STEPS = [
   { label: "Готово", shortLabel: "✓" },
 ];
 
-// Steps for LESSON flow (standalone lesson) - Access before Lesson!
+// Steps for LESSON flow (standalone lesson) - Module selection added!
 const LESSON_STEPS = [
   { label: "Раздел", shortLabel: "1" },
   { label: "Тип", shortLabel: "2" },
-  { label: "Доступ", shortLabel: "3" },   // Access FIRST
-  { label: "Урок", shortLabel: "4" },      // Then lesson data
+  { label: "Модуль", shortLabel: "3" },    // NEW: Module selection
+  { label: "Доступ", shortLabel: "4" },    // Access
+  { label: "Урок", shortLabel: "5" },      // Lesson data
   { label: "Готово", shortLabel: "✓" },    // Creation happens here
 ];
 
@@ -80,6 +83,7 @@ const MODULE_HINTS = [
 const LESSON_HINTS = [
   "Выберите, где будет отображаться ваш урок в меню пользователя",
   "Выберите тип создаваемого контента",
+  "Выберите, в какой модуль добавить урок или создайте новый",
   "Настройте, кто увидит контент. Пустой выбор = доступно всем",
   "Создайте урок (видеоответ, выпуск). Контент редактируется после создания",
   "Отлично! Урок создан и готов к редактированию",
@@ -88,6 +92,7 @@ const LESSON_HINTS = [
 const KB_LESSON_HINTS = [
   "Выберите, где будет отображаться ваш урок в меню пользователя",
   "Выберите тип создаваемого контента",
+  "Выберите, в какой модуль добавить выпуск или создайте новый",
   "Настройте, кто увидит контент. Пустой выбор = доступно всем",
   "Заполните данные выпуска и добавьте вопросы",
   "Отлично! Выпуск создан и готов к редактированию",
@@ -208,6 +213,7 @@ const createInitialState = (initialSectionKey?: string): WizardData => ({
   tariffIds: [],
   notification: { ...defaultNotificationConfig },
   saleConfig: { ...defaultSaleConfig },
+  targetModuleId: null, // null = standalone lesson (container)
 });
 
 // Check if section is KB (videos or questions)
@@ -281,17 +287,18 @@ export function ContentCreationWizard({
   // Validation based on current step and flow
   const canProceed = useMemo(() => {
     if (isLessonFlow) {
-      // Lesson flow: Section -> Type -> Access -> Lesson -> Done
+      // Lesson flow: Section -> Type -> Module -> Access -> Lesson -> Done
       switch (step) {
         case 0: return !!wizardData.menuSectionKey;
         case 1: return true; // Type selection always valid
-        case 2: return true; // Access is optional
-        case 3: 
+        case 2: return true; // Module selection is optional (null = standalone)
+        case 3: return true; // Access is optional
+        case 4: 
           if (isKbFlow) {
             return wizardData.kbLesson.episode_number > 0;
           }
           return !!wizardData.lesson.title && !!wizardData.lesson.slug;
-        case 4: return true; // Done
+        case 5: return true; // Done
         default: return false;
       }
     } else {
@@ -435,13 +442,15 @@ export function ContentCreationWizard({
     }
   };
 
-  // Create standalone lesson (lesson flow step 3 -> 4) - NOW creates BOTH lesson and access atomically
+  // Create standalone lesson (lesson flow step 4 -> 5) - NOW creates BOTH lesson and access atomically
   const handleCreateStandaloneLessonWithAccess = async () => {
     setIsCreating(true);
     
     try {
-      // Get or create container module for this section
-      const containerId = await getOrCreateContainerModule(wizardData.menuSectionKey);
+      // If a specific module was selected, use it. Otherwise get/create container
+      const containerId = wizardData.targetModuleId 
+        ? wizardData.targetModuleId 
+        : await getOrCreateContainerModule(wizardData.menuSectionKey);
       setCreatedModuleId(containerId);
 
       // Determine lesson data based on flow type
@@ -744,7 +753,7 @@ export function ContentCreationWizard({
   const handleSaveAccess = async () => {
     if (!createdModuleId) {
       // For lesson flow, move to done even without module access
-      setStep(isLessonFlow ? 4 : 5);
+      setStep(isLessonFlow ? 5 : 5);
       return;
     }
 
@@ -775,13 +784,14 @@ export function ContentCreationWizard({
   // Handle next button based on flow and step
   const handleNext = async () => {
     if (isLessonFlow) {
-      // Lesson flow: Section -> Type -> Access -> Lesson -> Done
+      // Lesson flow: Section -> Type -> Module -> Access -> Lesson -> Done
       switch (step) {
         case 0: setStep(1); break;
         case 1: setStep(2); break;
-        case 2: setStep(3); break;  // Access -> Lesson (no creation yet)
-        case 3: await handleCreateStandaloneLessonWithAccess(); break;  // Create lesson AND access
-        case 4:
+        case 2: setStep(3); break;  // Module selection -> Access
+        case 3: setStep(4); break;  // Access -> Lesson (no creation yet)
+        case 4: await handleCreateStandaloneLessonWithAccess(); break;  // Create lesson AND access
+        case 5:
           handleOpenChange(false);
           onComplete?.({ moduleId: createdModuleId!, lessonId: createdLessonId || undefined });
           break;
@@ -846,9 +856,19 @@ export function ContentCreationWizard({
     }
 
     if (isLessonFlow) {
-      // Lesson flow steps: Section -> Type -> Access -> Lesson -> Done
+      // Lesson flow steps: Section -> Type -> Module -> Access -> Lesson -> Done
       if (step === 2) {
-        // ACCESS step (now comes BEFORE lesson)
+        // MODULE SELECTION step (NEW!)
+        return (
+          <ModuleSelector
+            sectionKey={wizardData.menuSectionKey}
+            selectedModuleId={wizardData.targetModuleId}
+            onSelect={(id) => setWizardData((prev) => ({ ...prev, targetModuleId: id }))}
+          />
+        );
+      }
+      if (step === 3) {
+        // ACCESS step
         const lessonTitle = isKbFlow 
           ? `Выпуск №${wizardData.kbLesson.episode_number || "..."}`
           : (wizardData.lesson.title || "Новый урок");
@@ -871,7 +891,7 @@ export function ContentCreationWizard({
           </div>
         );
       }
-      if (step === 3) {
+      if (step === 4) {
         // LESSON step - UNIFIED form for all sections
         const lessonTitle = isKbFlow 
           ? `Выпуск №${wizardData.kbLesson.episode_number || "..."}`
@@ -906,7 +926,7 @@ export function ContentCreationWizard({
           </div>
         );
       }
-      if (step === 4) {
+      if (step === 5) {
         // DONE step
         const lessonTitle = isKbFlow 
           ? `Выпуск №${wizardData.kbLesson.episode_number}`
@@ -1019,9 +1039,9 @@ export function ContentCreationWizard({
   // Determine if we're on an optional lesson step (module flow step 3)
   const isOptionalLessonStep = !isLessonFlow && step === 3;
   const isFinalStep = step === maxStep;
-  // In lesson flow, step 3 is the lesson step where we create everything (show "Завершить")
+  // In lesson flow, step 4 is the lesson step where we create everything (show "Завершить")
   // In module flow, step 4 is access step where we finalize
-  const isCreationStep = isLessonFlow ? step === 3 : step === 4;
+  const isCreationStep = isLessonFlow ? step === 4 : step === 4;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
