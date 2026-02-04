@@ -1,193 +1,459 @@
-# PATCH: Расследование bePaid Subscriptions — Карта источников и архитектурный план (уточнённый финал)
+# PATCH-A..G: Исправление bePaid Subscriptions (Lovable Plan)
 
-## Обнаруженная критическая проблема (ROOT CAUSE)
+## Диагностика проблем
 
-**ROOT CAUSE:** Edge Function `bepaid-create-token` создаёт **bePaid subscription** через `POST https://api.bepaid.by/subscriptions` для **любой** рекуррентной логики/первой покупки из Landing/PaymentDialog (включая выбранный пользователем вариант “MIT / Привязать карту”).  
-Из-за этого:
-1) “Привязать карту (MIT)” фактически **не токенизирует** карту через tokenization checkout  
-2) Вместо этого создаётся **реальная provider-managed subscription bePaid** (30-дневный цикл)  
-3) Вы получаете “скрытые” автосписания, о которых не было явного UX-согласия
+### Подтверждённые факты
 
----
+| Проблема | Доказательство |
+|----------|----------------|
+| Role enum = `superadmin` (без underscore) | `SELECT enumlabel FROM pg_enum` → `[user, admin, superadmin]` |
+| Edge functions проверяют `super_admin` (с underscore) | `admin-reconcile-bepaid-legacy/index.ts:39` → `_role: 'super_admin'` |
+| UI показывает 0 подписок при реальных 8 в БД | Скриншот + edge logs: "Found 0 total subscriptions" |
+| bePaid API возвращает пустой список | Logs: "Listing API returned nothing" |
+| UI делает прямые записи в БД | `BepaidSubscriptionsTabContent.tsx:339-356` → `supabase.from().update()` |
 
-## Цель исправления
+### Корневая причина RBAC-проблемы
 
-1) **Жёстко разделить** два сценария оплаты:
-   - **MIT/tokenization**: привязали карту → дальше списания у нас (direct charge)  
-   - **bePaid subscription**: автосписание делает bePaid (только при явном выборе)
-2) **Не ломать** уже работающую токенизацию в `/settings/payment-methods`
-3) **Остановить** новые “скрытые” subscriptions, сохранив возможность оплаты для 3DS-карт через bePaid subscription
-4) Добавить **guards + диагностику** “unknown_origin” подписок
+```text
+Edge Function проверяет: has_role(user, 'super_admin')
+Enum в БД содержит:      'superadmin'
+Результат:               ВСЕГДА false → 403 Forbidden
 
----
 
-# PATCH-2..PATCH-7 (исполнение)
+⸻
 
-## PATCH-2 (CRITICAL): `bepaid-create-token` — разделить checkout vs subscription
+PATCH-A (RBAC UNIFY): Единый guard доступа + единый helper
 
-**Файл:** `supabase/functions/bepaid-create-token/index.ts`  
-**Проблема:** сейчас для recurring/первой покупки используется `/subscriptions` API.  
-**Исправление:** добавить явный режим работы, чтобы по умолчанию НЕ создавать subscriptions.
+Проблема
 
-### Изменения
-1) Добавить параметр запроса:
-- `use_provider_subscription?: boolean` (default: `false`)
-- `explicit_user_choice?: boolean` (обязателен, если `use_provider_subscription=true`)
+Edge Functions используют super_admin (с underscore), но в enum только superadmin.
 
-2) Логика:
+Файлы к изменению
 
-- Если `use_provider_subscription === true`:
-  - Разрешать ТОЛЬКО при `explicit_user_choice === true`
-  - Использовать текущую логику `POST https://api.bepaid.by/subscriptions`
-  - Писать audit_logs: `bepaid.subscription.create_attempt`
+Edge Function	Текущее	Исправление
+bepaid-list-subscriptions	_role: 'admin' только	Добавить OR superadmin
+bepaid-get-subscription-details	_role: 'admin' только	Добавить OR superadmin
+admin-reconcile-bepaid-legacy	_role: 'super_admin'	→ 'superadmin' + unified helper
+bepaid-cancel-subscriptions	_role: 'admin' только	Добавить OR superadmin
 
-- Если `use_provider_subscription !== true` (default):
-  - Использовать **checkout payment flow** (НЕ subscriptions API)
-  - Цель: создать **обычный checkout платеж** (в т.ч. с 3DS), а сохранение карты для MIT обеспечить **токенизацией** (см. ниже PATCH-2.1)
+Решение — единый паттерн проверки (с helper)
 
-### Важно (не гадать, сделать по факту)
-Сейчас у вас УЖЕ есть рабочий эталон токенизации:
-- `payment-methods-tokenize` (использует `transaction_type: 'tokenization'`)
+Требование: во всех admin Edge функций сделать единый helper:
+	•	assertAdminOrSuperadmin() — допускает admin OR superadmin
+	•	assertSuperadminOnly() — допускает только superadmin (для emergency unlink и любых “опасных” execute-операций)
 
-**Требование:** в MIT сценарии первый шаг должен быть:
-- либо **tokenization checkout** (получаем токен/сохраняем карту),
-- либо payment checkout + подтверждённый способ получить token/profile для дальнейшего MIT (если bePaid так умеет в вашей интеграции).
-Если нет 100% доказуемого способа “payment+recurring contract” получить токен — используем tokenization как единственный надёжный вариант.
+async function assertAdminOrSuperadmin(supabase, user) {
+  const [{ data: hasAdmin }, { data: hasSuperAdmin }] = await Promise.all([
+    supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' }),
+    supabase.rpc('has_role', { _user_id: user.id, _role: 'superadmin' }), // correct enum value
+  ]);
 
-### PATCH-2.1 (часть PATCH-2): Реиспользовать `payment-methods-tokenize` как общий механизм
-Сделать, чтобы Landing/PaymentDialog для “MIT / Привязать карту” вызывал **тот же** механизм, что и `/settings/payment-methods`:
-- один и тот же Edge function или общий helper внутри функций
-- одинаковый payload tokenization
-- одинаковое сохранение результата (card_profile_links / payments_methods / profiles)
+  const isAdmin = hasAdmin === true || hasSuperAdmin === true;
+  if (!isAdmin) {
+    return new Response(JSON.stringify({ error: 'Admin access required' }), {
+      status: 403,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  return null;
+}
 
-DoD:
-- При выборе “MIT / Привязать карту” **не создаётся** запись в bePaid subscriptions.
-- Карта после прохождения tokenization появляется в PaymentMethods и годится для direct-charge.
+async function assertSuperadminOnly(supabase, user) {
+  const { data: isSuperAdmin } = await supabase.rpc('has_role', {
+    _user_id: user.id,
+    _role: 'superadmin',
+  });
+  if (isSuperAdmin !== true) {
+    return new Response(JSON.stringify({ error: 'Superadmin access required' }), {
+      status: 403,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  return null;
+}
 
----
 
-## PATCH-3 (CRITICAL): PaymentDialog — правильная маршрутизация по flow
+⸻
 
-**Файл:** `src/components/payment/PaymentDialog.tsx`
+PATCH-B (UI БЕЗ ПРЯМЫХ ЗАПИСЕЙ): Убрать прямые DB-операции
 
-### Изменения
-1) `paymentFlowType === 'mit'`:
-- НЕ вызывать `bepaid-create-subscription-checkout`
-- НЕ вызывать `bepaid-create-token` в режиме subscriptions
-- Запускать **tokenization flow** (см. PATCH-2.1)
-- После успеха: показать “Карта привязана” → дальше либо:
-  - (а) сразу списать через direct-charge (если это ваш продуктовый сценарий),
-  - (б) либо активировать подписку/доступ по вашим правилам (НО строго после подтверждения оплаты, если есть оплата).
+Проблема
 
-2) `paymentFlowType === 'provider_managed'`:
-- вызывать `bepaid-create-subscription-checkout` (как сейчас)
-- передавать `explicit_user_choice: true`
+BepaidSubscriptionsTabContent.tsx строки 339-356 делают:
 
-DoD:
-- Два радиобаттона ведут в два разных backend-flow.
-- “MIT” никогда не вызывает subscriptions API.
+await supabase.from('provider_subscriptions').update(...)
+await supabase.from('audit_logs').insert(...)
 
----
+Решение
 
-## PATCH-4 (SECURITY): Guard на создание subscriptions (везде)
+UI должен вызывать только Edge Function admin-bepaid-emergency-unlink.
 
-**Файлы:**
-- `supabase/functions/bepaid-create-subscription-checkout/index.ts`
-- `supabase/functions/bepaid-create-subscription/index.ts`
-- `supabase/functions/bepaid-create-token/index.ts` (если там остаётся режим subscriptions)
+Удалить:
+	•	Строки 339-342: supabase.from('provider_subscriptions').update()
+	•	Строки 346-356: supabase.from('audit_logs').insert()
 
-### Правило
-Любая операция, которая создаёт bePaid subscription через `/subscriptions`, требует:
-- `explicit_user_choice === true`
-- audit_logs: `bepaid.subscription.create_attempt`
-- иначе `403` + audit_logs (без PII)
+Заменить на:
 
-DoD:
-- Невозможно создать subscription “случайно” ни из одного UI/флоу.
+const { data, error } = await supabase.functions.invoke('admin-bepaid-emergency-unlink', {
+  body: { 
+    provider_subscription_id: targetEmergencyUnlinkId,
+    confirm_text: emergencyUnlinkConfirm
+  }
+});
+if (error) throw new Error(error.message);
+if (data?.error) throw new Error(data.error);
 
----
 
-## PATCH-5 (HIGH): Диагностика “unknown_origin” subscriptions
+⸻
 
-**Создать:** `/admin/bepaid-subscriptions` (или вкладка в Payments)
+PATCH-C (NEW EDGE): admin-bepaid-emergency-unlink (superadmin-only)
 
-### Источник данных
-Использовать существующие компоненты/функции (`BepaidSubscriptionsList.tsx`, `bepaid-list-subscriptions`) если они есть.
+Спецификация
 
-### Функционал
-- Таблица: `bepaid_subscription_id`, status, created_at, next_charge/updated_at, tracking_id, last_transaction.uid
-- Колонка `Linked?`:
-  - матчинги к `orders_v2 / payments_v2 / provider_subscriptions / subscriptions_v2`
-- Фильтры: linked / unlinked / status
-- Отдельный блок “unknown_origin” (unlinked)
+// Input
+interface EmergencyUnlinkRequest {
+  provider_subscription_id: string;
+  confirm_text: string;  // Must be exactly "UNLINK"
+}
 
-DoD:
-- Я вижу все подписки в bePaid и понимаю, какие из них “наши” и какие нет.
+// Guards
+1. Authorization required
+2. Role: ONLY superadmin (not admin)
+3. confirm_text === "UNLINK" (иначе 400)
 
----
+// Action
+1. Find provider_subscriptions record by:
+   provider='bepaid' AND provider_subscription_id = input.provider_subscription_id
 
-## PATCH-6 (MEDIUM): Alerting в существующий Inbox/History (без отдельной вкладки)
+2. Capture "before" for return (no PII):
+   before_subscription_v2_id = existing.subscription_v2_id
+   target_user_id = existing.user_id
 
-События:
-- обнаружена новая unlinked subscription
-- создана subscription (provider-managed) в результате user choice
+3. UPDATE provider_subscriptions:
+   SET subscription_v2_id = NULL,
+       meta = merged_meta
+   WHERE provider='bepaid' AND provider_subscription_id = input.provider_subscription_id
 
-Только safe data (id/status/timestamps/tracking_id). RBAC: только admin edit.
+4. Merge meta (без PII):
+   emergency_unlink_at: now()
+   emergency_unlink_reason: 'admin_emergency_unlink'
+   emergency_unlink_initiator_user_id: actor.id
 
----
+5. INSERT audit_logs (SYSTEM ACTOR):
+   actor_type: 'system'
+   actor_user_id: NULL
+   actor_label: 'admin-bepaid-emergency-unlink'
+   action: 'bepaid.subscription.emergency_unlink'
+   target_user_id: existing.user_id
+   meta: { 
+     provider_subscription_id, 
+     confirmed_with: 'UNLINK',
+     initiator_user_id: actor.id,
+     before_subscription_v2_id
+   }
 
-## PATCH-7 (REGRESSION): Проверки по двум сценариям
+// Return (include diff, no PII)
+{
+  success: true,
+  message: 'Subscription unlinked',
+  provider_subscription_id,
+  target_user_id,
+  before_subscription_v2_id,
+  after_subscription_v2_id: null
+}
 
-### Сценарий A — MIT/tokenization
-- после нажатия “Оплатить/Привязать карту (MIT)”:
-  - bePaid subscriptions НЕ создаются
-  - карта появляется в PaymentMethods
-  - direct-charge способен списать (если карта без 3DS)
 
-### Сценарий B — bePaid subscription
-- после “Подписка bePaid”:
-  - создаётся subscription
-  - webhook обрабатывается
-  - доступ выдаётся только по факту оплаты/валидного статуса
+⸻
 
----
+PATCH-D (UX GUARDS): Ограничение Unlink без cancel
 
-# ВАЖНОЕ уточнение по рискам (обязательный блок)
+Текущее состояние (уже реализовано частично)
 
-## Риск 1: уже созданные subscriptions (117 шт.)
-Они продолжат списывать, пока не решите, что с ними делать.
-**Требование:** только диагностика + список + ручной план действий (без авто-отмен).
+const canUnlink = (sub: BepaidSubscription): boolean => {
+  const state = sub.snapshot_state || sub.status;
+  return state === 'canceled' || state === 'terminated';
+};
 
-## Риск 2: 3DS-карты
-MIT/direct-charge по ним может не работать — для них и нужна опция provider-managed subscription.
-Поэтому subscription flow должен остаться, но только при явном выборе.
+Дополнения
+	1.	Обычный Unlink:
+	•	Кнопка отображается только если canUnlink(sub) === true (уже ок)
+	2.	Emergency Unlink:
+	•	Показывать только isSuperAdmin (уже ок)
+	•	Вызов только через Edge Function (PATCH-B)
 
----
+⸻
 
-# Файлы к изменению (итог)
+PATCH-E (ERROR HANDLING): Не маскировать ошибки + строгая валидация ответа
 
-| Файл | Изменение |
-|------|----------|
-| `supabase/functions/bepaid-create-token/index.ts` | Разделение flow + default без subscriptions |
-| `supabase/functions/payment-methods-tokenize/*` | Реиспользовать как общий механизм (или вынести helper) |
-| `src/components/payment/PaymentDialog.tsx` | MIT → tokenization, provider_managed → subscription |
-| `supabase/functions/bepaid-create-subscription-checkout/index.ts` | Guard `explicit_user_choice` |
-| `supabase/functions/bepaid-create-subscription/index.ts` | Guard `explicit_user_choice` |
-| `src/pages/admin/AdminBepaidSubscriptions.tsx` | Диагностика subscriptions |
+Проблема
 
----
+При ошибке от edge (403/401/creds missing) UI показывает “Подписки не найдены” вместо ошибки.
 
-# DoD (Definition of Done)
+Решение
 
-1) **MIT flow НЕ создаёт subscriptions**:
-- в админке bePaid не появляется новая subscription после MIT клика
-- в наших логах нет `bepaid.subscription.created` для MIT
+В BepaidSubscriptionsTabContent.tsx модифицировать useQuery:
 
-2) **Provider-managed flow создаёт subscriptions только при explicit choice**:
-- без `explicit_user_choice` → 403 + audit_log
+const { data, isLoading, refetch, isRefetching, error } = useQuery({
+  queryKey: ["bepaid-subscriptions-admin"],
+  queryFn: async () => {
+    const { data, error } = await supabase.functions.invoke("bepaid-list-subscriptions");
 
-3) **Прозрачность**:
-- страница `/admin/bepaid-subscriptions` показывает linked/unlinked
-- есть список unknown_origin
+    // 1) transport error
+    if (error) throw new Error(error.message || 'Edge function error');
 
-4) **UI-пруфы**: скрины из 7500084@gmail.com + логи edge functions + diff-summary
+    // 2) edge payload error (even if 200)
+    if (data?.error) throw new Error(data.error);
+
+    // 3) strict shape validation (avoid silent "0 subscriptions")
+    if (!data || !Array.isArray(data.subscriptions)) {
+      throw new Error('Invalid response: subscriptions[] missing');
+    }
+
+    return data;
+  },
+});
+
+UI для отображения ошибки (как у тебя) — оставить.
+
+⸻
+
+PATCH-F (DEBUG INFO): Debug-объект без PII + UI popover
+
+Edge: модификация bepaid-list-subscriptions
+
+Добавить в response debug (без PII):
+
+debug: {
+  creds_source: credentials.source,  // 'integration_instance' | 'env_vars'
+  integration_status: credentials.instanceStatus,
+  statuses_tried: ['active', 'trial', 'cancelled', 'past_due'],
+  pages_fetched: totalPagesFetched,
+  api_errors: apiErrors.map(e => ({ status: e.status, count: e.count })),
+  fallback_ids_count: fallbackIdsFetched,
+  result_count: result.length,
+  from_provider_subscriptions: providerSubs?.length || 0,
+}
+
+UI: добавить popover для debug (как у тебя) — ок.
+
+⸻
+
+PATCH-G (CANCEL CONSTRAINTS): Улучшение reason_code + расширенный лог без PII
+
+Текущее состояние
+
+bepaid-cancel-subscriptions уже возвращает reason_code и сохраняет meta.
+
+Дополнения
+	1.	Добавить в response/лог (без PII):
+	•	http_status
+	•	provider_error (sanitized, без токенов/PII)
+	2.	UI: проверить, что badge “Needs support” отображается стабильно.
+
+⸻
+
+Техническая секция
+
+Файлы к изменению
+
+Файл	Изменение
+supabase/functions/bepaid-list-subscriptions/index.ts	PATCH-A: admin OR superadmin + PATCH-F debug
+supabase/functions/bepaid-get-subscription-details/index.ts	PATCH-A: admin OR superadmin
+supabase/functions/admin-reconcile-bepaid-legacy/index.ts	PATCH-A: super_admin → superadmin + helper
+supabase/functions/bepaid-cancel-subscriptions/index.ts	PATCH-A: admin OR superadmin
+supabase/functions/admin-bepaid-emergency-unlink/index.ts	PATCH-C: NEW FILE (superadmin-only)
+src/components/admin/payments/BepaidSubscriptionsTabContent.tsx	PATCH-B remove direct DB + PATCH-E error handling + PATCH-F popover
+
+
+⸻
+
+Новый Edge Function: admin-bepaid-emergency-unlink
+
+Реализация ниже — reference. Важно: используем assertSuperadminOnly() и возвращаем diff.
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Invalid token' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Superadmin-only
+    const { data: isSuperAdmin } = await supabase.rpc('has_role', {
+      _user_id: user.id,
+      _role: 'superadmin',
+    });
+
+    if (isSuperAdmin !== true) {
+      return new Response(JSON.stringify({ error: 'Superadmin access required' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { provider_subscription_id, confirm_text } = await req.json();
+
+    if (confirm_text !== 'UNLINK') {
+      return new Response(JSON.stringify({ error: 'Confirmation required: enter UNLINK' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (!provider_subscription_id) {
+      return new Response(JSON.stringify({ error: 'provider_subscription_id required' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Fetch existing (include subscription_v2_id for diff)
+    const { data: existing } = await supabase
+      .from('provider_subscriptions')
+      .select('user_id, meta, subscription_v2_id')
+      .eq('provider', 'bepaid')
+      .eq('provider_subscription_id', provider_subscription_id)
+      .maybeSingle();
+
+    if (!existing) {
+      return new Response(JSON.stringify({ error: 'Subscription not found' }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const before_subscription_v2_id = existing.subscription_v2_id ?? null;
+
+    // Merge meta (safe)
+    const oldMeta = (existing.meta as Record<string, unknown>) || {};
+    const newMeta = {
+      ...oldMeta,
+      emergency_unlink_at: new Date().toISOString(),
+      emergency_unlink_reason: 'admin_emergency_unlink',
+      emergency_unlink_initiator_user_id: user.id,
+    };
+
+    const { error: updateError } = await supabase
+      .from('provider_subscriptions')
+      .update({
+        subscription_v2_id: null,
+        meta: newMeta,
+      })
+      .eq('provider', 'bepaid')
+      .eq('provider_subscription_id', provider_subscription_id);
+
+    if (updateError) {
+      console.error('[admin-bepaid-emergency-unlink] Update error:', updateError);
+      return new Response(JSON.stringify({ error: updateError.message }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // SYSTEM ACTOR audit log
+    await supabase.from('audit_logs').insert({
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'admin-bepaid-emergency-unlink',
+      action: 'bepaid.subscription.emergency_unlink',
+      target_user_id: existing.user_id,
+      meta: {
+        provider_subscription_id,
+        confirmed_with: 'UNLINK',
+        initiator_user_id: user.id,
+        before_subscription_v2_id,
+      },
+    });
+
+    return new Response(JSON.stringify({
+      success: true,
+      message: 'Subscription unlinked',
+      provider_subscription_id,
+      target_user_id: existing.user_id,
+      before_subscription_v2_id,
+      after_subscription_v2_id: null,
+    }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+
+  } catch (e: any) {
+    console.error('[admin-bepaid-emergency-unlink] Error:', e);
+    return new Response(JSON.stringify({ error: e.message }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+});
+
+
+⸻
+
+DoD (Definition of Done)
+
+DoD-A: RBAC унифицирован (и helper реально используется)
+	•	superadmin имеет доступ к bepaid-list-subscriptions и не получает 403
+	•	admin-reconcile-bepaid-legacy больше нигде не использует 'super_admin'
+
+DoD-B: Нет прямых DB записей в UI
+
+grep -n "supabase.from('provider_subscriptions').update" BepaidSubscriptionsTabContent.tsx
+# Expected: 0 matches
+
+grep -n "supabase.from('audit_logs').insert" BepaidSubscriptionsTabContent.tsx
+# Expected: 0 matches
+
+DoD-C: SYSTEM ACTOR proof (обязательно)
+
+SELECT created_at, action, actor_type, actor_user_id, actor_label, meta
+FROM audit_logs
+WHERE action = 'bepaid.subscription.emergency_unlink'
+  AND actor_type = 'system'
+  AND actor_user_id IS NULL
+ORDER BY created_at DESC LIMIT 5;
+-- Expected: actor_label='admin-bepaid-emergency-unlink' + meta.before_subscription_v2_id
+
+DoD-E: Ошибки отображаются в UI (и не маскируются “0 results”)
+	•	При 403/401 — баннер с причиной
+	•	При creds not configured — отдельное сообщение
+	•	При некорректном shape ответа — “Invalid response…”
+
+DoD-F: Debug info в UI
+	•	Popover с creds_source, integration_status, result_count, fallback_ids_count
+
+⸻
+
+Приоритеты
+	1.	CRITICAL: PATCH-A (RBAC + helper) — без этого superadmin получает 403
+	2.	CRITICAL: PATCH-C (Edge Function) — без этого PATCH-B не работает
+	3.	HIGH: PATCH-B (убрать прямые DB записи)
+	4.	HIGH: PATCH-E (показывать ошибки + shape validation)
+	5.	MEDIUM: PATCH-F (debug info)
+	6.	LOW: PATCH-D, PATCH-G (уже частично реализованы)
+
