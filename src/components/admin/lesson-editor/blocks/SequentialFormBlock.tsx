@@ -300,7 +300,7 @@ export function SequentialFormBlock({
         </div>
       )}
 
-      {/* Step indicators */}
+      {/* Step indicators - PATCH-D: use localAnswers instead of answers */}
       <div className="flex gap-1">
         {steps.map((step, idx) => (
           <button
@@ -309,7 +309,7 @@ export function SequentialFormBlock({
             disabled={isCompleted}
             className={`
               flex-1 h-2 rounded-full transition-all
-              ${answers[step.id] 
+              ${localAnswers[step.id] 
                 ? 'bg-primary' 
                 : idx === currentStepIndex 
                   ? 'bg-primary/50' 
