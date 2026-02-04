@@ -426,8 +426,9 @@ export function PaymentDialog({
 
     try {
       // PATCH-3: If user selected provider_managed flow - no savedCard restriction
+      // This explicitly creates a bePaid subscription (provider-managed recurring)
       if (paymentFlowType === 'provider_managed' && isSubscription && !isTrial) {
-        console.log("Using provider_managed flow (bePaid subscription checkout)");
+        console.log("Using provider_managed flow (bePaid subscription checkout) - explicit user choice");
         const { data, error } = await supabase.functions.invoke("bepaid-create-subscription-checkout", {
           body: {
             productId,
@@ -438,6 +439,8 @@ export function PaymentDialog({
             customerFirstName: formData.firstName,
             customerLastName: formData.lastName,
             existingUserId,
+            // PATCH-4: Explicit user choice guard
+            explicit_user_choice: true,
           },
         });
 
@@ -523,7 +526,17 @@ export function PaymentDialog({
         }
       }
 
-      // Default: redirect to bePaid checkout (MIT tokenization)
+      // Default: redirect to bePaid checkout
+      // PATCH-3: For MIT flow, use useMitTokenization=true to avoid creating bePaid subscription
+      const shouldUseMitTokenization = paymentFlowType === 'mit' && isSubscription && !isTrial;
+      
+      console.log("Using bepaid-create-token with:", { 
+        paymentFlowType, 
+        isSubscription, 
+        isTrial, 
+        useMitTokenization: shouldUseMitTokenization 
+      });
+      
       const { data, error } = await supabase.functions.invoke("bepaid-create-token", {
         body: {
           productId,
@@ -537,6 +550,8 @@ export function PaymentDialog({
           offerId,
           isTrial,
           trialDays,
+          // PATCH-3: Signal MIT flow to avoid creating bePaid subscription
+          useMitTokenization: shouldUseMitTokenization,
         },
       });
 

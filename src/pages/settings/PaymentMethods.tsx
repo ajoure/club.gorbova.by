@@ -249,7 +249,9 @@ export default function PaymentMethodsSettings() {
       const { data, error } = await supabase.functions.invoke('bepaid-create-subscription', {
         body: { 
           subscription_v2_id: subscriptionV2Id,
-          return_url: window.location.href 
+          return_url: window.location.href,
+          // PATCH-4: Explicit user choice guard
+          explicit_user_choice: true,
         }
       });
       
@@ -458,7 +460,11 @@ export default function PaymentMethodsSettings() {
     try {
       // 1. FIRST create new provider subscription (redirect)
       const { data, error } = await supabase.functions.invoke('bepaid-create-subscription', {
-        body: { subscription_v2_id: subscriptionV2Id }
+        body: { 
+          subscription_v2_id: subscriptionV2Id,
+          // PATCH-4: Explicit user choice guard
+          explicit_user_choice: true,
+        }
       });
       
       if (error) throw error;

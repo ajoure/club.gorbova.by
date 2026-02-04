@@ -170,6 +170,7 @@ const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingIn
 const AdminPaymentDiagnostics = lazy(() => import("./pages/admin/AdminPaymentDiagnostics"));
 const AdminTelegramDiagnostics = lazy(() => import("./pages/admin/AdminTelegramDiagnostics"));
 const AdminKbImport = lazy(() => import("./pages/admin/AdminKbImport"));
+const AdminBepaidSubscriptions = lazy(() => import("./pages/admin/AdminBepaidSubscriptions"));
 
 // Page loader component for Suspense fallback
 const PageLoader = () => (
@@ -323,6 +324,7 @@ const App = () => {
               <Route path="/admin/payments/diagnostics" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/auto-renewals" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/statement" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/bepaid-subscriptions" element={<ProtectedRoute><LazyRoute><AdminBepaidSubscriptions /></LazyRoute></ProtectedRoute>} />
               {/* Legacy redirects */}
               <Route path="/admin/installments" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/preregistrations" element={<Navigate to="/admin/payments/preorders" replace />} />

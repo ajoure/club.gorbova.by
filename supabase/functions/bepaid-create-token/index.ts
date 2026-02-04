@@ -20,6 +20,9 @@ interface CreateTokenRequest {
   trialDays?: number; // Trial duration in days
   offerId?: string; // Offer ID for virtual card blocking check
   isOneTime?: boolean; // One-time payment (no subscription/recurring), e.g., consultations
+  // PATCH-2: MIT flow control - if true, use checkout payment API (NOT subscriptions API)
+  // This saves the card token for future MIT charges without creating a bePaid subscription
+  useMitTokenization?: boolean;
 }
 
 interface ProductInfo {
@@ -96,6 +99,7 @@ Deno.serve(async (req) => {
       trialDays,
       offerId,
       isOneTime,
+      useMitTokenization, // PATCH-2: MIT flow - use checkout API instead of subscriptions
     }: CreateTokenRequest = await req.json();
 
     if (!productId || !customerEmail) {
@@ -751,7 +755,133 @@ Deno.serve(async (req) => {
       );
     }
 
-    // For subscriptions/recurring payments
+    // PATCH-2: MIT tokenization flow - use checkout API with recurring contract (NOT subscriptions API)
+    // This saves the card for future MIT charges without creating a bePaid subscription
+    if (useMitTokenization) {
+      console.log('[bepaid-create-token] Using MIT tokenization checkout (NOT subscriptions API)');
+      
+      const mitCheckoutPayload = {
+        checkout: {
+          version: '2.1',
+          transaction_type: 'payment',
+          order: {
+            amount: Math.round(paymentAmount * 100),
+            currency: productInfo.currency,
+            description: description || productInfo.name,
+            tracking_id: trackingId,
+          },
+          settings: {
+            language: 'ru',
+            return_url: buildReturnUrl(successUrl, 'processing'),
+            cancel_url: buildReturnUrl(failUrl, 'cancelled'),
+            notification_url: `${supabaseUrl}/functions/v1/bepaid-webhook`,
+            auto_return: 3,
+            payment_method: {
+              types: ['credit_card'],
+            },
+          },
+          customer: {
+            email: emailLower,
+            first_name: customerFirstName || undefined,
+            last_name: customerLastName || undefined,
+            phone: customerPhone || undefined,
+            ip: customerIp,
+          },
+          // CRITICAL: Enable recurring contract to save card token for future MIT charges
+          additional_data: {
+            contract: ['recurring'],
+          },
+        },
+      };
+
+      console.log('[bepaid-create-token] MIT checkout payload (safe):', {
+        amount: Math.round(paymentAmount * 100),
+        currency: productInfo.currency,
+        tracking_id: trackingId,
+        has_recurring_contract: true,
+      });
+
+      const mitResponse = await fetch('https://checkout.bepaid.by/ctp/api/checkouts', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${bepaidAuth}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(mitCheckoutPayload),
+      });
+
+      const mitData = await mitResponse.json();
+      console.log('[bepaid-create-token] MIT checkout response (safe):', {
+        status: mitResponse.status,
+        has_token: !!mitData?.checkout?.token,
+        has_redirect: !!mitData?.checkout?.redirect_url,
+      });
+
+      const mitToken = mitData?.checkout?.token as string | undefined;
+      const mitRedirectUrl = mitData?.checkout?.redirect_url as string | undefined;
+
+      if (!mitResponse.ok || !mitToken || !mitRedirectUrl) {
+        const errMsg = mitData?.message || mitData?.errors?.[0]?.message || 'Payment service error';
+        console.error('[bepaid-create-token] MIT checkout error:', errMsg);
+
+        await supabase
+          .from('orders')
+          .update({ status: 'failed', error_message: errMsg })
+          .eq('id', order.id);
+
+        return new Response(
+          JSON.stringify({ success: false, error: errMsg }),
+          { status: mitResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Persist checkout token - NO bePaid subscription created
+      await supabase
+        .from('orders')
+        .update({
+          bepaid_token: mitToken,
+          status: 'processing',
+          meta: {
+            ...(order.meta as Record<string, any> || {}),
+            bepaid_checkout_token: mitToken,
+            payment_flow: 'mit_tokenization', // PATCH-2: Mark as MIT flow
+            is_mit: true,
+            // NO bepaid_subscription_id here - this is the fix!
+          },
+        })
+        .eq('id', order.id);
+
+      // Audit log for MIT flow
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'bepaid-create-token',
+        action: 'bepaid.mit_checkout.create',
+        target_user_id: userId,
+        meta: {
+          order_id: order.id,
+          amount: paymentAmount,
+          currency: productInfo.currency,
+          product_id: productId,
+          tariff_code: tariffCode || null,
+        },
+      });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          token: mitToken,
+          redirectUrl: mitRedirectUrl,
+          orderId: order.id,
+          isMitFlow: true, // Signal to frontend this is MIT, not subscription
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // For subscriptions/recurring payments (bePaid managed subscription)
+    // PATCH-4: This path should only be used when explicitly requested
     console.log('Sending subscription to bePaid:', JSON.stringify(subscriptionPayload, null, 2));
 
     const bepaidResponse = await fetch('https://api.bepaid.by/subscriptions', {

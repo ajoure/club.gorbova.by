@@ -14,6 +14,8 @@ interface CreateSubscriptionCheckoutRequest {
   customerFirstName?: string;
   customerLastName?: string;
   existingUserId?: string;
+  // PATCH-4: Guard - require explicit user choice for subscription creation
+  explicit_user_choice?: boolean;
 }
 
 interface BepaidConfig {
@@ -78,7 +80,30 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body: CreateSubscriptionCheckoutRequest = await req.json();
-    const { productId, tariffCode, offerId, customerEmail, customerPhone, customerFirstName, customerLastName, existingUserId } = body;
+    const { productId, tariffCode, offerId, customerEmail, customerPhone, customerFirstName, customerLastName, existingUserId, explicit_user_choice } = body;
+
+    // PATCH-4: Guard - require explicit user choice
+    if (!explicit_user_choice) {
+      console.error('[bepaid-sub-checkout] Missing explicit_user_choice flag - rejecting');
+      // Audit log for blocked attempt
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'bepaid-create-subscription-checkout',
+        action: 'bepaid.subscription.create_blocked',
+        meta: {
+          reason: 'missing_explicit_user_choice',
+          product_id: productId,
+        },
+      });
+      return new Response(JSON.stringify({ 
+        error: 'Subscription creation requires explicit user choice',
+        code: 'MISSING_EXPLICIT_CHOICE' 
+      }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     if (!productId || !customerEmail) {
       return new Response(JSON.stringify({ error: 'productId and customerEmail are required' }), {

@@ -9,6 +9,8 @@ interface CreateSubscriptionRequest {
   subscription_v2_id: string;
   offer_id?: string;
   return_url?: string;
+  // PATCH-4: Guard - require explicit user choice for subscription creation
+  explicit_user_choice?: boolean;
 }
 
 interface BepaidConfig {
@@ -87,7 +89,29 @@ Deno.serve(async (req) => {
     }
 
     const body: CreateSubscriptionRequest = await req.json();
-    const { subscription_v2_id, offer_id, return_url } = body;
+    const { subscription_v2_id, offer_id, return_url, explicit_user_choice } = body;
+
+    // PATCH-4: Guard - require explicit user choice
+    if (!explicit_user_choice) {
+      console.error('[bepaid-create-sub] Missing explicit_user_choice flag - rejecting');
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'bepaid-create-subscription',
+        action: 'bepaid.subscription.create_blocked',
+        meta: {
+          reason: 'missing_explicit_user_choice',
+          subscription_v2_id,
+        },
+      });
+      return new Response(JSON.stringify({ 
+        error: 'Subscription creation requires explicit user choice',
+        code: 'MISSING_EXPLICIT_CHOICE' 
+      }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     if (!subscription_v2_id) {
       return new Response(JSON.stringify({ error: 'subscription_v2_id is required' }), {
