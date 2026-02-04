@@ -1,267 +1,531 @@
 
+# План: Training Quest — Шаг 1
 
-# План: Новый тип блока "Опросник/Самодиагностика" (quiz_survey)
-
-## Проблема
-
-Текущий `quiz_single` имеет логику "правильно/неправильно" с:
-- Кнопкой "Проверить ответ" на каждом вопросе
-- Красной/зелёной подсветкой ответов
-- Обязательным `isCorrect` у каждого варианта
-
-Для теста самодиагностики нужна **другая логика**:
-- Нет правильных/неправильных ответов
-- Выбор свободный, можно менять
-- Одна кнопка "Подсчитать результат" в конце всего теста
-- Автоматический подсчёт категорий (А, Б, В)
-- Результаты скрыты до нажатия кнопки
+## Цель
+Создать полноценный kvest-режим прохождения уроков с новыми блоками (Video Unskippable, Diagnostic Table, Sequential Form) и логикой последовательного прохождения.
 
 ---
 
-## Решение: Новый тип блока `quiz_survey`
+## Текущее состояние
 
-### Структура данных
-
-```typescript
-interface SurveyQuestion {
-  id: string;
-  question: string;  // "1️⃣ Источник дохода\n\nОткуда формируется доход?"
-  options: Array<{
-    id: string;
-    text: string;      // "А. Фиксированная зарплата..."
-    category: string;  // "A", "B", "C" — для подсчёта
-  }>;
-}
-
-interface SurveyResult {
-  category: string;     // "A"
-  title: string;        // "Бухгалтер-исполнитель"
-  description: string;  // "Вы работаете по найму..."
-  color?: string;       // "blue", "amber", "green"
-}
-
-interface SurveyMixedResult {
-  categories: string[];  // ["A", "B"]
-  title: string;         // "Найм с элементами фриланса"
-  description: string;
-}
-
-interface QuizSurveyContent {
-  title?: string;          // Заголовок теста
-  instruction?: string;    // Инструкция для участника
-  questions: SurveyQuestion[];
-  results: SurveyResult[];
-  mixedResults?: SurveyMixedResult[];
-  buttonText?: string;     // "Узнать результат"
-}
-```
+| Компонент | Статус |
+|-----------|--------|
+| `training_lessons.published_at` | `date` (нужен `timestamptz`) |
+| `training_modules.published_at` | Не существует |
+| `training_lessons.require_previous` | Не существует |
+| `training_lessons.completion_mode` | Не существует |
+| `lesson_progress_state` (новая таблица) | Не существует |
+| Блок `quiz_survey` | Существует, работает |
+| Блок `video` | Существует, но без порога просмотра |
+| Блоки `diagnostic_table`, `sequential_form` | Не существуют |
 
 ---
 
-### UI компонента (Student View)
+## A) Миграция БД (add-only)
 
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│ 📋 В какой роли вы находитесь сейчас                           │
-├─────────────────────────────────────────────────────────────────┤
-│ ℹ️ Инструкция для участника                                    │
-│ В каждом вопросе выберите ОДИН ответ...                        │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│ 1️⃣ Источник дохода                                             │
-│ Откуда фактически формируется ваш доход?                       │
-│                                                                 │
-│   ○ А. Фиксированная зарплата...                               │
-│   ● Б. Оплата напрямую от клиентов...     ← выбран             │
-│   ○ В. Пакеты услуг / бизнес-модель...                         │
-│                                                                 │
-│ 2️⃣ Формирование цены                                           │
-│   ○ А. Цена назначается не мной...                             │
-│   ● Б. Ориентируюсь на рынок...           ← выбран             │
-│   ○ В. Цена от ответственности...                              │
-│                                                                 │
-│ ... (ещё 6 вопросов) ...                                       │
-│                                                                 │
-│ ┌─────────────────────────────────────────────────────────────┐│
-│ │        [ 🔍 Узнать результат ]  (disabled если не все)      ││
-│ └─────────────────────────────────────────────────────────────┘│
-│                                                                 │
-│ ═══════════════════════════════════════════════════════════════│
-│ ПОСЛЕ НАЖАТИЯ:                                                  │
-│                                                                 │
-│ ┌───────────────────────────────────────────────────────────┐  │
-│ │ 🎯 Ваш результат                                          │  │
-│ │                                                           │  │
-│ │ А: ██░░░░░░░░ 2                                          │  │
-│ │ Б: ████████░░ 5                                          │  │
-│ │ В: ██░░░░░░░░ 1                                          │  │
-│ │                                                           │  │
-│ │ 📊 Преобладают ответы Б                                   │  │
-│ │                                                           │  │
-│ │ ┌───────────────────────────────────────────────────────┐│  │
-│ │ │ 💼 Бухгалтер-фрилансер                                ││  │
-│ │ │                                                       ││  │
-│ │ │ Вы работаете напрямую с клиентами, но...              ││  │
-│ │ └───────────────────────────────────────────────────────┘│  │
-│ │                                                           │  │
-│ │ [ 🔄 Пройти ещё раз ]                                     │  │
-│ └───────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Технический план
-
-### PATCH-1: Создать `QuizSurveyBlock.tsx`
-
-**Путь**: `src/components/admin/lesson-editor/blocks/QuizSurveyBlock.tsx`
-
-**Функциональность**:
-
-**Editor Mode (isEditing=true)**:
-- Редактирование заголовка и инструкции
-- Добавление/удаление вопросов
-- Для каждого вопроса: текст вопроса + варианты с категориями
-- Секция "Результаты": описания для каждой категории
-- Секция "Смешанные результаты": что показать при равных ответах
-
-**Student Mode (isEditing=false)**:
-- Состояние `answers: Record<questionId, optionId>`
-- Состояние `isCompleted: boolean`
-- Вопросы можно свободно заполнять и менять
-- Кнопка "Узнать результат" активна только когда все вопросы отвечены
-- После нажатия:
-  - Подсчёт категорий: `{ A: 2, B: 5, C: 1 }`
-  - Определение преобладающей категории
-  - Показ соответствующего результата
-  - Если равные — показ смешанного результата
-- Кнопка "Пройти ещё раз" сбрасывает ответы
-
-**Дизайн (glassmorphism)**:
-- `bg-card/30 backdrop-blur-xl`
-- `border-border/30`
-- Плавные переходы при выборе
-- Результат появляется с анимацией fade-in
-- Прогресс-бары для категорий
-
----
-
-### PATCH-2: Зарегистрировать блок в системе
-
-**Файлы для обновления**:
-
-1. `src/hooks/useLessonBlocks.ts` — добавить `quiz_survey` в `BlockType`
-2. `src/components/admin/lesson-editor/LessonBlockEditor.tsx`:
-   - Импорт `QuizSurveyBlock`
-   - Добавить в `blockTypeConfig`
-   - Добавить в `availableBlocks`
-   - Добавить в `getDefaultContent`
-   - Добавить в `renderBlockContent`
-3. `src/components/lesson/LessonBlockRenderer.tsx`:
-   - Импорт `QuizSurveyBlock`
-   - Добавить case в `renderBlock`
-
----
-
-### PATCH-3: Миграция существующих блоков теста
-
-После создания компонента — конвертировать данные теста:
+### Таблица 1: lesson_progress_state
 
 ```sql
--- Удалить старые quiz_single блоки
-DELETE FROM lesson_blocks 
-WHERE lesson_id = '96c970e6-d530-473c-84ab-06b176d1c98a'
-AND block_type = 'quiz_single';
-
--- Удалить старые callout блоки с результатами
-DELETE FROM lesson_blocks 
-WHERE lesson_id = '96c970e6-d530-473c-84ab-06b176d1c98a'
-AND sort_order >= 10;  -- результаты были с 10+
-
--- Вставить новый quiz_survey блок со всем контентом
-INSERT INTO lesson_blocks (lesson_id, block_type, content, sort_order)
-VALUES (
-  '96c970e6-d530-473c-84ab-06b176d1c98a',
-  'quiz_survey',
-  '{...полный контент теста...}',
-  2
+CREATE TABLE lesson_progress_state (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  lesson_id uuid NOT NULL REFERENCES training_lessons(id) ON DELETE CASCADE,
+  state_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  completed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(user_id, lesson_id)
 );
+
+-- RLS
+ALTER TABLE lesson_progress_state ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage own progress state"
+  ON lesson_progress_state FOR ALL
+  TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- Индексы
+CREATE INDEX idx_lesson_progress_state_user_lesson 
+  ON lesson_progress_state(user_id, lesson_id);
+
+COMMENT ON TABLE lesson_progress_state IS 
+  'Хранит состояние прохождения квеста: роль, прогресс видео, ответы Point B и т.д.';
 ```
 
----
-
-## Структура контента для текущего теста
-
-```json
-{
-  "title": "В какой роли вы находитесь сейчас",
-  "instruction": "В каждом вопросе выберите <strong>ОДИН ответ</strong>, который наиболее точно описывает вашу <strong>текущую реальность</strong>...",
-  "questions": [
-    {
-      "id": "q1",
-      "question": "1️⃣ Источник дохода\n\nОткуда фактически формируется ваш основной доход?",
-      "options": [
-        { "id": "1a", "text": "А. Я получаю фиксированную зарплату или оплату за функции / участок работы.", "category": "A" },
-        { "id": "1b", "text": "Б. Я получаю оплату напрямую от клиентов за ведение их учёта / отчётности.", "category": "B" },
-        { "id": "1c", "text": "В. Мой доход формируется из пакетов услуг / абонентского обслуживания / бизнес-модели.", "category": "C" }
-      ]
-    },
-    // ... ещё 7 вопросов
-  ],
-  "results": [
-    { "category": "A", "title": "Бухгалтер-исполнитель", "description": "Вы работаете по найму или на конкретном участке работы.", "color": "blue" },
-    { "category": "B", "title": "Бухгалтер-фрилансер", "description": "Вы работаете напрямую с клиентами, но часто реагируете на обстоятельства.", "color": "amber" },
-    { "category": "C", "title": "Бухгалтер-предприниматель", "description": "Вы выстроили систему и бизнес-модель.", "color": "green" }
-  ],
-  "mixedResults": [
-    { "categories": ["A", "B"], "title": "Найм с элементами фриланса", "description": "Вы находитесь между ролями исполнителя и фрилансера." },
-    { "categories": ["B", "C"], "title": "Переходная стадия", "description": "Самая уязвимая и самая перспективная позиция. Вы на пути к предпринимательству." }
-  ],
-  "buttonText": "Узнать результат"
+**Структура state_json:**
+```typescript
+interface LessonProgressState {
+  role?: string;                    // Выбранная роль из quiz_survey
+  videoProgress?: Record<string, number>; // blockId -> percent watched
+  pointA_rows?: any[];              // Данные диагностической таблицы
+  pointB_answers?: Record<string, string>; // Ответы на 10 шагов Point B
+  currentStepIndex?: number;        // Текущий шаг квеста
+  completedSteps?: string[];        // ID завершённых блоков
 }
 ```
 
+### Таблица 2: Расширение training_lessons
+
+```sql
+-- Изменить тип published_at на timestamptz
+ALTER TABLE training_lessons 
+  ALTER COLUMN published_at TYPE timestamptz 
+  USING CASE 
+    WHEN published_at IS NOT NULL 
+    THEN published_at::timestamp AT TIME ZONE 'Europe/Minsk'
+    ELSE NULL 
+  END;
+
+-- Добавить новые колонки
+ALTER TABLE training_lessons
+  ADD COLUMN IF NOT EXISTS require_previous boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS completion_mode text DEFAULT 'manual'
+    CHECK (completion_mode IN ('manual', 'view_all_blocks', 'watch_video', 'kvest'));
+
+COMMENT ON COLUMN training_lessons.require_previous IS 
+  'Требует завершения предыдущего урока для открытия';
+COMMENT ON COLUMN training_lessons.completion_mode IS 
+  'manual = ручная отметка, kvest = последовательные шаги с gate rules';
+```
+
+### Таблица 3: Расширение training_modules
+
+```sql
+ALTER TABLE training_modules
+  ADD COLUMN IF NOT EXISTS published_at timestamptz;
+
+COMMENT ON COLUMN training_modules.published_at IS 
+  'Дата/время открытия модуля для пользователей';
+```
+
+### Таблица 4: Расширение lesson_blocks constraint
+
+```sql
+ALTER TABLE lesson_blocks 
+  DROP CONSTRAINT IF EXISTS lesson_blocks_block_type_check;
+
+ALTER TABLE lesson_blocks 
+  ADD CONSTRAINT lesson_blocks_block_type_check 
+  CHECK (block_type IN (
+    'heading', 'text', 'accordion', 'tabs', 'spoiler', 'callout', 'quote',
+    'video', 'audio', 'image', 'gallery', 'file',
+    'button', 'embed', 'divider', 'timeline', 'steps',
+    'quiz_single', 'quiz_multiple', 'quiz_true_false', 'quiz_fill_blank',
+    'quiz_matching', 'quiz_sequence', 'quiz_hotspot', 'quiz_survey',
+    'input_short', 'input_long', 'checklist', 'table_input', 'file_upload', 'rating',
+    'container', 'columns', 'condition',
+    -- NEW KVEST BLOCKS
+    'video_unskippable',
+    'diagnostic_table',
+    'sequential_form'
+  ));
+```
+
 ---
 
-## Грамматические исправления
+## B) Новые блоки
 
-При создании блока исправлю замеченные проблемы:
-- "учёта / отчётности" → "учёта/отчётности" (без пробелов)
-- Нумерация emoji остаётся как есть (1️⃣, 2️⃣ и т.д.)
-- Удалю "isCorrect" — здесь нет правильных ответов
+### B1: VideoUnskippableBlock
+
+**Путь:** `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx`
+
+**Поля контента:**
+```typescript
+interface VideoUnskippableContent {
+  url: string;
+  provider?: 'youtube' | 'vimeo' | 'kinescope';
+  title?: string;
+  threshold_percent: number;  // default 95
+  required: boolean;          // default true
+}
+```
+
+**Логика:**
+- Встраивается в Kinescope API для отслеживания прогресса
+- Пока `watchedPercent < threshold` → `isComplete = false`
+- Сохраняет прогресс в `lesson_progress_state.state_json.videoProgress[blockId]`
+- Не позволяет перематывать вперёд (опционально)
+
+**UI:**
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ 🎬 Обязательное видео                                       │
+├─────────────────────────────────────────────────────────────┤
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │                   [VIDEO PLAYER]                        │ │
+│ │                                                         │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                             │
+│ 📊 Просмотрено: 47% из 95% требуемых                        │
+│ ████████████░░░░░░░░░░                                      │
+│                                                             │
+│ ⚠️ Досмотрите видео, чтобы продолжить                       │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Файлы к созданию/изменению
+### B2: DiagnosticTableBlock (Point A)
+
+**Путь:** `src/components/admin/lesson-editor/blocks/DiagnosticTableBlock.tsx`
+
+**Поля контента:**
+```typescript
+interface DiagnosticTableColumn {
+  id: string;
+  name: string;
+  type: 'text' | 'number' | 'select' | 'computed';
+  options?: string[];           // для select
+  formula?: string;             // для computed, e.g. "col3 / col4"
+  width?: number;
+  required?: boolean;
+}
+
+interface DiagnosticTableContent {
+  title?: string;
+  instruction?: string;
+  columns: DiagnosticTableColumn[];
+  minRows: number;              // default 1
+  showAggregates: boolean;      // показывать суммы/средние
+  submitButtonText: string;     // "Диагностика точки А завершена"
+}
+```
+
+**Дефолтные колонки (по ТЗ):**
+1. Источник дохода (text)
+2. Тип — найм/клиент (select: найм, клиент)
+3. Доход в месяц (number)
+4. Часы по задачам (number)
+5. Часы переписки/тревоги (number)
+6. Доход за час (computed: col3 / (col4 + col5))
+7. Юридические риски (select: низкий, средний, высокий)
+8. Финансовые риски (select: низкий, средний, высокий)
+9. Репутационные риски (select: низкий, средний, высокий)
+10. Эмоциональная нагрузка (number 1-10)
+11. Комментарий (text)
+
+**Gate rule:** `rows.length >= minRows` И кнопка "Завершена" нажата
+
+**UI:**
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ 📊 Диагностика точки А                                      │
+├─────────────────────────────────────────────────────────────┤
+│ Заполните таблицу источников дохода                         │
+│                                                             │
+│ ┌─────────┬─────────┬─────────┬─────────┬─────────┐         │
+│ │Источник │  Тип    │ Доход   │ Часы    │ $/час   │ ...     │
+│ ├─────────┼─────────┼─────────┼─────────┼─────────┤         │
+│ │ Клиент1 │ клиент  │ 2000    │  40     │  50     │         │
+│ │ Работа  │  найм   │ 1500    │  80     │  18.75  │         │
+│ │ + Добавить строку                               │         │
+│ └─────────────────────────────────────────────────┘         │
+│                                                             │
+│ 📈 Итого: 3500 BYN/мес, 120 часов, средний доход/час: 29.17 │
+│                                                             │
+│ [ ✅ Диагностика точки А завершена ]                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### B3: SequentialFormBlock (Point B)
+
+**Путь:** `src/components/admin/lesson-editor/blocks/SequentialFormBlock.tsx`
+
+**Поля контента:**
+```typescript
+interface FormStep {
+  id: string;
+  title: string;
+  description: string;
+  inputType: 'textarea' | 'text' | 'number' | 'select';
+  options?: string[];
+  required: boolean;
+  helperText?: string;
+  helperTextByRole?: Record<string, string>; // Разные подсказки по ролям
+}
+
+interface SequentialFormContent {
+  title?: string;
+  steps: FormStep[];
+  submitButtonText: string;     // "Формула точки B сформирована"
+}
+```
+
+**Дефолтные 10 шагов (по ТЗ):**
+1. Финансовая цель — Какой доход в месяц я хочу получать через 12 месяцев?
+2. Финансовая модель — За счёт чего именно будет формироваться этот доход?
+3. Клиентская модель — С какими клиентами я работаю?
+4. Формат работы — Как выглядит мой рабочий формат?
+5. Загрузка — Сколько часов в неделю я готов(а) работать?
+6. Роль в бизнесе — Что я делаю лично, а что не делаю?
+7. Команда/ресурсы — Нужны ли люди, сервисы, автоматизация?
+8. Риски — Какие риски я осознанно беру и какие исключаю?
+9. Ограничения — От чего я отказываюсь ради этой цели?
+10. Критерий достижения — По каким признакам я пойму, что точка B достигнута?
+
+**Gate rule:** Все 10 шагов заполнены И кнопка "Сформирована" нажата
+
+**UI:**
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ 🎯 Формула точки B                          Шаг 3 из 10     │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ ● ● ● ○ ○ ○ ○ ○ ○ ○                                         │
+│                                                             │
+│ 3️⃣ Клиентская модель                                        │
+│                                                             │
+│ С какими клиентами я работаю (тип, масштаб, формат)?        │
+│                                                             │
+│ 💡 Подсказка для фрилансера:                                │
+│ Опишите идеального клиента: его бизнес, масштаб,            │
+│ какие услуги ему нужны...                                   │
+│                                                             │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │                                                         │ │
+│ │ [textarea]                                              │ │
+│ │                                                         │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                             │
+│ [← Назад]                                      [Дальше →]   │
+│                                                             │
+│ ═══════════════════════════════════════════════════════════ │
+│ После шага 10:                                              │
+│ [ ✅ Формула точки B сформирована ]                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## C) Kvest Flow Engine
+
+### C1: Хук useLessonProgressState
+
+**Путь:** `src/hooks/useLessonProgressState.tsx`
+
+```typescript
+interface LessonProgressState {
+  role?: string;
+  videoProgress?: Record<string, number>;
+  pointA_rows?: any[];
+  pointB_answers?: Record<string, string>;
+  currentStepIndex?: number;
+  completedSteps?: string[];
+}
+
+function useLessonProgressState(lessonId: string) {
+  // CRUD для lesson_progress_state
+  // Автосохранение при изменениях (debounced)
+  return {
+    state: LessonProgressState,
+    loading: boolean,
+    updateState: (partial) => void,
+    markBlockCompleted: (blockId) => void,
+    isBlockCompleted: (blockId) => boolean,
+    reset: () => void,
+  };
+}
+```
+
+### C2: Компонент KvestLessonView
+
+**Путь:** `src/components/lesson/KvestLessonView.tsx`
+
+Заменяет стандартный рендеринг блоков для `completion_mode='kvest'`:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ 📚 Урок: Тест "В какой роли..."           Шаг 2 из 5       │
+├─────────────────────────────────────────────────────────────┤
+│ ● ● ○ ○ ○                                                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ [Текущий блок отображается здесь]                           │
+│                                                             │
+├─────────────────────────────────────────────────────────────┤
+│ [← Назад]                                      [Дальше →]   │
+│                                   (disabled если gate fail) │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Логика:**
+1. Получаем `blocks` урока
+2. Фильтруем только "шаговые" блоки (heading не считается шагом)
+3. Отображаем по одному блоку
+4. Проверяем gate rule текущего блока:
+   - `quiz_survey` → выбран ответ?
+   - `video_unskippable` → threshold достигнут?
+   - `diagnostic_table` → есть строки + кнопка нажата?
+   - `sequential_form` → все шаги заполнены + кнопка нажата?
+5. Если gate pass → "Дальше" активна
+6. При достижении последнего блока и его завершении → урок completed
+
+### C3: Обновление LibraryLesson.tsx
+
+Добавить условный рендеринг:
+
+```tsx
+if (currentLesson.completion_mode === 'kvest') {
+  return (
+    <KvestLessonView 
+      lesson={currentLesson}
+      blocks={blocks}
+      module={module}
+      onComplete={handleComplete}
+    />
+  );
+}
+
+// Иначе — стандартный рендеринг
+```
+
+---
+
+## D) Интеграция quiz_survey с ролью
+
+### D1: Обновить QuizSurveyBlock
+
+Добавить сохранение роли в `lesson_progress_state`:
+
+```typescript
+const handleSubmitResults = async () => {
+  setShowResults(true);
+  
+  // Определяем преобладающую категорию как "роль"
+  const role = dominantCategories[0] || null;
+  
+  // Сохраняем в progress state (для kvest)
+  if (onRoleSelected && role) {
+    onRoleSelected(role);
+  }
+  
+  if (onSubmit) {
+    onSubmit({ answers, isCompleted: true, role }, true, ...);
+  }
+};
+```
+
+### D2: helperText по роли
+
+В `SequentialFormBlock` и других блоках добавить поддержку:
+
+```tsx
+const { state } = useLessonProgressState(lessonId);
+const userRole = state?.role;
+
+// В UI:
+{step.helperTextByRole?.[userRole] || step.helperText}
+```
+
+---
+
+## E) Обновление Admin UI
+
+### E1: AdminTrainingLessons.tsx
+
+Добавить в форму урока:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ ⚙️ Настройки доступа и прохождения                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 📅 Дата открытия                                            │
+│ [  15.02.2026  ] [ 10:00 ] [ Europe/Minsk ▼ ]              │
+│                                                             │
+│ 🔗 Последовательность                                       │
+│ ☑️ Требовать прохождение предыдущего урока                  │
+│                                                             │
+│ ✅ Режим завершения                                         │
+│ ○ Ручная отметка                                            │
+│ ○ Просмотр всех блоков                                      │
+│ ○ Досмотреть видео                                          │
+│ ● Квест (пошаговое прохождение)                             │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### E2: LessonBlockEditor.tsx
+
+Добавить новые блоки в меню:
+
+```typescript
+const blockTypeConfig = {
+  // ... existing
+  video_unskippable: { 
+    icon: Video, 
+    label: "Видео (обязательное)", 
+    color: "bg-red-500/10 text-red-600", 
+    category: 'media' 
+  },
+  diagnostic_table: { 
+    icon: Table, 
+    label: "Диагностическая таблица", 
+    color: "bg-emerald-500/10 text-emerald-600", 
+    category: 'input' 
+  },
+  sequential_form: { 
+    icon: ListOrdered, 
+    label: "Пошаговая форма", 
+    color: "bg-indigo-500/10 text-indigo-600", 
+    category: 'input' 
+  },
+};
+```
+
+---
+
+## F) Файлы к созданию/изменению
 
 | Файл | Действие |
 |------|----------|
-| `src/components/admin/lesson-editor/blocks/QuizSurveyBlock.tsx` | **Создать** |
-| `src/hooks/useLessonBlocks.ts` | Добавить `quiz_survey` в BlockType |
-| `src/components/admin/lesson-editor/LessonBlockEditor.tsx` | Регистрация блока |
-| `src/components/lesson/LessonBlockRenderer.tsx` | Рендеринг для студентов |
-| `lesson_blocks` (БД) | Миграция данных теста |
+| `supabase/migrations/XXXX_kvest_step1.sql` | Создать (миграция БД) |
+| `src/hooks/useLessonProgressState.tsx` | Создать |
+| `src/components/lesson/KvestLessonView.tsx` | Создать |
+| `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx` | Создать |
+| `src/components/admin/lesson-editor/blocks/DiagnosticTableBlock.tsx` | Создать |
+| `src/components/admin/lesson-editor/blocks/SequentialFormBlock.tsx` | Создать |
+| `src/hooks/useLessonBlocks.tsx` | Добавить 3 новых типа |
+| `src/components/admin/lesson-editor/LessonBlockEditor.tsx` | Регистрация блоков |
+| `src/components/lesson/LessonBlockRenderer.tsx` | Рендеринг блоков |
+| `src/pages/LibraryLesson.tsx` | Условный kvest-режим |
+| `src/pages/LibraryModule.tsx` | Отображение замков |
+| `src/pages/admin/AdminTrainingLessons.tsx` | Настройки урока |
+| `src/hooks/useTrainingLessons.tsx` | Новые поля |
 
 ---
 
-## DoD (Definition of Done)
+## G) DoD (Definition of Done)
 
 | # | Проверка | Ожидание |
 |---|----------|----------|
-| 1 | Добавить блок "Опросник" через редактор | Блок появляется в категории "Тесты" |
-| 2 | Настроить вопросы и результаты | Редактор позволяет добавлять вопросы с категориями |
-| 3 | Пройти тест как пользователь | Можно выбирать ответы, менять их свободно |
-| 4 | Нажать "Узнать результат" | Подсчёт категорий, показ нужного результата |
-| 5 | Нажать "Пройти ещё раз" | Сброс ответов, результат скрывается |
-| 6 | Проверить glassmorphism-дизайн | Прозрачность, blur, плавные анимации |
+| 1 | Открыть админ-форму урока | Видны настройки: дата открытия, require_previous, completion_mode |
+| 2 | Создать урок с `completion_mode='kvest'` | Урок сохраняется |
+| 3 | Добавить блоки: quiz_survey, video_unskippable, diagnostic_table, sequential_form | Блоки доступны в редакторе |
+| 4 | Открыть урок как студент | Квест-режим: шаги 1/N, кнопки Назад/Дальше |
+| 5 | Пройти quiz → роль сохраняется | role появляется в state_json |
+| 6 | Видео: не достигнут threshold | Кнопка "Дальше" disabled |
+| 7 | Видео: достигнут threshold | Кнопка "Дальше" enabled |
+| 8 | Diagnostic Table: 0 строк | Кнопка "Дальше" disabled |
+| 9 | Diagnostic Table: ≥1 строка + "Завершена" | Кнопка "Дальше" enabled |
+| 10 | Sequential Form: не все шаги | Нельзя перейти к финальной кнопке |
+| 11 | Sequential Form: все 10 шагов + "Сформирована" | Блок завершён |
+| 12 | Урок completed | Только когда все блоки завершены |
+| 13 | require_previous=true | Урок заблокирован если предыдущий не пройден |
+| 14 | Список уроков | Замки и причины блокировки |
+| 15 | Финальный отчёт | UI-скрины, diff-summary, список файлов |
 
 ---
 
 ## Безопасность и ограничения
 
-- Никаких изменений RLS/RBAC
-- Add-only: новый компонент, минимальные изменения в существующих файлах
-- Прогресс пользователя сохраняется в `user_lesson_progress` (опционально)
+- Никаких изменений существующих RLS/RBAC
+- Новая таблица `lesson_progress_state` с RLS "только свои записи"
+- Add-only миграции с дефолтами
+- Обратная совместимость: существующие уроки работают как раньше
+- Админ видит все уроки без блокировок
 - Все тексты на русском языке
-
