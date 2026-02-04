@@ -5,9 +5,20 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// PATCH-G: Reason codes for cancel failures
+type CancelReasonCode = 'cannot_cancel_until_paid' | 'not_found' | 'already_canceled' | 'api_error' | 'unknown';
+
+interface CancelFailure {
+  id: string;
+  error: string;
+  reason_code: CancelReasonCode;
+  http_status?: number;
+  provider_error?: string;
+}
+
 interface CancelResult {
-  cancelled: string[];
-  failed: Array<{ id: string; error: string }>;
+  canceled: string[];  // Use 'canceled' (correct spelling)
+  failed: CancelFailure[];
   total_requested: number;
 }
 
@@ -41,6 +52,29 @@ async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; se
   }
 
   return null;
+}
+
+// PATCH-G: Determine reason_code from error response
+function determineReasonCode(httpStatus: number, errorText: string, localState?: string): CancelReasonCode {
+  if (httpStatus === 404) {
+    // Check if already canceled or not found
+    if (localState === 'canceled' || localState === 'cancelled' || localState === 'terminated') {
+      return 'already_canceled';
+    }
+    return 'not_found';
+  }
+  
+  // Only set cannot_cancel_until_paid if we have clear evidence
+  // Look for specific known phrases from bePaid API
+  const lowerError = errorText.toLowerCase();
+  if (
+    lowerError.includes('cannot cancel') && 
+    (lowerError.includes('payment') || lowerError.includes('past_due') || lowerError.includes('failed payment'))
+  ) {
+    return 'cannot_cancel_until_paid';
+  }
+  
+  return 'api_error';
 }
 
 Deno.serve(async (req) => {
@@ -149,13 +183,20 @@ Deno.serve(async (req) => {
     const authString = btoa(`${credentials.shopId}:${credentials.secretKey}`);
 
     const result: CancelResult = {
-      cancelled: [],
+      canceled: [],
       failed: [],
       total_requested: subscriptionIds.length,
     };
 
     for (const subId of subscriptionIds) {
       try {
+        // Get local state first for determining reason_code
+        const { data: localSub } = await supabase
+          .from('provider_subscriptions')
+          .select('state, meta')
+          .eq('provider_subscription_id', subId)
+          .maybeSingle();
+
         // Call bePaid cancel API
         const response = await fetch(`https://api.bepaid.by/subscriptions/${subId}/cancel`, {
           method: 'POST',
@@ -168,7 +209,7 @@ Deno.serve(async (req) => {
         });
 
         let shouldMarkCanceled = false;
-        let failReason: string | null = null;
+        let failReason: CancelFailure | null = null;
 
         if (response.ok) {
           // Direct success from bePaid
@@ -176,35 +217,43 @@ Deno.serve(async (req) => {
           console.log(`[bepaid-cancel-subs] Cancelled subscription ${subId}`);
         } else if (response.status === 404) {
           // PATCH-5: 404 handling - check local state before marking as success
-          const { data: localSub } = await supabase
-            .from('provider_subscriptions')
-            .select('state')
-            .eq('provider_subscription_id', subId)
-            .maybeSingle();
-          
-          if (localSub && localSub.state !== 'active') {
+          if (localSub && (localSub.state === 'canceled' || localSub.state === 'cancelled' || localSub.state === 'terminated')) {
             // Already non-active locally — treat as success
             shouldMarkCanceled = true;
-            console.log(`[bepaid-cancel-subs] ${subId} returned 404 but already non-active locally (${localSub.state})`);
+            console.log(`[bepaid-cancel-subs] ${subId} returned 404 but already canceled locally (${localSub.state})`);
           } else {
-            // Unknown or still active — mark as failed for investigation
-            failReason = '404: subscription not found in bePaid (local state still active)';
-            console.warn(`[bepaid-cancel-subs] ${subId} returned 404 but local state is ${localSub?.state || 'unknown'} — needs investigation`);
+            // Unknown or still active — mark as failed
+            const reasonCode = determineReasonCode(404, '', localSub?.state);
+            failReason = {
+              id: subId,
+              error: '404: subscription not found in bePaid',
+              reason_code: reasonCode,
+              http_status: 404,
+            };
+            console.warn(`[bepaid-cancel-subs] ${subId} returned 404, local state=${localSub?.state || 'unknown'}`);
           }
         } else {
           const errText = await response.text();
-          failReason = `${response.status}: ${errText}`;
-          console.error(`[bepaid-cancel-subs] Failed to cancel ${subId}:`, response.status);
+          const reasonCode = determineReasonCode(response.status, errText, localSub?.state);
+          
+          failReason = {
+            id: subId,
+            error: `${response.status}: ${errText.slice(0, 200)}`,
+            reason_code: reasonCode,
+            http_status: response.status,
+            provider_error: errText.slice(0, 500),
+          };
+          console.error(`[bepaid-cancel-subs] Failed to cancel ${subId}:`, response.status, reasonCode);
         }
 
         if (shouldMarkCanceled) {
-          result.cancelled.push(subId);
+          result.canceled.push(subId);
 
-          // Update provider_subscriptions
+          // Update provider_subscriptions with normalized state
           await supabase
             .from('provider_subscriptions')
             .update({
-              state: 'canceled',
+              state: 'canceled',  // Use 'canceled' (normalized)
             })
             .eq('provider_subscription_id', subId);
 
@@ -229,8 +278,8 @@ Deno.serve(async (req) => {
                   canceled_at: new Date().toISOString(),
                   meta: {
                     ...((subV2?.meta as object) || {}),
-                    bepaid_cancelled_at: new Date().toISOString(),
-                    bepaid_cancelled_by: user.id,
+                    bepaid_canceled_at: new Date().toISOString(),  // Use 'canceled'
+                    bepaid_canceled_by: user.id,
                     bepaid_cancel_source: source,
                   },
                 })
@@ -243,12 +292,35 @@ Deno.serve(async (req) => {
             }
           }
         } else if (failReason) {
-          result.failed.push({ id: subId, error: failReason });
-          // Note: DO NOT update auto_renew on failed cancellation
+          result.failed.push(failReason);
+
+          // PATCH-G: For 'cannot_cancel_until_paid', save needs_support flag
+          if (failReason.reason_code === 'cannot_cancel_until_paid') {
+            // Read-modify-write for meta
+            const oldMeta = (localSub?.meta as Record<string, unknown>) || {};
+            const newMeta = {
+              ...oldMeta,
+              cancellation_capability: 'cannot_cancel_until_paid',
+              needs_support: true,
+              cancel_block_reason: failReason.provider_error || failReason.error,
+              cancel_blocked_at: new Date().toISOString(),
+            };
+
+            await supabase
+              .from('provider_subscriptions')
+              .update({ meta: newMeta })
+              .eq('provider_subscription_id', subId);
+
+            console.log(`[bepaid-cancel-subs] Marked ${subId} as needs_support`);
+          }
         }
       } catch (e: any) {
-        result.failed.push({ id: subId, error: e.message });
-        console.error(`[bepaid-cancel-subs] Error cancelling ${subId}`);
+        result.failed.push({ 
+          id: subId, 
+          error: e.message, 
+          reason_code: 'unknown' 
+        });
+        console.error(`[bepaid-cancel-subs] Error cancelling ${subId}:`, e.message);
       }
     }
 
@@ -261,9 +333,9 @@ Deno.serve(async (req) => {
       target_user_id: targetUserId || user.id,
       meta: {
         requested: subscriptionIds.length,
-        cancelled: result.cancelled.length,
+        canceled: result.canceled.length,
         failed: result.failed.length,
-        cancelled_ids: result.cancelled,
+        canceled_ids: result.canceled,
         failed_details: result.failed,
         source,
         initiator_user_id: user.id,

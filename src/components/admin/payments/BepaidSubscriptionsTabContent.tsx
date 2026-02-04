@@ -32,11 +32,15 @@ import {
   Database,
   Calendar,
   Play,
+  RotateCcw,
+  Unlink,
+  ShieldAlert,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
+import { useHasRole } from "@/hooks/useHasRole";
 
 interface BepaidSubscription {
   id: string;
@@ -54,13 +58,19 @@ interface BepaidSubscription {
   linked_user_id: string | null;
   linked_profile_name: string | null;
   is_orphan: boolean;
+  // Extended fields from snapshot
+  snapshot_state?: string;
+  snapshot_at?: string;
+  cancellation_capability?: 'can_cancel_now' | 'cannot_cancel_until_paid' | 'unknown';
+  needs_support?: boolean;
 }
 
 interface SubscriptionStats {
   total: number;
   active: number;
   trial: number;
-  cancelled: number;
+  canceled?: number;   // Correct spelling
+  cancelled?: number;  // Backward compatibility
   orphans: number;
   linked: number;
 }
@@ -75,13 +85,21 @@ interface ReconcileResult {
   would_insert: number;
   linked_to_subscription_v2: number;
   still_unlinked: number;
+  still_missing_after_execute?: number;
   sample_ids: string[];
 }
 
-type StatusFilter = "all" | "active" | "trial" | "cancelled" | "past_due";
-type LinkFilter = "all" | "linked" | "orphan" | "urgent";
+// Normalized status filter - always use 'canceled'
+type StatusFilter = "all" | "active" | "trial" | "canceled" | "past_due";
+type LinkFilter = "all" | "linked" | "orphan" | "urgent" | "needs_support";
 type SortField = "created_at" | "next_billing_at" | "plan_amount" | "status";
 type SortDir = "asc" | "desc";
+
+// Normalize status: cancelled → canceled
+function normalizeStatus(status: string): string {
+  if (status === 'cancelled') return 'canceled';
+  return status;
+}
 
 export function BepaidSubscriptionsTabContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -95,7 +113,16 @@ export function BepaidSubscriptionsTabContent() {
   const [showReconcileDialog, setShowReconcileDialog] = useState(false);
   const [reconcileResult, setReconcileResult] = useState<ReconcileResult | null>(null);
   
+  // Emergency unlink state
+  const [showEmergencyUnlinkDialog, setShowEmergencyUnlinkDialog] = useState(false);
+  const [emergencyUnlinkConfirm, setEmergencyUnlinkConfirm] = useState("");
+  const [targetEmergencyUnlinkId, setTargetEmergencyUnlinkId] = useState<string | null>(null);
+  
+  // Refresh snapshot state
+  const [refreshingSnapshotIds, setRefreshingSnapshotIds] = useState<Set<string>>(new Set());
+  
   const queryClient = useQueryClient();
+  const { hasRole: isSuperAdmin } = useHasRole('superadmin');
 
   // Fetch subscriptions from bePaid
   const { data, isLoading, refetch, isRefetching } = useQuery({
@@ -103,21 +130,39 @@ export function BepaidSubscriptionsTabContent() {
     queryFn: async () => {
       const { data, error } = await supabase.functions.invoke("bepaid-list-subscriptions");
       if (error) throw error;
-      return data as { subscriptions: BepaidSubscription[]; stats: SubscriptionStats };
+      
+      // Normalize status for all subscriptions
+      const subs = (data.subscriptions || []).map((s: BepaidSubscription) => ({
+        ...s,
+        status: normalizeStatus(s.status),
+        snapshot_state: s.snapshot_state ? normalizeStatus(s.snapshot_state) : undefined,
+      }));
+      
+      return { 
+        subscriptions: subs, 
+        stats: data.stats as SubscriptionStats 
+      };
     },
     staleTime: 60000,
   });
 
   const subscriptions = data?.subscriptions || [];
-  const stats = data?.stats || { total: 0, active: 0, trial: 0, cancelled: 0, orphans: 0, linked: 0 };
+  // PATCH-A: Backward compatible stats - use canceled ?? cancelled
+  const rawStats = data?.stats || { total: 0, active: 0, trial: 0, canceled: 0, cancelled: 0, orphans: 0, linked: 0 };
+  const canceledCount = rawStats.canceled ?? rawStats.cancelled ?? 0;
 
   // Calculate urgent subscriptions (next charge within 7 days)
   const urgentCount = useMemo(() => {
-    return subscriptions.filter(s => {
-      if (!s.next_billing_at || s.status === 'cancelled') return false;
+    return subscriptions.filter((s: BepaidSubscription) => {
+      if (!s.next_billing_at || s.status === 'canceled') return false;
       const daysUntil = differenceInDays(new Date(s.next_billing_at), new Date());
       return daysUntil <= 7 && daysUntil >= 0 && s.is_orphan;
     }).length;
+  }, [subscriptions]);
+
+  // Count needs_support
+  const needsSupportCount = useMemo(() => {
+    return subscriptions.filter((s: BepaidSubscription) => s.needs_support).length;
   }, [subscriptions]);
 
   // Filter and sort subscriptions
@@ -125,24 +170,26 @@ export function BepaidSubscriptionsTabContent() {
     let result = [...subscriptions];
     
     if (statusFilter !== "all") {
-      result = result.filter(s => s.status === statusFilter);
+      result = result.filter((s: BepaidSubscription) => s.status === statusFilter);
     }
     
     if (linkFilter === "linked") {
-      result = result.filter(s => !s.is_orphan);
+      result = result.filter((s: BepaidSubscription) => !s.is_orphan);
     } else if (linkFilter === "orphan") {
-      result = result.filter(s => s.is_orphan);
+      result = result.filter((s: BepaidSubscription) => s.is_orphan);
     } else if (linkFilter === "urgent") {
-      result = result.filter(s => {
-        if (!s.next_billing_at || s.status === 'cancelled') return false;
+      result = result.filter((s: BepaidSubscription) => {
+        if (!s.next_billing_at || s.status === 'canceled') return false;
         const daysUntil = differenceInDays(new Date(s.next_billing_at), new Date());
         return daysUntil <= 7 && daysUntil >= 0;
       });
+    } else if (linkFilter === "needs_support") {
+      result = result.filter((s: BepaidSubscription) => s.needs_support);
     }
     
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(s => 
+      result = result.filter((s: BepaidSubscription) => 
         s.id.toLowerCase().includes(q) ||
         s.plan_title.toLowerCase().includes(q) ||
         s.customer_email.toLowerCase().includes(q) ||
@@ -151,7 +198,7 @@ export function BepaidSubscriptionsTabContent() {
       );
     }
     
-    result.sort((a, b) => {
+    result.sort((a: BepaidSubscription, b: BepaidSubscription) => {
       let aVal: any, bVal: any;
       
       switch (sortField) {
@@ -168,7 +215,8 @@ export function BepaidSubscriptionsTabContent() {
           bVal = b.plan_amount;
           break;
         case "status":
-          const order: Record<string, number> = { active: 0, trial: 1, past_due: 2, cancelled: 3 };
+          // Use 'canceled' in order map
+          const order: Record<string, number> = { active: 0, trial: 1, past_due: 2, canceled: 3 };
           aVal = order[a.status] ?? 4;
           bVal = order[b.status] ?? 4;
           break;
@@ -214,12 +262,20 @@ export function BepaidSubscriptionsTabContent() {
       if (error) throw error;
       return data;
     },
-    onSuccess: (data) => {
-      toast.success(`Отменено: ${data.cancelled.length} из ${data.total_requested}`);
-      if (data.failed.length > 0) {
-        const failedReasons = data.failed.map((f: any) => f.error || 'unknown').join(', ');
+    onSuccess: async (data) => {
+      const canceledIds = data.canceled || data.cancelled || [];
+      toast.success(`Отменено: ${canceledIds.length} из ${data.total_requested}`);
+      
+      if (data.failed?.length > 0) {
+        const failedReasons = data.failed.map((f: any) => f.reason_code || f.error || 'unknown').join(', ');
         toast.error(`Не удалось отменить ${data.failed.length}: ${failedReasons}`);
       }
+      
+      // PATCH-B: Auto-refresh snapshot for canceled subscriptions
+      if (canceledIds.length > 0) {
+        await refreshSnapshotsForIds(canceledIds);
+      }
+      
       setSelectedIds(new Set());
       setShowCancelDialog(false);
       queryClient.invalidateQueries({ queryKey: ["bepaid-subscriptions-admin"] });
@@ -229,11 +285,97 @@ export function BepaidSubscriptionsTabContent() {
     },
   });
 
+  // Refresh snapshot mutation
+  const refreshSnapshotMutation = useMutation({
+    mutationFn: async (subscriptionId: string) => {
+      const { data, error } = await supabase.functions.invoke("bepaid-get-subscription-details", {
+        body: { subscription_id: subscriptionId },
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Snapshot обновлён: ${data.snapshot?.state || 'unknown'}`);
+      queryClient.invalidateQueries({ queryKey: ["bepaid-subscriptions-admin"] });
+    },
+    onError: (e: any) => {
+      toast.error("Ошибка обновления snapshot: " + e.message);
+    },
+  });
+
+  // Helper to refresh snapshots for multiple IDs
+  const refreshSnapshotsForIds = async (ids: string[]) => {
+    for (const id of ids) {
+      try {
+        await supabase.functions.invoke("bepaid-get-subscription-details", {
+          body: { subscription_id: id },
+        });
+      } catch (e) {
+        console.error(`Failed to refresh snapshot for ${id}:`, e);
+      }
+    }
+  };
+
+  // Handle single snapshot refresh
+  const handleRefreshSnapshot = async (id: string) => {
+    setRefreshingSnapshotIds(prev => new Set([...prev, id]));
+    try {
+      await refreshSnapshotMutation.mutateAsync(id);
+    } finally {
+      setRefreshingSnapshotIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  // Emergency Unlink (super_admin only)
+  const handleEmergencyUnlink = async () => {
+    if (!targetEmergencyUnlinkId || emergencyUnlinkConfirm !== "UNLINK") return;
+    
+    try {
+      // Update provider_subscriptions to remove subscription_v2_id
+      await supabase
+        .from('provider_subscriptions')
+        .update({ subscription_v2_id: null })
+        .eq('provider_subscription_id', targetEmergencyUnlinkId);
+      
+      // Audit log
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from('audit_logs').insert({
+        actor_type: 'user',
+        actor_user_id: user?.id,
+        actor_label: 'admin',
+        action: 'bepaid.subscription.emergency_unlink',
+        meta: {
+          provider_subscription_id: targetEmergencyUnlinkId,
+          reason: 'admin_emergency_unlink',
+          confirmed_with: 'UNLINK',
+        },
+      });
+      
+      toast.success('Подписка аварийно отвязана');
+      setShowEmergencyUnlinkDialog(false);
+      setEmergencyUnlinkConfirm("");
+      setTargetEmergencyUnlinkId(null);
+      queryClient.invalidateQueries({ queryKey: ["bepaid-subscriptions-admin"] });
+    } catch (e: any) {
+      toast.error('Ошибка отвязки: ' + e.message);
+    }
+  };
+
+  // Check if unlink is allowed (only if canceled/terminated)
+  const canUnlink = (sub: BepaidSubscription): boolean => {
+    const state = sub.snapshot_state || sub.status;
+    return state === 'canceled' || state === 'terminated';
+  };
+
   const handleSelectAll = () => {
-    if (selectedIds.size === filteredSubscriptions.filter(s => s.status !== 'cancelled').length) {
+    if (selectedIds.size === filteredSubscriptions.filter((s: BepaidSubscription) => s.status !== 'canceled').length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredSubscriptions.filter(s => s.status !== 'cancelled').map(s => s.id)));
+      setSelectedIds(new Set(filteredSubscriptions.filter((s: BepaidSubscription) => s.status !== 'canceled').map((s: BepaidSubscription) => s.id)));
     }
   };
 
@@ -280,7 +422,7 @@ export function BepaidSubscriptionsTabContent() {
         return <Badge className="bg-blue-500/10 text-blue-600 border-blue-500/20">Trial</Badge>;
       case "past_due":
         return <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20">Просрочена</Badge>;
-      case "cancelled":
+      case "canceled":
         return <Badge variant="secondary">Отменена</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
@@ -290,32 +432,39 @@ export function BepaidSubscriptionsTabContent() {
   return (
     <div className="space-y-4">
       {/* Stats cards */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
         <Card className="p-3">
-          <div className="text-2xl font-bold">{stats.total}</div>
+          <div className="text-2xl font-bold">{rawStats.total}</div>
           <div className="text-xs text-muted-foreground">Всего</div>
         </Card>
         <Card className="p-3">
-          <div className="text-2xl font-bold text-emerald-600">{stats.active}</div>
+          <div className="text-2xl font-bold text-emerald-600">{rawStats.active}</div>
           <div className="text-xs text-muted-foreground">Активных</div>
         </Card>
         <Card className="p-3">
-          <div className="text-2xl font-bold text-blue-600">{stats.trial}</div>
+          <div className="text-2xl font-bold text-blue-600">{rawStats.trial}</div>
           <div className="text-xs text-muted-foreground">Trial</div>
         </Card>
         <Card className="p-3">
-          <div className="text-2xl font-bold text-red-600">{stats.orphans}</div>
+          <div className="text-2xl font-bold text-muted-foreground">{canceledCount}</div>
+          <div className="text-xs text-muted-foreground">Отменённых</div>
+        </Card>
+        <Card className="p-3">
+          <div className="text-2xl font-bold text-red-600">{rawStats.orphans}</div>
           <div className="text-xs text-muted-foreground">Сирот</div>
         </Card>
         <Card className="p-3">
-          <div className="text-2xl font-bold text-emerald-600">{stats.linked}</div>
+          <div className="text-2xl font-bold text-emerald-600">{rawStats.linked}</div>
           <div className="text-xs text-muted-foreground">Связанных</div>
         </Card>
-        {urgentCount > 0 && (
+        {(urgentCount > 0 || needsSupportCount > 0) && (
           <Card className="p-3 border-amber-500/50 bg-amber-500/5">
-            <div className="text-2xl font-bold text-amber-600">{urgentCount}</div>
+            <div className="text-2xl font-bold text-amber-600">
+              {urgentCount > 0 ? urgentCount : needsSupportCount}
+            </div>
             <div className="text-xs text-muted-foreground flex items-center gap-1">
-              <AlertTriangle className="h-3 w-3" /> ≤7 дней
+              <AlertTriangle className="h-3 w-3" /> 
+              {urgentCount > 0 ? '≤7 дней' : 'Needs support'}
             </div>
           </Card>
         )}
@@ -389,12 +538,12 @@ export function BepaidSubscriptionsTabContent() {
                 <SelectItem value="active">Активные</SelectItem>
                 <SelectItem value="trial">Trial</SelectItem>
                 <SelectItem value="past_due">Просроченные</SelectItem>
-                <SelectItem value="cancelled">Отменённые</SelectItem>
+                <SelectItem value="canceled">Отменённые</SelectItem>
               </SelectContent>
             </Select>
             
             <Select value={linkFilter} onValueChange={(v) => setLinkFilter(v as LinkFilter)}>
-              <SelectTrigger className="w-32 h-8">
+              <SelectTrigger className="w-36 h-8">
                 <SelectValue placeholder="Связь" />
               </SelectTrigger>
               <SelectContent>
@@ -402,6 +551,7 @@ export function BepaidSubscriptionsTabContent() {
                 <SelectItem value="linked">Связанные</SelectItem>
                 <SelectItem value="orphan">Сироты</SelectItem>
                 <SelectItem value="urgent">Срочные (≤7д)</SelectItem>
+                <SelectItem value="needs_support">Needs support</SelectItem>
               </SelectContent>
             </Select>
             
@@ -471,7 +621,7 @@ export function BepaidSubscriptionsTabContent() {
                   <TableRow>
                     <TableHead className="w-10">
                       <Checkbox
-                        checked={selectedIds.size === filteredSubscriptions.filter(s => s.status !== 'cancelled').length && filteredSubscriptions.length > 0}
+                        checked={selectedIds.size === filteredSubscriptions.filter((s: BepaidSubscription) => s.status !== 'canceled').length && filteredSubscriptions.length > 0}
                         onCheckedChange={handleSelectAll}
                       />
                     </TableHead>
@@ -485,9 +635,10 @@ export function BepaidSubscriptionsTabContent() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredSubscriptions.map((sub) => {
+                  {filteredSubscriptions.map((sub: BepaidSubscription) => {
                     const daysUntil = getDaysUntilCharge(sub.next_billing_at);
                     const isUrgent = daysUntil !== null && daysUntil <= 7 && daysUntil >= 0 && sub.is_orphan;
+                    const isRefreshingSnapshot = refreshingSnapshotIds.has(sub.id);
                     
                     return (
                       <TableRow 
@@ -498,7 +649,7 @@ export function BepaidSubscriptionsTabContent() {
                           <Checkbox
                             checked={selectedIds.has(sub.id)}
                             onCheckedChange={() => handleSelectOne(sub.id)}
-                            disabled={sub.status === "cancelled"}
+                            disabled={sub.status === "canceled"}
                           />
                         </TableCell>
                         <TableCell>
@@ -514,8 +665,20 @@ export function BepaidSubscriptionsTabContent() {
                               <Copy className="h-3 w-3 opacity-50" />
                             )}
                           </button>
+                          {sub.needs_support && (
+                            <Badge variant="destructive" className="mt-1 text-xs">
+                              Needs support
+                            </Badge>
+                          )}
                         </TableCell>
-                        <TableCell>{getStatusBadge(sub.status)}</TableCell>
+                        <TableCell>
+                          {getStatusBadge(sub.status)}
+                          {sub.snapshot_state && sub.snapshot_state !== sub.status && (
+                            <div className="text-xs text-muted-foreground mt-1">
+                              bePaid: {sub.snapshot_state}
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <div className="text-sm font-medium">
                             {sub.customer_name || sub.customer_email || "—"}
@@ -565,7 +728,24 @@ export function BepaidSubscriptionsTabContent() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
-                            {sub.status !== 'cancelled' && (
+                            {/* Refresh Snapshot */}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => handleRefreshSnapshot(sub.id)}
+                              disabled={isRefreshingSnapshot}
+                              title="Обновить статус (snapshot)"
+                            >
+                              {isRefreshingSnapshot ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <RotateCcw className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                            
+                            {/* Cancel */}
+                            {sub.status !== 'canceled' && (
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -577,6 +757,52 @@ export function BepaidSubscriptionsTabContent() {
                                 title="Отменить подписку"
                               >
                                 <Ban className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            
+                            {/* Unlink - disabled until canceled */}
+                            {!sub.is_orphan && (
+                              <>
+                                {canUnlink(sub) ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => {
+                                      setTargetEmergencyUnlinkId(sub.id);
+                                      setShowEmergencyUnlinkDialog(true);
+                                    }}
+                                    title="Отвязать (доступно после отмены)"
+                                  >
+                                    <Unlink className="h-3.5 w-3.5" />
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 opacity-30 cursor-not-allowed"
+                                    disabled
+                                    title="Сначала отмените подписку, затем отвязывайте"
+                                  >
+                                    <Unlink className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                              </>
+                            )}
+                            
+                            {/* Emergency Unlink - super_admin only for non-canceled */}
+                            {!sub.is_orphan && !canUnlink(sub) && isSuperAdmin && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-destructive hover:text-destructive"
+                                onClick={() => {
+                                  setTargetEmergencyUnlinkId(sub.id);
+                                  setShowEmergencyUnlinkDialog(true);
+                                }}
+                                title="Аварийное отвязывание (super_admin)"
+                              >
+                                <ShieldAlert className="h-3.5 w-3.5" />
                               </Button>
                             )}
                           </div>
@@ -605,9 +831,9 @@ export function BepaidSubscriptionsTabContent() {
               </p>
               <p className="text-amber-600">
                 ⚠️ Автоматические списания прекратятся. Если bePaid откажет в отмене 
-                (например, при past_due), подписка останется активной.
+                (например, при past_due), подписка останется активной и будет помечена "needs_support".
               </p>
-              <p>Это действие нельзя отменить.</p>
+              <p>После успешной отмены snapshot будет автоматически обновлён.</p>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -624,6 +850,59 @@ export function BepaidSubscriptionsTabContent() {
               )}
               Отменить {selectedIds.size} подписок
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Emergency Unlink dialog */}
+      <AlertDialog open={showEmergencyUnlinkDialog} onOpenChange={(open) => {
+        if (!open) {
+          setEmergencyUnlinkConfirm("");
+          setTargetEmergencyUnlinkId(null);
+        }
+        setShowEmergencyUnlinkDialog(open);
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <ShieldAlert className="h-5 w-5" />
+              {canUnlink(filteredSubscriptions.find(s => s.id === targetEmergencyUnlinkId) || {} as BepaidSubscription) 
+                ? "Отвязать подписку?" 
+                : "АВАРИЙНОЕ отвязывание"}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                {!canUnlink(filteredSubscriptions.find(s => s.id === targetEmergencyUnlinkId) || {} as BepaidSubscription) && (
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive">
+                    <p className="font-medium">⚠️ ВНИМАНИЕ: Подписка НЕ отменена в bePaid!</p>
+                    <p className="text-sm mt-1">
+                      Автосписания могут продолжаться. Используйте это только если Cancel невозможен 
+                      и вы понимаете последствия.
+                    </p>
+                  </div>
+                )}
+                <p>
+                  Введите <strong>UNLINK</strong> для подтверждения:
+                </p>
+                <Input 
+                  value={emergencyUnlinkConfirm}
+                  onChange={(e) => setEmergencyUnlinkConfirm(e.target.value.toUpperCase())}
+                  placeholder="UNLINK"
+                  className="font-mono"
+                />
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <Button 
+              variant="destructive"
+              disabled={emergencyUnlinkConfirm !== "UNLINK"}
+              onClick={handleEmergencyUnlink}
+            >
+              <Unlink className="h-4 w-4 mr-2" />
+              Отвязать
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -678,6 +957,12 @@ export function BepaidSubscriptionsTabContent() {
                       </div>
                     </div>
 
+                    {reconcileResult.still_missing_after_execute !== undefined && !reconcileResult.dry_run && (
+                      <div className={`p-2 rounded text-sm ${reconcileResult.still_missing_after_execute === 0 ? 'bg-emerald-500/10' : 'bg-amber-500/10'}`}>
+                        Осталось missing: <strong>{reconcileResult.still_missing_after_execute}</strong>
+                      </div>
+                    )}
+
                     {reconcileResult.sample_ids.length > 0 && (
                       <div className="text-xs">
                         <div className="font-medium mb-1">Примеры ID:</div>
@@ -691,6 +976,11 @@ export function BepaidSubscriptionsTabContent() {
                     {reconcileResult.dry_run && reconcileResult.would_insert > 0 && (
                       <div className="p-2 bg-amber-500/10 rounded border border-amber-500/20 text-sm">
                         ⚠️ Это dry-run. Нажмите "Выполнить" чтобы создать записи.
+                        {!isSuperAdmin && (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Execute доступен только для super_admin.
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -706,7 +996,7 @@ export function BepaidSubscriptionsTabContent() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Закрыть</AlertDialogCancel>
-            {reconcileResult?.dry_run && reconcileResult.would_insert > 0 && (
+            {reconcileResult?.dry_run && reconcileResult.would_insert > 0 && isSuperAdmin && (
               <Button
                 onClick={() => reconcileMutation.mutate(true)}
                 disabled={reconcileMutation.isPending}

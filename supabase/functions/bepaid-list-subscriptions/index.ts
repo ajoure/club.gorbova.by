@@ -5,6 +5,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// PATCH-H: Centralized status normalization
+function normalizeStatus(status: string | undefined): string {
+  if (!status) return 'unknown';
+  // cancelled → canceled
+  if (status === 'cancelled') return 'canceled';
+  return status;
+}
+
 interface BepaidSubscription {
   id: string;
   status: string;
@@ -46,6 +54,11 @@ interface SubscriptionWithLink {
   linked_user_id: string | null;
   linked_profile_name: string | null;
   is_orphan: boolean;
+  // Extended from provider_subscriptions.meta
+  snapshot_state?: string;
+  snapshot_at?: string;
+  cancellation_capability?: string;
+  needs_support?: boolean;
 }
 
 interface CredentialsResult {
@@ -131,7 +144,7 @@ Deno.serve(async (req) => {
       console.error('[bepaid-list-subs] No credentials found');
       return new Response(JSON.stringify({ 
         subscriptions: [], 
-        stats: { total: 0, active: 0, trial: 0, cancelled: 0, orphans: 0, linked: 0 }, 
+        stats: { total: 0, active: 0, trial: 0, canceled: 0, orphans: 0, linked: 0 }, 
         error: 'bePaid credentials not configured',
         debug: {
           checked_statuses: ['active', 'connected'],
@@ -160,11 +173,22 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Also get provider_subscriptions for extended data
+    const { data: providerSubs } = await supabase
+      .from('provider_subscriptions')
+      .select('provider_subscription_id, subscription_v2_id, user_id, meta, state')
+      .eq('provider', 'bepaid');
+
+    const providerSubsMap = new Map<string, any>();
+    for (const ps of providerSubs || []) {
+      providerSubsMap.set(ps.provider_subscription_id, ps);
+    }
+
     const allSubscriptions: BepaidSubscription[] = [];
     const fetchedIds = new Set<string>();
 
     // 2) Try listing
-    const statuses = ['active', 'trial', 'cancelled', 'past_due'];
+    const statuses = ['active', 'trial', 'cancelled', 'past_due'];  // bePaid uses 'cancelled'
     for (const status of statuses) {
       let page = 1;
       let hasMore = true;
@@ -181,7 +205,7 @@ Deno.serve(async (req) => {
         });
 
         if (!response.ok) {
-          // Don’t fail the whole function; just stop paging this status
+          // Don't fail the whole function; just stop paging this status
           const text = await response.text();
           console.warn(`[bepaid-list-subscriptions] list ${status} page ${page} failed: ${response.status} ${text}`);
           hasMore = false;
@@ -254,17 +278,26 @@ Deno.serve(async (req) => {
 
     const userIdToProfile = new Map(profiles?.map((p) => [p.user_id, { name: p.full_name, email: p.email }]) || []);
 
-    // 5) Build result
+    // 5) Build result with PATCH-H: Normalize status
     const result: SubscriptionWithLink[] = allSubscriptions.map((sub) => {
       const ourSub = sub.id ? bepaidIdToOurSub.get(String(sub.id)) : undefined;
       const profile = ourSub ? userIdToProfile.get(ourSub.user_id) : null;
+      const providerSub = providerSubsMap.get(String(sub.id));
 
       const planAmountRaw = sub.plan?.amount ?? 0;
       const planAmount = planAmountRaw > 1000 ? planAmountRaw / 100 : planAmountRaw; // defensive
 
+      // PATCH-H: Normalize status
+      const rawStatus = sub.state || sub.status || 'unknown';
+      const normalizedStatus = normalizeStatus(rawStatus);
+
+      // Get extended data from provider_subscriptions.meta
+      const providerMeta = providerSub?.meta as Record<string, any> | undefined;
+      const snapshot = providerMeta?.provider_snapshot;
+
       return {
         id: String(sub.id),
-        status: sub.state || sub.status || 'unknown',
+        status: normalizedStatus,  // Normalized
         plan_title: sub.plan?.title || 'Без названия',
         plan_amount: planAmount,
         plan_currency: sub.plan?.currency || 'BYN',
@@ -279,11 +312,17 @@ Deno.serve(async (req) => {
         linked_user_id: ourSub?.user_id || null,
         linked_profile_name: profile?.name || profile?.email || null,
         is_orphan: !ourSub,
+        // Extended snapshot data
+        snapshot_state: snapshot?.state ? normalizeStatus(snapshot.state) : undefined,
+        snapshot_at: providerMeta?.snapshot_at,
+        cancellation_capability: providerMeta?.cancellation_capability,
+        needs_support: providerMeta?.needs_support,
       };
     });
 
     result.sort((a, b) => {
-      const statusOrder: Record<string, number> = { active: 0, trial: 1, past_due: 2, cancelled: 3 };
+      // Use 'canceled' in sort order
+      const statusOrder: Record<string, number> = { active: 0, trial: 1, past_due: 2, canceled: 3 };
       const aOrder = statusOrder[a.status] ?? 4;
       const bOrder = statusOrder[b.status] ?? 4;
       if (aOrder !== bOrder) return aOrder - bOrder;
@@ -292,6 +331,7 @@ Deno.serve(async (req) => {
 
     console.log(`Found ${result.length} total subscriptions, ${result.filter((s) => s.is_orphan).length} orphans`);
 
+    // PATCH-A: Use 'canceled' in stats (not 'cancelled')
     return new Response(
       JSON.stringify({
         subscriptions: result,
@@ -299,7 +339,7 @@ Deno.serve(async (req) => {
           total: result.length,
           active: result.filter((s) => s.status === 'active').length,
           trial: result.filter((s) => s.status === 'trial').length,
-          cancelled: result.filter((s) => s.status === 'cancelled').length,
+          canceled: result.filter((s) => s.status === 'canceled').length,  // Correct spelling
           orphans: result.filter((s) => s.is_orphan).length,
           linked: result.filter((s) => !s.is_orphan).length,
         },

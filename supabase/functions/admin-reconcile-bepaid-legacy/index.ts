@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // RBAC: Only super_admin allowed
+    // RBAC: Check roles
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -44,8 +44,9 @@ Deno.serve(async (req) => {
       _role: 'admin',
     });
 
+    // Must have at least admin to access
     if (!hasSuperAdmin && !hasAdmin) {
-      return new Response(JSON.stringify({ error: 'Super admin access required' }), {
+      return new Response(JSON.stringify({ error: 'Admin access required' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -54,6 +55,18 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const dryRun = body.dry_run !== false; // default true
     const limit = Math.min(body.limit || 500, 1000); // max 1000
+
+    // PATCH-E: super_admin required for execute mode
+    if (!dryRun && !hasSuperAdmin) {
+      return new Response(JSON.stringify({ 
+        error: 'Super admin access required for execute mode',
+        dry_run_allowed: true 
+      }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const reconcileRunId = crypto.randomUUID();
 
     console.log(`[admin-reconcile-bepaid-legacy] Starting reconcile: dry_run=${dryRun}, limit=${limit}, run_id=${reconcileRunId}`);
