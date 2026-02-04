@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { toast } from "sonner";
 import { useParams, useNavigate, Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -66,11 +67,37 @@ export default function LibraryLesson() {
   const [searchParams] = useSearchParams();
   
   // PATCH-V4: Admin/Preview mode detection
-  const { isAdmin } = usePermissions();
+  const { isAdmin, loading: permissionsLoading } = usePermissions();
   const isAdminMode = isAdmin();
   const isPreviewMode = searchParams.get('preview') === '1';
   // allowBypassEmptyVideo = bypass only if admin AND preview mode is active
   const allowBypassEmptyVideo = isAdminMode && isPreviewMode;
+  
+  // Debug log for admin bypass (remove in production)
+  useEffect(() => {
+    if (isPreviewMode && !permissionsLoading) {
+      console.info('[LibraryLesson] Admin bypass state:', {
+        isAdminMode,
+        isPreviewMode,
+        allowBypassEmptyVideo,
+        permissionsLoading
+      });
+    }
+  }, [isAdminMode, isPreviewMode, allowBypassEmptyVideo, permissionsLoading]);
+  
+  // Handle page restoration (bfcache / tab suspension by mobile browser)
+  useEffect(() => {
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        toast.info("Страница восстановлена", {
+          description: "Прогресс просмотра сохранён"
+        });
+      }
+    };
+    
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
+  }, []);
   
   // State for internal timecode seeking
   const [activeTimecode, setActiveTimecode] = useState<number | null>(null);
