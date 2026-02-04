@@ -96,7 +96,7 @@ const products: Product[] = [
     description: "Пошаговый квест для бухгалтеров, которые хотят работать на себя и зарабатывать больше",
     badge: "Тренинг",
     badgeVariant: "secondary",
-    price: "от 100 BYN/мес",
+    price: "250 BYN/мес",
     image: katerinaBusinessImage,
     isPurchased: false,
     purchaseLink: "https://club.gorbova.by/business-training",
