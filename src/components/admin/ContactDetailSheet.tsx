@@ -53,6 +53,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   User,
   Mail,
   Phone,
@@ -200,6 +208,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     productName: string;
     hasPaymentMethod: boolean;
   } | null>(null);
+  // PATCH-B: State for bePaid link modal
+  const [bepaidLinkModalOpen, setBepaidLinkModalOpen] = useState(false);
+  const [bepaidLinkUrl, setBepaidLinkUrl] = useState<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Reset scroll position when tab changes
@@ -727,22 +738,20 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
-  // Admin create provider subscription mutation
+  // PATCH-B: Admin create provider subscription mutation using dedicated admin function
   const createProviderSubAdminMutation = useMutation({
     mutationFn: async (subscriptionV2Id: string) => {
-      const { data, error } = await supabase.functions.invoke('bepaid-create-subscription', {
-        body: { 
-          subscription_v2_id: subscriptionV2Id,
-          admin_initiated: true 
-        }
+      const { data, error } = await supabase.functions.invoke('bepaid-admin-create-subscription-link', {
+        body: { subscription_v2_id: subscriptionV2Id }
       });
       if (error) throw error;
       return data;
     },
     onSuccess: async (data) => {
       if (data?.redirect_url) {
-        await navigator.clipboard.writeText(data.redirect_url);
-        toast.success('Ссылка скопирована в буфер обмена — отправьте пользователю для активации подписки');
+        setBepaidLinkUrl(data.redirect_url);
+        setBepaidLinkModalOpen(true);
+        queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions'] });
       } else {
         toast.error('Не удалось получить ссылку');
       }
@@ -3078,6 +3087,52 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* PATCH-B: bePaid Link Modal */}
+        <Dialog open={bepaidLinkModalOpen} onOpenChange={setBepaidLinkModalOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Ссылка для клиента</DialogTitle>
+              <DialogDescription>
+                Скопируйте и отправьте клиенту. Клиент завершит оформление подписки на стороне bePaid.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <Input 
+                readOnly 
+                value={bepaidLinkUrl || ''} 
+                className="font-mono text-xs"
+                onClick={(e) => (e.target as HTMLInputElement).select()}
+              />
+            </div>
+            <DialogFooter className="flex gap-2 sm:gap-0">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (bepaidLinkUrl) {
+                    navigator.clipboard.writeText(bepaidLinkUrl);
+                    toast.success('Ссылка скопирована');
+                  }
+                }}
+                className="gap-2"
+              >
+                <Copy className="w-4 h-4" />
+                Копировать
+              </Button>
+              <Button
+                onClick={() => {
+                  if (bepaidLinkUrl) {
+                    window.open(bepaidLinkUrl, '_blank');
+                  }
+                }}
+                className="gap-2"
+              >
+                <ExternalLink className="w-4 h-4" />
+                Открыть
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </SheetContent>
     </Sheet>
   );

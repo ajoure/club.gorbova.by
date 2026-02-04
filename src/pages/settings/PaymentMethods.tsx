@@ -41,6 +41,10 @@ interface Subscription {
   status: string;
   payment_method_id: string | null;
   billing_type?: string | null;
+  auto_renew?: boolean;
+  access_end_at?: string | null;
+  product_id?: string | null;
+  products_v2?: { name: string; code: string } | null;
 }
 
 export default function PaymentMethodsSettings() {
@@ -162,18 +166,22 @@ export default function PaymentMethodsSettings() {
     enabled: !!user,
   });
 
+  // PATCH-C: Expand query to include product info and access_end_at
   const { data: activeSubscriptions } = useQuery({
     queryKey: ["user-active-subscriptions", user?.id],
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase
         .from("subscriptions_v2")
-        .select("id, status, payment_method_id, auto_renew, billing_type")
+        .select(`
+          id, status, payment_method_id, auto_renew, billing_type, access_end_at, product_id,
+          products_v2(name, code)
+        `)
         .eq("user_id", user.id)
         .in("status", ["active", "trial"]);
       
       if (error) throw error;
-      return data as (Subscription & { auto_renew?: boolean })[];
+      return data as Subscription[];
     },
     enabled: !!user,
   });
@@ -531,7 +539,7 @@ export default function PaymentMethodsSettings() {
           </Alert>
         )}
 
-        {/* Billing Method Choice - show when user has active sub but no payment method */}
+        {/* PATCH-C: Billing Method Choice - show each eligible subscription separately */}
         {hasEligibleSubs && (!paymentMethods || paymentMethods.length === 0) && (
           <Card className="border-primary/30 bg-primary/5">
             <CardHeader>
@@ -540,76 +548,68 @@ export default function PaymentMethodsSettings() {
                 Настройка автопродления
               </CardTitle>
               <CardDescription>
-                Выберите удобный способ автоматического списания
+                Выберите удобный способ автоматического списания для каждой подписки
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 sm:grid-cols-2">
-                {/* MIT Option - More benefits */}
-                <div className="border rounded-lg p-4 space-y-3 bg-background hover:border-primary/50 transition-colors">
-                  <div className="flex items-center gap-2">
-                    <CreditCard className="h-5 w-5 text-primary" />
-                    <h3 className="font-medium">Привязать карту</h3>
-                  </div>
-                  <ul className="text-sm text-muted-foreground space-y-1.5">
-                    <li className="flex items-start gap-2">
-                      <Zap className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                      <span>Мгновенные покупки в 1 клик</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <Shield className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                      <span>Гибкое управление — добавляйте подписки, меняйте тарифы</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <Clock className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                      <span>Автоматический пересчёт при накладных подписках</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <Star className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                      <span>Списание когда вам удобно — не строго каждые 30 дней</span>
-                    </li>
-                  </ul>
-                  <Button onClick={handleAddCard} className="w-full gap-2">
-                    <CreditCard className="h-4 w-4" />
-                    Привязать карту
-                  </Button>
-                </div>
+            <CardContent className="space-y-4">
+              {eligibleForProviderSub.map((sub) => {
+                const productName = sub.products_v2?.name || 'Подписка';
+                const accessEndDate = sub.access_end_at 
+                  ? format(new Date(sub.access_end_at), "dd.MM.yy", { locale: ru })
+                  : null;
                 
-                {/* Provider-managed Option */}
-                <div className="border rounded-lg p-4 space-y-3 bg-background hover:border-blue-500/50 transition-colors">
-                  <div className="flex items-center gap-2">
-                    <RefreshCw className="h-5 w-5 text-blue-600" />
-                    <h3 className="font-medium">Подписка bePaid</h3>
+                return (
+                  <div key={sub.id} className="border rounded-lg p-4 bg-background">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <h4 className="font-medium">{productName}</h4>
+                        {accessEndDate && (
+                          <p className="text-sm text-muted-foreground">
+                            Доступ до {accessEndDate}
+                          </p>
+                        )}
+                      </div>
+                      {sub.status === 'trial' && (
+                        <Badge variant="outline">Триал</Badge>
+                      )}
+                    </div>
+                    
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {/* MIT Option */}
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          <strong>Привязать карту</strong> — мгновенные покупки, гибкое управление, пересчёт при накладных подписках
+                        </p>
+                        <Button onClick={handleAddCard} size="sm" className="w-full gap-2">
+                          <CreditCard className="h-4 w-4" />
+                          Привязать карту
+                        </Button>
+                      </div>
+                      
+                      {/* Provider-managed Option */}
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          <strong>bePaid подписка</strong> — работает с 3D-Secure (БЕЛКАРТ), списание каждые 30 дней
+                        </p>
+                        <Button 
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleCreateProviderSubscription(sub.id)}
+                          disabled={isCreatingProviderSub}
+                          className="w-full gap-2 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:hover:bg-blue-900/20"
+                        >
+                          {isCreatingProviderSub ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4" />
+                          )}
+                          Подключить bePaid
+                        </Button>
+                      </div>
+                    </div>
                   </div>
-                  <ul className="text-sm text-muted-foreground space-y-1.5">
-                    <li className="flex items-start gap-2">
-                      <Check className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
-                      <span>Работает с картами 3D-Secure (БЕЛКАРТ и др.)</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <Check className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
-                      <span>Автоматическое списание каждые 30 дней</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <Check className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
-                      <span>Управление подпиской через платёжную систему</span>
-                    </li>
-                  </ul>
-                  <Button 
-                    variant="outline"
-                    onClick={() => handleCreateProviderSubscription(eligibleForProviderSub[0].id)}
-                    disabled={isCreatingProviderSub}
-                    className="w-full gap-2 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:hover:bg-blue-900/20"
-                  >
-                    {isCreatingProviderSub ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
-                    Подключить через bePaid
-                  </Button>
-                </div>
-              </div>
+                );
+              })}
             </CardContent>
           </Card>
         )}
@@ -789,26 +789,13 @@ export default function PaymentMethodsSettings() {
                         </div>
                       </div>
                       
-                      {/* CTA for rejected cards - suggest provider subscription */}
-                      {method.verification_status === 'rejected' && hasEligibleSubs && (
+                      {/* PATCH-D: Warning only for rejected cards - NO CTA button here */}
+                      {method.verification_status === 'rejected' && (
                         <div className="mt-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
-                          <p className="text-sm text-amber-800 dark:text-amber-200 mb-2">
-                            Эта карта требует 3D-Secure на каждую операцию. Для автопродления подключите подписку через bePaid:
+                          <p className="text-sm text-amber-800 dark:text-amber-200">
+                            ⚠️ Эта карта требует 3D-Secure — не подходит для автосписаний. 
+                            Используйте bePaid в блоке «Настройка автопродления» выше.
                           </p>
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => handleCreateProviderSubscription(eligibleForProviderSub[0].id)}
-                            disabled={isCreatingProviderSub}
-                            className="gap-2 border-blue-200 hover:bg-blue-50"
-                          >
-                            {isCreatingProviderSub ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <RefreshCw className="h-4 w-4" />
-                            )}
-                            Подключить через bePaid
-                          </Button>
                         </div>
                       )}
                     </div>

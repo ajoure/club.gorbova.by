@@ -305,3 +305,6 @@ verify_jwt = false
 
 [functions.admin-reconcile-processing-payments]
 verify_jwt = false
+
+[functions.bepaid-admin-create-subscription-link]
+verify_jwt = false
