@@ -5402,6 +5402,7 @@ export type Database = {
           id: string
           interval_days: number | null
           last_charge_at: string | null
+          meta: Json | null
           next_charge_at: string | null
           profile_id: string | null
           provider: string
@@ -5422,6 +5423,7 @@ export type Database = {
           id?: string
           interval_days?: number | null
           last_charge_at?: string | null
+          meta?: Json | null
           next_charge_at?: string | null
           profile_id?: string | null
           provider?: string
@@ -5442,6 +5444,7 @@ export type Database = {
           id?: string
           interval_days?: number | null
           last_charge_at?: string | null
+          meta?: Json | null
           next_charge_at?: string | null
           profile_id?: string | null
           provider?: string
@@ -8332,6 +8335,14 @@ export type Database = {
       }
       admin_get_payments_stats_v1: {
         Args: { p_from: string; p_provider?: string; p_to: string }
+        Returns: Json
+      }
+      admin_reconcile_bepaid_legacy_subscriptions: {
+        Args: {
+          p_dry_run?: boolean
+          p_limit?: number
+          p_reconcile_run_id?: string
+        }
         Returns: Json
       }
       admin_repair_card_links: {

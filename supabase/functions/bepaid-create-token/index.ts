@@ -880,9 +880,39 @@ Deno.serve(async (req) => {
       );
     }
 
+    // PATCH-10: HARD GUARD - Block legacy subscription path
+    // This path creates bePaid-managed subscriptions which should only be used via bepaid-create-subscription-checkout
+    const originScreen = req.headers.get('X-Origin-Screen') || 'unknown';
+    
+    console.error('[bepaid-create-token] BLOCKED: legacy subscription path attempted without explicit choice');
+    
+    await supabase.from('audit_logs').insert({
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'bepaid-create-token',
+      action: 'bepaid.subscription.create_blocked',
+      target_user_id: userId,
+      meta: {
+        reason: 'legacy_subscription_path_blocked',
+        origin_screen: originScreen,
+        order_id: order?.id,
+        product_id: productId,
+        tariff_code: tariffCode || null,
+        note: 'Use bepaid-create-subscription-checkout for provider-managed subscriptions',
+      },
+    });
+    
+    return new Response(JSON.stringify({
+      success: false,
+      error: 'Legacy subscription path is disabled. Use bepaid-create-subscription-checkout for provider-managed subscriptions.',
+      error_code: 'SUBSCRIPTION_PATH_BLOCKED',
+    }), { 
+      status: 403, 
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+    });
+
+    // NOTE: Code below is now unreachable - kept for reference only
     // For subscriptions/recurring payments (bePaid managed subscription)
-    // PATCH-4: This path should only be used when explicitly requested
-    console.log('Sending subscription to bePaid:', JSON.stringify(subscriptionPayload, null, 2));
 
     const bepaidResponse = await fetch('https://api.bepaid.by/subscriptions', {
       method: 'POST',
