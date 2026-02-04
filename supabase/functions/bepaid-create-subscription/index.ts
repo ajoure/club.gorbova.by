@@ -102,19 +102,25 @@ Deno.serve(async (req) => {
       .select(`
         *,
         products_v2(id, name, code),
-        tariffs(id, name, code, access_days),
-        profiles!subscriptions_v2_user_id_fkey(id, email, full_name)
+        tariffs(id, name, code, access_days)
       `)
       .eq('id', subscription_v2_id)
       .single();
 
     if (subError || !subscription) {
-      console.error('[bepaid-create-sub] Subscription not found:', subError);
+      console.error('[bepaid-create-sub] Subscription not found:', { error_code: subError?.code });
       return new Response(JSON.stringify({ error: 'Subscription not found' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    // Fetch profile separately (profiles.user_id = subscription.user_id)
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id, email, full_name')
+      .eq('user_id', subscription.user_id)
+      .maybeSingle();
 
     // RBAC: User can only create provider subscription for their own subscription
     if (subscription.user_id !== user.id) {
@@ -218,13 +224,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get profile info for customer data
-    const profile = subscription.profiles || {};
+    // profile already fetched above (line 119)
     const product = subscription.products_v2 || {};
     const tariff = subscription.tariffs || {};
 
     // Get user email
-    let customerEmail = profile.email;
+    let customerEmail = profile?.email;
     if (!customerEmail) {
       const { data: authUser } = await supabase.auth.admin.getUserById(user.id);
       customerEmail = authUser?.user?.email;
@@ -238,28 +243,28 @@ Deno.serve(async (req) => {
     const failReturnUrl = `${baseUrl}?bepaid_sub=failed&sub_id=${subscription_v2_id}`;
 
     // PATCH-3: Use safe name parsing
-    const parsedName = safeParseFullName(profile.full_name);
+    const parsedName = safeParseFullName(profile?.full_name);
 
+    // bePaid Subscription API expects flat structure (no outer "subscription" wrapper)
     const bepaidPayload = {
-      subscription: {
-        notification_url: notificationUrl,
-        return_url: successReturnUrl,
-        decline_url: failReturnUrl,
-        tracking_id: trackingId,
-        language: 'ru',
-        customer: {
-          email: customerEmail,
-          first_name: parsedName.firstName,
-          last_name: parsedName.lastName,
-        },
+      notification_url: notificationUrl,
+      return_url: successReturnUrl,
+      decline_url: failReturnUrl,
+      tracking_id: trackingId,
+      language: 'ru',
+      customer: {
+        email: customerEmail,
+        first_name: parsedName.firstName,
+        last_name: parsedName.lastName,
+        ip: '127.0.0.1', // Required by bePaid
+      },
+      plan: {
+        currency,
+        title: `${product.name || 'Подписка'} — Каждые ${intervalDays} дней`,
         plan: {
-          currency,
-          title: `${product.name || 'Подписка'} — Каждые ${intervalDays} дней`,
-          plan: {
-            amount: amountCents,
-            interval: intervalDays,
-            interval_unit: 'day',
-          },
+          amount: amountCents,
+          interval: intervalDays,
+          interval_unit: 'day',
         },
       },
     };
@@ -325,7 +330,7 @@ Deno.serve(async (req) => {
         provider_subscription_id: bepaidSubId,
         user_id: user.id,
         subscription_v2_id: subscription_v2_id,
-        profile_id: profile.id || null,
+        profile_id: profile?.id || null,
         state: 'pending',
         amount_cents: amountCents,
         currency,
