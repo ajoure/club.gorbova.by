@@ -351,21 +351,19 @@ Deno.serve(async (req) => {
     const trackingId = `subv2:${subscription.id}:order:${order.id}`;
     const notificationUrl = `${supabaseUrl}/functions/v1/bepaid-webhook`;
     const successReturnUrl = `${baseUrl}?bepaid_sub=success&sub_id=${subscription.id}&order=${order.id}`;
-    const failReturnUrl = `${baseUrl}?bepaid_sub=failed&sub_id=${subscription.id}`;
 
+    // bePaid: language is passed under settings, and when creating a plan inline you must provide plan.shop_id.
     const bepaidPayload = {
       notification_url: notificationUrl,
       return_url: successReturnUrl,
-      decline_url: failReturnUrl,
       tracking_id: trackingId,
-      language: 'ru',
       customer: {
         email: customerEmail,
         first_name: customerFirstName || undefined,
         last_name: customerLastName || undefined,
-        // PATCH-2: Remove hardcoded IP - let bePaid detect or use real client IP
       },
       plan: {
+        shop_id: Number(credentials.shop_id),
         currency,
         title: `${product.name || 'Подписка'} — Каждые ${intervalDays} дней`,
         plan: {
@@ -373,6 +371,9 @@ Deno.serve(async (req) => {
           interval: intervalDays,
           interval_unit: 'day',
         },
+      },
+      settings: {
+        language: 'ru',
       },
     };
 
