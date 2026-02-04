@@ -253,6 +253,19 @@ export default function PaymentMethodsSettings() {
         }
       });
       
+      // Handle 409 - already has pending provider subscription
+      if (error?.message?.includes('409') || data?.error?.includes('Already has active provider subscription')) {
+        const providerSubId = data?.provider_subscription_id;
+        toast.info('Подписка bePaid уже создана', {
+          description: providerSubId 
+            ? `ID: ${providerSubId}. Проверьте статус или отмените для создания новой.`
+            : 'Проверьте статус подписки или отмените существующую.',
+          duration: 6000,
+        });
+        setCreatingSubId(null);
+        return;
+      }
+      
       if (error) throw error;
       
       if (data?.redirect_url) {
@@ -262,6 +275,16 @@ export default function PaymentMethodsSettings() {
         setCreatingSubId(null);
       }
     } catch (error: any) {
+      // Parse error body for 409 case
+      const errorBody = error?.context?.body;
+      if (errorBody?.error?.includes('Already has active provider subscription')) {
+        toast.info('Подписка bePaid уже существует', {
+          description: 'Проверьте статус или отмените существующую для создания новой.',
+          duration: 6000,
+        });
+        setCreatingSubId(null);
+        return;
+      }
       toast.error('Ошибка: ' + error.message);
       setCreatingSubId(null);
     }
