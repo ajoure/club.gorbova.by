@@ -323,14 +323,14 @@ Deno.serve(async (req) => {
         product_id: productId,
         tariff_id: tariff.id,
         status: 'pending',
-        billing_type: 'provider_managed', // Provider-managed from start
+        billing_type: 'provider_managed',
         auto_renew: true,
         is_trial: false,
-        access_days: accessDays,
         meta: {
           pending_provider_managed: true,
           checkout_order_id: order.id,
           offer_id: effectiveOfferId,
+          access_days: accessDays, // Store in meta instead
         },
       })
       .select('id')
