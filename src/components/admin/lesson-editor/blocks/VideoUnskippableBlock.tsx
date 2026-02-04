@@ -131,10 +131,16 @@ export function VideoUnskippableBlock({
     if (isEditing || isCompleted) return;
 
     const handleMessage = (event: MessageEvent) => {
-      // PATCH-B: Строгая проверка origin — только домены Kinescope
-      const originValid = KINESCOPE_ORIGINS.some(o => event.origin === o);
-      if (!originValid) {
-        return; // Игнорируем недоверенные источники
+      // PATCH-B: Проверка origin через host — kinescope.io или *.kinescope.io
+      try {
+        const url = new URL(event.origin);
+        const host = url.host;
+        const originValid = host === 'kinescope.io' || host.endsWith('.kinescope.io');
+        if (!originValid) {
+          return; // Игнорируем недоверенные источники
+        }
+      } catch {
+        return; // Невалидный origin
       }
       
       // PATCH-B: Проверка source — сообщение должно быть от нашего iframe
@@ -161,8 +167,15 @@ export function VideoUnskippableBlock({
         
         // Kinescope event types
         if (eventType === 'player:timeupdate' || eventType === 'timeupdate') {
-          // PATCH-E: Mark API as working + stop fallback if running
+          // PATCH-E: Mark API as working + stop all timers
           setApiWorking(true);
+          
+          // Сбросить флаг детекции и её таймер
+          setApiDetectionDone(false);
+          if (apiDetectionTimeoutRef.current) {
+            clearTimeout(apiDetectionTimeoutRef.current);
+            apiDetectionTimeoutRef.current = null;
+          }
           
           // Остановить fallback таймер если был запущен
           if (fallbackIntervalRef.current) {
@@ -202,11 +215,13 @@ export function VideoUnskippableBlock({
     return () => window.removeEventListener('message', handleMessage);
   }, [isEditing, isCompleted, onProgress]);
   
+  // PATCH-E: Вычислить embedUrl до эффекта (стабильное значение для deps)
+  const embedUrl = getEmbedUrl();
+  
   // PATCH-E: Автодетекция API — 5 сек ожидания, потом показываем fallback
   useEffect(() => {
     if (isEditing || isCompleted || apiWorking) return;
     
-    const embedUrl = getEmbedUrl();
     if (embedUrl && content.duration_seconds) {
       apiDetectionTimeoutRef.current = setTimeout(() => {
         if (!apiWorking) {
@@ -220,7 +235,7 @@ export function VideoUnskippableBlock({
         clearTimeout(apiDetectionTimeoutRef.current);
       }
     };
-  }, [isEditing, isCompleted, apiWorking, getEmbedUrl, content.duration_seconds]);
+  }, [isEditing, isCompleted, apiWorking, embedUrl, content.duration_seconds]);
 
   // Fallback timer when Kinescope API doesn't work
   const startFallbackTimer = useCallback(() => {
@@ -369,8 +384,7 @@ export function VideoUnskippableBlock({
     );
   }
 
-  // Player mode (student view)
-  const embedUrl = getEmbedUrl();
+  // Player mode (student view) - embedUrl already computed above
 
   // Already completed - show simple confirmation
   if (isCompleted) {

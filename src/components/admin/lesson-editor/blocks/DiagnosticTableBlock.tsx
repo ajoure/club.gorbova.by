@@ -108,12 +108,19 @@ export function DiagnosticTableBlock({
   // Generate unique ID (stable function outside render)
   const genId = useCallback(() => Math.random().toString(36).substring(2, 9), []);
   
-  // PATCH-C: Initialize local rows from props OR create first empty row (one-time)
+  // PATCH-C: Initialize local rows from props OR create first empty row
   useEffect(() => {
-    // Одноразовая инициализация — предотвращает "размножение" строк
+    // Если пришли реальные данные — ВСЕГДА применить (даже после init)
+    if (rows.length > 0) {
+      setLocalRows(rows);
+      initDoneRef.current = true;
+      return;
+    }
+    
+    // Одноразовая инициализация пустой строкой
     if (initDoneRef.current) return;
     
-    if (rows.length === 0 && !isCompleted) {
+    if (!isCompleted) {
       // Создать первую пустую строку
       const newRow: Record<string, unknown> = { _id: genId() };
       columnsRef.current.forEach(col => {
@@ -121,9 +128,6 @@ export function DiagnosticTableBlock({
       });
       setLocalRows([newRow]);
       onRowsChangeRef.current?.([newRow]);
-      initDoneRef.current = true;
-    } else if (rows.length > 0) {
-      setLocalRows(rows);
       initDoneRef.current = true;
     }
   }, [rows, isCompleted, genId]);
