@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { CreditCard, Plus, Star, Trash2, AlertTriangle, Check, Loader2, AlertCircle, RefreshCw, Calendar } from "lucide-react";
+import { CreditCard, Plus, Star, Trash2, AlertTriangle, Check, Loader2, AlertCircle, RefreshCw, Calendar, Shield, Zap, Clock } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -40,6 +40,7 @@ interface Subscription {
   id: string;
   status: string;
   payment_method_id: string | null;
+  billing_type?: string | null;
 }
 
 export default function PaymentMethodsSettings() {
@@ -167,7 +168,7 @@ export default function PaymentMethodsSettings() {
       if (!user) return [];
       const { data, error } = await supabase
         .from("subscriptions_v2")
-        .select("id, status, payment_method_id, auto_renew")
+        .select("id, status, payment_method_id, auto_renew, billing_type")
         .eq("user_id", user.id)
         .in("status", ["active", "trial"]);
       
@@ -207,6 +208,56 @@ export default function PaymentMethodsSettings() {
   const hasAutoRenewWithoutCard = activeSubscriptions?.some(
     s => s.auto_renew === true && !s.payment_method_id
   );
+
+  // Eligible subscriptions for provider-managed billing (not already provider-managed)
+  const eligibleForProviderSub = useMemo(() => {
+    if (!activeSubscriptions || !providerSubscriptions) return [];
+    
+    // Get subscription IDs that already have active provider subscriptions
+    const providerLinkedSubIds = new Set(
+      providerSubscriptions
+        ?.filter((ps: any) => ['active', 'trial', 'pending'].includes(ps.state))
+        ?.map((ps: any) => ps.subscriptions_v2?.id) || []
+    );
+    
+    // Return active subscriptions that are NOT provider-managed
+    return activeSubscriptions.filter(
+      sub => (sub.status === 'active' || sub.status === 'trial') && 
+             !providerLinkedSubIds.has(sub.id) &&
+             sub.billing_type !== 'provider_managed'
+    );
+  }, [activeSubscriptions, providerSubscriptions]);
+
+  const hasEligibleSubs = eligibleForProviderSub && eligibleForProviderSub.length > 0;
+
+  // Check for rejected cards that need 3DS
+  const hasRejectedCards = paymentMethods?.some(m => m.verification_status === 'rejected');
+
+  // Create provider subscription function
+  const [isCreatingProviderSub, setIsCreatingProviderSub] = useState(false);
+  const handleCreateProviderSubscription = async (subscriptionV2Id: string) => {
+    try {
+      setIsCreatingProviderSub(true);
+      const { data, error } = await supabase.functions.invoke('bepaid-create-subscription', {
+        body: { 
+          subscription_v2_id: subscriptionV2Id,
+          return_url: window.location.href 
+        }
+      });
+      
+      if (error) throw error;
+      
+      if (data?.redirect_url) {
+        window.location.href = data.redirect_url;
+      } else {
+        toast.error('Не удалось создать сессию подписки');
+        setIsCreatingProviderSub(false);
+      }
+    } catch (error: any) {
+      toast.error('Ошибка: ' + error.message);
+      setIsCreatingProviderSub(false);
+    }
+  };
 
   const setDefaultMutation = useMutation({
     mutationFn: async (methodId: string) => {
@@ -480,6 +531,89 @@ export default function PaymentMethodsSettings() {
           </Alert>
         )}
 
+        {/* Billing Method Choice - show when user has active sub but no payment method */}
+        {hasEligibleSubs && (!paymentMethods || paymentMethods.length === 0) && (
+          <Card className="border-primary/30 bg-primary/5">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <RefreshCw className="h-5 w-5" />
+                Настройка автопродления
+              </CardTitle>
+              <CardDescription>
+                Выберите удобный способ автоматического списания
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {/* MIT Option - More benefits */}
+                <div className="border rounded-lg p-4 space-y-3 bg-background hover:border-primary/50 transition-colors">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="h-5 w-5 text-primary" />
+                    <h3 className="font-medium">Привязать карту</h3>
+                  </div>
+                  <ul className="text-sm text-muted-foreground space-y-1.5">
+                    <li className="flex items-start gap-2">
+                      <Zap className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                      <span>Мгновенные покупки в 1 клик</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Shield className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                      <span>Гибкое управление — добавляйте подписки, меняйте тарифы</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Clock className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                      <span>Автоматический пересчёт при накладных подписках</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Star className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                      <span>Списание когда вам удобно — не строго каждые 30 дней</span>
+                    </li>
+                  </ul>
+                  <Button onClick={handleAddCard} className="w-full gap-2">
+                    <CreditCard className="h-4 w-4" />
+                    Привязать карту
+                  </Button>
+                </div>
+                
+                {/* Provider-managed Option */}
+                <div className="border rounded-lg p-4 space-y-3 bg-background hover:border-blue-500/50 transition-colors">
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className="h-5 w-5 text-blue-600" />
+                    <h3 className="font-medium">Подписка bePaid</h3>
+                  </div>
+                  <ul className="text-sm text-muted-foreground space-y-1.5">
+                    <li className="flex items-start gap-2">
+                      <Check className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                      <span>Работает с картами 3D-Secure (БЕЛКАРТ и др.)</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Check className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                      <span>Автоматическое списание каждые 30 дней</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Check className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                      <span>Управление подпиской через платёжную систему</span>
+                    </li>
+                  </ul>
+                  <Button 
+                    variant="outline"
+                    onClick={() => handleCreateProviderSubscription(eligibleForProviderSub[0].id)}
+                    disabled={isCreatingProviderSub}
+                    className="w-full gap-2 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:hover:bg-blue-900/20"
+                  >
+                    {isCreatingProviderSub ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    Подключить через bePaid
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -512,146 +646,171 @@ export default function PaymentMethodsSettings() {
                   return (
                     <div
                       key={method.id}
-                      className={`flex items-center justify-between p-4 rounded-lg border ${
+                      className={`p-4 rounded-lg border ${
                         expired ? "bg-destructive/5 border-destructive/30" : "bg-muted/30"
                       }`}
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="text-muted-foreground">
-                          {getCardIcon(method.brand)}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">
-                              {method.brand?.toUpperCase() || "Карта"} •••• {method.last4 || "****"}
-                            </span>
-                            {method.is_default && (
-                              <Badge variant="secondary" className="gap-1">
-                                <Star className="h-3 w-3" />
-                                Основная
-                              </Badge>
-                            )}
-                            {expired && (
-                              <Badge variant="destructive" className="gap-1">
-                                <AlertTriangle className="h-3 w-3" />
-                                Истекла
-                              </Badge>
-                            )}
-                            {/* Verification status badges */}
-                            {method.verification_status === 'pending' && (
-                              <Badge variant="outline" className="gap-1 text-amber-600 border-amber-600">
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                                Проверяем...
-                              </Badge>
-                            )}
-                            {method.verification_status === 'verified' && (
-                              <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
-                                <Check className="h-3 w-3" />
-                                Для автоплатежей
-                              </Badge>
-                            )}
-                            {method.verification_status === 'rejected' && (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge variant="destructive" className="gap-1 cursor-help">
-                                      <AlertTriangle className="h-3 w-3" />
-                                      Не для автоплатежей
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="max-w-xs">
-                                    <p>{method.verification_error || 'Карта требует 3D-Secure на каждую операцию'}</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            )}
-                            {method.verification_status === 'failed' && (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge variant="secondary" className="gap-1 cursor-help">
-                                      <AlertCircle className="h-3 w-3" />
-                                      Не удалось проверить
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="max-w-xs">
-                                    <p>{method.verification_error || 'Ошибка проверки карты'}</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            )}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="text-muted-foreground">
+                            {getCardIcon(method.brand)}
                           </div>
-                          <p className="text-sm text-muted-foreground">
-                            Действует до: {formatExpiry(method.exp_month, method.exp_year)}
-                          </p>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-medium">
+                                {method.brand?.toUpperCase() || "Карта"} •••• {method.last4 || "****"}
+                              </span>
+                              {method.is_default && (
+                                <Badge variant="secondary" className="gap-1">
+                                  <Star className="h-3 w-3" />
+                                  Основная
+                                </Badge>
+                              )}
+                              {expired && (
+                                <Badge variant="destructive" className="gap-1">
+                                  <AlertTriangle className="h-3 w-3" />
+                                  Истекла
+                                </Badge>
+                              )}
+                              {/* Verification status badges */}
+                              {method.verification_status === 'pending' && (
+                                <Badge variant="outline" className="gap-1 text-amber-600 border-amber-600">
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  Проверяем...
+                                </Badge>
+                              )}
+                              {method.verification_status === 'verified' && (
+                                <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
+                                  <Check className="h-3 w-3" />
+                                  Для автоплатежей
+                                </Badge>
+                              )}
+                              {method.verification_status === 'rejected' && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Badge variant="destructive" className="gap-1 cursor-help">
+                                        <AlertTriangle className="h-3 w-3" />
+                                        Не для автоплатежей
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-xs">
+                                      <p>{method.verification_error || 'Карта требует 3D-Secure на каждую операцию'}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                              {method.verification_status === 'failed' && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Badge variant="secondary" className="gap-1 cursor-help">
+                                        <AlertCircle className="h-3 w-3" />
+                                        Не удалось проверить
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-xs">
+                                      <p>{method.verification_error || 'Ошибка проверки карты'}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            </div>
+                            <p className="text-sm text-muted-foreground">
+                              Действует до: {formatExpiry(method.exp_month, method.exp_year)}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-2">
+                          {/* PATCH D: Re-verify button for rejected/failed cards */}
+                          {(method.verification_status === 'rejected' || method.verification_status === 'failed') && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => reverifyMutation.mutate(method.id)}
+                              disabled={reverifyMutation.isPending}
+                              className="gap-1"
+                            >
+                              {reverifyMutation.isPending ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-3 w-3" />
+                              )}
+                              Перепроверить
+                            </Button>
+                          )}
+                          
+                          {!method.is_default && !expired && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setDefaultMutation.mutate(method.id)}
+                              disabled={setDefaultMutation.isPending}
+                            >
+                              Сделать основной
+                            </Button>
+                          )}
+                          
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                disabled={!canDelete(method.id)}
+                                title={!canDelete(method.id) ? "Нельзя удалить единственную карту при активных подписках" : "Отвязать карту"}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Отвязать карту?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Карта {method.brand?.toUpperCase()} •••• {method.last4} будет отвязана от вашего аккаунта.
+                                  {method.is_default && paymentMethods.length > 1 && (
+                                    <span className="block mt-2 text-amber-600">
+                                      Другая карта будет назначена основной.
+                                    </span>
+                                  )}
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Отмена</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => deleteMutation.mutate(method.id)}
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                >
+                                  Отвязать
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
                         </div>
                       </div>
                       
-                      <div className="flex items-center gap-2">
-                        {/* PATCH D: Re-verify button for rejected/failed cards */}
-                        {(method.verification_status === 'rejected' || method.verification_status === 'failed') && (
-                          <Button
-                            variant="outline"
+                      {/* CTA for rejected cards - suggest provider subscription */}
+                      {method.verification_status === 'rejected' && hasEligibleSubs && (
+                        <div className="mt-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
+                          <p className="text-sm text-amber-800 dark:text-amber-200 mb-2">
+                            Эта карта требует 3D-Secure на каждую операцию. Для автопродления подключите подписку через bePaid:
+                          </p>
+                          <Button 
+                            variant="outline" 
                             size="sm"
-                            onClick={() => reverifyMutation.mutate(method.id)}
-                            disabled={reverifyMutation.isPending}
-                            className="gap-1"
+                            onClick={() => handleCreateProviderSubscription(eligibleForProviderSub[0].id)}
+                            disabled={isCreatingProviderSub}
+                            className="gap-2 border-blue-200 hover:bg-blue-50"
                           >
-                            {reverifyMutation.isPending ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
+                            {isCreatingProviderSub ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
-                              <RefreshCw className="h-3 w-3" />
+                              <RefreshCw className="h-4 w-4" />
                             )}
-                            Перепроверить
+                            Подключить через bePaid
                           </Button>
-                        )}
-                        
-                        {!method.is_default && !expired && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setDefaultMutation.mutate(method.id)}
-                            disabled={setDefaultMutation.isPending}
-                          >
-                            Сделать основной
-                          </Button>
-                        )}
-                        
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              disabled={!canDelete(method.id)}
-                              title={!canDelete(method.id) ? "Нельзя удалить единственную карту при активных подписках" : "Отвязать карту"}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Отвязать карту?</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Карта {method.brand?.toUpperCase()} •••• {method.last4} будет отвязана от вашего аккаунта.
-                                {method.is_default && paymentMethods.length > 1 && (
-                                  <span className="block mt-2 text-amber-600">
-                                    Другая карта будет назначена основной.
-                                  </span>
-                                )}
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Отмена</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => deleteMutation.mutate(method.id)}
-                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                              >
-                                Отвязать
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

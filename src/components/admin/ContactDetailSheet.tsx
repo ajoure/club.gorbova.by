@@ -727,6 +727,30 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
+  // Admin create provider subscription mutation
+  const createProviderSubAdminMutation = useMutation({
+    mutationFn: async (subscriptionV2Id: string) => {
+      const { data, error } = await supabase.functions.invoke('bepaid-create-subscription', {
+        body: { 
+          subscription_v2_id: subscriptionV2Id,
+          admin_initiated: true 
+        }
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: async (data) => {
+      if (data?.redirect_url) {
+        await navigator.clipboard.writeText(data.redirect_url);
+        toast.success('Ссылка скопирована в буфер обмена — отправьте пользователю для активации подписки');
+      } else {
+        toast.error('Не удалось получить ссылку');
+      }
+    },
+    onError: (error: Error) => {
+      toast.error('Ошибка: ' + error.message);
+    },
+  });
 
   const { data: trialHistory } = useQuery({
     queryKey: ["contact-trial-history", contact?.user_id],
@@ -2393,27 +2417,50 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               )}
                             </div>
                             {/* Toggle button */}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className={cn(
-                                "h-6 w-6 p-0",
-                                sub.auto_renew ? "text-green-600 hover:text-green-700" : "text-muted-foreground hover:text-primary"
+                            <div className="flex items-center gap-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className={cn(
+                                  "h-6 w-6 p-0",
+                                  sub.auto_renew ? "text-green-600 hover:text-green-700" : "text-muted-foreground hover:text-primary"
+                                )}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setAutoRenewTarget({
+                                    subscriptionId: sub.id,
+                                    currentValue: sub.auto_renew || false,
+                                    productName: product?.name || "Продукт",
+                                    hasPaymentMethod: !!(paymentMethods && paymentMethods.length > 0),
+                                  });
+                                  setAutoRenewConfirmOpen(true);
+                                }}
+                                title={sub.auto_renew ? "Отключить автопродление" : "Включить автопродление"}
+                              >
+                                <RefreshCw className={cn("w-3.5 h-3.5", sub.auto_renew && "animate-pulse")} />
+                              </Button>
+                              
+                              {/* Switch to provider-managed (bePaid) button */}
+                              {sub.billing_type !== 'provider_managed' && !contactProviderSubscriptions?.some((ps: any) => ps.subscription_v2_id === sub.id && ['active', 'trial', 'pending'].includes(ps.state)) && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 px-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    createProviderSubAdminMutation.mutate(sub.id);
+                                  }}
+                                  disabled={createProviderSubAdminMutation.isPending}
+                                  title="Переключить на bePaid — для карт с 3D-Secure"
+                                >
+                                  {createProviderSubAdminMutation.isPending ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <span className="text-xs">→ bePaid</span>
+                                  )}
+                                </Button>
                               )}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setAutoRenewTarget({
-                                  subscriptionId: sub.id,
-                                  currentValue: sub.auto_renew || false,
-                                  productName: product?.name || "Продукт",
-                                  hasPaymentMethod: !!(paymentMethods && paymentMethods.length > 0),
-                                });
-                                setAutoRenewConfirmOpen(true);
-                              }}
-                              title={sub.auto_renew ? "Отключить автопродление" : "Включить автопродление"}
-                            >
-                              <RefreshCw className={cn("w-3.5 h-3.5", sub.auto_renew && "animate-pulse")} />
-                            </Button>
+                            </div>
                           </div>
                         )}
 
