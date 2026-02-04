@@ -7,6 +7,7 @@ import { useTrainingLessons, TrainingLesson } from "@/hooks/useTrainingLessons";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
+import { KvestLessonView } from "@/components/lesson/KvestLessonView";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -237,86 +238,100 @@ export default function LibraryLesson() {
           </Button>
         </div>
 
-        {/* Block-based Content (if blocks exist) */}
-        {blocks.length > 0 ? (
-          <Card className="mb-6">
-            <CardContent className="py-6">
-              <LessonBlockRenderer 
-                key={`blocks-${autoplayNonce || activeTimecode || 0}`} 
-                blocks={blocks} 
-                lessonId={currentLesson?.id} 
-                activeTimecode={activeTimecode}
-                autoplayNonce={autoplayNonce}
-                onSeekApplied={handleSeekApplied}
-              />
-            </CardContent>
-          </Card>
+        {/* KVEST MODE */}
+        {currentLesson.completion_mode === 'kvest' && blocks.length > 0 ? (
+          <KvestLessonView
+            lesson={currentLesson}
+            blocks={blocks}
+            moduleSlug={moduleSlug || ''}
+            onComplete={async () => {
+              await markCompleted(currentLesson.id);
+            }}
+          />
         ) : (
           <>
-            {/* Legacy Video Player */}
-            {currentLesson.video_url && (
-              <Card className="mb-6 overflow-hidden">
-                <div className="aspect-video bg-black">
-                  {currentLesson.video_url.includes("youtube.com") || currentLesson.video_url.includes("youtu.be") ? (
-                    <iframe
-                      src={currentLesson.video_url.replace("watch?v=", "embed/").replace("youtu.be/", "youtube.com/embed/")}
-                      className="w-full h-full"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                    />
-                  ) : currentLesson.video_url.includes("vimeo.com") ? (
-                    <iframe
-                      src={currentLesson.video_url.replace("vimeo.com/", "player.vimeo.com/video/")}
-                      className="w-full h-full"
-                      allow="autoplay; fullscreen; picture-in-picture"
-                      allowFullScreen
-                    />
-                  ) : currentLesson.video_url.includes("kinescope.io") ? (
-                    <iframe
-                      src={currentLesson.video_url.includes("/embed/")
-                        ? currentLesson.video_url
-                        : `https://kinescope.io/embed/${currentLesson.video_url.split('/').pop()}`}
-                      className="w-full h-full"
-                      allow="autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write"
-                      allowFullScreen
-                    />
-                  ) : (
-                    <video
-                      src={currentLesson.video_url}
-                      controls
-                      className="w-full h-full"
-                    />
-                  )}
-                </div>
-              </Card>
-            )}
-
-            {/* Legacy Audio Player */}
-            {currentLesson.audio_url && (
-              <Card className="mb-6">
-                <CardContent className="py-4">
-                  <div className="flex items-center gap-4">
-                    <Music className="h-8 w-8 text-purple-500" />
-                    <audio
-                      src={currentLesson.audio_url}
-                      controls
-                      className="flex-1"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Legacy Text Content */}
-            {currentLesson.content && (
+            {/* Block-based Content (if blocks exist) */}
+            {blocks.length > 0 ? (
               <Card className="mb-6">
                 <CardContent className="py-6">
-                  <div
-                    className="prose prose-sm max-w-none dark:prose-invert"
-                    dangerouslySetInnerHTML={{ __html: currentLesson.content }}
+                  <LessonBlockRenderer 
+                    key={`blocks-${autoplayNonce || activeTimecode || 0}`} 
+                    blocks={blocks} 
+                    lessonId={currentLesson?.id} 
+                    activeTimecode={activeTimecode}
+                    autoplayNonce={autoplayNonce}
+                    onSeekApplied={handleSeekApplied}
                   />
                 </CardContent>
               </Card>
+            ) : (
+              <>
+                {/* Legacy Video Player */}
+                {currentLesson.video_url && (
+                  <Card className="mb-6 overflow-hidden">
+                    <div className="aspect-video bg-black">
+                      {currentLesson.video_url.includes("youtube.com") || currentLesson.video_url.includes("youtu.be") ? (
+                        <iframe
+                          src={currentLesson.video_url.replace("watch?v=", "embed/").replace("youtu.be/", "youtube.com/embed/")}
+                          className="w-full h-full"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                        />
+                      ) : currentLesson.video_url.includes("vimeo.com") ? (
+                        <iframe
+                          src={currentLesson.video_url.replace("vimeo.com/", "player.vimeo.com/video/")}
+                          className="w-full h-full"
+                          allow="autoplay; fullscreen; picture-in-picture"
+                          allowFullScreen
+                        />
+                      ) : currentLesson.video_url.includes("kinescope.io") ? (
+                        <iframe
+                          src={currentLesson.video_url.includes("/embed/")
+                            ? currentLesson.video_url
+                            : `https://kinescope.io/embed/${currentLesson.video_url.split('/').pop()}`}
+                          className="w-full h-full"
+                          allow="autoplay; fullscreen; picture-in-picture; encrypted-media; clipboard-write"
+                          allowFullScreen
+                        />
+                      ) : (
+                        <video
+                          src={currentLesson.video_url}
+                          controls
+                          className="w-full h-full"
+                        />
+                      )}
+                    </div>
+                  </Card>
+                )}
+
+                {/* Legacy Audio Player */}
+                {currentLesson.audio_url && (
+                  <Card className="mb-6">
+                    <CardContent className="py-4">
+                      <div className="flex items-center gap-4">
+                        <Music className="h-8 w-8 text-purple-500" />
+                        <audio
+                          src={currentLesson.audio_url}
+                          controls
+                          className="flex-1"
+                        />
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Legacy Text Content */}
+                {currentLesson.content && (
+                  <Card className="mb-6">
+                    <CardContent className="py-6">
+                      <div
+                        className="prose prose-sm max-w-none dark:prose-invert"
+                        dangerouslySetInnerHTML={{ __html: currentLesson.content }}
+                      />
+                    </CardContent>
+                  </Card>
+                )}
+              </>
             )}
           </>
         )}

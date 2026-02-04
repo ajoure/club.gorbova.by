@@ -25,6 +25,9 @@ import { QuizMatchingBlock } from "@/components/admin/lesson-editor/blocks/QuizM
 import { QuizSequenceBlock } from "@/components/admin/lesson-editor/blocks/QuizSequenceBlock";
 import { QuizHotspotBlock } from "@/components/admin/lesson-editor/blocks/QuizHotspotBlock";
 import { QuizSurveyBlock } from "@/components/admin/lesson-editor/blocks/QuizSurveyBlock";
+import { VideoUnskippableBlock } from "@/components/admin/lesson-editor/blocks/VideoUnskippableBlock";
+import { DiagnosticTableBlock } from "@/components/admin/lesson-editor/blocks/DiagnosticTableBlock";
+import { SequentialFormBlock } from "@/components/admin/lesson-editor/blocks/SequentialFormBlock";
 
 interface LessonBlockRendererProps {
   blocks: LessonBlock[];
@@ -245,6 +248,32 @@ export function LessonBlockRenderer({ blocks, lessonId, activeTimecode, autoplay
             isSubmitted={isSubmitted}
             onSubmit={(answer, isCorrect, score, maxScore) => handleQuizSubmit(block.id, answer as unknown as Record<string, unknown>, isCorrect, score, maxScore)}
             onReset={() => handleQuizReset(block.id)}
+          />
+        );
+      
+      // Kvest blocks (view mode only for now - full integration in KvestLessonView)
+      case 'video_unskippable':
+        return (
+          <VideoUnskippableBlock 
+            content={block.content as any} 
+            onChange={() => {}} 
+            isEditing={false}
+          />
+        );
+      case 'diagnostic_table':
+        return (
+          <DiagnosticTableBlock 
+            content={block.content as any} 
+            onChange={() => {}} 
+            isEditing={false}
+          />
+        );
+      case 'sequential_form':
+        return (
+          <SequentialFormBlock 
+            content={block.content as any} 
+            onChange={() => {}} 
+            isEditing={false}
           />
         );
       default:

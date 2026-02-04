@@ -14,6 +14,8 @@ export interface LessonAttachment {
   created_at: string;
 }
 
+export type CompletionMode = 'manual' | 'view_all_blocks' | 'watch_video' | 'kvest';
+
 export interface TrainingLesson {
   id: string;
   module_id: string;
@@ -30,6 +32,10 @@ export interface TrainingLesson {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  // Kvest fields
+  published_at: string | null;
+  require_previous: boolean;
+  completion_mode: CompletionMode;
   // Computed fields
   is_completed?: boolean;
   attachments?: LessonAttachment[];
@@ -97,6 +103,8 @@ export function useTrainingLessons(moduleId?: string) {
       const enrichedLessons = lessonsData?.map(lesson => ({
         ...lesson,
         content_type: lesson.content_type as TrainingLesson["content_type"],
+        completion_mode: (lesson.completion_mode || 'manual') as CompletionMode,
+        require_previous: lesson.require_previous ?? false,
         is_completed: completedLessonIds.includes(lesson.id),
         attachments: attachmentsData?.filter(a => a.lesson_id === lesson.id) || [],
       })) || [];
