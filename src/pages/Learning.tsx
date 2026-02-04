@@ -92,18 +92,16 @@ const products: Product[] = [
   },
   {
     id: "4",
-    title: "Мастер-класс: Налоговая оптимизация",
-    description: "Практические кейсы по легальному снижению налоговой нагрузки",
-    badge: "Скоро",
-    badgeVariant: "outline",
-    price: "290 BYN",
-    image: productCourseImage,
-    isPurchased: true,
-    purchaseLink: "#",
-    courseSlug: "tax-optimization",
-    lessonCount: 8,
-    completedCount: 3,
-    duration: "2 недели",
+    title: "Бухгалтерия как бизнес",
+    description: "Пошаговый квест для бухгалтеров, которые хотят работать на себя и зарабатывать больше",
+    badge: "Тренинг",
+    badgeVariant: "secondary",
+    price: "от 100 BYN/мес",
+    image: katerinaBusinessImage,
+    isPurchased: false,
+    purchaseLink: "https://club.gorbova.by/business-training",
+    courseSlug: "buh-business",
+    duration: "12 модулей",
   },
 ];
 
@@ -123,6 +121,8 @@ const getBadgeClasses = (badge?: string) => {
       return "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-0 font-medium";
     case "Старт 5 февраля":
       return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-0";
+    case "Тренинг":
+      return "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-0";
     default:
       return "bg-primary/10 text-primary border-0";
   }
@@ -404,8 +404,17 @@ export default function Learning() {
       };
     }
     
-    // PATCH-C: Removed buh-business handling here - mock was deleted
-    // Real module from training_modules handles this via menu_section_key
+    // Special handling for buh-business
+    if (product.courseSlug === "buh-business") {
+      const hasPaid = businessTrainingAccess?.hasPaidAccess || false;
+      const hasReserve = businessTrainingAccess?.hasReservation || false;
+      
+      return {
+        ...product,
+        isPurchased: hasPaid,
+        badge: hasPaid ? "Активно" : hasReserve ? "Бронь" : product.badge,
+      };
+    }
     
     if (matchingModule) {
       return {
