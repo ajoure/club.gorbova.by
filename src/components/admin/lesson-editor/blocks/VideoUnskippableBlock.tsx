@@ -519,16 +519,16 @@ export function VideoUnskippableBlock({
             Я просмотрел(а) видео
           </Button>
           
-          {/* Admin bypass button - always visible in preview mode */}
-          {allowBypassEmptyVideo && !canConfirm && (
+          {/* Admin bypass button - always visible in preview mode when not completed */}
+          {allowBypassEmptyVideo && !isCompleted && (
             <Button
               onClick={handleConfirmWatched}
               variant="outline"
-              className="w-full text-muted-foreground"
+              className="w-full text-amber-600 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-600 dark:hover:bg-amber-900/20"
               size="sm"
             >
               <CheckCircle2 className="mr-2 h-4 w-4" />
-              Продолжить без видео (админ)
+              Пропустить (админ preview)
             </Button>
           )}
           
