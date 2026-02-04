@@ -66,10 +66,10 @@ import { format, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useHasRole } from "@/hooks/useHasRole";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
-import { LinkContactDialog } from "./LinkContactDialog";
-import { UnlinkContactDialog } from "./UnlinkContactDialog";
-import { LinkDealDialog } from "./LinkDealDialog";
-import { UnlinkDealDialog } from "./UnlinkDealDialog";
+import { LinkSubscriptionContactDialog } from "./LinkSubscriptionContactDialog";
+import { UnlinkSubscriptionContactDialog } from "./UnlinkSubscriptionContactDialog";
+import { LinkSubscriptionDealDialog } from "./LinkSubscriptionDealDialog";
+import { UnlinkSubscriptionDealDialog } from "./UnlinkSubscriptionDealDialog";
 import { cn } from "@/lib/utils";
 import {
   DndContext,
@@ -1551,14 +1551,13 @@ export function BepaidSubscriptionsTabContent() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* PATCH-T3: Link Contact Dialog */}
+      {/* Subscription-specific dialogs for linking contacts/deals */}
       {selectedSubscription && (
-        <LinkContactDialog
+        <LinkSubscriptionContactDialog
           open={linkContactOpen}
           onOpenChange={setLinkContactOpen}
-          paymentId={selectedSubscription.linked_payment_id || selectedSubscription.id}
-          rawSource="payments_v2"
-          initialEmail={selectedSubscription.customer_email}
+          subscriptionId={selectedSubscription.id}
+          customerEmail={selectedSubscription.customer_email}
           cardLast4={selectedSubscription.card_last4}
           cardBrand={selectedSubscription.card_brand}
           onSuccess={() => {
@@ -1569,14 +1568,11 @@ export function BepaidSubscriptionsTabContent() {
         />
       )}
 
-      {/* PATCH-T3: Unlink Contact Dialog */}
       {selectedSubscription && selectedSubscription.linked_user_id && (
-        <UnlinkContactDialog
+        <UnlinkSubscriptionContactDialog
           open={unlinkContactOpen}
           onOpenChange={setUnlinkContactOpen}
-          paymentId={selectedSubscription.linked_payment_id || selectedSubscription.id}
-          rawSource="payments_v2"
-          cardLast4={selectedSubscription.card_last4}
+          subscriptionId={selectedSubscription.id}
           profileId={selectedSubscription.linked_user_id}
           profileName={selectedSubscription.linked_profile_name}
           onSuccess={() => {
@@ -1587,13 +1583,11 @@ export function BepaidSubscriptionsTabContent() {
         />
       )}
 
-      {/* PATCH-T3: Link Deal Dialog */}
       {selectedSubscription && (
-        <LinkDealDialog
+        <LinkSubscriptionDealDialog
           open={linkDealOpen}
           onOpenChange={setLinkDealOpen}
-          paymentId={selectedSubscription.linked_payment_id || selectedSubscription.id}
-          rawSource="payments_v2"
+          subscriptionId={selectedSubscription.id}
           amount={selectedSubscription.plan_amount}
           currency={selectedSubscription.plan_currency}
           profileId={selectedSubscription.linked_user_id}
@@ -1605,13 +1599,11 @@ export function BepaidSubscriptionsTabContent() {
         />
       )}
 
-      {/* PATCH-T3: Unlink Deal Dialog */}
       {selectedSubscription && selectedSubscription.linked_order_id && (
-        <UnlinkDealDialog
+        <UnlinkSubscriptionDealDialog
           open={unlinkDealOpen}
           onOpenChange={setUnlinkDealOpen}
-          paymentId={selectedSubscription.linked_payment_id || selectedSubscription.id}
-          rawSource="payments_v2"
+          subscriptionId={selectedSubscription.id}
           orderId={selectedSubscription.linked_order_id}
           orderNumber={selectedSubscription.linked_order_number}
           onSuccess={() => {
