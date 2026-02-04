@@ -27,6 +27,17 @@ export interface LessonFormDataSimple {
   slug: string;
   description?: string;
   thumbnail_url?: string;
+  // Extended fields for universal wizard
+  answer_date?: Date;
+  answer_time?: string;      // "HH:mm"
+  answer_timezone?: string;  // IANA, default "Europe/Minsk"
+  kinescope_url?: string;
+  questions?: Array<{
+    question_number: number;
+    title: string;
+    full_question?: string;
+    timecode?: string;
+  }>;
 }
 
 interface LessonFormFieldsSimpleProps {
