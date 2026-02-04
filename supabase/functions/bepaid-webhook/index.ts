@@ -719,6 +719,331 @@ Deno.serve(async (req) => {
 
     console.log(`Processing bePaid webhook: tracking=${rawTrackingId}, orderId=${orderId}, offerId=${parsedOfferId}, transaction=${transactionUid}, status=${transactionStatus}, subscription=${subscriptionId}, state=${subscriptionState}, isRefund=${isRefundTransaction}`);
 
+    // =====================================================================
+    // PATCH-1: PROVIDER-MANAGED SUBSCRIPTION WEBHOOK HANDLER
+    // Handle subscription webhooks with tracking_id format: subv2:{subscription_v2_id}:order:{order_id}
+    // =====================================================================
+    if (isSubscriptionWebhook && rawTrackingId?.startsWith('subv2:')) {
+      console.log('[WEBHOOK-SUBSCRIPTION] Processing provider-managed subscription webhook');
+      
+      // Parse tracking_id: subv2:{subscription_v2_id}:order:{order_id}
+      const trackingParts = rawTrackingId.match(/^subv2:([^:]+):order:(.+)$/);
+      
+      if (!trackingParts) {
+        console.error('[WEBHOOK-SUBSCRIPTION] Bad tracking_id format:', rawTrackingId);
+        await supabase.from('provider_webhook_orphans').insert({
+          provider: 'bepaid',
+          provider_subscription_id: subscriptionId,
+          provider_payment_id: transactionUid,
+          reason: 'bad_tracking_id',
+          raw_data: body,
+          processed: false,
+        });
+        return new Response(JSON.stringify({ error: 'Bad tracking_id format' }), {
+          status: 400,
+          headers: corsHeaders,
+        });
+      }
+      
+      const subscriptionV2Id = trackingParts[1];
+      const orderV2Id = trackingParts[2];
+      
+      console.log('[WEBHOOK-SUBSCRIPTION] Parsed:', { subscriptionV2Id, orderV2Id, subscriptionState, transactionStatus });
+      
+      // IDEMPOTENCY CHECK: Check if already processed by transaction uid
+      if (transactionUid) {
+        const { data: existingPayment } = await supabase
+          .from('payments_v2')
+          .select('id')
+          .eq('provider_payment_id', transactionUid)
+          .maybeSingle();
+        
+        if (existingPayment) {
+          console.log('[WEBHOOK-SUBSCRIPTION] Already processed (idempotency):', transactionUid);
+          return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+      
+      // Get subscription and order data
+      const { data: subV2, error: subError } = await supabase
+        .from('subscriptions_v2')
+        .select('*, tariffs(id, name, access_days, getcourse_offer_id), products_v2(id, name, code, telegram_club_id)')
+        .eq('id', subscriptionV2Id)
+        .maybeSingle();
+      
+      if (subError || !subV2) {
+        console.error('[WEBHOOK-SUBSCRIPTION] Subscription not found:', subscriptionV2Id);
+        await supabase.from('provider_webhook_orphans').insert({
+          provider: 'bepaid',
+          provider_subscription_id: subscriptionId,
+          provider_payment_id: transactionUid,
+          reason: 'subscription_not_found',
+          raw_data: body,
+          processed: false,
+        });
+        return new Response(JSON.stringify({ error: 'Subscription not found' }), {
+          status: 404,
+          headers: corsHeaders,
+        });
+      }
+      
+      const now = new Date();
+      
+      // Handle based on subscription state
+      if (subscriptionState === 'active' && (transaction?.status === 'successful' || !transaction)) {
+        console.log('[WEBHOOK-SUBSCRIPTION] Processing ACTIVE subscription');
+        
+        // Get order data
+        const { data: orderV2 } = await supabase
+          .from('orders_v2')
+          .select('*')
+          .eq('id', orderV2Id)
+          .maybeSingle();
+        
+        // 1. Update order status to paid
+        if (orderV2 && orderV2.status !== 'paid') {
+          await supabase
+            .from('orders_v2')
+            .update({
+              status: 'paid',
+              paid_amount: transaction?.amount ? transaction.amount / 100 : orderV2.final_price,
+              meta: {
+                ...(orderV2.meta || {}),
+                bepaid_subscription_id: subscriptionId,
+                bepaid_uid: transactionUid,
+              },
+            })
+            .eq('id', orderV2Id);
+          console.log('[WEBHOOK-SUBSCRIPTION] Order updated to paid');
+        }
+        
+        // 2. Update subscription_v2 status to active
+        const accessDays = subV2.tariffs?.access_days || subV2.access_days || 30;
+        const accessEndAt = new Date(now.getTime() + accessDays * 24 * 60 * 60 * 1000);
+        const renewAt = body.renew_at ? new Date(body.renew_at) : accessEndAt;
+        
+        await supabase
+          .from('subscriptions_v2')
+          .update({
+            status: 'active',
+            billing_type: 'provider_managed',
+            access_start_at: now.toISOString(),
+            access_end_at: accessEndAt.toISOString(),
+            next_charge_at: renewAt.toISOString(),
+            auto_renew: true,
+            meta: {
+              ...(subV2.meta || {}),
+              bepaid_subscription_id: subscriptionId,
+              bepaid_activated_at: now.toISOString(),
+            },
+          })
+          .eq('id', subscriptionV2Id);
+        console.log('[WEBHOOK-SUBSCRIPTION] Subscription updated to active, provider_managed');
+        
+        // 3. Update provider_subscriptions state
+        await supabase
+          .from('provider_subscriptions')
+          .update({
+            state: 'active',
+            next_charge_at: renewAt.toISOString(),
+            card_last4: subscription?.card?.last_4 || body.card?.last_4 || null,
+            card_brand: subscription?.card?.brand || body.card?.brand || null,
+          })
+          .eq('provider_subscription_id', subscriptionId);
+        console.log('[WEBHOOK-SUBSCRIPTION] provider_subscriptions updated to active');
+        
+        // 4. Create payments_v2 record
+        const paymentAmount = transaction?.amount ? transaction.amount / 100 : (body.plan?.amount ? body.plan.amount / 100 : 0);
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('user_id', subV2.user_id)
+          .maybeSingle();
+        
+        await supabase
+          .from('payments_v2')
+          .insert({
+            order_id: orderV2Id,
+            user_id: subV2.user_id,
+            profile_id: profile?.id || null,
+            amount: paymentAmount,
+            currency: body.plan?.currency || 'BYN',
+            status: 'succeeded',
+            provider: 'bepaid',
+            provider_payment_id: transactionUid || subscriptionId,
+            card_brand: subscription?.card?.brand || body.card?.brand || null,
+            card_last4: subscription?.card?.last_4 || body.card?.last_4 || null,
+            paid_at: transaction?.paid_at || now.toISOString(),
+            is_recurring: true,
+            meta: {
+              bepaid_subscription_id: subscriptionId,
+              provider_managed: true,
+            },
+          });
+        console.log('[WEBHOOK-SUBSCRIPTION] payments_v2 created');
+        
+        // 5. Create entitlements
+        if (subV2.products_v2?.code) {
+          const productCode = subV2.products_v2.code;
+          const { data: existingEntitlement } = await supabase
+            .from('entitlements')
+            .select('id, expires_at')
+            .eq('user_id', subV2.user_id)
+            .eq('product_code', productCode)
+            .maybeSingle();
+          
+          if (existingEntitlement) {
+            // Extend existing
+            const currentExpires = existingEntitlement.expires_at ? new Date(existingEntitlement.expires_at) : new Date(0);
+            const newExpires = accessEndAt > currentExpires ? accessEndAt : currentExpires;
+            
+            await supabase
+              .from('entitlements')
+              .update({
+                expires_at: newExpires.toISOString(),
+                status: 'active',
+                updated_at: now.toISOString(),
+              })
+              .eq('id', existingEntitlement.id);
+            console.log('[WEBHOOK-SUBSCRIPTION] Entitlement extended');
+          } else {
+            // Create new
+            await supabase
+              .from('entitlements')
+              .insert({
+                user_id: subV2.user_id,
+                profile_id: profile?.id || null,
+                order_id: orderV2Id,
+                product_code: productCode,
+                status: 'active',
+                expires_at: accessEndAt.toISOString(),
+                meta: {
+                  source: 'bepaid_subscription_webhook',
+                  bepaid_subscription_id: subscriptionId,
+                },
+              });
+            console.log('[WEBHOOK-SUBSCRIPTION] Entitlement created');
+          }
+        }
+        
+        // 6. Send notifications
+        try {
+          // Admin notification
+          const productName = subV2.products_v2?.name || 'Подписка';
+          const tariffName = subV2.tariffs?.name || '';
+          const amountFormatted = paymentAmount.toFixed(2);
+          
+          await fetch(
+            `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+              },
+              body: JSON.stringify({
+                message: `💳 Подписка bePaid активирована\n\n📦 Продукт: ${productName}${tariffName ? ` — ${tariffName}` : ''}\n💵 Сумма: ${amountFormatted} BYN\n🔄 Следующее списание: ${renewAt.toLocaleDateString('ru-RU')}\n🆔 bePaid sub: ${subscriptionId}`,
+                source: 'bepaid_subscription_webhook',
+              }),
+            }
+          );
+          console.log('[WEBHOOK-SUBSCRIPTION] Admin notification sent');
+        } catch (notifyErr) {
+          console.error('[WEBHOOK-SUBSCRIPTION] Notification error:', notifyErr);
+        }
+        
+        // 7. Audit log (SYSTEM ACTOR PROOF)
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'bepaid-webhook',
+          action: 'bepaid.subscription.processed',
+          target_user_id: subV2.user_id,
+          meta: {
+            subscription_v2_id: subscriptionV2Id,
+            order_id: orderV2Id,
+            provider_subscription_id: subscriptionId,
+            event: 'activated',
+            state: subscriptionState,
+            last_tx_uid: transactionUid,
+          },
+        });
+        
+        return new Response(JSON.stringify({ 
+          ok: true, 
+          mode: 'provider_managed_subscription', 
+          status: 'activated',
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+        
+      } else if (subscriptionState === 'canceled' || subscriptionState === 'expired') {
+        console.log('[WEBHOOK-SUBSCRIPTION] Processing CANCELED/EXPIRED subscription');
+        
+        // Update provider_subscriptions state
+        await supabase
+          .from('provider_subscriptions')
+          .update({
+            state: 'canceled',
+          })
+          .eq('provider_subscription_id', subscriptionId);
+        
+        // Disable auto_renew but DON'T revoke access retroactively
+        await supabase
+          .from('subscriptions_v2')
+          .update({
+            auto_renew: false,
+            meta: {
+              ...(subV2.meta || {}),
+              bepaid_canceled_at: now.toISOString(),
+            },
+          })
+          .eq('id', subscriptionV2Id);
+        
+        // Audit log
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'bepaid-webhook',
+          action: 'bepaid.subscription.canceled',
+          target_user_id: subV2.user_id,
+          meta: {
+            subscription_v2_id: subscriptionV2Id,
+            provider_subscription_id: subscriptionId,
+            state: subscriptionState,
+          },
+        });
+        
+        return new Response(JSON.stringify({ 
+          ok: true, 
+          mode: 'provider_managed_subscription', 
+          status: 'canceled',
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      
+      // Unknown state - log for investigation
+      console.warn('[WEBHOOK-SUBSCRIPTION] Unknown subscription state:', subscriptionState);
+      await supabase.from('provider_webhook_orphans').insert({
+        provider: 'bepaid',
+        provider_subscription_id: subscriptionId,
+        provider_payment_id: transactionUid,
+        reason: 'unknown_state',
+        raw_data: body,
+        processed: false,
+      });
+      
+      return new Response(JSON.stringify({ ok: true, status: 'unknown_state' }), {
+        headers: corsHeaders,
+      });
+    }
+    
+    // End of PATCH-1 provider-managed subscription handler
+    // =====================================================================
+
     // ---------------------------------------------------------------------
     // V2 direct-charge support
     // In direct-charge we send tracking_id = payments_v2.id (UUID).
