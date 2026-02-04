@@ -110,12 +110,33 @@ Deno.serve(async (req) => {
     let profileId: string | null = null;
 
     if (!userId) {
-      // PATCH-2: Use profiles table instead of listUsers() (faster, no memory issues)
-      const { data: profileByEmail } = await supabase
+      // PATCH-2: Use profiles table instead of listUsers() + handle email collisions
+      const { data: profilesByEmail, error: profilesError } = await supabase
         .from('profiles')
         .select('user_id, id')
-        .ilike('email', customerEmail.trim())
-        .maybeSingle();
+        .ilike('email', customerEmail.trim());
+
+      if (profilesError) {
+        console.error('[bepaid-sub-checkout] Profiles lookup failed:', profilesError);
+        return new Response(JSON.stringify({ error: 'profiles lookup failed' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // PATCH-2: Email collision → 409 + stop (no auto-creation)
+      if (profilesByEmail && profilesByEmail.length > 1) {
+        console.error('[bepaid-sub-checkout] Multiple profiles found for email, stopping');
+        return new Response(JSON.stringify({
+          error: 'Multiple profiles found for this email. Please contact support.',
+          code: 'EMAIL_COLLISION',
+        }), {
+          status: 409,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const profileByEmail = profilesByEmail?.[0] || null;
 
       if (profileByEmail?.user_id) {
         userId = profileByEmail.user_id;
