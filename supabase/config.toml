@@ -323,3 +323,6 @@ verify_jwt = false
 
 [functions.telegram-admin-chat]
 verify_jwt = false
+
+[functions.admin-import-bepaid-statement-csv]
+verify_jwt = false
