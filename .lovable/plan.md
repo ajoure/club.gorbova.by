@@ -1,188 +1,186 @@
+# Edge Functions Mass Deployment Fix: TIER-1 Critical Functions (v2)
 
-Stabilization PATCH v2.1: Messages Fix + Security DoD Completion
+## ЖЁСТКИЕ ПРАВИЛА ИСПОЛНЕНИЯ
+1) Ничего не ломать и не трогать лишнее. Только заявленный скоуп.  
+2) Add-only где возможно; удаления — только для явных дублей.  
+3) DRY-RUN → EXECUTE. STOP если любой шаг даёт регрессию.  
+4) Никаких хардкод-UUID.  
+5) STOP-предохранители: если после деплоя функция всё ещё 404/таймаут/ошибка бандла — STOP и отчёт.  
+6) Безопасность: `verify_jwt=false` допустимо только при ручном auth guard (anon → getUser → role/permission).  
+7) Финальный отчёт: изменённые файлы + diff-summary + DoD пруфы (Network/response).  
 
-Summary
+---
 
-Обнаружены две проблемы:
-	1.	Сообщения не видны: Edge function telegram-admin-chat не была задеплоена (возвращала 404)
-	2.	DoD неполный: Отсутствовали подтверждённые пруфы 401/403 для неавторизованных и не-админ запросов (из-за автоподстановки Authorization в dev-инструментах)
+## Executive Summary
 
-⸻
+**Root Cause:** функции зарегистрированы/существуют в репо, но **фактически не оказываются в проде**, потому что CI **скрывает ошибки деплоя** (`|| echo Warning`) и продолжает пайплайн.
 
-ISSUE-1: Messages Not Visible (FIXED)
+**Project integrity:** целевой проект один — `hdjgkjceownmmnrqqtuz`.
 
-Root Cause
+---
 
-Edge function telegram-admin-chat была зарегистрирована в supabase/config.toml (строки 324–325), но не была задеплоена на production. При вызове возвращала 404:
+## PATCH-0 (DRY-RUN): Подтвердить “что ломается” по фактам
 
-supabase-edge-functions http error: status code 404
-{"code":"NOT_FOUND","message":"Requested function was not found"}
+1) В DevTools → Network на UI:
+- "Проверка карт" → запрос `/functions/v1/payment-method-verify-recurring` (статус/тело)
+- "Подписки bePaid" → запрос `/functions/v1/bepaid-list-subscriptions`
+- "Детали подписки" → запрос `/functions/v1/bepaid-get-subscription-details`
 
-Resolution
+2) Для каждой ошибки фиксируем:
+- Request URL
+- Status code
+- Response body (если есть)
 
-Функция telegram-admin-chat задеплоена в production.
+**STOP:** если endpoint не `/hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/...` — сначала чинить ENV/URL, иначе дальнейшие шаги бессмысленны.
 
-DoD (обязательные пруфы)
-	1.	DevTools → Network
-	•	URL: /functions/v1/telegram-admin-chat
-	•	Status: 200
-	•	Response: JSON со списком сообщений (достаточно snippet)
-	2.	UI
-	•	/admin/communication
-	•	После refresh сообщения отображаются в правой панели
+---
 
-⸻
+## PATCH-1 (BLOCKER): Register missing function in config.toml
 
-ISSUE-2: Security DoD Completion
+Файл: `supabase/config.toml`
 
-Current State (Already Implemented)
+Добавить:
+```toml
+[functions.bepaid-get-subscription-details]
+verify_jwt = false
 
-Все критичные функции имеют корректные auth guards:
-
-Function	Guard Type	Implementation
-telegram-grant-access	JWT + Permission	Bearer → supabaseAuth(anon).auth.getUser() → has_permission('entitlements.manage') / has_role('admin'/'superadmin')
-telegram-revoke-access	JWT + Permission	Идентичный паттерн
-bepaid-auto-process	Internal Key	Header x-internal-key → CRON_SECRET
-
-Verification Tests Performed (Admin)
-
-Function	Test Case	Result
-telegram-grant-access	POST с superadmin	400 user_id required (auth прошёл, бизнес-ошибка)
-telegram-revoke-access	POST с superadmin	400 (аналогично)
-bepaid-auto-process	POST без ключа	403 INVALID_INTERNAL_KEY
-
+Guard check: если у bepaid-get-subscription-details нет ручного auth guard — либо добавить, либо поставить verify_jwt=true.
+(по умолчанию оставляем false как в плане, но обязателен аудит guard перед деплоем)
 
 ⸻
 
-Missing Proofs (DoD Gap)
+PATCH-2 (CRITICAL): Fix role name mismatch in payment-method-verify-recurring
 
-Dev-инструменты (supabase--curl_edge_functions, invoke) автоматически добавляют Authorization текущего пользователя, поэтому 401/403 нельзя проверить этим способом.
+Файл: supabase/functions/payment-method-verify-recurring/index.ts
+
+Заменить:
+
+// BEFORE
+.rpc('has_role', { _user_id: user.id, _role: 'super_admin' });
+
+// AFTER
+.rpc('has_role', { _user_id: user.id, _role: 'superadmin' });
+
 
 ⸻
 
-Implementation Plan
+PATCH-3 (MEDIUM): CORS Allow-Methods (preflight + browser stability)
 
-STEP-1: UI Verification (no code changes)
-	1.	Открыть /admin/communication
-	2.	Выбрать любой диалог
-	3.	Убедиться, что сообщения загружаются
-	4.	Зафиксировать Network-пруф (telegram-admin-chat, status 200)
+Файл: supabase/functions/payment-method-verify-recurring/index.ts
 
-⸻
+Привести corsHeaders к стандарту:
 
-STEP-2: Manual Security Matrix Verification
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret, x-internal-key, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
-(выполнять из DevTools Console браузера, не через Lovable)
+И убедиться, что есть preflight handler:
 
-Helper: универсально получить JWT (Supabase v2)
-
-function getSupabaseAccessToken() {
-  const storages = [localStorage, sessionStorage];
-  for (const s of storages) {
-    for (const k of Object.keys(s)) {
-      if (k.includes('-auth-token')) {
-        try {
-          const obj = JSON.parse(s.getItem(k));
-          const token =
-            obj?.access_token ||
-            obj?.currentSession?.access_token ||
-            obj?.data?.session?.access_token;
-          if (token) return token;
-        } catch {}
-      }
-    }
-  }
-  return null;
+if (req.method === "OPTIONS") {
+  return new Response(null, { headers: corsHeaders });
 }
 
 
 ⸻
 
-Test-1: 401 без токена
+PATCH-4 (BLOCKER): Deploy TIER-1 functions (по одной, со STOP-guard)
 
-fetch("https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/telegram-grant-access", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({})
-}).then(async r => console.log({ status: r.status, body: await r.text() }))
+Деплоим строго по одной функции, сразу проверяем, что это НЕ “Requested function was not found”:
+	1.	payment-method-verify-recurring
+	2.	bepaid-list-subscriptions
+	3.	bepaid-get-subscription-details
+	4.	bepaid-create-token
+	5.	admin-payments-diagnostics
+	6.	integration-healthcheck
 
-Expected:
-401
-{"error":"Unauthorized","code":"MISSING_TOKEN"}
-
-⸻
-
-Test-2: 403 для не-админа
-
-const jwt = getSupabaseAccessToken();
-
-fetch("https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/telegram-grant-access", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${jwt}`
-  },
-  body: JSON.stringify({})
-}).then(async r => console.log({ status: r.status, body: await r.text() }))
-
-Expected:
-403
-{"error":"Forbidden","code":"INSUFFICIENT_PERMISSIONS"}
-
-(повторить аналогично для telegram-revoke-access)
+STOP-guard после каждого деплоя:
+	•	если ответ всё ещё {"code":"NOT_FOUND","message":"Requested function was not found"} → STOP
+	•	если bundle timeout → STOP и отдельный PATCH на облегчение imports/shared
+	•	если 401/403/400 — это ОК (функция существует), дальше разбираем guard/параметры
 
 ⸻
 
-Test-3: bepaid-auto-process internal guard
+PATCH-5 (CRITICAL): Harden CI pipeline (убрать “тихие” провалы деплоя)
 
-fetch("https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/bepaid-auto-process", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({})
-}).then(async r => console.log({ status: r.status, body: await r.text() }))
+Файл: .github/workflows/deploy-functions.yml
 
-Expected:
-403
-{"error":"Forbidden","code":"INVALID_INTERNAL_KEY"}
+Запрещаем “continue on error”. Деплой обязан падать, если хоть одна функция не задеплоилась.
+
+Заменить:
+
+# BEFORE
+supabase functions deploy "$func_name" || echo "Warning: Failed..."
+
+На:
+
+# AFTER
+supabase functions deploy "$func_name"
+
+Дополнение (рекомендация, без расширения скоупа логики)
+	•	Включить явный вывод имени функции перед деплоем:
+
+echo "Deploying function: $func_name"
+supabase functions deploy "$func_name"
+
+
+⸻
+
+Current Status Matrix (обновить по факту после STEP-0)
+
+Function	config.toml	Deployed	UI Broken
+payment-method-verify-recurring	Yes	?	Проверка карт
+bepaid-list-subscriptions	Yes	?	Подписки bePaid
+bepaid-get-subscription-details	No → FIX	?	Детали подписки
+bepaid-create-token	Yes	?	Оплата
+admin-payments-diagnostics	Yes	?	Диагностика
+integration-healthcheck	Yes	?	Healthcheck
+
+
+⸻
+
+DoD Checklist (пруфы обязательны)
+
+Existence / Deployment
+	•	payment-method-verify-recurring отвечает НЕ NOT_FOUND (любой из: 200/400/401/403)
+	•	bepaid-list-subscriptions отвечает НЕ NOT_FOUND
+	•	bepaid-get-subscription-details отвечает НЕ NOT_FOUND
+	•	bepaid-create-token отвечает НЕ NOT_FOUND
+
+Security / Auth correctness
+	•	роль: проверка superadmin реально работает (нет super_admin)
+	•	CORS: OPTIONS preflight возвращает headers с Access-Control-Allow-Methods: POST, OPTIONS
+
+UI
+	•	“Проверка карт” — нет “Failed to send a request…”
+	•	“Подписки bePaid” — список грузится (или показывает уже бизнес-ошибку, но не 404/Load failed)
+
+CI
+	•	пайплайн падает на ошибке деплоя (нет silent ignore)
 
 ⸻
 
 Technical Details
 
-Files Already Modified
+Files to Modify
 
 File	Changes
-supabase/functions/telegram-grant-access/index.ts	JWT + permission guard
-supabase/functions/telegram-revoke-access/index.ts	JWT + permission guard
-supabase/functions/bepaid-auto-process/index.ts	Internal key guard (CRON_SECRET)
-.github/workflows/deploy-functions.yml	Убран --no-verify-jwt
+supabase/config.toml	добавить [functions.bepaid-get-subscription-details]
+supabase/functions/payment-method-verify-recurring/index.ts	super_admin→superadmin, CORS Allow-Methods + OPTIONS
+.github/workflows/deploy-functions.yml	убрать `
 
-Edge Function Deployed
-
-Function	Status
-telegram-admin-chat	Deployed, 200 OK
-
-
-⸻
-
-DoD Checklist
-
-Check	Status
-Messages visible in /admin/communication	⬜ Pending UI proof
-telegram-grant-access → 401 без токена	⬜ Pending manual test
-telegram-grant-access → 403 не-админ	⬜ Pending manual test
-telegram-revoke-access → 401 / 403	⬜ Pending manual test
-telegram-grant-access → admin	✅ Verified (400 business error)
-bepaid-auto-process → без ключа	✅ Verified (403)
-CI: correct project-ref, no --no-verify-jwt	✅ Verified
-CORS: POST, OPTIONS	✅ Verified
-
+Functions to Deploy (TIER-1)
+	1.	payment-method-verify-recurring
+	2.	bepaid-list-subscriptions
+	3.	bepaid-get-subscription-details
+	4.	bepaid-create-token
+	5.	admin-payments-diagnostics
+	6.	integration-healthcheck
 
 ⸻
 
-Next Steps
-	1.	Проверить UI /admin/communication
-	2.	Выполнить manual security tests из DevTools
-	3.	Зафиксировать Network-скриншоты (status + body)
-	4.	Закрыть PATCH после пруфов
+Risk Assessment
+	•	Low/Medium: изменения точечные, но CI change влияет на процесс (это правильно: лучше падать, чем молча “успешно”).
+	•	Reversible: всё откатывается re-deploy’ем и revert коммитов.
 
