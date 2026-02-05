@@ -125,15 +125,16 @@ export function useTrainingLessons(moduleId?: string) {
       const lessonsWithScheduleFlag = enrichedLessons
         // Filter: admin sees all, user sees only is_active=true
         .filter(lesson => isAdminUser || lesson.is_active)
-        // Filter: admin sees all, user doesn't see future published_at
-        .filter(lesson => isAdminUser || !lesson.published_at || new Date(lesson.published_at) <= now)
-        .map(lesson => ({
-          ...lesson,
-          // isScheduled flag for UI badge (only for non-admins with future date)
-          isScheduled: !isAdminUser && lesson.published_at 
-            ? new Date(lesson.published_at) > now 
-            : false,
-        }));
+        // НЕ фильтруем по published_at — урок показываем, но с флагом isScheduled
+        .map(lesson => {
+          const publishedAt = lesson.published_at ? new Date(lesson.published_at) : null;
+          const isScheduled = publishedAt && publishedAt > now;
+          return {
+            ...lesson,
+            // isScheduled = true для уроков с будущей датой (показываем "Скоро")
+            isScheduled: Boolean(isScheduled),
+          };
+        });
 
       setLessons(lessonsWithScheduleFlag);
     } catch (error) {
