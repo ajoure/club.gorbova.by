@@ -1,19 +1,16 @@
 import { useMemo } from "react";
 import { CheckCircle2, XCircle, RotateCcw, Percent, TrendingUp, Loader2, Clock } from "lucide-react";
-import { UnifiedPayment } from "@/hooks/useUnifiedPayments";
-import { classifyPayment } from "@/lib/paymentClassification";
+import { usePaymentsServerStats } from "@/hooks/usePaymentsServerStats";
 import { cn } from "@/lib/utils";
 
 // Payment filter types - PATCH-C3: Added 'processing'
 export type StatsFilterType = 'successful' | 'refunded' | 'cancelled' | 'failed' | 'processing' | null;
 
 interface PaymentsStatsPanelProps {
-  payments: UnifiedPayment[];
-  isLoading?: boolean;
-  dateRange?: { from: string; to?: string | null };
+  dateRange: { from: string; to?: string };
+  isTableLoading?: boolean;
   activeFilter?: StatsFilterType;
   onFilterChange?: (filter: StatsFilterType) => void;
-  totalUnfilteredCount?: number; // PATCH-2: Shows "X of Y" context
 }
 
 interface StatCardProps {
@@ -107,93 +104,48 @@ function StatCard({
 }
 
 export default function PaymentsStatsPanel({ 
-  payments, 
-  isLoading, 
   dateRange,
+  isTableLoading,
   activeFilter,
   onFilterChange,
-  totalUnfilteredCount, // PATCH-2
 }: PaymentsStatsPanelProps) {
+  // Fetch server-side stats for the entire date range
+  const { data: serverStats, isLoading: statsLoading } = usePaymentsServerStats(dateRange);
+  
+  const isLoading = isTableLoading || statsLoading;
+  
   const stats = useMemo(() => {
-    if (!payments || payments.length === 0) {
+    if (!serverStats) {
       return {
         successful: { count: 0, amount: 0 },
         refunded: { count: 0, amount: 0 },
         failed: { count: 0, amount: 0 },
         cancelled: { count: 0, amount: 0 },
-        processing: { count: 0, amount: 0 }, // PATCH-C3: Added processing stats
+        processing: { count: 0, amount: 0 },
         fees: { amount: 0, percent: 0 },
         netRevenue: 0,
       };
     }
-
-    let successfulCount = 0;
-    let successfulAmount = 0;
-    let refundedCount = 0;
-    let refundedAmount = 0;
-    let failedCount = 0;
-    let failedAmount = 0;
-    let cancelledCount = 0;
-    let cancelledAmount = 0;
-    let processingCount = 0; // PATCH-C3
-    let processingAmount = 0; // PATCH-C3
-    let totalFees = 0;
-
-    for (const p of payments) {
-      const category = classifyPayment(p.status_normalized, p.transaction_type, p.amount);
-      const absAmount = Math.abs(p.amount || 0);
-      // Extract real commission from meta (synced from bePaid statement)
-      const realFee = (p as any).commission_total || 0;
-      
-      // PATCH-C3: Handle processing/pending as separate category
-      const isProcessing = ['processing', 'pending', 'incomplete', 'pending_3ds'].includes(p.status_normalized || '');
-      if (isProcessing) {
-        processingCount++;
-        processingAmount += absAmount;
-        continue; // Don't classify as failed
-      }
-      
-      switch (category) {
-        case 'successful':
-          successfulCount++;
-          successfulAmount += absAmount;
-          totalFees += realFee;
-          break;
-        case 'refunded':
-          refundedCount++;
-          refundedAmount += absAmount;
-          break;
-        case 'failed':
-          failedCount++;
-          failedAmount += absAmount;
-          break;
-        case 'cancelled':
-          cancelledCount++;
-          cancelledAmount += absAmount;
-          break;
-      }
-    }
-
-    // Use real fees from bePaid statement (no fallback to estimated %)
-    const estimatedFees = totalFees;
     
-    const feePercent = successfulAmount > 0 
-      ? (estimatedFees / successfulAmount) * 100 
+    const feePercent = serverStats.successful_amount > 0 
+      ? (serverStats.commission_total / serverStats.successful_amount) * 100 
       : 0;
 
-    // Чистая выручка = Успешные - Возвраты - Комиссия
-    const netRevenue = successfulAmount - refundedAmount - estimatedFees;
+    // Net revenue = Successful - Refunds - Commission
+    const netRevenue = serverStats.successful_amount 
+      - serverStats.refunded_amount 
+      - serverStats.commission_total;
 
     return {
-      successful: { count: successfulCount, amount: successfulAmount },
-      refunded: { count: refundedCount, amount: refundedAmount },
-      failed: { count: failedCount, amount: failedAmount },
-      cancelled: { count: cancelledCount, amount: cancelledAmount },
-      processing: { count: processingCount, amount: processingAmount }, // PATCH-C3
-      fees: { amount: estimatedFees, percent: feePercent },
+      successful: { count: serverStats.successful_count, amount: serverStats.successful_amount },
+      refunded: { count: serverStats.refunded_count, amount: serverStats.refunded_amount },
+      failed: { count: serverStats.failed_count, amount: serverStats.failed_amount },
+      cancelled: { count: serverStats.cancelled_count, amount: serverStats.cancelled_amount },
+      processing: { count: serverStats.processing_count, amount: serverStats.processing_amount },
+      fees: { amount: serverStats.commission_total, percent: feePercent },
       netRevenue,
     };
-  }, [payments]);
+  }, [serverStats]);
 
   const handleFilterClick = (filterKey: StatsFilterType) => {
     if (!onFilterChange) return;

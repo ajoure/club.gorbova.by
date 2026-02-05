@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Label } from "@/components/ui/label";
-import { format, startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter, subQuarters, startOfYear, endOfYear, subYears, parseISO } from "date-fns";
+import { format, startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter, subQuarters, startOfYear, endOfYear, subYears, parseISO, subDays, startOfWeek, endOfWeek, subWeeks } from "date-fns";
 import { ru } from "date-fns/locale";
 import { toZonedTime } from "date-fns-tz";
 
@@ -24,7 +24,7 @@ interface PeriodSelectorProps {
   align?: "start" | "center" | "end";
 }
 
-type PresetKey = 'allTime' | 'thisMonth' | 'lastMonth' | 'thisQuarter' | 'lastQuarter' | 'thisYear' | 'lastYear' | 'custom';
+type PresetKey = 'allTime' | 'today' | 'yesterday' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'thisQuarter' | 'lastQuarter' | 'thisYear' | 'lastYear' | 'custom';
 
 interface Preset {
   key: PresetKey;
@@ -45,6 +45,46 @@ const presets: Preset[] = [
       from: '2020-01-01',
       to: format(getNowMinsk(), 'yyyy-MM-dd'),
     }),
+  },
+  {
+    key: 'today',
+    label: 'Сегодня',
+    getRange: () => {
+      const nowMinsk = getNowMinsk();
+      const today = format(nowMinsk, 'yyyy-MM-dd');
+      return { from: today, to: today };
+    },
+  },
+  {
+    key: 'yesterday',
+    label: 'Вчера',
+    getRange: () => {
+      const yesterday = subDays(getNowMinsk(), 1);
+      const date = format(yesterday, 'yyyy-MM-dd');
+      return { from: date, to: date };
+    },
+  },
+  {
+    key: 'thisWeek',
+    label: 'Эта неделя',
+    getRange: () => {
+      const nowMinsk = getNowMinsk();
+      return {
+        from: format(startOfWeek(nowMinsk, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
+        to: format(endOfWeek(nowMinsk, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
+      };
+    },
+  },
+  {
+    key: 'lastWeek',
+    label: 'Прошлая неделя',
+    getRange: () => {
+      const lastWeek = subWeeks(getNowMinsk(), 1);
+      return {
+        from: format(startOfWeek(lastWeek, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
+        to: format(endOfWeek(lastWeek, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
+      };
+    },
   },
   {
     key: 'thisMonth',
