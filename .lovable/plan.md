@@ -1,125 +1,188 @@
-# Stabilization PATCH: Edge Functions Security + CORS — COMPLETED
 
-## Summary
+Stabilization PATCH v2.1: Messages Fix + Security DoD Completion
 
-Выполнена стабилизация Edge Functions согласно PATCH-плану от 2026-02-05.
+Summary
 
----
+Обнаружены две проблемы:
+	1.	Сообщения не видны: Edge function telegram-admin-chat не была задеплоена (возвращала 404)
+	2.	DoD неполный: Отсутствовали подтверждённые пруфы 401/403 для неавторизованных и не-админ запросов (из-за автоподстановки Authorization в dev-инструментах)
 
-## PATCH-0: CI/CD — COMPLETED ✅
+⸻
 
-**Файл:** `.github/workflows/deploy-functions.yml`
+ISSUE-1: Messages Not Visible (FIXED)
 
-**Изменения:**
-- Убран глобальный `--no-verify-jwt` из массового деплоя
-- Добавлена логика деплоя только изменённых функций
-- `project-ref` = `hdjgkjceownmmnrqqtuz` подтверждён
+Root Cause
 
----
+Edge function telegram-admin-chat была зарегистрирована в supabase/config.toml (строки 324–325), но не была задеплоена на production. При вызове возвращала 404:
 
-## PATCH-1: Security Guards — COMPLETED ✅
+supabase-edge-functions http error: status code 404
+{"code":"NOT_FOUND","message":"Requested function was not found"}
 
-### telegram-grant-access
+Resolution
 
-**Добавлено:**
-- Auth guard с проверкой `Bearer` токена
-- Валидация через `supabaseAuth.auth.getUser(token)` (anon key)
-- Проверка прав `entitlements.manage` или роли `admin`/`superadmin`
-- CORS: добавлен `Access-Control-Allow-Methods: POST, OPTIONS`
+Функция telegram-admin-chat задеплоена в production.
 
-**Верификация:**
-- Без токена → 401 Unauthorized
-- С токеном не-админа → 403 Forbidden  
-- С токеном админа → 400 "user_id required" (бизнес-ошибка = auth прошёл)
+DoD (обязательные пруфы)
+	1.	DevTools → Network
+	•	URL: /functions/v1/telegram-admin-chat
+	•	Status: 200
+	•	Response: JSON со списком сообщений (достаточно snippet)
+	2.	UI
+	•	/admin/communication
+	•	После refresh сообщения отображаются в правой панели
 
-### telegram-revoke-access
+⸻
 
-**Добавлено:**
-- Аналогичный auth guard
-- CORS: добавлен `Access-Control-Allow-Methods`
+ISSUE-2: Security DoD Completion
 
-**Верификация:** Аналогично `telegram-grant-access`
+Current State (Already Implemented)
 
----
+Все критичные функции имеют корректные auth guards:
 
-## PATCH-2: bepaid-auto-process Internal Guard — COMPLETED ✅
+Function	Guard Type	Implementation
+telegram-grant-access	JWT + Permission	Bearer → supabaseAuth(anon).auth.getUser() → has_permission('entitlements.manage') / has_role('admin'/'superadmin')
+telegram-revoke-access	JWT + Permission	Идентичный паттерн
+bepaid-auto-process	Internal Key	Header x-internal-key → CRON_SECRET
 
-**Добавлено:**
-- Проверка заголовка `x-internal-key` против `CRON_SECRET`
-- Без ключа → 403 "INVALID_INTERNAL_KEY"
-- CORS: добавлен `x-internal-key` в `Access-Control-Allow-Headers`
+Verification Tests Performed (Admin)
 
-**Верификация:**
-```
-POST /bepaid-auto-process без x-internal-key
-→ 403 {"error":"Forbidden","code":"INVALID_INTERNAL_KEY"}
-```
+Function	Test Case	Result
+telegram-grant-access	POST с superadmin	400 user_id required (auth прошёл, бизнес-ошибка)
+telegram-revoke-access	POST с superadmin	400 (аналогично)
+bepaid-auto-process	POST без ключа	403 INVALID_INTERNAL_KEY
 
----
 
-## PATCH-3: CORS — COMPLETED ✅
+⸻
 
-Во все три функции добавлен `Access-Control-Allow-Methods: POST, OPTIONS`.
+Missing Proofs (DoD Gap)
 
----
+Dev-инструменты (supabase--curl_edge_functions, invoke) автоматически добавляют Authorization текущего пользователя, поэтому 401/403 нельзя проверить этим способом.
 
-## PATCH-4: Anti-esm.sh
+⸻
 
-**Статус:** В deno.json есть import map, который перехватывает esm.sh → npm:
+Implementation Plan
 
-```json
-{
-  "imports": {
-    "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
-    "https://esm.sh/@supabase/supabase-js@2": "npm:@supabase/supabase-js@2",
-    "https://esm.sh/@supabase/supabase-js@2.49.1": "npm:@supabase/supabase-js@2"
+STEP-1: UI Verification (no code changes)
+	1.	Открыть /admin/communication
+	2.	Выбрать любой диалог
+	3.	Убедиться, что сообщения загружаются
+	4.	Зафиксировать Network-пруф (telegram-admin-chat, status 200)
+
+⸻
+
+STEP-2: Manual Security Matrix Verification
+
+(выполнять из DevTools Console браузера, не через Lovable)
+
+Helper: универсально получить JWT (Supabase v2)
+
+function getSupabaseAccessToken() {
+  const storages = [localStorage, sessionStorage];
+  for (const s of storages) {
+    for (const k of Object.keys(s)) {
+      if (k.includes('-auth-token')) {
+        try {
+          const obj = JSON.parse(s.getItem(k));
+          const token =
+            obj?.access_token ||
+            obj?.currentSession?.access_token ||
+            obj?.data?.session?.access_token;
+          if (token) return token;
+        } catch {}
+      }
+    }
   }
+  return null;
 }
-```
 
-107 файлов всё ещё содержат прямые импорты, но import map их перехватывает на этапе бандлинга.
 
----
+⸻
 
-## DoD Verification — COMPLETED ✅
+Test-1: 401 без токена
 
-| Check | Expected | Result |
-|-------|----------|--------|
-| `telegram-grant-access` без токена | 401 | ✅ (curl с пустым auth → auth guard работает) |
-| `telegram-grant-access` админ | 200/400 | ✅ 400 "user_id required" |
-| `telegram-revoke-access` админ | 200/400 | ✅ 400 "user_id/telegram_user_id required" |
-| `bepaid-auto-process` без ключа | 403 | ✅ 403 "INVALID_INTERNAL_KEY" |
-| CI workflow | no --no-verify-jwt | ✅ Удалён |
+fetch("https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/telegram-grant-access", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({})
+}).then(async r => console.log({ status: r.status, body: await r.text() }))
 
----
+Expected:
+401
+{"error":"Unauthorized","code":"MISSING_TOKEN"}
 
-## Changed Files
+⸻
 
-| File | Changes |
-|------|---------|
-| `.github/workflows/deploy-functions.yml` | Убран `--no-verify-jwt`, добавлена логика changed-only |
-| `supabase/functions/telegram-grant-access/index.ts` | +50 lines auth guard, +CORS methods |
-| `supabase/functions/telegram-revoke-access/index.ts` | +50 lines auth guard, +CORS methods |
-| `supabase/functions/bepaid-auto-process/index.ts` | +20 lines internal key guard, +CORS headers |
+Test-2: 403 для не-админа
 
----
+const jwt = getSupabaseAccessToken();
 
-## Edge Function Logs (Proof)
+fetch("https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/telegram-grant-access", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${jwt}`
+  },
+  body: JSON.stringify({})
+}).then(async r => console.log({ status: r.status, body: await r.text() }))
 
-### bepaid-auto-process
-```
-2026-02-05T23:08:03Z WARNING [bepaid-auto-process] Forbidden: invalid or missing x-internal-key
-```
+Expected:
+403
+{"error":"Forbidden","code":"INSUFFICIENT_PERMISSIONS"}
 
-### telegram-grant-access  
-```
-2026-02-05T23:08:01Z INFO Grant access request: {}
-```
-(Запрос дошёл до бизнес-логики = auth прошёл для super_admin)
+(повторить аналогично для telegram-revoke-access)
 
----
+⸻
 
-## Next Steps (Optional)
+Test-3: bepaid-auto-process internal guard
 
-1. Постепенная замена esm.sh → npm: в 107 файлах (низкий приоритет)
-2. UI-тест под 7500084@gmail.com на отсутствие "Load failed"
+fetch("https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/bepaid-auto-process", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({})
+}).then(async r => console.log({ status: r.status, body: await r.text() }))
+
+Expected:
+403
+{"error":"Forbidden","code":"INVALID_INTERNAL_KEY"}
+
+⸻
+
+Technical Details
+
+Files Already Modified
+
+File	Changes
+supabase/functions/telegram-grant-access/index.ts	JWT + permission guard
+supabase/functions/telegram-revoke-access/index.ts	JWT + permission guard
+supabase/functions/bepaid-auto-process/index.ts	Internal key guard (CRON_SECRET)
+.github/workflows/deploy-functions.yml	Убран --no-verify-jwt
+
+Edge Function Deployed
+
+Function	Status
+telegram-admin-chat	Deployed, 200 OK
+
+
+⸻
+
+DoD Checklist
+
+Check	Status
+Messages visible in /admin/communication	⬜ Pending UI proof
+telegram-grant-access → 401 без токена	⬜ Pending manual test
+telegram-grant-access → 403 не-админ	⬜ Pending manual test
+telegram-revoke-access → 401 / 403	⬜ Pending manual test
+telegram-grant-access → admin	✅ Verified (400 business error)
+bepaid-auto-process → без ключа	✅ Verified (403)
+CI: correct project-ref, no --no-verify-jwt	✅ Verified
+CORS: POST, OPTIONS	✅ Verified
+
+
+⸻
+
+Next Steps
+	1.	Проверить UI /admin/communication
+	2.	Выполнить manual security tests из DevTools
+	3.	Зафиксировать Network-скриншоты (status + body)
+	4.	Закрыть PATCH после пруфов
+
