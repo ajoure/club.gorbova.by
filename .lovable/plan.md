@@ -1,166 +1,202 @@
+ЖЁСТКИЕ ПРАВИЛА ИСПОЛНЕНИЯ ДЛЯ LOVABLE.DEV (ОБЯЗАТЕЛЬНО)
+1) Ничего не ломать и не трогать лишнее. Только по пунктам ниже.
+2) Add-only где возможно; если нужно удалить — удалять только явно указанное.
+3) Dry-run → Execute: сначала показать, что будет изменено (какие файлы/строки/компоненты), потом вносить правки.
+4) Никаких хардкод-UUID. Идентификация только по slug/product_code/логическим ключам.
+5) STOP-guards: при отсутствии данных (module not found, user null) — безопасный fallback без краша.
+6) Без PII в логах: не логировать email/телефоны/ответы пользователя. Допустимо: module.slug, lesson.id, user_id (обрезать).
+7) Финальный отчёт DoD: скрины UI + список изменённых файлов + diff-summary + проверочные кейсы из DoD.
 
-# План: Исправление ошибки "removeChild" при переходе между шагами квеста
+СПРИНТ: /products — логика “Все продукты” vs “Моя библиотека” + admin always-sees-all
 
-## Диагноз проблемы
+ЦЕЛЬ:
+1) “Все продукты” = витрина (только ProductCard со ссылками на лендинги), без ModuleCard.
+2) “Моя библиотека” = библиотека обучения (ModuleCard), но только те модули, к которым есть доступ (has_access=true).
+3) Админ видит ВСЁ всегда: все модули в библиотеке и все продукты в витрине (без ограничений), независимо от покупок.
+4) Никаких дублей “Бухгалтерия как бизнес”. Источник данных обучения — ТОЛЬКО реальный модуль из БД (через админку).
 
-При клике на "Я просмотрел видео" или "Перейти к следующему шагу" возникает критическая ошибка:
+------------------------------------------------------------
+PATCH-1 (BLOCKER): Admin bypass — единый источник правды в useTrainingModules
+------------------------------------------------------------
+ПРОБЛЕМА:
+Сейчас “админ видит всё” реализуется кусочно на страницах. Нужно сделать это на уровне hook-а, который отдаёт modules[].
 
-```
-NotFoundError: Failed to execute 'removeChild' on 'Node': 
-The node to be removed is not a child of this node.
-```
+ИЗМЕНЕНИЯ:
+Файл: src/hooks/useTrainingModules.tsx (или аналогичный хук, где формируется modules и поле has_access)
 
-**Причина:** Kinescope Player SDK напрямую манипулирует DOM внутри контейнера, а React ожидает, что DOM структура соответствует его virtual DOM. Когда React пытается удалить/обновить компонент, происходит конфликт.
+1) Импортировать usePermissions (или текущий механизм RBAC):
+- const { isAdmin } = usePermissions();  (или isAdminUser)
 
-**Последовательность проблемы:**
-1. Пользователь нажимает "Я просмотрел видео"
-2. Вызывается `handleVideoComplete` → `markBlockCompleted` → `updateState`
-3. React начинает ре-рендер KvestLessonView
-4. VideoUnskippableBlock меняет `isCompleted` с false на true
-5. React пытается удалить/заменить DOM элементы
-6. **CRASH:** Kinescope изменил DOM, React не может найти ожидаемые элементы
+2) В самом конце, перед setModules(...), принудительно выставлять has_access=true для админа:
+Псевдокод:
+const isAdminUser = isAdmin?.() === true;
 
----
+const normalized = (modulesData || []).map(m => ({
+  ...m,
+  has_access: isAdminUser ? true : Boolean(m.has_access),
+}));
 
-## Решение: Изоляция DOM Kinescope от React
+setModules(normalized);
 
-### PATCH-1: Использовать React ref вместо document.getElementById
+STOP-GUARD:
+Если permissions ещё грузятся — не ломать, считать isAdminUser=false до готовности.
 
-Заменить прямое манипулирование DOM на React ref, который не конфликтует с reconciliation.
+DoD:
+- Под админом: любой модуль в системе имеет has_access=true и отображается в “Моя библиотека”.
+- Под юзером: has_access остаётся прежним.
 
-**Файл:** `src/hooks/useKinescopePlayer.ts`
+------------------------------------------------------------
+PATCH-2 (BLOCKER): Learning.tsx — “Все продукты” = только витрина, без ModuleCard
+------------------------------------------------------------
+ПРОБЛЕМА:
+Сейчас во вкладке “Все продукты” показываются и статичные карточки, и модули (ModuleCard), из-за чего “Бухгалтерия как бизнес” может попадать туда как модуль обучения.
 
-```typescript
-// БЫЛО:
-const container = document.getElementById(containerId);
-if (container) {
-  while (container.firstChild) {
-    container.removeChild(container.firstChild);
-  }
-}
+ИЗМЕНЕНИЯ:
+Файл: src/pages/Learning.tsx
 
-// СТАНЕТ:
-// Не очищаем DOM вручную - позволяем Kinescope SDK управлять своим контейнером
-// Kinescope.IframePlayer.create сам очистит и заполнит контейнер
-```
+1) Во вкладке “Все продукты” УДАЛИТЬ рендер списка модулей:
+- удалить блок:
+{allProductsModules.map((module) => (
+  <ModuleCard key={module.id} module={module} />
+))}
 
-### PATCH-2: Добавить ключ стабильности для VideoUnskippableBlock
+2) Вкладка “Все продукты” должна показывать только ProductCard (Клуб/Курс/Консультация/Бухгалтерия как бизнес) со ссылками на лендинги.
 
-Когда `isCompleted` меняется, React пытается обновить компонент. Проблема в том, что содержимое рендерится условно (разный JSX для completed/not completed). Нужно использовать `key` для полной перемонтировки компонента.
+DoD:
+- В “Все продукты” нет ни одной карточки ModuleCard.
+- Только статичные карточки с кнопкой “На сайт”.
 
-**Файл:** `src/components/lesson/KvestLessonView.tsx`
+------------------------------------------------------------
+PATCH-3 (BLOCKER): Learning.tsx — “Моя библиотека” = модули по has_access (а не menu_section_key)
+------------------------------------------------------------
+ПРОБЛЕМА:
+Фильтрация libraryModules по menu_section_key ломает доступ: модуль “Бухгалтерия как бизнес” может иметь menu_section_key="products" и не попадать в библиотеку.
 
-В `renderBlockWithProps` для `video_unskippable` добавить условный рендеринг с уникальным ключом:
+ИЗМЕНЕНИЯ:
+Файл: src/pages/Learning.tsx
 
-```typescript
-case 'video_unskippable':
-  // Для completed блока - простой статичный UI без Kinescope
-  if (isCompleted) {
-    return (
-      <div key={`${blockId}-completed`} className="opacity-80">
-        <LessonBlockRenderer 
-          {...commonProps}
-          kvestProps={{ isCompleted: true }}
-        />
-      </div>
-    );
-  }
-  // Для активного блока - полный Kinescope player
-  return (
-    <div key={`${blockId}-active`}>
-      <LessonBlockRenderer 
-        {...commonProps}
-        kvestProps={{
-          watchedPercent: videoProgress,
-          onProgress: (percent: number) => handleVideoProgress(blockId, percent),
-          onComplete: () => handleVideoComplete(blockId),
-          isCompleted: false,
-          allowBypassEmptyVideo: allowBypassEmptyVideo,
-        }}
-      />
-    </div>
-  );
-```
+1) Заменить вычисление libraryModules:
+БЫЛО (примерно): menu_section_key === "products-library"
+СТАЛО:
+const libraryModules = modules.filter(m =>
+  m.is_active &&
+  m.has_access === true &&
+  (m.menu_section_key?.startsWith("products") ?? true) // мягко: не блокировать из-за пустого key
+);
 
-### PATCH-3: Улучшить cleanup в useKinescopePlayer
+Примечание: startsWith("products") оставляем как мягкий guard, но решающее — has_access.
 
-Обеспечить корректное уничтожение player'а без конфликтов с React:
+2) Empty-state “Библиотека пуста” показывать только когда загрузка завершена.
+- Если есть loading из useTrainingModules() — показать skeleton/loader, не “пусто”.
 
-```typescript
-return () => {
-  // 1. Сначала отключаем observer
-  if (observer) {
-    observer.disconnect();
-    observer = null;
-  }
-  
-  // 2. Отменяем RAF
-  if (rafId !== null) {
-    cancelAnimationFrame(rafId);
-    rafId = null;
-  }
-  
-  // 3. Помечаем как unmounted
-  isMounted = false;
-  isReadyRef.current = false;
-  
-  // 4. Уничтожаем player (он сам очистит свой DOM)
-  if (player) {
-    try {
-      player.destroy();
-    } catch {
-      // ignore
-    }
-    player = null;
-  }
-  playerRef.current = null;
-  
-  // 5. НЕ очищаем container вручную - React сам удалит DOM элемент
-};
-```
+DoD:
+- Любой модуль с has_access=true виден в “Моя библиотека”, даже если menu_section_key="products".
+- “Библиотека пуста” не флешит во время загрузки.
 
-### PATCH-4: Предотвратить forceFill после unmount
+------------------------------------------------------------
+PATCH-4 (BLOCKER): Витрина — добавить ProductCard “Бухгалтерия как бизнес” со ссылкой на лендинг
+------------------------------------------------------------
+ПРОБЛЕМА:
+После удаления ModuleCard из “Все продукты” нужен отдельный ProductCard, чтобы продукт был в витрине.
 
-В функции `forceFill` и `throttledForceFill` добавить дополнительную проверку:
+ИЗМЕНЕНИЯ:
+Файл: src/pages/Learning.tsx
 
-```typescript
-const forceFill = () => {
-  // Guard: exit if unmounted
-  if (!isMounted) return;
-  
-  const containerEl = document.getElementById(containerId);
-  // Guard: exit if container not in DOM (React removed it)
-  if (!containerEl || !containerEl.isConnected) return;
-  
-  // ... rest of forceFill logic
-};
-```
+1) Добавить в массив products карточку “Бухгалтерия как бизнес” (ВИТРИНА):
+- purchaseLink: https://business-training.gorbova.by
+- badge: "Тренинг"
+- duration: "Квест"
+- image: buhBusinessImage (добавить импорт/asset)
 
----
+ВАЖНО:
+Это только витрина. Обучение берётся из реального модуля в БД через “Моя библиотека”.
 
-## Файлы для изменения
+DoD:
+- В “Все продукты” есть карточка “Бухгалтерия как бизнес” → кнопка “На сайт”.
 
-| Файл | Изменение |
-|------|-----------|
-| `src/hooks/useKinescopePlayer.ts` | Убрать ручную очистку DOM, улучшить cleanup |
-| `src/components/lesson/KvestLessonView.tsx` | Добавить key для изоляции completed/active состояний |
+------------------------------------------------------------
+PATCH-5 (BLOCKER): “Куплено” для витрины — без UUID, без отдельного запроса на BUH_PRODUCT_ID
+------------------------------------------------------------
+ПРОБЛЕМА:
+План предлагает отдельный запрос subscriptions_v2 с product_id (нужен UUID) — запрещено. И это дублирует источники доступа.
 
----
+РЕШЕНИЕ (упрощаем и стабилизируем):
+- Бейдж “Куплено” на витрине ставим по факту доступа к связанному модулю (slug).
+- Для “Бухгалтерии как бизнес”: если в modules есть slug 'buhgalteriya-kak-biznes' и has_access=true → “Куплено”.
+- Для остальных продуктов — как было (если есть свой механизм clubAccess и т.п.).
 
-## Техническое объяснение
+ИЗМЕНЕНИЯ:
+Файл: src/pages/Learning.tsx
 
-React использует Virtual DOM для отслеживания изменений. Когда внешняя библиотека (Kinescope) напрямую добавляет/удаляет DOM элементы, React "теряет" связь между своим virtual DOM и реальным DOM.
+1) При построении enrichedProducts:
+- найти matchingModule по product.courseSlug
+- если найден и matchingModule.has_access → isPurchased=true, badge="Куплено"
+- НЕ делать отдельный useQuery с subscriptions_v2 product_id.
 
-**Паттерн решения:**
-1. Изолировать внешнюю библиотеку в контейнер, который React не модифицирует
-2. Использовать `key` prop для полной перемонтировки при существенных изменениях
-3. Позволить внешней библиотеке управлять своим DOM через её API (destroy), а не через React
+STOP-GUARD:
+Если module не найден — не ставить “Куплено”, оставить дефолт.
 
----
+DoD:
+- Витрина показывает “Куплено” без отдельных запросов и без UUID.
+- Admin (через PATCH-1) увидит “Куплено” для всех продуктов, у которых есть связанный модуль.
 
-## DoD
+------------------------------------------------------------
+PATCH-6 (NON-BLOCKER, но желательно): Дедуп модулей в UI по slug
+------------------------------------------------------------
+ПРОБЛЕМА:
+Если где-то вернутся старые статические/особые блоки, могут появиться дубли.
 
-1. Нажать "Я просмотрел видео" → страница НЕ становится белой
-2. Переход к следующему шагу происходит плавно
-3. Консоль браузера НЕ содержит "removeChild" ошибок
-4. При возврате на вкладку страница НЕ перезагружается (это отдельная проблема bfcache, но должна обрабатываться корректно)
+ИЗМЕНЕНИЯ:
+Файл: src/pages/Learning.tsx
+
+1) Перед рендером libraryModules сделать дедуп по slug:
+const seen = new Set<string>();
+const uniqueLibraryModules = libraryModules.filter(m => {
+  const key = m.slug || m.id;
+  if (seen.has(key)) return false;
+  seen.add(key);
+  return true;
+});
+
+Использовать uniqueLibraryModules для рендера.
+
+DoD:
+- В “Моя библиотека” никогда не показывается 2 одинаковых модуля.
+
+------------------------------------------------------------
+ГРАНИЦЫ / ВАЖНО
+------------------------------------------------------------
+- Админ видит всё: реализуем через PATCH-1 (useTrainingModules).
+- “Все продукты” — только витрина, модулей там НЕТ.
+- “Моя библиотека” — только обучение (ModuleCard) по has_access.
+- Никаких UUID (PRODUCT_ID_BUH_BUSINESS) — удаляем из плана.
+
+------------------------------------------------------------
+ФАЙЛЫ ДЛЯ ИЗМЕНЕНИЯ
+------------------------------------------------------------
+1) src/hooks/useTrainingModules.tsx
+2) src/pages/Learning.tsx
+
+------------------------------------------------------------
+DoD (ПРОВЕРКИ)
+------------------------------------------------------------
+A) Все продукты
+1) Есть карточки: Клуб, Курс, Консультация, Бухгалтерия как бизнес.
+2) У всех кнопка “На сайт” ведёт на лендинг.
+3) ModuleCard не рендерится вообще.
+
+B) Моя библиотека
+1) Рендерятся только модули с has_access=true (для юзера).
+2) Для админа рендерятся все активные модули (has_access принудительно true).
+3) Нет дублей по slug.
+4) Нет “flash: библиотека пуста” при загрузке (loader → список).
+
+C) Регрессия доступа
+1) Обычный пользователь без доступа не видит модуль в “Моя библиотека”.
+2) Админ видит модуль всегда.
+
+ФИНАЛЬНЫЙ ОТЧЁТ:
+- Скрин “Все продукты” (только ProductCard)
+- Скрин “Моя библиотека” (ModuleCard по has_access)
+- Скрин под админом (видно всё)
+- Diff-summary + список файлов
