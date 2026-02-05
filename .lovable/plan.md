@@ -1,117 +1,170 @@
 
+# План: Исправление трекинга прогресса видео в блоке "Видео (обязат.)"
 
-# План: Исправление published_at + дубликаты модулей
+## Диагноз проблемы
 
-## 🔴 Критические проблемы (BLOCKER)
+**Корневая причина:**  
+В `VideoUnskippableBlock.tsx` используется пассивный `postMessage` listener (строки 132-219), который ожидает события от iframe. Однако **Kinescope Player API не отправляет события автоматически** — необходимо создать плеер через их `IframePlayer.create()` API.
 
-### Проблема 1: Урок виден несмотря на `published_at` в будущем
+В отличие от этого, `VideoBlock.tsx` использует `useKinescopePlayer.ts`, который:
+1. Загружает скрипт `https://player.kinescope.io/latest/iframe.player.js`
+2. Создаёт плеер через `Kinescope.IframePlayer.create(containerId, { url })`
+3. Получает события через API плеера (`player.on('timeupdate', ...)`)
 
-**Причина:**  
-В `useTrainingLessons.tsx` **отсутствует фильтр по `is_active`**.  
-- Урок в БД: `is_active = false`, `published_at = 2026-02-05 17:00:00+00`
-- Хук загружает ВСЕ уроки модуля без фильтрации по `is_active`
-- Фильтр `published_at` есть (строки 121-128), но бесполезен если урок с `is_active = false` попадает в список
+**Проблема:** `VideoUnskippableBlock` пытается слушать postMessage от обычного iframe — это не работает с Kinescope.
 
-**SQL-пруф:**
-```sql
--- Урок is_active = false, но виден пользователю
-SELECT is_active, published_at, title 
-FROM training_lessons 
-WHERE module_id = (
-  SELECT id FROM training_modules WHERE slug = 'buhgalteriya-kak-biznes'
-);
--- Результат: is_active = false, published_at = 2026-02-05 17:00+00
-```
+---
 
-**Файл:** `src/hooks/useTrainingLessons.tsx`
+## Решение
 
-**Исправление (PATCH-1):**  
-Добавить фильтр `.eq("is_active", true)` в запрос (строка 84):
+### PATCH-1: Добавить подписку на события через Kinescope IframePlayer API
+
+**Файл:** `src/hooks/useKinescopePlayer.ts`
+
+Добавить callback `onTimeUpdate` для передачи прогресса:
 
 ```typescript
-// Строка 81-86
-const { data: lessonsData, error } = await supabase
-  .from("training_lessons")
-  .select("*")
-  .eq("module_id", moduleId)
-  .eq("is_active", true)  // ← ДОБАВИТЬ
-  .order("sort_order", { ascending: true });
+interface UseKinescopePlayerOptions {
+  // ... существующие поля
+  onTimeUpdate?: (currentTime: number, duration: number, percent: number) => void;
+  onEnded?: () => void;
+}
+```
+
+Внутри `initPlayer()` после создания плеера:
+
+```typescript
+// Subscribe to timeupdate events
+player.on('timeupdate', async () => {
+  try {
+    const currentTime = await player.getCurrentTime();
+    const duration = ...; // получить из события или закешировать
+    const percent = duration > 0 ? Math.round((currentTime / duration) * 100) : 0;
+    onTimeUpdate?.(currentTime, duration, percent);
+  } catch { /* ignore */ }
+});
+
+player.on('ended', () => {
+  onEnded?.();
+});
 ```
 
 ---
 
-### Проблема 2: Дубликаты карточки "Бухгалтерия как бизнес"
+### PATCH-2: Переписать VideoUnskippableBlock на использование useKinescopePlayer
 
-**Причина:**  
-Несоответствие slug в условии фильтрации.
+**Файл:** `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx`
 
-**Файл:** `src/pages/Learning.tsx`
+**Изменения:**
 
-Строка 103:
-```javascript
-courseSlug: "buhgalteriya-kak-biznes",
-```
+1. **Импортировать `useKinescopePlayer` и `extractKinescopeVideoId`**
 
-Строка 408:
-```javascript
-if (product.courseSlug === "buh-business") {  // ← НЕВЕРНЫЙ SLUG!
-```
-
-Условие никогда не срабатывает → карточка не получает корректные данные о доступе → отображается как "не куплено" + модуль из БД тоже рендерится.
-
-**Исправление (PATCH-2):**  
-Заменить `"buh-business"` на `"buhgalteriya-kak-biznes"` (строка 408):
+2. **Заменить postMessage listener на хук:**
 
 ```typescript
-// Строка 407-408
-// Special handling for buh-business
-if (product.courseSlug === "buhgalteriya-kak-biznes") {  // ← ИСПРАВИТЬ
+// Для Kinescope используем IframePlayer API
+const kinescopeVideoId = content.provider === 'kinescope' 
+  ? extractKinescopeVideoId(content.url || "") 
+  : null;
+
+const containerId = `kinescope-unskippable-${useId().replace(/:/g, '-')}`;
+
+// Обновлённый useKinescopePlayer с onTimeUpdate
+const { isReady } = useKinescopePlayer({
+  videoId: kinescopeVideoId || "",
+  containerId,
+  onReady: () => {
+    setApiWorking(true);
+  },
+  onTimeUpdate: (currentTime, duration, percent) => {
+    setLocalWatched(prev => Math.max(prev, percent));
+    setVideoStarted(true);
+    onProgress?.(percent);
+  },
+  onEnded: () => {
+    setLocalWatched(100);
+    onProgress?.(100);
+  },
+  onError: () => {
+    setApiDetectionDone(true); // Показать fallback
+  }
+});
+```
+
+3. **Для Kinescope — рендерить контейнер `<div id={containerId}>` вместо `<iframe>`**  
+   (плеер создаётся автоматически хуком)
+
+4. **Для YouTube/Vimeo — оставить iframe с postMessage** (они поддерживают postMessage API напрямую)
+
+---
+
+### PATCH-3: Расширить useKinescopePlayer для получения duration и timeupdate
+
+**Файл:** `src/hooks/useKinescopePlayer.ts`
+
+Добавить:
+
+```typescript
+interface UseKinescopePlayerOptions {
+  // ... существующие
+  onTimeUpdate?: (currentTime: number, duration: number, percent: number) => void;
+  onPlay?: () => void;
+  onEnded?: () => void;
+}
+```
+
+В `initPlayer()`:
+
+```typescript
+let cachedDuration = 0;
+
+// Listen for duration change (usually fires once on ready)
+player.on('durationchange', async () => {
+  try {
+    cachedDuration = await player.getDuration?.() || 0;
+  } catch {}
+});
+
+// Listen for timeupdate
+player.on('timeupdate', async () => {
+  try {
+    const currentTime = await player.getCurrentTime();
+    // Try to get duration if not cached
+    if (!cachedDuration) {
+      cachedDuration = await player.getDuration?.() || 0;
+    }
+    if (cachedDuration > 0) {
+      const percent = Math.round((currentTime / cachedDuration) * 100);
+      onTimeUpdate?.(currentTime, cachedDuration, percent);
+    }
+  } catch {}
+});
+
+player.on('play', () => onPlay?.());
+player.on('ended', () => onEnded?.());
 ```
 
 ---
 
-### Проблема 3: Неправильная сборка `published_at` в админке
+## Файлы для изменения
 
-**Причина:**  
-`new Date("2026-02-05T18:00:00")` парсится в **локальной таймзоне браузера**, а не в Europe/Minsk.
-
-**Файл:** `src/pages/admin/AdminTrainingLessons.tsx` (строки 442-446, 473-477)
-
-**Текущий код:**
-```typescript
-publishedAt = formatInTimeZone(
-  new Date(`${dateStr}T${publishTime}:00`),  // ← Парсится в локальной TZ!
-  publishTimezone, 
-  "yyyy-MM-dd'T'HH:mm:ssXXX"
-);
-```
-
-**Исправление (PATCH-3):**  
-Использовать `date-fns-tz/fromZonedTime` для создания даты из "wall clock" времени:
-
-```typescript
-import { fromZonedTime } from "date-fns-tz";
-
-// ...
-
-// Вместо new Date(...) + formatInTimeZone:
-const wallClockDate = new Date(`${dateStr}T${publishTime}:00`);
-// Интерпретируем wallClockDate как время в выбранной TZ
-const utcDate = fromZonedTime(wallClockDate, publishTimezone);
-publishedAt = utcDate.toISOString();
-```
-
-Или эквивалентный подход через строку с offset.
+| Файл | Действие |
+|------|----------|
+| `src/hooks/useKinescopePlayer.ts` | Добавить `onTimeUpdate`, `onPlay`, `onEnded` callbacks |
+| `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx` | Использовать `useKinescopePlayer` для Kinescope вместо postMessage |
 
 ---
 
-## 📋 Сводка изменений
+## Тестирование
 
-| Файл | Изменение | Критичность |
-|------|-----------|-------------|
-| `src/hooks/useTrainingLessons.tsx` | Добавить `.eq("is_active", true)` в запрос | BLOCKER |
-| `src/pages/Learning.tsx` | Исправить slug `"buh-business"` → `"buhgalteriya-kak-biznes"` | BLOCKER |
-| `src/pages/admin/AdminTrainingLessons.tsx` | Использовать `fromZonedTime` для корректной сборки `published_at` | HIGH |
+После изменений необходимо протестировать:
+
+1. **Открыть квест-урок с video_unskippable блоком (Kinescope)**
+2. **Запустить видео** → прогресс должен увеличиваться (0% → 10% → 50% → ...)
+3. **Достичь порога (95%)** → кнопка "Я просмотрел(а) видео" активируется
+4. **Нажать кнопку** → блок помечается завершённым, открывается следующий шаг
+5. **Перемотка** — должна корректно обновлять прогресс (currentTime / duration)
+6. **Fallback таймер** — если API не сработал за 5 сек, показать кнопку ручного старта
 
 ---
 
@@ -119,24 +172,19 @@ publishedAt = utcDate.toISOString();
 
 | Проверка | Критерий |
 |----------|----------|
-| Урок с `is_active = false` | НЕ отображается в списке (даже для пользователя с доступом) |
-| Урок с `published_at` в будущем | НЕ отображается для обычного пользователя |
-| Прямой URL future-урока | Заглушка "Урок ещё не опубликован" с датой |
-| Админ | Видит все уроки (bypass) |
-| "Моя библиотека" | Одна карточка "Бухгалтерия как бизнес" (без дубля) |
-| Сохранение `published_at` 18:00 Minsk | В БД: `17:00:00+00` (UTC) |
+| Прогресс обновляется | При просмотре Kinescope видео % растёт в реальном времени |
+| Порог срабатывает | При достижении 95% (или настроенного порога) кнопка активируется |
+| Перемотка работает | Перемотка вперёд обновляет прогресс корректно |
+| Данные сохраняются | Прогресс сохраняется в `lesson_progress_state.state_json.videoProgress[blockId]` |
+| Fallback работает | Если API недоступен, fallback-таймер активируется через 5 сек |
+| YouTube/Vimeo | Для этих провайдеров сохраняется текущая логика (postMessage) |
 
 ---
 
-## Тест-кейсы
+## Техническое примечание
 
-1. **Пользователь gerda_nat@mail.ru** (не админ):
-   - Открыть /library/buhgalteriya-kak-biznes → урок НЕ виден в списке
-   - Прямой URL /library/buhgalteriya-kak-biznes/test-v-kakoj-roli-vy-nahodites-sejchas → заглушка "Урок откроется 5 февраля 2026 в 18:00"
+Kinescope IframePlayer API использует **нестандартный подход**: вместо отправки событий через `postMessage` к родительскому окну, он требует создания инстанса плеера через их JS SDK и подписки на события через `player.on(event, callback)`.
 
-2. **Админ 7500084@gmail.com**:
-   - Урок виден в списке и открывается
+Это отличается от YouTube/Vimeo, которые отправляют postMessage-события напрямую.
 
-3. **"Моя библиотека"**:
-   - Одна карточка "Бухгалтерия как бизнес" с бейджем "Куплено"/"Активно"
-
+Именно поэтому текущий `postMessage` listener в `VideoUnskippableBlock` не получает события — Kinescope их просто не отправляет таким образом.
