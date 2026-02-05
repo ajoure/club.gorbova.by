@@ -108,7 +108,7 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify({
         chat_id: telegramChatId,
         text: `🧪 ТЕСТОВОЕ СООБЩЕНИЕ\n\n${messageText}`,
-        parse_mode: "HTML",
+        parse_mode: "Markdown",
         reply_markup: keyboard,
       }),
     });

@@ -56,6 +56,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
 import { TelegramTextToolbar } from "./TelegramTextToolbar";
+import { TelegramMessagePreview } from "./TelegramMessagePreview";
 
 interface BroadcastFilters {
   hasActiveSubscription: boolean;
@@ -588,12 +589,22 @@ const [includeButton, setIncludeButton] = useState(true);
                       value={message}
                       onChange={(e) => setMessage(e.target.value)}
                       rows={6}
-                      className="resize-none"
+                      className="resize-none font-mono text-sm"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Поддерживается Markdown: *жирный*, _курсив_, `код`
-                    </p>
                   </div>
+
+                  {/* WYSIWYG Preview */}
+                  {message && (
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-2">
+                        <Eye className="h-4 w-4" />
+                        Предпросмотр
+                      </Label>
+                      <div className="rounded-lg border bg-muted/30 p-4">
+                        <TelegramMessagePreview text={message} />
+                      </div>
+                    </div>
+                  )}
 
                   <Separator />
 
