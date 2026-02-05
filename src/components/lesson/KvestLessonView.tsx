@@ -8,6 +8,7 @@ import { ArrowLeft, ArrowRight, CheckCircle2, Lock, ChevronDown } from "lucide-r
 import { LessonBlock, BlockType } from "@/hooks/useLessonBlocks";
 import { TrainingLesson } from "@/hooks/useTrainingLessons";
 import { useLessonProgressState, LessonProgressStateData } from "@/hooks/useLessonProgressState";
+import { useResetProgress } from "@/hooks/useResetProgress";
 import { LessonBlockRenderer } from "./LessonBlockRenderer";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -55,7 +56,8 @@ export function KvestLessonView({
   allowBypassEmptyVideo = false
 }: KvestLessonViewProps) {
   const navigate = useNavigate();
-  const { state, updateState, markBlockCompleted, isBlockCompleted, markLessonCompleted } = useLessonProgressState(lesson.id);
+  const { state, updateState, markBlockCompleted, isBlockCompleted, markLessonCompleted, refetch: refetchProgress } = useLessonProgressState(lesson.id);
+  const { resetProgress: resetViaEdge } = useResetProgress();
   const blockRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   
   // Filter blocks that are "steps"
@@ -188,20 +190,25 @@ export function KvestLessonView({
     updateState({ role });
   }, [updateState]);
 
-  // Handler for quiz_survey reset (clears role and removes from completedSteps)
+  // Handler for quiz_survey reset via canonical Edge Function
   const handleQuizSurveyReset = useCallback(async (blockId: string) => {
-    console.log('[KvestLessonView] Quiz reset triggered for block:', blockId.slice(0, 8));
+    console.log('[KvestLessonView] Quiz reset via Edge Function:', blockId.slice(0, 8));
     
-    // Clear role and completedSteps from lesson_progress_state
-    const newCompletedSteps = (state?.completedSteps || []).filter(id => id !== blockId);
-    updateState({ 
-      role: undefined,
-      completedSteps: newCompletedSteps,
-      currentStepIndex: 0  // Reset to first step
-    });
+    const result = await resetViaEdge(lesson.id, 'quiz_only', blockId);
     
-    console.log('[KvestLessonView] State cleared: role=undefined, currentStepIndex=0');
-  }, [state?.completedSteps, updateState]);
+    if (!result.ok) {
+      console.error('[KvestLessonView] Reset failed:', result.error);
+      return;
+    }
+    
+    // Force refetch state from DB (Edge Function already cleared it)
+    await refetchProgress();
+    
+    // Reset local step index
+    setCurrentStepIndex(0);
+    
+    console.log('[KvestLessonView] Reset success:', result);
+  }, [lesson.id, resetViaEdge, refetchProgress]);
 
   // Handler for role_description block completion
   const handleRoleDescriptionComplete = useCallback((blockId: string) => {
