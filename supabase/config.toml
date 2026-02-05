@@ -326,3 +326,6 @@ verify_jwt = false
 
 [functions.admin-import-bepaid-statement-csv]
 verify_jwt = false
+
+[functions.sync-payments-with-statement]
+verify_jwt = false
