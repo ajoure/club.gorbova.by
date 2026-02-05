@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -84,13 +84,25 @@ export function QuizSurveyBlock({
 }: QuizSurveyBlockProps) {
   const content = { ...defaultContent, ...rawContent };
   
-  // Student view state
-  const [answers, setAnswers] = useState<Record<string, string>>(
-    savedAnswer?.answers || {}
-  );
-  const [showResults, setShowResults] = useState(
-    externalIsSubmitted || savedAnswer?.isCompleted || false
-  );
+  // Student view state - restore from savedAnswer on mount
+  const [answers, setAnswers] = useState<Record<string, string>>(() => {
+    // Restore answers from saved data
+    return savedAnswer?.answers || {};
+  });
+  const [showResults, setShowResults] = useState(() => {
+    // Restore completed state
+    return externalIsSubmitted || savedAnswer?.isCompleted || false;
+  });
+  
+  // Sync with savedAnswer when it changes (e.g., after page reload with data from DB)
+  useEffect(() => {
+    if (savedAnswer?.answers && Object.keys(savedAnswer.answers).length > 0) {
+      setAnswers(savedAnswer.answers);
+    }
+    if (savedAnswer?.isCompleted || externalIsSubmitted) {
+      setShowResults(true);
+    }
+  }, [savedAnswer, externalIsSubmitted]);
 
   const allQuestionsAnswered = useMemo(() => {
     return content.questions.every((q) => answers[q.id]);
