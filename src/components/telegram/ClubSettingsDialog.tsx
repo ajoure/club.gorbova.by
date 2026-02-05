@@ -154,12 +154,21 @@ export function ClubSettingsDialog({ club, bots, onClose }: ClubSettingsDialogPr
     setBotTestResult(null);
     
     try {
+      const chatId = formData.chat_id ? parseInt(formData.chat_id) : undefined;
+      const channelId = formData.channel_id ? parseInt(formData.channel_id) : undefined;
+      
+      if (!chatId && !channelId) {
+        setBotTestResult({ error: 'Укажите Chat ID или Channel ID для проверки' });
+        setTestingBot(false);
+        return;
+      }
+      
       const { data, error } = await supabase.functions.invoke('telegram-bot-actions', {
         body: {
           action: 'check_chat_rights',
           bot_id: club.bot_id,
-          chat_id: formData.chat_id ? parseInt(formData.chat_id) : null,
-          channel_id: formData.channel_id ? parseInt(formData.channel_id) : null,
+          chat_id: chatId,
+          channel_id: channelId,
         },
       });
       
