@@ -20,7 +20,10 @@ import {
   CheckCircle2,
   ChevronRight,
   Lock,
+  Timer,
 } from "lucide-react";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
 
 const contentTypeConfig = {
   video: { icon: Video, label: "Видео", color: "text-blue-500" },
@@ -216,33 +219,34 @@ export default function LibraryModule() {
           </Card>
         ) : (
           <div className="space-y-3">
-            {lessons.filter(l => l.is_active).map((lesson, index) => {
+            {lessons.map((lesson, index) => {
               const config = contentTypeConfig[lesson.content_type];
               const Icon = config.icon;
+              const isScheduled = lesson.isScheduled;
 
               return (
                 <Card
                   key={lesson.id}
-                  className={`cursor-pointer transition-all hover:shadow-md group ${
+                  className={`transition-all group ${
                     lesson.is_completed ? "bg-muted/30" : ""
+                  } ${isScheduled 
+                    ? "opacity-80 cursor-not-allowed" 
+                    : "cursor-pointer hover:shadow-md"
                   }`}
-                  onClick={() => handleLessonClick(lesson)}
+                  onClick={() => !isScheduled && handleLessonClick(lesson)}
                 >
                   <CardContent className="flex items-center gap-4 p-4">
-                    {/* Completion checkbox */}
-                    <div
-                      className="shrink-0"
-                      onClick={(e) => handleToggleComplete(lesson, e)}
-                    >
-                      <Checkbox
-                        checked={lesson.is_completed}
-                        className="h-6 w-6 rounded-full"
-                      />
-                    </div>
-
-                    {/* Lesson number */}
-                    <div className="shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center text-sm font-medium">
-                      {index + 1}
+                    {/* Lesson number or lock icon */}
+                    <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+                      isScheduled 
+                        ? "bg-amber-100 text-amber-600 dark:bg-amber-900/30" 
+                        : "bg-muted"
+                    }`}>
+                      {isScheduled ? (
+                        <Lock className="h-4 w-4" />
+                      ) : (
+                        index + 1
+                      )}
                     </div>
 
                     {/* Content type icon */}
@@ -252,32 +256,58 @@ export default function LibraryModule() {
 
                     {/* Lesson info */}
                     <div className="flex-1 min-w-0">
-                      <h3 className={`font-medium group-hover:text-primary transition-colors ${
+                      <h3 className={`font-medium transition-colors ${
                         lesson.is_completed ? "text-muted-foreground line-through" : ""
-                      }`}>
+                      } ${!isScheduled ? "group-hover:text-primary" : ""}`}>
                         {lesson.title}
                       </h3>
-                      {lesson.description && (
+                      {isScheduled && lesson.published_at ? (
+                        <p className="text-xs text-amber-600 flex items-center gap-1">
+                          <Timer className="h-3 w-3" />
+                          Откроется {format(new Date(lesson.published_at), "d MMMM 'в' HH:mm", { locale: ru })}
+                        </p>
+                      ) : lesson.description ? (
                         <p className="text-sm text-muted-foreground line-clamp-1">
                           {lesson.description}
                         </p>
-                      )}
+                      ) : null}
                     </div>
 
-                    {/* Duration */}
-                    {lesson.duration_minutes && (
-                      <div className="shrink-0 flex items-center gap-1 text-sm text-muted-foreground">
-                        <Clock className="h-4 w-4" />
-                        <span>{lesson.duration_minutes} мин</span>
-                      </div>
+                    {/* Scheduled badge or regular controls */}
+                    {isScheduled ? (
+                      <Badge variant="outline" className="shrink-0 bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-900/30 dark:text-amber-500 dark:border-amber-700">
+                        <Clock className="h-3 w-3 mr-1" />
+                        Скоро
+                      </Badge>
+                    ) : (
+                      <>
+                        {/* Duration */}
+                        {lesson.duration_minutes && (
+                          <div className="shrink-0 flex items-center gap-1 text-sm text-muted-foreground">
+                            <Clock className="h-4 w-4" />
+                            <span>{lesson.duration_minutes} мин</span>
+                          </div>
+                        )}
+
+                        {/* Content type badge */}
+                        <Badge variant="secondary" className="shrink-0">
+                          {config.label}
+                        </Badge>
+
+                        {/* Completion checkbox */}
+                        <div
+                          className="shrink-0"
+                          onClick={(e) => handleToggleComplete(lesson, e)}
+                        >
+                          <Checkbox
+                            checked={lesson.is_completed}
+                            className="h-6 w-6 rounded-full"
+                          />
+                        </div>
+
+                        <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
+                      </>
                     )}
-
-                    {/* Badge */}
-                    <Badge variant="secondary" className="shrink-0">
-                      {config.label}
-                    </Badge>
-
-                    <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
                   </CardContent>
                 </Card>
               );
