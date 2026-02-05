@@ -53,20 +53,18 @@ import {
   BookOpen,
   Eye,
   EyeOff,
-  Download,
-  FileSpreadsheet,
   MoreVertical,
   Settings,
   Wand2,
+  Users,
 } from "lucide-react";
-import { GetCourseContentImportDialog } from "@/components/admin/GetCourseContentImportDialog";
-import { ExcelTrainingImportDialog } from "@/components/admin/ExcelTrainingImportDialog";
 import TrainingModuleCard from "@/components/admin/trainings/TrainingModuleCard";
 import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings/TrainingSettingsPanel";
 import { CompactAccessSelector } from "@/components/admin/trainings/CompactAccessSelector";
 import { ContentSectionSelector } from "@/components/admin/trainings/ContentSectionSelector";
 import { DisplayLayoutSelector, DisplayLayout } from "@/components/admin/trainings/DisplayLayoutSelector";
 import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
+import { ProgressTabContent } from "@/components/admin/trainings/ProgressTabContent";
 import { cn } from "@/lib/utils";
 import { Upload, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -361,8 +359,6 @@ export default function AdminTrainingModules() {
   const { modules, loading, refetch, createModule, updateModule, deleteModule } = useTrainingModules();
   const [editingModule, setEditingModule] = useState<TrainingModule | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
-  const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   
@@ -502,7 +498,7 @@ export default function AdminTrainingModules() {
   };
 
   // Active tab state
-  const [activeTab, setActiveTab] = useState<"modules" | "settings">("modules");
+  const [activeTab, setActiveTab] = useState<"modules" | "progress" | "settings">("modules");
 
   return (
     <AdminLayout>
@@ -524,6 +520,18 @@ export default function AdminTrainingModules() {
               <span>Модули</span>
             </button>
             <button
+              onClick={() => setActiveTab("progress")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200",
+                activeTab === "progress"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Users className="h-3.5 w-3.5" />
+              <span>Прогресс</span>
+            </button>
+            <button
               onClick={() => setActiveTab("settings")}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200",
@@ -539,19 +547,15 @@ export default function AdminTrainingModules() {
 
           {/* Desktop actions */}
           <div className="hidden md:flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setIsExcelImportOpen(true)}>
-              <FileSpreadsheet className="mr-1.5 h-4 w-4" />
-              Excel
+            <Button variant="outline" size="sm" onClick={() => navigate("/admin/kb-import")}>
+              <Upload className="mr-1.5 h-4 w-4" />
+              Импорт
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setIsImportDialogOpen(true)}>
-              <Download className="mr-1.5 h-4 w-4" />
-              GetCourse
-            </Button>
-            <Button variant="default" size="sm" onClick={() => setIsWizardOpen(true)}>
+            <Button variant="outline" size="sm" onClick={() => setIsWizardOpen(true)}>
               <Wand2 className="mr-1.5 h-4 w-4" />
               Мастер
             </Button>
-            <Button variant="outline" size="sm" onClick={openCreateDialog}>
+            <Button variant="default" size="sm" onClick={openCreateDialog}>
               <Plus className="mr-1.5 h-4 w-4" />
               Добавить
             </Button>
@@ -566,21 +570,17 @@ export default function AdminTrainingModules() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-background/95 backdrop-blur-xl border-border/50">
-                <DropdownMenuItem onClick={() => setIsWizardOpen(true)}>
-                  <Wand2 className="h-4 w-4 mr-2" />
-                  Мастер добавления
-                </DropdownMenuItem>
                 <DropdownMenuItem onClick={openCreateDialog}>
                   <Plus className="h-4 w-4 mr-2" />
                   Добавить модуль
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setIsImportDialogOpen(true)}>
-                  <Download className="h-4 w-4 mr-2" />
-                  Импорт GetCourse
+                <DropdownMenuItem onClick={() => setIsWizardOpen(true)}>
+                  <Wand2 className="h-4 w-4 mr-2" />
+                  Мастер добавления
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setIsExcelImportOpen(true)}>
-                  <FileSpreadsheet className="h-4 w-4 mr-2" />
-                  Импорт Excel
+                <DropdownMenuItem onClick={() => navigate("/admin/kb-import")}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Импорт КБ
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -596,6 +596,8 @@ export default function AdminTrainingModules() {
               showAdvanced={showAdvanced}
               onShowAdvancedChange={handleShowAdvancedChange}
             />
+          ) : activeTab === "progress" ? (
+            <ProgressTabContent modules={modules} />
           ) : (
             <>
 
@@ -729,17 +731,6 @@ export default function AdminTrainingModules() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-
-        {/* Import Dialogs */}
-        <GetCourseContentImportDialog
-          open={isImportDialogOpen}
-          onOpenChange={setIsImportDialogOpen}
-          onImportComplete={refetch}
-        />
-        <ExcelTrainingImportDialog
-          open={isExcelImportOpen}
-          onOpenChange={setIsExcelImportOpen}
-        />
 
         {/* Content Creation Wizard */}
         <ContentCreationWizard
