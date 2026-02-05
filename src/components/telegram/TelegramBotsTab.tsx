@@ -87,10 +87,15 @@ export function TelegramBotsTab() {
       if (result.success) {
         toast.success(`Подключение успешно: @${result.bot.username}`);
       } else {
-        toast.error(`Ошибка: ${result.error}`);
+        const errorDetails = result.error || 'Неизвестная ошибка';
+        const statusCode = (result as any).status || '';
+        toast.error(`Ошибка${statusCode ? ` (${statusCode})` : ''}: ${errorDetails}`);
       }
-    } catch (error) {
-      toast.error('Ошибка проверки подключения');
+    } catch (error: any) {
+      // Extract detailed error info
+      const status = error?.status || error?.context?.status || '';
+      const message = error?.message || error?.error || String(error);
+      toast.error(`Ошибка проверки${status ? ` (${status})` : ''}: ${message}`);
     }
     setCheckingBot(null);
   };
