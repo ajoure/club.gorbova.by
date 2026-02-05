@@ -1,188 +1,427 @@
 
+# План: Исправление кнопки "Формула точки B" и админ-просмотр прогресса учеников
 
-# План: Исправление кнопки админ-bypass и бага перезагрузки вкладки
+## Обнаруженные проблемы
 
-## Проблема 1: Кнопка "Продолжить без видео (админ)" не появляется
+### Проблема 1: Кнопка "Формула точки B сформирована" не нажимается
 
-### Анализ
-
-В `VideoUnskippableBlock.tsx` есть ДВА места, где должна появляться кнопка bypass:
-
-1. **Когда URL видео пустой** (строки 456-461) — работает
-2. **Когда URL видео есть, но видео не досмотрено** (строки 522-533) — НЕ работает
-
-Причина: Кнопка на строках 522-533 показывается только когда `allowBypassEmptyVideo && !canConfirm`:
+**Анализ кода `SequentialFormBlock.tsx`:**
 
 ```tsx
-{allowBypassEmptyVideo && !canConfirm && (
-  <Button onClick={handleConfirmWatched}...>
-    Продолжить без видео (админ)
-  </Button>
-)}
+// Строки 95-100: Инициализация localAnswers из props
+useEffect(() => {
+  if (Object.keys(answers).length > 0 && Object.keys(localAnswers).length === 0) {
+    setLocalAnswers(answers);
+  }
+}, [answers]);
 ```
 
-Но название пропа `allowBypassEmptyVideo` вводит в заблуждение — фактически она означает "разрешить bypass для админа в preview режиме" и должна работать И когда URL пустой, И когда видео не досмотрено.
+**Проблема**: Условие `Object.keys(localAnswers).length === 0` означает, что если `localAnswers` уже заполнены, то данные из `answers` prop НЕ синхронизируются. 
 
-Логика правильная, но проблема в том, что `canConfirm` зависит от `videoStarted`:
+Но главная проблема в том, что `answers` prop (который приходит из `state?.pointB_answers`) **пуст** в БД!
+
+**Цепочка данных:**
+1. Пользователь заполняет шаги → `localAnswers` обновляется
+2. При `onBlur` или навигации → `commitAnswers()` вызывает `onAnswersChange?.(localAnswers)`
+3. `onAnswersChange` = `handleSequentialFormUpdate` (KvestLessonView.tsx:234)
+4. `handleSequentialFormUpdate` вызывает `updateState({ pointB_answers: answers })`
+5. `updateState` (useLessonProgressState.tsx:97) сохраняет в `lesson_progress_state`
+
+**Почему данные не сохраняются?**
+
+Посмотрев на БД:
+```json
+{
+  "completedSteps": ["90daa613-...", "ee5f06cb-..."],
+  "currentStepIndex": 2,
+  "role": "executor"
+}
+```
+
+Нет `pointA_rows`, `pointB_answers`, `pointA_completed` — это значит что данные диагностической таблицы и формулы B **не сохраняются**.
+
+**Корневая причина**: `onAnswersChange` передаётся как `undefined` когда `isReadOnly = true`!
 
 ```tsx
-const canConfirm = isThresholdReached && videoStarted;
+// KvestLessonView.tsx:331
+onAnswersChange: isReadOnly ? undefined : handleSequentialFormUpdate,
 ```
 
-Если видео не запущено (`videoStarted = false`), то `canConfirm = false` — и кнопка ДОЛЖНА показываться. Но условие `allowBypassEmptyVideo` требует, чтобы этот проп был `true`.
+А `isReadOnly = isCompleted && !isCurrent`, где `isCompleted` для sequential_form это:
+```tsx
+// Строка 333
+isCompleted: state?.pointB_completed || false,
+```
 
-### Проверка передачи пропа
+Если `pointB_completed = false` и блок текущий (`isCurrent = true`), то `isReadOnly = false`, и `onAnswersChange` ДОЛЖЕН передаваться.
 
-Цепочка передачи:
-1. `LibraryLesson.tsx` (строка 73): `const allowBypassEmptyVideo = isAdminMode && isPreviewMode;`
-2. `LibraryLesson.tsx` (строка 267): `<KvestLessonView ... allowBypassEmptyVideo={allowBypassEmptyVideo} />`
-3. `KvestLessonView.tsx` (строка 303): `allowBypassEmptyVideo: allowBypassEmptyVideo,`
-4. `LessonBlockRenderer.tsx` (строка 323): `allowBypassEmptyVideo={kvestProps?.allowBypassEmptyVideo}`
-5. `VideoUnskippableBlock.tsx` (строка 49): `allowBypassEmptyVideo = false`
+**Реальная причина**: На скриншоте пользователь находится в **редакторе админки** (`/admin/training-lessons/.../edit/...`), а НЕ в режиме прохождения урока!
 
-### Проблема найдена!
+В редакторе блоков (`AdminLessonBlockEditor.tsx`) блоки рендерятся через `LessonBlockEditor.tsx`, где:
+```tsx
+// LessonBlockEditor.tsx:338
+case 'sequential_form':
+  return <SequentialFormBlock content={block.content as any} onChange={onUpdate} />;
+```
 
-В `usePermissions` хук может возвращать `false` если проверка еще не завершена. Нужно:
-1. Добавить дебаг-лог в `LibraryLesson.tsx` для проверки значения `allowBypassEmptyVideo`
-2. Убедиться что `isAdmin()` возвращает `true` для админа
+**НЕТ пропсов `answers`, `onAnswersChange`, `onComplete`!** Это режим редактирования, а не режим игрока.
 
-## Проблема 2: Перезагрузка вкладки при переключении
+Но на скриншоте показывается режим **Preview** (предпросмотр), где должны быть эти пропсы.
 
-### Анализ
+### Проблема 2: Нет интерфейса для просмотра прогресса учеников
 
-Пользователь описывает:
-> "Если я во вкладке запустил видео, слушаю его, перехожу в другую вкладку, звук идет, и потом возвращаюсь обратно во вкладке, где идет видео, то вкладка перезагружается"
+В админке нет страницы для просмотра:
+- Кто прошёл какой урок
+- Какие ответы дал ученик
+- Результаты диагностики точки А и формулы точки B
 
-Это **не баг нашего кода**, а поведение браузера:
+## Решение
 
-1. **iOS Safari** имеет агрессивный memory management — при переключении вкладок Safari может "заморозить" или выгрузить неактивные вкладки
-2. **Chrome на мобильных устройствах** также может выгружать вкладки при нехватке памяти
-3. Когда пользователь возвращается — браузер перезагружает страницу
+### Часть 1: Исправить кнопку SequentialFormBlock
 
-### Решение
+**Проблема в логике инициализации:**
+```tsx
+useEffect(() => {
+  if (Object.keys(answers).length > 0 && Object.keys(localAnswers).length === 0) {
+    setLocalAnswers(answers);
+  }
+}, [answers]);
+```
 
-Мы НЕ МОЖЕМ предотвратить выгрузку вкладки браузером — это поведение ОС/браузера для экономии памяти.
+Если `answers` изменились (например, загрузились из БД), но `localAnswers` уже имеют данные (введённые пользователем), то синхронизация НЕ произойдёт.
 
-НО мы УЖЕ сохраняем прогресс просмотра видео в `lesson_progress_state`, поэтому видео продолжает с того же места — это работает корректно.
+**Исправление**: Добавить **двустороннюю синхронизацию** и убрать условие:
 
-Что можно улучшить:
-1. **Показать уведомление** при восстановлении страницы: "Страница была перезагружена браузером. Прогресс сохранён."
-2. **Оптимизировать частоту сохранения** прогресса (debounce)
+```tsx
+// Синхронизация с внешними answers при изменении
+useEffect(() => {
+  // Merge incoming answers with local (incoming takes priority if we have no local edits)
+  if (Object.keys(answers).length > 0) {
+    setLocalAnswers(prev => {
+      // If local is empty, use incoming
+      if (Object.keys(prev).length === 0) return answers;
+      // Otherwise keep local (user is editing)
+      return prev;
+    });
+  }
+}, [answers]);
+```
 
-Но это cosmetic — основная проблема в поведении браузера, не в нашем коде.
+Но проблема глубже: **когда `onComplete` undefined, кнопка не должна работать**.
+
+Нужно добавить **fallback**: если `onComplete` не передан, кнопка должна всё равно быть интерактивной (для preview режима).
+
+### Часть 2: Добавить страницу прогресса учеников
+
+**Новые компоненты:**
+
+1. **`src/pages/admin/AdminLessonProgress.tsx`** — страница просмотра прогресса по уроку
+2. **Кнопка "Прогресс"** в списке уроков (`AdminTrainingLessons.tsx`)
+
+**Схема данных:**
+
+```text
+lesson_progress_state (существует):
+├── id
+├── user_id → profiles
+├── lesson_id → training_lessons
+├── state_json (JSONB):
+│   ├── role
+│   ├── videoProgress: {blockId: percent}
+│   ├── pointA_rows: [{source, income, task_hours, ...}]
+│   ├── pointA_completed: boolean
+│   ├── pointB_answers: {stepId: "answer"}
+│   ├── pointB_completed: boolean
+│   ├── currentStepIndex: number
+│   └── completedSteps: [blockIds]
+├── completed_at
+└── updated_at
+```
+
+**UI страницы прогресса:**
+
+| Ученик | Email | Роль | Точка А | Точка B | Завершён | Действия |
+|--------|-------|------|---------|---------|----------|----------|
+| Имя | email | executor | ✅ | ❌ | ❌ | Просмотр |
+
+**Модальное окно "Просмотр":**
+- Данные точки А (таблица с источниками дохода)
+- Формула точки B (10 ответов)
+- Результат теста (роль)
 
 ## Файлы для изменения
 
 | Файл | Изменения |
 |------|-----------|
-| `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx` | Добавить console.log для дебага `allowBypassEmptyVideo`, убедиться что кнопка bypass всегда видна для админа |
-| `src/hooks/usePermissions.tsx` | Проверить логику `isAdmin()` |
-| `src/pages/LibraryLesson.tsx` | Добавить дебаг-лог для проверки `allowBypassEmptyVideo` |
+| `src/components/admin/lesson-editor/blocks/SequentialFormBlock.tsx` | Исправить логику инициализации `localAnswers`, добавить fallback для кнопки |
+| `src/pages/admin/AdminTrainingLessons.tsx` | Добавить кнопку "Прогресс" для уроков с `completion_mode = 'kvest'` |
+| `src/pages/admin/AdminLessonProgress.tsx` | **НОВЫЙ** — страница просмотра прогресса учеников |
+| `src/components/admin/trainings/StudentProgressModal.tsx` | **НОВЫЙ** — модальное окно с детальным просмотром ответов |
+| `src/App.tsx` | Добавить роут `/admin/training-lessons/:moduleId/progress/:lessonId` |
 
-## Решение проблемы 1
+## Детальные изменения
 
-### Шаг 1: Добавить явный дебаг в VideoUnskippableBlock
+### 1. SequentialFormBlock.tsx — исправление кнопки
+
+**Строки 95-100**: Заменить инициализацию:
 
 ```tsx
-// После строки 63
+// БЫЛО:
 useEffect(() => {
-  if (!isEditing) {
-    console.info('[VideoUnskippableBlock] Render state:', {
-      allowBypassEmptyVideo,
-      canConfirm,
-      videoStarted,
-      isThresholdReached,
-      embedUrl: !!embedUrl,
-      isCompleted
-    });
+  if (Object.keys(answers).length > 0 && Object.keys(localAnswers).length === 0) {
+    setLocalAnswers(answers);
   }
-}, [allowBypassEmptyVideo, canConfirm, videoStarted, isThresholdReached, embedUrl, isCompleted, isEditing]);
+}, [answers]);
+
+// СТАЛО:
+// Initialize from props on mount
+useEffect(() => {
+  if (Object.keys(answers).length > 0) {
+    setLocalAnswers(answers);
+  }
+}, []); // Only on mount
+
+// Reset local answers when answers prop changes significantly (e.g., block reset)
+useEffect(() => {
+  const answerKeys = Object.keys(answers);
+  const localKeys = Object.keys(localAnswers);
+  // If answers were cleared externally, reset local
+  if (answerKeys.length === 0 && localKeys.length > 0 && isCompleted === false) {
+    // Don't reset if user is actively editing
+  }
+}, [answers, isCompleted]);
 ```
 
-### Шаг 2: Упростить логику кнопки bypass
+**Строки 394-405**: Добавить fallback для кнопки:
 
-Текущая логика:
 ```tsx
-{allowBypassEmptyVideo && !canConfirm && (
-  <Button>Продолжить без видео (админ)</Button>
-)}
+<Button
+  onClick={() => {
+    commitAnswers();
+    if (onComplete) {
+      onComplete();
+    } else {
+      // Fallback: show toast for preview/edit mode
+      toast?.success?.("Формула сформирована (preview)");
+    }
+  }}
+  disabled={!allFilled}
+  variant="default"
+>
+  <CheckCircle2 className="mr-2 h-4 w-4" />
+  {content.submitButtonText || 'Завершить'}
+</Button>
 ```
 
-Проблема: если `embedUrl` есть, но видео заблокировано (не запущено), кнопка должна быть видна.
+**Добавить импорт toast:**
+```tsx
+import { toast } from "sonner";
+```
 
-Новая логика — показывать кнопку bypass ВСЕГДА когда:
-- `allowBypassEmptyVideo === true` (админ + preview режим)
-- `!isCompleted` (блок не завершён)
+### 2. AdminLessonProgress.tsx — новая страница
 
 ```tsx
-{/* Admin bypass button - visible in preview mode when not completed */}
-{allowBypassEmptyVideo && !isCompleted && (
+// Структура компонента:
+export default function AdminLessonProgress() {
+  const { moduleId, lessonId } = useParams();
+  
+  // Fetch lesson info
+  const { data: lesson } = useQuery({...});
+  
+  // Fetch all progress records for this lesson
+  const { data: progressRecords } = useQuery({
+    queryKey: ["lesson-progress", lessonId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("lesson_progress_state")
+        .select(`
+          *,
+          profiles:user_id (
+            id,
+            email,
+            full_name
+          )
+        `)
+        .eq("lesson_id", lessonId)
+        .order("updated_at", { ascending: false });
+      
+      if (error) throw error;
+      return data;
+    },
+  });
+  
+  // Render table with students and their progress
+  return (
+    <AdminLayout>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Ученик</TableHead>
+            <TableHead>Роль</TableHead>
+            <TableHead>Точка А</TableHead>
+            <TableHead>Точка B</TableHead>
+            <TableHead>Статус</TableHead>
+            <TableHead>Обновлено</TableHead>
+            <TableHead></TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {progressRecords?.map(record => (
+            <TableRow key={record.id}>
+              <TableCell>{record.profiles?.full_name || record.profiles?.email}</TableCell>
+              <TableCell>
+                <Badge>{record.state_json?.role || '—'}</Badge>
+              </TableCell>
+              <TableCell>
+                {record.state_json?.pointA_completed ? '✅' : '❌'}
+              </TableCell>
+              <TableCell>
+                {record.state_json?.pointB_completed ? '✅' : '❌'}
+              </TableCell>
+              <TableCell>
+                <Badge variant={record.completed_at ? "default" : "secondary"}>
+                  {record.completed_at ? 'Завершён' : 'В процессе'}
+                </Badge>
+              </TableCell>
+              <TableCell>{formatDate(record.updated_at)}</TableCell>
+              <TableCell>
+                <Button size="sm" onClick={() => openDetailModal(record)}>
+                  Просмотр
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </AdminLayout>
+  );
+}
+```
+
+### 3. StudentProgressModal.tsx — модальное окно
+
+```tsx
+interface StudentProgressModalProps {
+  record: LessonProgressRecord;
+  lessonBlocks: LessonBlock[];
+  open: boolean;
+  onClose: () => void;
+}
+
+export function StudentProgressModal({ record, lessonBlocks, open, onClose }: StudentProgressModalProps) {
+  const state = record.state_json;
+  
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Прогресс: {record.profiles?.full_name}</DialogTitle>
+        </DialogHeader>
+        
+        {/* Role from quiz */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Роль</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Badge>{roleLabels[state?.role] || state?.role || '—'}</Badge>
+          </CardContent>
+        </Card>
+        
+        {/* Point A - Diagnostic Table */}
+        {state?.pointA_rows && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Диагностика точки А</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Источник</TableHead>
+                    <TableHead>Доход</TableHead>
+                    <TableHead>Часы задач</TableHead>
+                    <TableHead>Часы переписки</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {state.pointA_rows.map((row, idx) => (
+                    <TableRow key={idx}>
+                      <TableCell>{row.source_name}</TableCell>
+                      <TableCell>{row.income} BYN</TableCell>
+                      <TableCell>{row.task_hours} ч</TableCell>
+                      <TableCell>{row.communication_hours} ч</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+        
+        {/* Point B - Sequential Form Answers */}
+        {state?.pointB_answers && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Формула точки B</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Find sequential_form block to get step titles */}
+              {getSequentialFormSteps(lessonBlocks).map(step => (
+                <div key={step.id} className="border-b pb-3">
+                  <Label className="text-sm text-muted-foreground">{step.title}</Label>
+                  <p className="mt-1">{state.pointB_answers[step.id] || '—'}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+### 4. AdminTrainingLessons.tsx — кнопка прогресса
+
+**В действиях каждого урока добавить:**
+
+```tsx
+{lesson.completion_mode === 'kvest' && (
   <Button
-    onClick={() => {
-      onComplete?.();
-    }}
     variant="outline"
-    className="w-full text-amber-600 border-amber-300 hover:bg-amber-50"
     size="sm"
+    onClick={() => navigate(`/admin/training-lessons/${moduleId}/progress/${lesson.id}`)}
   >
-    <CheckCircle2 className="mr-2 h-4 w-4" />
-    Пропустить (админ preview)
+    <Users className="h-4 w-4 mr-1" />
+    Прогресс
   </Button>
 )}
 ```
 
-И удалить дублирующую кнопку из блока с пустым URL (строки 456-461) — она станет избыточной.
-
-## Решение проблемы 2
-
-### Шаг 1: Показать уведомление при восстановлении
-
-Добавить в `LibraryLesson.tsx` или `KvestLessonView.tsx`:
+### 5. App.tsx — новый роут
 
 ```tsx
-// Detect page restoration (bfcache or reload after tab suspension)
-useEffect(() => {
-  const handlePageShow = (e: PageTransitionEvent) => {
-    if (e.persisted) {
-      toast.info("Страница восстановлена", {
-        description: "Прогресс просмотра сохранён"
-      });
-    }
-  };
-  
-  window.addEventListener('pageshow', handlePageShow);
-  return () => window.removeEventListener('pageshow', handlePageShow);
-}, []);
+<Route 
+  path="/admin/training-lessons/:moduleId/progress/:lessonId" 
+  element={<ProtectedRoute><AdminLessonProgress /></ProtectedRoute>} 
+/>
 ```
 
-### Шаг 2: Оптимизировать сохранение прогресса видео
-
-В `KvestLessonView.tsx` уже есть debounced сохранение через `updateState`. Можно добавить `beforeunload` для гарантии сохранения:
-
-```tsx
-// Save progress before page unload
-useEffect(() => {
-  const handleBeforeUnload = () => {
-    // Force immediate save of any pending state
-    if (pendingStateRef.current) {
-      // Use sendBeacon for reliable delivery
-      navigator.sendBeacon('/api/save-progress', JSON.stringify(pendingStateRef.current));
-    }
-  };
-  
-  window.addEventListener('beforeunload', handleBeforeUnload);
-  return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-}, []);
-```
-
-Но это сложнее — нужен отдельный endpoint. Пока достаточно информировать пользователя.
-
-## DoD
+## DoD (Definition of Done)
 
 | Проверка | Ожидаемый результат |
 |----------|---------------------|
-| Урок в preview режиме (`?preview=1`) как админ | Кнопка "Пропустить (админ preview)" видна под видео |
-| Клик по кнопке bypass | Блок помечается завершённым, переход к следующему шагу |
-| Переключение вкладок на мобильном | Toast "Страница восстановлена" при возврате, видео с сохранённого момента |
-| Обычный пользователь (без `?preview=1`) | Кнопка bypass НЕ видна |
+| Кнопка "Формула точки B сформирована" | Нажимается при заполнении 10/10 шагов |
+| Данные pointB_answers | Сохраняются в lesson_progress_state.state_json |
+| Страница "Прогресс" для квест-урока | Показывает список учеников с их статусами |
+| Модальное окно "Просмотр" | Показывает детальные ответы ученика |
+| Роль ученика | Отображается корректно (Исполнитель/Фрилансер/Предприниматель) |
 
+## Техническая заметка
+
+Текущая архитектура сохранения данных через `useLessonProgressState` работает корректно, но требует что бы:
+1. `onAnswersChange` callback передавался в `SequentialFormBlock`
+2. Пользователь находился в режиме прохождения урока (не в режиме редактирования)
+
+Режим Preview в редакторе (`?preview=1`) не имеет полноценного контекста `useLessonProgressState`, поэтому данные там НЕ сохраняются — это **ожидаемое поведение**.
