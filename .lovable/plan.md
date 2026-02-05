@@ -1,166 +1,193 @@
 
-# План редизайна статистики платежей
+# План: Премиальный glassmorphism дизайн для статистики платежей
 
-## Задачи
+## Проблема
 
-1. **Удалить карточку "В обработке"** из `PaymentsStatsPanel`
-2. **Унифицировать стиль карточек** — использовать единый компонент `GlassStatCard` для обоих панелей
-3. **Применить "реальный glass" эффект** по референсу: мягкие полупрозрачные границы, усиленный blur, внутреннее свечение
+Текущие карточки выглядят **серыми и дешёвыми** потому что:
+1. Фон страницы почти белый — стекло на белом = серое
+2. Шрифт слишком жирный (`font-bold`)
+3. Нет цветного подсвета/градиента для создания глубины
+4. Карточки используют `bg-white/8%` на белом фоне → визуально серые
 
----
-
-## Анализ референса (image-880.png)
-
-Ключевые визуальные характеристики:
-- **Скруглённые углы** — `rounded-2xl` или `rounded-3xl`
-- **Полупрозрачный фон** — `bg-white/5` с усиленным blur (`backdrop-blur-2xl`)
-- **Мягкая граница** — `border-white/10` с внутренним свечением
-- **Эффект "стеклянной капсулы"** — внутренний градиент от светлого к прозрачному
-- **Тень с мягким glow** — `shadow-[0_8px_32px_rgba(0,0,0,0.12)]`
+**Референс (image-882)**: Стекло работает на **цветном градиентном фоне** — это создаёт прозрачность и премиальность.
 
 ---
 
 ## Решение
 
-### PATCH-1: Создать унифицированный компонент `GlassStatCard`
+### Подход: Добавить цветной градиентный фон под панель статистики
 
-**Новый файл:** `src/components/admin/payments/GlassStatCard.tsx`
+Вместо белого фона создаём мягкий градиент от синего к фиолетовому — как на референсе. Карточки становятся реально прозрачными.
 
-Единый компонент для обоих панелей с параметрами:
-- `title` — заголовок
-- `value` — основное значение (форматированная сумма)
-- `subtitle` — подзаголовок (количество)
-- `icon` — иконка
-- `variant` — цветовая схема (`success`, `warning`, `danger`, `info`, `default`)
-- `isActive`, `isClickable`, `onClick` — интерактивность
+---
 
-Стиль (CSS):
-```tsx
+## PATCH-1: Обновить GlassStatCard.tsx — лёгкий воздушный стиль
+
+**Файл:** `src/components/admin/payments/GlassStatCard.tsx`
+
+Изменения:
+1. **Убрать жирный шрифт** — `font-bold` → `font-medium` для значений
+2. **Сделать фон прозрачнее** — `rgba(255,255,255,0.08)` → `rgba(255,255,255,0.4)` (light) / `rgba(255,255,255,0.06)` (dark)
+3. **Более мягкие границы** — `border-white/[0.2]` для лёгкости
+4. **Усилить внутреннее свечение** — более заметный shine overlay
+5. **Убрать тёмный фон иконок** — использовать прозрачные круги
+
+```typescript
+// Новые стили:
 className={cn(
-  // Base glass effect
   "relative overflow-hidden rounded-2xl p-4",
-  "bg-white/[0.08] dark:bg-white/[0.04]",
-  "backdrop-blur-2xl",
-  "border border-white/[0.12] dark:border-white/[0.08]",
-  // Soft shadow with color glow
-  "shadow-[0_8px_32px_rgba(0,0,0,0.08)]",
-  // Inner shine overlay (pseudo-element in component)
-  "transition-all duration-300",
-  // Hover & active states
-  isClickable && "cursor-pointer hover:bg-white/[0.12] hover:border-white/[0.18] hover:scale-[1.02]",
-  isActive && "ring-2 ring-primary/60 ring-offset-2 ring-offset-background"
+  "backdrop-blur-xl",
+  // Light mode: более прозрачный белый
+  "bg-white/40 dark:bg-white/[0.06]",
+  // Мягкая граница
+  "border border-white/50 dark:border-white/[0.12]",
+  // Мягкая тень
+  "shadow-[0_4px_24px_rgba(0,0,0,0.04)]",
+  // ...
 )}
+
+// Значения — средний вес шрифта
+<p className={cn("text-xl font-medium tabular-nums tracking-tight", colors.text)}>
 ```
 
-Внутренний shine overlay (CSS-in-JSX):
-```tsx
-<div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/[0.08] via-transparent to-transparent pointer-events-none" />
-```
+---
 
-### PATCH-2: Обновить `PaymentsStatsPanel`
+## PATCH-2: Добавить градиентный контейнер в PaymentsStatsPanel
 
 **Файл:** `src/components/admin/payments/PaymentsStatsPanel.tsx`
 
-Изменения:
-1. **Удалить карточку "В обработке"** (строки 192-203)
-2. **Заменить `StatCard` на `GlassStatCard`** с единым интерфейсом
-3. **Изменить grid** — `lg:grid-cols-6` → `lg:grid-cols-5` (убрали 1 карточку)
-4. **Удалить `Clock` из импортов** lucide-react
-5. **Убрать `processing` из `StatsFilterType`** (опционально — или оставить для совместимости с быстрыми фильтрами)
+Обернуть сетку карточек в контейнер с мягким градиентом:
 
-Итоговые карточки (5 шт):
-| # | Название | Иконка | Variant |
-|---|----------|--------|---------|
-| 1 | Успешные | CheckCircle2 | success |
-| 2 | Возвраты | RotateCcw | warning |
-| 3 | Отмены | XCircle | danger |
-| 4 | Ошибки | XCircle | danger |
-| 5 | Комиссия | Percent | info |
-| 6 | Чистая выручка | TrendingUp | success |
+```typescript
+<div 
+  className="relative rounded-3xl p-4 overflow-hidden"
+  style={{
+    background: 'linear-gradient(135deg, hsl(217 91% 60% / 0.08) 0%, hsl(260 80% 65% / 0.06) 50%, hsl(280 75% 60% / 0.04) 100%)',
+  }}
+>
+  {/* Декоративные размытые сферы для глубины */}
+  <div 
+    className="absolute -top-20 -left-20 w-40 h-40 rounded-full opacity-30 blur-3xl pointer-events-none"
+    style={{ background: 'radial-gradient(circle, hsl(217 91% 60% / 0.4), transparent)' }}
+  />
+  <div 
+    className="absolute -bottom-10 -right-10 w-32 h-32 rounded-full opacity-20 blur-3xl pointer-events-none"
+    style={{ background: 'radial-gradient(circle, hsl(280 75% 60% / 0.4), transparent)' }}
+  />
+  
+  {/* Сетка карточек */}
+  <div className="relative grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+    {/* GlassStatCard... */}
+  </div>
+</div>
+```
 
-**Примечание:** Убираем только карточку статистики "В обработке", но оставляем возможность фильтрации по этому статусу в быстрых табах (pill buttons "В обработке").
+---
 
-### PATCH-3: Обновить `BepaidStatementSummary`
+## PATCH-3: Обновить цветовую палитру вариантов
+
+**Файл:** `src/components/admin/payments/GlassStatCard.tsx`
+
+Более "дорогие" премиальные цвета:
+
+```typescript
+const variantColors: Record<GlassStatVariant, { text: string; iconBg: string }> = {
+  default: { 
+    text: 'text-foreground/90', 
+    iconBg: 'bg-primary/10' 
+  },
+  success: { 
+    // Изумрудно-бирюзовый (премиальный)
+    text: 'text-emerald-600 dark:text-emerald-400', 
+    iconBg: 'bg-emerald-500/10' 
+  },
+  warning: { 
+    // Тёплый янтарный
+    text: 'text-amber-600 dark:text-amber-400', 
+    iconBg: 'bg-amber-500/10' 
+  },
+  danger: { 
+    // Мягкий розовый вместо агрессивного красного
+    text: 'text-rose-600 dark:text-rose-400', 
+    iconBg: 'bg-rose-500/10' 
+  },
+  info: { 
+    // Небесно-голубой
+    text: 'text-sky-600 dark:text-sky-400', 
+    iconBg: 'bg-sky-500/10' 
+  },
+};
+```
+
+---
+
+## PATCH-4: Обновить BepaidStatementSummary (тот же стиль)
 
 **Файл:** `src/components/admin/payments/BepaidStatementSummary.tsx`
 
-Изменения:
-1. **Заменить локальный `StatCard` на импорт `GlassStatCard`**
-2. **Адаптировать props** — унифицировать интерфейс с `PaymentsStatsPanel`
-3. **Применить тот же glass-эффект**
+Применить идентичный градиентный контейнер и обновлённые карточки.
 
 ---
 
 ## Файлы для изменения
 
-| Файл | Действие |
-|------|----------|
-| `src/components/admin/payments/GlassStatCard.tsx` | **Создать** — единый glass-компонент |
-| `src/components/admin/payments/PaymentsStatsPanel.tsx` | Убрать "В обработке", использовать `GlassStatCard` |
-| `src/components/admin/payments/BepaidStatementSummary.tsx` | Использовать `GlassStatCard` |
+| Файл | Изменения |
+|------|-----------|
+| `src/components/admin/payments/GlassStatCard.tsx` | Прозрачнее, легче, средний вес шрифта |
+| `src/components/admin/payments/PaymentsStatsPanel.tsx` | Градиентный контейнер + декоративные сферы |
+| `src/components/admin/payments/BepaidStatementSummary.tsx` | Тот же градиентный контейнер |
 
 ---
 
-## Ожидаемый результат
+## Визуальное сравнение
 
-### До (текущий UI)
-- Разный стиль карточек в Платежах и Выписке
-- Карточка "В обработке" занимает место
-- Менее выраженный glass-эффект
-
-### После (новый UI)
-- Единый стиль для всех карточек
-- 5 карточек в Платежах, 6 в Выписке (с "Чистой выручкой")
-- Усиленный glassmorphism: `backdrop-blur-2xl`, мягкие границы, внутреннее свечение
-- Hover-анимация с масштабированием
+| Аспект | Было | Станет |
+|--------|------|--------|
+| Фон карточек | `bg-white/8%` на белом → серый | `bg-white/40%` на градиенте → прозрачное стекло |
+| Шрифт значений | `font-bold` (жирный) | `font-medium` (средний) |
+| Границы | `border-white/12%` (едва видны) | `border-white/50%` (мягкий блеск) |
+| Контейнер | Без фона | Мягкий сине-фиолетовый градиент |
+| Глубина | Плоские карточки | Декоративные blur-сферы создают объём |
 
 ---
 
-## Техническая спецификация CSS Glass-эффекта
+## Технические детали CSS
 
+### Градиентный контейнер
 ```css
-.glass-stat-card {
-  /* Base */
-  background: linear-gradient(135deg, 
-    rgba(255,255,255,0.08) 0%, 
-    rgba(255,255,255,0.02) 100%
+.stats-container {
+  background: linear-gradient(
+    135deg,
+    hsl(217 91% 60% / 0.08) 0%,   /* Синий */
+    hsl(260 80% 65% / 0.06) 50%,  /* Фиолетовый */
+    hsl(280 75% 60% / 0.04) 100%  /* Пурпурный */
   );
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  
-  /* Border */
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 1rem;
-  
-  /* Shadow */
-  box-shadow: 
-    0 8px 32px rgba(0,0,0,0.08),
-    inset 0 1px 0 rgba(255,255,255,0.1);
-    
-  /* Inner shine */
-  &::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background: linear-gradient(135deg, 
-      rgba(255,255,255,0.08) 0%, 
-      transparent 50%
-    );
-    pointer-events: none;
-  }
+  border-radius: 1.5rem;
+  padding: 1rem;
+}
+```
+
+### Прозрачная карточка
+```css
+.glass-card {
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+}
+
+.dark .glass-card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 ```
 
 ---
 
-## DoD (Definition of Done)
+## Ожидаемый результат
 
-| Проверка | Критерий |
-|----------|----------|
-| Карточка "В обработке" | Удалена из PaymentsStatsPanel |
-| Единый стиль | GlassStatCard используется в обоих компонентах |
-| Glass-эффект | backdrop-blur-2xl, полупрозрачные границы, внутренний shine |
-| Сетка | 5 карточек в Платежах, 6 в Выписке |
-| Hover-эффект | scale-[1.02] при наведении на кликабельные карточки |
-| Скрин /admin/payments | Визуальное соответствие референсу |
+- Карточки будут выглядеть как настоящее стекло на цветном фоне
+- Лёгкий, воздушный дизайн с премиальными цветами
+- Мягкие тени и границы вместо жёстких линий
+- Шрифты средней толщины для элегантности
+- Декоративные blur-сферы добавляют глубину и "дороговизну"
