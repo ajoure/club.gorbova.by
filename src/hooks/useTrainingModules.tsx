@@ -115,7 +115,7 @@ export function useTrainingModules() {
         
         // СТРОГО: Админы имеют полный доступ, остальные — только по настройкам модуля (module_access)
         // Если moduleAccess пустой — модуль публичный. Иначе — проверяем tariff_id пользователя.
-        const hasAccess = isAdminUser || 
+        const baseAccess = 
           moduleAccess.length === 0 || 
           moduleAccess.some(a => userTariffIds.includes(a.tariff_id));
 
@@ -134,13 +134,19 @@ export function useTrainingModules() {
           ...mod,
           lesson_count: lessonCount,
           completed_count: progressMap[mod.id] || 0,
-          has_access: hasAccess,
+          has_access: baseAccess, // Will be overridden for admins below
           accessible_tariffs: accessibleTariffs,
           accessible_products: accessibleProducts,
         };
       }) || [];
 
-      setModules(enrichedModules);
+      // PATCH-1: Admin bypass — force has_access=true for all modules for admins
+      const normalizedModules = enrichedModules.map(m => ({
+        ...m,
+        has_access: isAdminUser ? true : m.has_access,
+      }));
+
+      setModules(normalizedModules);
     } catch (error) {
       console.error("Error fetching modules:", error);
       toast.error("Ошибка загрузки модулей");

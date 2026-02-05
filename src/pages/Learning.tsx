@@ -57,10 +57,8 @@ const products: Product[] = [
     image: productClubImage,
     isPurchased: false, // Will be determined dynamically
     purchaseLink: "https://club.gorbova.by",
-    // No courseSlug - club is not a course
-    // No lessonCount - not applicable for subscription
     duration: "Подписка",
-    isClub: true, // Marker for special handling
+    isClub: true,
   },
   {
     id: "2",
@@ -76,7 +74,6 @@ const products: Product[] = [
     lessonCount: 25,
     duration: "7 недель",
   },
-  // PATCH-C: Removed hardcoded "Бухгалтерия как бизнес" - real module from DB used instead
   {
     id: "3",
     title: "Консультация эксперта",
@@ -88,6 +85,20 @@ const products: Product[] = [
     isPurchased: false,
     purchaseLink: "/consultation",
     duration: "1-2 часа",
+  },
+  // PATCH-4: Витрина "Бухгалтерия как бизнес" со ссылкой на лендинг
+  {
+    id: "4",
+    title: "Бухгалтерия как бизнес",
+    description: "Практический тренинг для бухгалтеров: как строить и развивать свой бизнес в сфере бухгалтерских услуг",
+    badge: "Тренинг",
+    badgeVariant: "outline",
+    price: "от 50 BYN/мес",
+    image: productCourseImage, // Uses same course image
+    isPurchased: false, // Will be determined by matching module
+    purchaseLink: "https://business-training.gorbova.by",
+    courseSlug: "buhgalteriya-kak-biznes", // Links to real module for isPurchased check
+    duration: "Квест",
   },
 ];
 
@@ -350,21 +361,29 @@ export default function Learning() {
     return product;
   }), [modules, clubAccess]);
 
-  // PATCH-A: Filter modules by menu_section_key - NO exclusions, real modules from DB
-  const libraryModules = modules.filter(m => 
-    m.menu_section_key === "products-library" && 
-    m.is_active
-  );
-  const allProductsModules = modules.filter(m => 
-    m.menu_section_key === "products" && 
-    m.is_active
-  );
+  // PATCH-3: "Моя библиотека" = модули по has_access (не menu_section_key)
+  // PATCH-6: Дедуп по slug
+  const seenSlugs = new Set<string>();
+  const libraryModules = modules
+    .filter(m => 
+      m.is_active &&
+      m.has_access === true &&
+      (m.menu_section_key?.startsWith("products") ?? true)
+    )
+    .filter(m => {
+      const key = m.slug || m.id;
+      if (seenSlugs.has(key)) return false;
+      seenSlugs.add(key);
+      return true;
+    });
+  
+  // PATCH-2: allProductsModules больше НЕ используется (убран рендер ModuleCard из витрины)
 
   const purchasedProducts = enrichedProducts.filter(p => p.isPurchased && p.courseSlug);
   
   // PATCH-B: Track loading state to avoid flash empty
   const isLibraryLoading = loading;
-  const libraryItemsCount = purchasedProducts.length + libraryModules.length;
+  const libraryItemsCount = libraryModules.length; // Only modules count, not static products
 
   return (
     <DashboardLayout>
@@ -391,7 +410,7 @@ export default function Learning() {
             </TabsTrigger>
           </TabsList>
 
-          {/* Store Tab */}
+          {/* Store Tab - PATCH-2: Только витрина (ProductCard), без ModuleCard */}
           <TabsContent value="store" className="mt-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               {enrichedProducts.map((product) => (
@@ -402,10 +421,7 @@ export default function Learning() {
                   onSwitchToLibrary={() => setActiveTab("library")}
                 />
               ))}
-              {/* Dynamic modules assigned to "products" section */}
-              {allProductsModules.map((module) => (
-                <ModuleCard key={module.id} module={module} />
-              ))}
+              {/* PATCH-2: Убран рендер allProductsModules - витрина только ProductCard */}
             </div>
           </TabsContent>
 
@@ -439,16 +455,7 @@ export default function Learning() {
               </GlassCard>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                {/* Static purchased products */}
-                {purchasedProducts.map((product) => (
-                  <ProductCard
-                    key={product.id}
-                    product={product}
-                    variant="library"
-                    onSwitchToLibrary={() => {}}
-                  />
-                ))}
-                {/* Dynamic modules assigned to "products-library" section */}
+                {/* PATCH-3: Только ModuleCard по has_access, без статичных ProductCard */}
                 {libraryModules.map((module) => (
                   <ModuleCard key={module.id} module={module} />
                 ))}
