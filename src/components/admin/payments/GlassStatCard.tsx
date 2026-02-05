@@ -40,24 +40,24 @@
        className={cn(
          // Real glass effect
          "relative overflow-hidden rounded-[28px] p-4",
-         "bg-white/[0.08]",
+         "bg-white/[0.06]",
          "border border-white/[0.22]",
-         "shadow-[0_18px_60px_rgba(0,0,0,0.18)]",
+         "shadow-[0_18px_60px_rgba(0,0,0,0.22),inset_0_0_0_1px_rgba(255,255,255,0.10)]",
          "ring-1 ring-white/[0.10]",
          "transition-all duration-300",
          // Hover & active states
-         isClickable && "cursor-pointer hover:bg-white/[0.12] hover:border-white/[0.30] hover:scale-[1.02]",
+         isClickable && "cursor-pointer hover:bg-white/[0.10] hover:border-white/[0.28] hover:scale-[1.02]",
          isActive && "ring-2 ring-primary/60 ring-offset-2 ring-offset-background"
        )}
        style={{ 
-         backdropFilter: 'blur(22px) saturate(160%)', 
-         WebkitBackdropFilter: 'blur(22px) saturate(160%)' 
+         backdropFilter: 'blur(24px) saturate(170%)', 
+         WebkitBackdropFilter: 'blur(24px) saturate(170%)' 
        }}
      >
        {/* Realistic glare overlay */}
        <div className="pointer-events-none absolute inset-0">
          {/* Main glare - rotated */}
-         <div className="absolute -top-20 left-[-30%] h-56 w-[160%] rotate-[-12deg] bg-gradient-to-b from-white/35 via-white/10 to-transparent" />
+         <div className="absolute -top-16 left-[-30%] h-40 w-[160%] rotate-[-12deg] bg-gradient-to-b from-white/30 via-white/10 to-transparent" />
          {/* Secondary glow */}
          <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-white/5" />
        </div>
