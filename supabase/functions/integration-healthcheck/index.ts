@@ -36,8 +36,13 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+    // Auth client (anon) — для валидации JWT
+    const supabaseAuth = createClient(supabaseUrl, anonKey);
+    // Admin client (service-role) — для RPC + DB writes (обходит RLS)
+    const supabaseAdmin = createClient(supabaseUrl, serviceKey);
 
     // --- AUTH GUARD: superadmin only ---
     const authHeader = req.headers.get("Authorization") ?? "";
@@ -49,7 +54,7 @@ serve(async (req) => {
     }
 
     const token = authHeader.slice("Bearer ".length).trim();
-    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    const { data: userData, error: userError } = await supabaseAuth.auth.getUser(token);
 
     if (userError || !userData?.user?.id) {
       return new Response(
@@ -58,7 +63,7 @@ serve(async (req) => {
       );
     }
 
-    const { data: isSuperAdmin, error: roleErr } = await supabase.rpc("has_role", {
+    const { data: isSuperAdmin, error: roleErr } = await supabaseAdmin.rpc("has_role", {
       _user_id: userData.user.id,
       _role: "superadmin",
     });
@@ -349,7 +354,7 @@ serve(async (req) => {
     }
 
     // Update instance status in database
-    const { error: updateError } = await supabase
+    const { error: updateError } = await supabaseAdmin
       .from("integration_instances")
       .update({
         status: success ? "connected" : "error",
@@ -363,7 +368,7 @@ serve(async (req) => {
     }
 
     // Add log entry
-    const { error: logError } = await supabase.from("integration_logs").insert({
+    const { error: logError } = await supabaseAdmin.from("integration_logs").insert({
       instance_id,
       event_type: "healthcheck",
       result: success ? "success" : "error",
