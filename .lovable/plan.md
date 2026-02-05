@@ -1,139 +1,89 @@
-СПРИНТ: AdminLessonProgress — починить отображение учеников + добавить ContactDetailSheet
 
-ЦЕЛЬ:
-1) Исправить привязку профилей к lesson_progress_state.user_id (auth.users.id).
-2) На клике по имени ученика открывать ContactDetailSheet справа, без перезагрузки страницы.
-3) Сохранить текущую модалку StudentProgressModal (“Просмотр”) без регрессий.
+# План: Сверка и обновление статусов предзаписей "Бухгалтерия как бизнес"
 
----------------------------------------
-PATCH-1 (BLOCKER): Исправить JOIN profiles по user_id
----------------------------------------
-ПРОБЛЕМА:
-lesson_progress_state.user_id = auth.users.id
-а profiles связаны через profiles.user_id, не profiles.id.
+## Текущее состояние
 
-Файл: src/pages/admin/AdminLessonProgress.tsx
+| Статус | Кол-во |
+|--------|--------|
+| paid | 20 |
+| new | 8 |
+| converted | 1 |
 
-ИЗМЕНЕНИЯ:
-1) Запрос профилей:
-БЫЛО:
-.from("profiles").select("id, email, full_name").in("id", userIds)
+## Выявленные расхождения
 
-СТАЛО:
-.from("profiles").select("id, user_id, email, full_name").in("user_id", userIds)
+### Группа A: Статус "new", но уже оплачено (4 записи)
+Эти пользователи уже оплатили, но предзапись не обновилась:
 
-2) Map для быстрого доступа:
-БЫЛО:
-new Map(profiles?.map(p => [p.id, p]) || [])
+| Имя | Email | Нужное действие |
+|-----|-------|-----------------|
+| Юлия Лялина | volodik_84@mail.ru | → paid |
+| Вероника Матук | nika.1900735@mail.ru | → paid |
+| Ксения Шуманская | kshumanskaya@gmail.com | → paid |
+| Екатерина Кузьменок | kate_9292@mail.ru | → paid |
 
-СТАЛО:
-new Map(profiles?.map(p => [p.user_id, p]) || [])
+### Группа B: Статус "new", не оплачено — курс начался (4 записи)
+Эти пользователи не оплатили, курс уже идёт — отменяем:
 
-STOP-GUARD:
-- userIds пустой → profiles запрос не выполнять, profileMap = empty Map.
+| Имя | Email | Нужное действие |
+|-----|-------|-----------------|
+| Анастасия Жевнерова | nastassia_87@mail.ru | → cancelled |
+| Мария Громыко | slmmls@mail.ru | → cancelled |
+| Светлана Евгеньевна | metelska7@mail.ru | → cancelled (дубль 1) |
+| Светлана Евгеньевна Ярош | metelska7@mail.ru | → cancelled (дубль 2) |
 
-DoD:
-- В таблице прогресса появляются full_name и email для всех учеников, где есть profiles.user_id.
+---
 
----------------------------------------
-PATCH-2 (BLOCKER): ContactDetailSheet — открыть справа по клику на имя ученика
----------------------------------------
-ВАЖНО: В системе “контакт” может быть НЕ равен “profile”.
-Поэтому делаем открытие ContactDetailSheet через корректный идентификатор контакта, без угадываний.
+## Миграция (SQL)
 
-Dry-run (обязательный):
-A) Найти, что ожидает ContactDetailSheet:
-- props: contactId? contact? profile? (посмотреть компонент)
-B) Найти, где хранится связь profile → contact:
-- возможные поля: profiles.contact_id / profiles.amo_contact_id / profiles.email match contacts.email
-- если прямой связи нет — используем безопасный fallback: открывать Sheet по profile.user_id, но внутри Sheet показывать профильные данные (минимально), и пометить как “нет связанного контакта”.
+```sql
+-- ============================================
+-- PATCH: Обновление статусов предзаписей buh_business
+-- ============================================
 
-Файл: src/pages/admin/AdminLessonProgress.tsx
+-- Группа A: new → paid (уже оплатили)
+UPDATE course_preregistrations
+SET 
+  status = 'paid',
+  updated_at = NOW(),
+  notes = COALESCE(notes, '') || E'\n[Auto] 2026-02-05: Статус обновлён на paid (найдена оплаченная сделка)'
+WHERE id IN (
+  '67a011f5-8b9d-4ee2-9f98-042cbc1f7444',  -- Юлия Лялина
+  '70af01f6-1580-4647-98fd-f3e594ed5d54',  -- Вероника Матук
+  '5763ee04-a99d-444d-bb6f-62b19808243c',  -- Ксения Шуманская
+  'b333f6f7-819b-473d-a6b2-2e7713087a08'   -- Екатерина Кузьменок
+);
 
-ИЗМЕНЕНИЯ (универсальный безопасный вариант):
-1) Импорт:
-import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+-- Группа B: new → cancelled (не оплатили, курс начался)
+UPDATE course_preregistrations
+SET 
+  status = 'cancelled',
+  updated_at = NOW(),
+  notes = COALESCE(notes, '') || E'\n[Auto] 2026-02-05: Отменено — курс начался, оплата не поступила'
+WHERE id IN (
+  'dd071858-618e-42c2-91ee-964855903978',  -- Анастасия Жевнерова
+  '2c178be8-549d-46e4-a8c7-b13ad38855ad',  -- Мария Громыко
+  'd69baeb7-2a1d-4afc-b3a5-acad3a83fcb3',  -- Светлана Евгеньевна (дубль 1)
+  '33fc4dd3-5e0c-4184-988e-96ee7ac79648'   -- Светлана Евгеньевна Ярош (дубль 2)
+);
+```
 
-2) State:
-const [contactSheetOpen, setContactSheetOpen] = useState(false);
-const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
-const [selectedProfile, setSelectedProfile] = useState<any>(null); // только для fallback UI/поиска
+---
 
-3) Функция открытия:
-const openContactSheet = async (profile: { id: string; user_id: string; email?: string | null }) => {
-  // НЕ логировать email. Только технические статусы.
-  setSelectedProfile(profile);
+## Ожидаемый результат после миграции
 
-  // Step 1: попытаться найти contact_id прямой связью (если поле существует)
-  // - если в проекте есть profiles.contact_id → используем его
-  // - иначе (add-only) аккуратно ищем контакт по email (если это допустимо в вашей модели)
-  // - если контакт не найден → fallback: открыть sheet в режиме “нет контакта”
-  
-  // Псевдокод (конкретику выбрать после dry-run структуры таблиц):
-  // 1) if (profile.contact_id) { setSelectedContactId(profile.contact_id); setContactSheetOpen(true); return; }
-  // 2) else if (profile.email) { find in contacts by email (eq). if found -> open. }
-  // 3) else { setSelectedContactId(null); setContactSheetOpen(true); }
+| Статус | Было | Станет |
+|--------|------|--------|
+| paid | 20 | 24 (+4) |
+| new | 8 | 0 |
+| converted | 1 | 1 |
+| cancelled | 0 | 4 (+4) |
 
-  setContactSheetOpen(true);
-};
+---
 
-4) Сделать имя кликабельным:
-- В ячейке ученика заменить текст на button:
-<button
-  className="font-medium text-left hover:underline hover:text-primary"
-  onClick={() => profile && openContactSheet(profile)}
->
-  {profile?.full_name || "—"}
-</button>
+## DoD
 
-5) Рендер ContactDetailSheet (внизу компонента):
-ВАРИАНТ A (если sheet принимает contactId):
-<ContactDetailSheet
-  contactId={selectedContactId}
-  open={contactSheetOpen}
-  onOpenChange={setContactSheetOpen}
-  fallbackProfile={selectedProfile}   // add-only prop ТОЛЬКО если нужно и компонент позволяет
-/>
-
-ВАРИАНТ B (если sheet принимает contact объект):
-- загрузить contact объект перед open (но без PII логов), и передавать contact={selectedContact}
-
-STOP-GUARDS:
-- Если контакт не найден → Sheet всё равно открывается, но показывает “Контакт не найден / не связан”, и кнопку “Открыть профиль” (если такая логика у вас есть) либо просто информацию профиля (имя/email) без падения.
-- Не менять существующую логику “Просмотр” (StudentProgressModal).
-
-DoD:
-- Клик по имени ученика открывает правый ContactDetailSheet без перезагрузки.
-- Если контакт связан — видны данные контакта/сделки/платежи (как в других местах).
-- Если контакт не связан — виден корректный fallback, без краша.
-
----------------------------------------
-PATCH-3 (NON-BLOCKER): Сохранить модалку “Просмотр” как есть
----------------------------------------
-Файл: src/pages/admin/AdminLessonProgress.tsx
-Проверить, что кнопка “Просмотр” продолжает открывать StudentProgressModal и не зависит от ContactDetailSheet state.
-
-DoD:
-- “Просмотр” работает как раньше.
-
----------------------------------------
-ФАЙЛЫ ДЛЯ ИЗМЕНЕНИЯ
----------------------------------------
-1) src/pages/admin/AdminLessonProgress.tsx
-(+ возможно add-only расширение ContactDetailSheet только если по dry-run выяснится, что без этого нельзя показать fallback)
-
----------------------------------------
-ТЕСТ-КЕЙСЫ / DoD
----------------------------------------
-A) Прогресс работает
-1) /admin/training-modules → вкладка “Прогресс” → открыть урок
-2) Таблица учеников показывает full_name + email (где есть profiles.user_id)
-
-B) ContactDetailSheet
-1) Клик по имени ученика → открывается правый sheet
-2) Страница не перезагружается
-3) “Просмотр” по-прежнему открывает модалку ответов
-
-C) Безопасность
-- В консоли/логах нет email/телефонов/ответов
-- Только тех. статусы/счётчики
+1. Все предзаписи со статусом "new" обработаны
+2. Оплаченные → статус "paid"
+3. Неоплаченные → статус "cancelled"
+4. В notes добавлена причина изменения
+5. На странице /admin/payments/preorders отображаются корректные статусы
