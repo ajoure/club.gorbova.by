@@ -30,10 +30,15 @@ Deno.serve(async (req: Request) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+    // User client for auth
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } },
     });
+
+    // Admin client for reading bot tokens (RLS protected)
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
     // Get current user
     const { data: userData, error: authError } = await supabase.auth.getUser();
@@ -57,11 +62,11 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Get user's Telegram ID from profile (FIX: use telegram_user_id, not telegram_link)
-    const { data: profile, error: profileError } = await supabase
+    // Get user's Telegram ID from profile
+    const { data: profile, error: profileError } = await supabaseAdmin
       .from("profiles")
       .select("telegram_user_id, telegram_username")
-      .eq("user_id", userId)  // FIX: was eq("id", userId) - profiles.id != auth.users.id
+      .eq("user_id", userId)
       .single();
 
     if (profileError || !profile?.telegram_user_id) {
@@ -74,17 +79,17 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Use telegram_user_id directly from profile (no need for extra lookups)
     const telegramChatId = profile.telegram_user_id;
 
-    // Get bot token
-    const { data: bot, error: botError } = await supabase
+    // Get bot token using admin client (bypasses RLS)
+    const { data: bot, error: botError } = await supabaseAdmin
       .from("telegram_bots")
       .select("bot_token")
       .eq("id", botId)
       .single();
 
     if (botError || !bot?.bot_token) {
+      console.error("Bot lookup failed:", botError, "botId:", botId);
       return new Response(JSON.stringify({ error: "Bot not found" }), { 
         status: 404, 
         headers: { ...corsHeaders, "Content-Type": "application/json" } 
