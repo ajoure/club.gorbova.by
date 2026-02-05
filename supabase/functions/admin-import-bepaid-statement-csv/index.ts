@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { parse as csvParse } from "https://deno.land/std@0.224.0/csv/parse.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const BUILD_ID = "2026-02-02T21:30:00Z-csv-import-multifile-v3";
 
