@@ -27,10 +27,19 @@ jobs:
         run: |
           supabase link --project-ref hdjgkjceownmmnrqqtuz
           
-          for dir in supabase/functions/*/; do
-            func_name=$(basename "$dir")
+          # Get list of changed functions in this commit (if any)
+          CHANGED_FUNCS=$(git diff --name-only HEAD~1 HEAD -- supabase/functions/ | grep -oP 'supabase/functions/\K[^/]+' | sort -u || true)
+          
+          if [ -z "$CHANGED_FUNCS" ]; then
+            echo "No function changes detected in this commit, deploying all functions..."
+            CHANGED_FUNCS=$(ls -d supabase/functions/*/ | xargs -n1 basename)
+          fi
+          
+          for func_name in $CHANGED_FUNCS; do
+            dir="supabase/functions/$func_name"
             if [ -f "$dir/index.ts" ]; then
               echo "Deploying function: $func_name"
-              supabase functions deploy "$func_name" --no-verify-jwt || echo "Warning: Failed to deploy $func_name"
+              # Use config.toml settings (no --no-verify-jwt flag)
+              supabase functions deploy "$func_name" || echo "Warning: Failed to deploy $func_name"
             fi
           done

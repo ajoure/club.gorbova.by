@@ -2,7 +2,8 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-internal-key, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
 interface QueueItem {
@@ -107,6 +108,28 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // ========== INTERNAL KEY GUARD (PATCH-2) ==========
+    // This function is for cron/internal use only
+    const internalKey = req.headers.get('x-internal-key') || req.headers.get('X-Internal-Key');
+    const expectedKey = Deno.env.get('CRON_SECRET');
+
+    if (!expectedKey) {
+      console.error('[bepaid-auto-process] CRON_SECRET not configured');
+      return new Response(
+        JSON.stringify({ error: 'Server misconfiguration', code: 'MISSING_CRON_SECRET' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (internalKey !== expectedKey) {
+      console.warn('[bepaid-auto-process] Forbidden: invalid or missing x-internal-key');
+      return new Response(
+        JSON.stringify({ error: 'Forbidden', code: 'INVALID_INTERNAL_KEY' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    // ========== END INTERNAL KEY GUARD ==========
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
