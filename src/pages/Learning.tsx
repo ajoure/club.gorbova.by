@@ -66,7 +66,7 @@ const products: Product[] = [
     description: "25 модулей за 7 недель: от методологии до подготовки к проверкам",
     badge: "Новинка",
     badgeVariant: "secondary",
-    price: "от 590 BYN",
+    price: "от 1590 BYN",
     image: productCourseImage,
     isPurchased: false,
     purchaseLink: "/course-accountant",
@@ -93,10 +93,10 @@ const products: Product[] = [
     description: "Практический тренинг для бухгалтеров: как строить и развивать свой бизнес в сфере бухгалтерских услуг",
     badge: "Тренинг",
     badgeVariant: "outline",
-    price: "от 50 BYN/мес",
+    price: "250 BYN/мес",
     image: productCourseImage, // Uses same course image
     isPurchased: false, // Will be determined by matching module
-    purchaseLink: "https://business-training.gorbova.by",
+    purchaseLink: "https://club.gorbova.by/business-training",
     courseSlug: "buhgalteriya-kak-biznes", // Links to real module for isPurchased check
     duration: "Квест",
   },
