@@ -276,13 +276,9 @@ export function useKinescopePlayer({
           throw new Error("Kinescope IframePlayer not available");
         }
 
-        // Safe DOM cleanup - remove children one by one to avoid React reconciliation conflicts
-        const container = document.getElementById(containerId);
-        if (container) {
-          while (container.firstChild) {
-            container.removeChild(container.firstChild);
-          }
-        }
+        // PATCH-1: Don't manually clean container DOM - let Kinescope SDK manage it
+        // Kinescope.IframePlayer.create will clear and populate the container itself
+        // Manual DOM manipulation conflicts with React's virtual DOM reconciliation
 
         // Create player
         player = await factory.create(containerId, {

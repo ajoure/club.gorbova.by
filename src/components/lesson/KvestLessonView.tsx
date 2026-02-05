@@ -322,10 +322,13 @@ export function KvestLessonView({
           </div>
         );
       
-      case 'video_unskippable':
+      case 'video_unskippable': {
         const videoProgress = state?.videoProgress?.[blockId] ?? 0;
+        // PATCH-2: Use unique key based on isCompleted to force full remount
+        // This isolates Kinescope's DOM from React reconciliation
+        const stableKey = `${blockId}-${isCompleted ? 'completed' : 'active'}`;
         return (
-          <div className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
+          <div key={stableKey} className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
             <LessonBlockRenderer 
               {...commonProps}
               kvestProps={{
@@ -338,6 +341,7 @@ export function KvestLessonView({
             />
           </div>
         );
+      }
       
       case 'diagnostic_table':
         return (
