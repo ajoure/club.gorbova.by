@@ -43,3 +43,46 @@ jobs:
               supabase functions deploy "$func_name"
             fi
           done
+          
+          # ============================================
+          # SMOKE CHECKS: Verify TIER-1 UI-used functions are reachable
+          # ============================================
+          echo "Running smoke checks for TIER-1 functions..."
+          
+          TIER1_FUNCTIONS=(
+            "payment-method-verify-recurring"
+            "bepaid-list-subscriptions"
+            "bepaid-get-subscription-details"
+            "bepaid-create-token"
+            "admin-payments-diagnostics"
+            "integration-healthcheck"
+          )
+          
+          SUPABASE_URL="https://hdjgkjceownmmnrqqtuz.supabase.co"
+          SMOKE_FAILED=0
+          
+          for func in "${TIER1_FUNCTIONS[@]}"; do
+            echo "Smoke check: $func"
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -d '{}' \
+              "$SUPABASE_URL/functions/v1/$func" || echo "000")
+            
+            if [ "$RESPONSE" = "404" ]; then
+              echo "❌ FAIL: $func returned 404 NOT_FOUND"
+              SMOKE_FAILED=1
+            elif [ "$RESPONSE" = "000" ]; then
+              echo "❌ FAIL: $func - connection failed"
+              SMOKE_FAILED=1
+            else
+              echo "✅ OK: $func returned $RESPONSE (function exists)"
+            fi
+          done
+          
+          if [ "$SMOKE_FAILED" = "1" ]; then
+            echo "::error::Smoke checks failed! One or more TIER-1 functions are not reachable."
+            exit 1
+          fi
+          
+          echo "All smoke checks passed!"
