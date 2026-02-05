@@ -1,4 +1,4 @@
-import { CreditCard, RotateCcw, XCircle, Percent, Banknote, AlertTriangle } from "lucide-react";
+import { CreditCard, RotateCcw, XCircle, Percent, AlertTriangle, TrendingUp } from "lucide-react";
 import { BepaidStatementStats } from "@/hooks/useBepaidStatement";
 import { cn } from "@/lib/utils";
 
@@ -102,6 +102,12 @@ export function BepaidStatementSummary({ stats, isLoading, activeFilter, onFilte
     total_count: 0,
   };
 
+  // Net revenue = Payments - Refunds - Cancellations - Commission
+  const netRevenue = data.payments_amount 
+    - data.refunds_amount 
+    - data.cancellations_amount 
+    - data.commission_total;
+
   return (
     <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
       <StatCard
@@ -148,9 +154,9 @@ export function BepaidStatementSummary({ stats, isLoading, activeFilter, onFilte
         isClickable={false}
       />
       <StatCard
-        title="Перечислено"
-        value={formatAmount(data.payout_total)}
-        icon={<Banknote className="h-4 w-4" />}
+        title="Чистая выручка"
+        value={formatAmount(netRevenue)}
+        icon={<TrendingUp className="h-4 w-4" />}
         variant="success"
         isClickable={false}
       />
