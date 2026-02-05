@@ -5,7 +5,7 @@
  * Все edge functions должны импортировать из этого файла.
  */
 
-import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 export interface AccessCheckResult {
   valid: boolean;
