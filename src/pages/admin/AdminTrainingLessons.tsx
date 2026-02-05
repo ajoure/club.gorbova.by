@@ -54,6 +54,7 @@ import {
   Clock,
   ChevronRight,
   Blocks,
+  Users,
 } from "lucide-react";
 
 const contentTypeOptions = [
@@ -393,6 +394,16 @@ export default function AdminTrainingLessons() {
 
                     {/* Actions */}
                     <div className="flex items-center gap-2 shrink-0">
+                      {lesson.completion_mode === 'kvest' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => navigate(`/admin/training-lessons/${moduleId}/progress/${lesson.id}`)}
+                        >
+                          <Users className="h-4 w-4 mr-1" />
+                          Прогресс
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"

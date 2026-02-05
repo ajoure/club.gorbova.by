@@ -21,6 +21,7 @@ import {
   Trash2,
   Lightbulb 
 } from "lucide-react";
+import { toast } from "sonner";
 
 export interface FormStep {
   id: string;
@@ -92,12 +93,13 @@ export function SequentialFormBlock({
   const currentStep = steps[currentStepIndex];
   const progressPercent = totalSteps > 0 ? ((currentStepIndex + 1) / totalSteps) * 100 : 0;
 
-  // Initialize local answers from props (only once or when answers reset)
+  // Initialize local answers from props on mount
   useEffect(() => {
-    if (Object.keys(answers).length > 0 && Object.keys(localAnswers).length === 0) {
+    if (Object.keys(answers).length > 0) {
       setLocalAnswers(answers);
     }
-  }, [answers]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only on mount to prevent overwriting user input
 
   // Commit local answers to parent (on blur, navigation, or completion)
   const commitAnswers = useCallback(() => {
@@ -394,7 +396,12 @@ export function SequentialFormBlock({
             <Button
               onClick={() => {
                 commitAnswers();
-                onComplete?.();
+              if (onComplete) {
+                onComplete();
+              } else {
+                // Fallback for preview/edit mode without callback
+                toast.success("Формула сформирована (preview)");
+              }
               }}
               disabled={!allFilled}
               variant="default"

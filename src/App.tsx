@@ -160,6 +160,7 @@ const AdminBroadcasts = lazy(() => import("./pages/admin/AdminBroadcasts"));
 const AdminTrainingModules = lazy(() => import("./pages/admin/AdminTrainingModules"));
 const AdminTrainingLessons = lazy(() => import("./pages/admin/AdminTrainingLessons"));
 const AdminLessonBlockEditor = lazy(() => import("./pages/admin/AdminLessonBlockEditor"));
+const AdminLessonProgress = lazy(() => import("./pages/admin/AdminLessonProgress"));
 const AdminBepaidArchiveImport = lazy(() => import("./pages/admin/AdminBepaidArchiveImport"));
 const AdminSupport = lazy(() => import("./pages/admin/AdminSupport"));
 const AdminNews = lazy(() => import("./pages/admin/AdminNews"));
@@ -315,6 +316,7 @@ const App = () => {
               <Route path="/admin/training-modules" element={<ProtectedRoute><LazyRoute><AdminTrainingModules /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/training-modules/:moduleId/lessons" element={<ProtectedRoute><LazyRoute><AdminTrainingLessons /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/training-lessons/:moduleId/edit/:lessonId" element={<ProtectedRoute><LazyRoute><AdminLessonBlockEditor /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/training-lessons/:moduleId/progress/:lessonId" element={<ProtectedRoute><LazyRoute><AdminLessonProgress /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/bepaid-sync" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/refunds-v2" element={<Navigate to="/admin/payments" replace />} />
               {/* Payments Hub routes */}
