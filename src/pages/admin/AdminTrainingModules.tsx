@@ -555,7 +555,7 @@ export default function AdminTrainingModules() {
               <Wand2 className="mr-1.5 h-4 w-4" />
               Мастер
             </Button>
-            <Button variant="default" size="sm" onClick={openCreateDialog}>
+            <Button variant="outline" size="sm" onClick={openCreateDialog}>
               <Plus className="mr-1.5 h-4 w-4" />
               Добавить
             </Button>

@@ -117,10 +117,10 @@ type LessonBlock = ModalBlock;
        <AdminLayout>
          <div className="container mx-auto px-4 py-6 max-w-6xl text-center">
            <h1 className="text-2xl font-bold mb-4">Урок не найден</h1>
-           <Button onClick={() => navigate(`/admin/training-lessons/${moduleId}`)}>
-             <ArrowLeft className="mr-2 h-4 w-4" />
-             Назад
-           </Button>
+          <Button onClick={() => navigate(`/admin/training-modules/${moduleId}/lessons`)}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Назад
+            </Button>
          </div>
        </AdminLayout>
      );
@@ -135,10 +135,10 @@ type LessonBlock = ModalBlock;
              Тренинги
            </Link>
            <ChevronRight className="h-4 w-4" />
-           <Link 
-             to={`/admin/training-lessons/${moduleId}`} 
-             className="hover:text-foreground transition-colors"
-           >
+          <Link 
+              to={`/admin/training-modules/${moduleId}/lessons`} 
+              className="hover:text-foreground transition-colors"
+            >
              {(lesson as any).training_modules?.title || "Модуль"}
            </Link>
            <ChevronRight className="h-4 w-4" />
@@ -154,10 +154,10 @@ type LessonBlock = ModalBlock;
              </h1>
              <p className="text-muted-foreground">Урок: {lesson.title}</p>
            </div>
-           <Button 
-             variant="outline" 
-             onClick={() => navigate(`/admin/training-lessons/${moduleId}`)}
-           >
+          <Button 
+              variant="outline" 
+              onClick={() => navigate(`/admin/training-modules/${moduleId}/lessons`)}
+            >
              <ArrowLeft className="mr-2 h-4 w-4" />
              К урокам
            </Button>
