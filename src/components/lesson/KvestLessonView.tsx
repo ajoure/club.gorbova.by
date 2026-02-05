@@ -240,6 +240,14 @@ export function KvestLessonView({
     markBlockCompleted(blockId);
   }, [updateState, markBlockCompleted]);
 
+  // PATCH-5: Handler for AI summary generation
+  const handleSummaryGenerated = useCallback((summary: string) => {
+    updateState({ pointB_summary: summary });
+  }, [updateState]);
+
+  // Memoized saved summary
+  const savedSummary = useMemo(() => state?.pointB_summary || undefined, [state?.pointB_summary]);
+
   // Memoized props for blocks to prevent unnecessary re-renders
   const pointARows = useMemo(() => state?.pointA_rows || [], [state?.pointA_rows]);
   const pointBAnswers = useMemo(() => state?.pointB_answers || {}, [state?.pointB_answers]);
@@ -331,6 +339,8 @@ export function KvestLessonView({
                 onAnswersChange: isReadOnly ? undefined : handleSequentialFormUpdate,
                 onComplete: isReadOnly ? undefined : () => handleSequentialFormComplete(blockId),
                 isCompleted: state?.pointB_completed || false,
+                savedSummary: savedSummary,  // PATCH-5: Pass saved summary
+                onSummaryGenerated: isReadOnly ? undefined : handleSummaryGenerated,  // PATCH-5
               }}
             />
           </div>
@@ -349,6 +359,7 @@ export function KvestLessonView({
     userRole,
     pointARows,
     pointBAnswers,
+    savedSummary,
     handleRoleSelected,
     handleRoleDescriptionComplete,
     handleVideoProgress,
@@ -357,6 +368,7 @@ export function KvestLessonView({
     handleDiagnosticTableComplete,
     handleSequentialFormUpdate,
     handleSequentialFormComplete,
+    handleSummaryGenerated,
   ]);
 
   // Get gate explanation for current block

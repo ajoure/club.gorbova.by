@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 
 export interface LessonAttachment {
@@ -62,6 +63,8 @@ export interface TrainingLessonFormData {
 
 export function useTrainingLessons(moduleId?: string) {
   const { user } = useAuth();
+  const { isAdmin } = usePermissions();
+  const isAdminUser = isAdmin();
   const [lessons, setLessons] = useState<TrainingLesson[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -113,14 +116,25 @@ export function useTrainingLessons(moduleId?: string) {
         attachments: attachmentsData?.filter(a => a.lesson_id === lesson.id) || [],
       })) || [];
 
-      setLessons(enrichedLessons);
+      // PATCH-1: Filter lessons by published_at for non-admin users
+      const now = new Date();
+      const filteredLessons = enrichedLessons.filter(lesson => {
+        // Admin sees all lessons
+        if (isAdminUser) return true;
+        // No published_at = visible
+        if (!lesson.published_at) return true;
+        // published_at in past or now = visible
+        return new Date(lesson.published_at) <= now;
+      });
+
+      setLessons(filteredLessons);
     } catch (error) {
       console.error("Error fetching lessons:", error);
       toast.error("Ошибка загрузки уроков");
     } finally {
       setLoading(false);
     }
-  }, [moduleId, user]);
+  }, [moduleId, user, isAdminUser]);
 
   useEffect(() => {
     fetchLessons();

@@ -308,3 +308,6 @@ verify_jwt = false
 
 [functions.bepaid-admin-create-subscription-link]
 verify_jwt = false
+
+[functions.generate-point-b-summary]
+verify_jwt = false

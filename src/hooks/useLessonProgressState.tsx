@@ -9,6 +9,7 @@ export interface LessonProgressStateData {
   pointA_completed?: boolean;
   pointB_answers?: Record<string, string>; // Answers to sequential form steps
   pointB_completed?: boolean;
+  pointB_summary?: string;                 // AI-generated summary for Point B
   currentStepIndex?: number;              // Current kvest step
   completedSteps?: string[];              // IDs of completed blocks
 }

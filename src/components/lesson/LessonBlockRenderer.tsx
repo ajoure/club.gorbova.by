@@ -47,6 +47,8 @@ export interface KvestBlockProps {
   // Sequential form
   answers?: Record<string, string>;
   onAnswersChange?: (answers: Record<string, string>) => void;
+  savedSummary?: string;                    // PATCH-5: Pre-saved AI summary
+  onSummaryGenerated?: (summary: string) => void; // PATCH-5: Callback to save summary
   
   // Common
   onComplete?: () => void;
@@ -345,6 +347,8 @@ export function LessonBlockRenderer({
             onAnswersChange={kvestProps?.onAnswersChange}
             onComplete={kvestProps?.onComplete}
             isCompleted={kvestProps?.isCompleted}
+            savedSummary={kvestProps?.savedSummary}
+            onSummaryGenerated={kvestProps?.onSummaryGenerated}
           />
         );
       case 'role_description':

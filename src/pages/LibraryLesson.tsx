@@ -30,8 +30,11 @@ import {
   ExternalLink,
   ListVideo,
   Play,
+  CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
 
 const contentTypeConfig = {
   video: { icon: Video, label: "Видео", color: "text-blue-500" },
@@ -201,6 +204,35 @@ export default function LibraryLesson() {
           <Button onClick={() => navigate(`/library/${moduleSlug}`)}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             Вернуться к модулю
+          </Button>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  // PATCH-2: Check if lesson is scheduled for future (non-admin)
+  const isScheduledForFuture = 
+    currentLesson.published_at && 
+    new Date(currentLesson.published_at) > new Date() && 
+    !isAdminMode;
+
+  if (isScheduledForFuture) {
+    return (
+      <DashboardLayout>
+        <div className="container mx-auto px-4 py-12 text-center max-w-md">
+          <div className="rounded-full bg-primary/10 p-6 w-24 h-24 mx-auto mb-6 flex items-center justify-center">
+            <CalendarClock className="h-12 w-12 text-primary" />
+          </div>
+          <h1 className="text-2xl font-bold mb-3">Урок ещё не опубликован</h1>
+          <p className="text-muted-foreground mb-6">
+            Этот урок откроется{" "}
+            <span className="font-medium text-foreground">
+              {format(new Date(currentLesson.published_at!), "d MMMM yyyy 'в' HH:mm", { locale: ru })}
+            </span>
+          </p>
+          <Button onClick={() => navigate(-1)} variant="outline">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Назад
           </Button>
         </div>
       </DashboardLayout>

@@ -19,9 +19,12 @@ import {
   CheckCircle2, 
   Plus, 
   Trash2,
-  Lightbulb 
+  Lightbulb,
+  Sparkles,
+  Loader2
 } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface FormStep {
   id: string;
@@ -50,6 +53,9 @@ interface SequentialFormBlockProps {
   onComplete?: () => void;
   isCompleted?: boolean;
   userRole?: string;
+  // PATCH-4/5: AI summary props
+  savedSummary?: string;
+  onSummaryGenerated?: (summary: string) => void;
 }
 
 // Default 10 steps for Point B
@@ -80,13 +86,19 @@ export function SequentialFormBlock({
   onAnswersChange,
   onComplete,
   isCompleted = false,
-  userRole
+  userRole,
+  savedSummary,
+  onSummaryGenerated
 }: SequentialFormBlockProps) {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   
   // PATCH-1: Local state for inputs to prevent focus loss
   const [localAnswers, setLocalAnswers] = useState<Record<string, string>>({});
+  
+  // PATCH-4: AI summary state
+  const [summary, setSummary] = useState<string | null>(savedSummary || null);
+  const [isGenerating, setIsGenerating] = useState(false);
   
   const steps = content.steps || DEFAULT_STEPS;
   const totalSteps = steps.length;
@@ -100,6 +112,13 @@ export function SequentialFormBlock({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only on mount to prevent overwriting user input
+
+  // Sync savedSummary if changed from outside
+  useEffect(() => {
+    if (savedSummary && !summary) {
+      setSummary(savedSummary);
+    }
+  }, [savedSummary, summary]);
 
   // Commit local answers to parent (on blur, navigation, or completion)
   const commitAnswers = useCallback(() => {
@@ -165,6 +184,57 @@ export function SequentialFormBlock({
       return step.helperTextByRole[userRole];
     }
     return step.helperText;
+  };
+
+  // PATCH-4: Generate AI summary
+  const generateSummary = async () => {
+    // If summary already exists, don't regenerate
+    if (savedSummary) {
+      setSummary(savedSummary);
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-point-b-summary', {
+        body: { answers: localAnswers, steps }
+      });
+
+      if (error) {
+        console.error('[SequentialFormBlock] AI error:', error);
+        toast.error("Не удалось сгенерировать итог");
+        return;
+      }
+
+      if (data?.summary) {
+        setSummary(data.summary);
+        onSummaryGenerated?.(data.summary);
+        toast.success("Итог сформирован!");
+      }
+    } catch (e) {
+      console.error('[SequentialFormBlock] Error:', e);
+      toast.error("Ошибка при генерации итога");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // PATCH-4: Handle completion with AI summary
+  const handleComplete = async () => {
+    commitAnswers();
+    
+    // Generate summary if not already exists
+    if (!savedSummary && !summary) {
+      await generateSummary();
+    }
+    
+    // Call original onComplete
+    if (onComplete) {
+      onComplete();
+    } else {
+      // Fallback for preview/edit mode without callback
+      toast.success("Формула сформирована (preview)");
+    }
   };
 
   if (isEditing) {
@@ -394,37 +464,75 @@ export function SequentialFormBlock({
             </Button>
           ) : (
             <Button
-              onClick={() => {
-                commitAnswers();
-              if (onComplete) {
-                onComplete();
-              } else {
-                // Fallback for preview/edit mode without callback
-                toast.success("Формула сформирована (preview)");
-              }
-              }}
-              disabled={!allFilled}
+              onClick={handleComplete}
+              disabled={!allFilled || isGenerating}
               variant="default"
             >
-              <CheckCircle2 className="mr-2 h-4 w-4" />
-              {content.submitButtonText || 'Завершить'}
+              {isGenerating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Генерация итога...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  {content.submitButtonText || 'Завершить'}
+                </>
+              )}
             </Button>
           )}
         </div>
       )}
 
       {/* Completion status */}
-      {isCompleted && (
+      {isCompleted && !summary && (
         <div className="flex items-center justify-center gap-2 text-primary py-4">
           <CheckCircle2 className="h-5 w-5" />
           <span className="font-medium">Формула сформирована</span>
         </div>
       )}
 
+      {/* PATCH-4: AI Summary Block */}
+      {(isCompleted || summary) && summary && (
+        <div 
+          className="relative rounded-2xl overflow-hidden border border-primary/20 p-6 mt-6"
+          style={{
+            background: 'linear-gradient(135deg, hsl(var(--primary) / 0.08), hsl(var(--primary) / 0.03))',
+            boxShadow: '0 12px 40px hsl(var(--primary) / 0.12)'
+          }}
+        >
+          {/* Decorative orb */}
+          <div className="absolute -top-16 -right-16 w-48 h-48 bg-primary/20 rounded-full blur-3xl pointer-events-none" />
+          
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-4">
+              <Sparkles className="h-5 w-5 text-primary" />
+              <h3 className="text-lg font-semibold">Ваша Точка B: Итог</h3>
+            </div>
+            <div className="prose prose-sm max-w-none dark:prose-invert">
+              {summary.split('\n').map((line, i) => {
+                if (line.startsWith('## ')) {
+                  return <h4 key={i} className="font-semibold text-foreground mt-4 mb-2">{line.slice(3)}</h4>;
+                }
+                if (line.startsWith('- ')) {
+                  return <p key={i} className="text-muted-foreground ml-4">• {line.slice(2)}</p>;
+                }
+                if (line.trim()) {
+                  return <p key={i} className="text-muted-foreground">{line}</p>;
+                }
+                return null;
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Progress indicator */}
-      <p className="text-center text-sm text-muted-foreground">
-        Заполнено: {filledCount} из {totalSteps}
-      </p>
+      {!isCompleted && (
+        <p className="text-center text-sm text-muted-foreground">
+          Заполнено: {filledCount} из {totalSteps}
+        </p>
+      )}
     </div>
   );
 }
