@@ -3,13 +3,30 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 interface HealthCheckRequest {
   provider: string;
   instance_id: string;
   config: Record<string, unknown>;
+}
+
+// Helper: fetch with timeout (10s default)
+async function fetchWithTimeout(
+  input: RequestInfo,
+  init: RequestInit = {},
+  timeoutMs = 10000
+): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(input, { ...init, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(id);
+  }
 }
 
 serve(async (req) => {
@@ -21,6 +38,46 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // --- AUTH GUARD: superadmin only ---
+    const authHeader = req.headers.get("Authorization") ?? "";
+    if (!authHeader.startsWith("Bearer ")) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const token = authHeader.slice("Bearer ".length).trim();
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+
+    if (userError || !userData?.user?.id) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid token" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const { data: isSuperAdmin, error: roleErr } = await supabase.rpc("has_role", {
+      _user_id: userData.user.id,
+      _role: "superadmin",
+    });
+
+    if (roleErr) {
+      console.error("Role check error:", roleErr.message);
+      return new Response(
+        JSON.stringify({ success: false, error: "Role check failed" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (isSuperAdmin !== true) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Superadmin access required" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    // --- END AUTH GUARD ---
 
     const { provider, instance_id, config } = (await req.json()) as HealthCheckRequest;
 
@@ -48,11 +105,20 @@ serve(async (req) => {
           const apiUrl = `https://${accountName}.getcourse.ru/pl/api/account/groups`;
           console.log("GetCourse API URL:", apiUrl);
           
-          const response = await fetch(apiUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: `action=getList&key=${secretKey}`,
-          });
+          let response: Response;
+          try {
+            response = await fetchWithTimeout(apiUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: `action=getList&key=${secretKey}`,
+            }, 10000);
+          } catch (e: unknown) {
+            const isAbort = e instanceof Error && e.name === "AbortError";
+            return new Response(
+              JSON.stringify({ success: false, provider: "getcourse", error: isAbort ? "TIMEOUT" : "FETCH_FAILED" }),
+              { status: isAbort ? 504 : 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
 
           const data = await response.json();
           console.log("GetCourse response:", JSON.stringify(data));
@@ -91,36 +157,44 @@ serve(async (req) => {
 
         try {
           // Test bePaid API by checking shop info
-          const authHeader = btoa(`${shopId}:${secretKey}`);
+          const authHeaderVal = btoa(`${shopId}:${secretKey}`);
           const testMode = config.test_mode ? true : false;
           const baseUrl = testMode
             ? "https://checkout.bepaid.by"
             : "https://checkout.bepaid.by";
 
-          // Try to get shop info via a minimal checkout token request
-          const response = await fetch(`${baseUrl}/ctp/api/checkouts`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Basic ${authHeader}`,
-            },
-            body: JSON.stringify({
-              checkout: {
-                test: testMode,
-                transaction_type: "payment",
-                order: {
-                  amount: 100, // 1.00 in minor units
-                  currency: "BYN",
-                  description: "Health check test",
-                },
-                settings: {
-                  return_url: "https://example.com",
-                  notification_url: "https://example.com/webhook",
-                  language: "ru",
-                },
+          let response: Response;
+          try {
+            response = await fetchWithTimeout(`${baseUrl}/ctp/api/checkouts`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Basic ${authHeaderVal}`,
               },
-            }),
-          });
+              body: JSON.stringify({
+                checkout: {
+                  test: testMode,
+                  transaction_type: "payment",
+                  order: {
+                    amount: 100, // 1.00 in minor units
+                    currency: "BYN",
+                    description: "Health check test",
+                  },
+                  settings: {
+                    return_url: "https://example.com",
+                    notification_url: "https://example.com/webhook",
+                    language: "ru",
+                  },
+                },
+              }),
+            }, 10000);
+          } catch (e: unknown) {
+            const isAbort = e instanceof Error && e.name === "AbortError";
+            return new Response(
+              JSON.stringify({ success: false, provider: "bepaid", error: isAbort ? "TIMEOUT" : "FETCH_FAILED" }),
+              { status: isAbort ? 504 : 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
 
           const data = await response.json();
           console.log("bePaid response status:", response.status);
@@ -177,13 +251,22 @@ serve(async (req) => {
           const apiUrl = `https://${cleanSubdomain}.amocrm.ru/api/v4/account`;
           console.log("AmoCRM API URL:", apiUrl);
 
-          const response = await fetch(apiUrl, {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": "application/json",
-            },
-          });
+          let response: Response;
+          try {
+            response = await fetchWithTimeout(apiUrl, {
+              method: "GET",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+              },
+            }, 10000);
+          } catch (e: unknown) {
+            const isAbort = e instanceof Error && e.name === "AbortError";
+            return new Response(
+              JSON.stringify({ success: false, provider: "amocrm", error: isAbort ? "TIMEOUT" : "FETCH_FAILED" }),
+              { status: isAbort ? 504 : 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
 
           console.log("AmoCRM response status:", response.status);
 
@@ -218,14 +301,22 @@ serve(async (req) => {
         }
 
         try {
-          // Validate token by fetching projects list
-          const response = await fetch("https://api.kinescope.io/v1/projects", {
-            method: "GET",
-            headers: {
-              "Authorization": `Bearer ${apiToken}`,
-              "Content-Type": "application/json"
-            }
-          });
+          let response: Response;
+          try {
+            response = await fetchWithTimeout("https://api.kinescope.io/v1/projects", {
+              method: "GET",
+              headers: {
+                "Authorization": `Bearer ${apiToken}`,
+                "Content-Type": "application/json"
+              }
+            }, 10000);
+          } catch (e: unknown) {
+            const isAbort = e instanceof Error && e.name === "AbortError";
+            return new Response(
+              JSON.stringify({ success: false, provider: "kinescope", error: isAbort ? "TIMEOUT" : "FETCH_FAILED" }),
+              { status: isAbort ? 504 : 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
 
           console.log("Kinescope response status:", response.status);
 
