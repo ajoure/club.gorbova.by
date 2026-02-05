@@ -54,25 +54,17 @@ export function BepaidStatementSummary({ stats, isLoading, activeFilter, onFilte
     - data.commission_total;
 
   return (
-    <div 
-      className="relative rounded-3xl p-4 overflow-hidden"
-      style={{
-        background: 'linear-gradient(135deg, hsl(217 91% 60% / 0.1) 0%, hsl(260 80% 65% / 0.08) 50%, hsl(280 75% 60% / 0.06) 100%)',
-      }}
-    >
-      {/* Decorative blur spheres for depth */}
-      <div 
-        className="absolute -top-20 -left-20 w-40 h-40 rounded-full opacity-40 blur-3xl pointer-events-none"
-        style={{ background: 'radial-gradient(circle, hsl(217 91% 60% / 0.5), transparent)' }}
-      />
-      <div 
-        className="absolute -bottom-10 -right-10 w-32 h-32 rounded-full opacity-30 blur-3xl pointer-events-none"
-        style={{ background: 'radial-gradient(circle, hsl(280 75% 60% / 0.5), transparent)' }}
-      />
-      <div 
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-60 h-60 rounded-full opacity-20 blur-3xl pointer-events-none"
-        style={{ background: 'radial-gradient(circle, hsl(260 80% 70% / 0.4), transparent)' }}
-      />
+     <div className="relative isolate rounded-3xl p-4 overflow-hidden">
+       {/* Dark gradient background - the "scene" for glass */}
+       <div 
+         className="absolute inset-0 -z-10"
+         style={{ background: 'linear-gradient(135deg, #0B2A6F 0%, #123B8B 50%, #0A1E4A 100%)' }}
+       />
+       
+       {/* Blurred color spots for depth */}
+       <div className="absolute -z-10 top-[-100px] left-[-100px] h-[320px] w-[320px] rounded-full bg-cyan-400/25 blur-[90px] pointer-events-none" />
+       <div className="absolute -z-10 bottom-[-140px] right-[-140px] h-[380px] w-[380px] rounded-full bg-violet-500/20 blur-[110px] pointer-events-none" />
+       <div className="absolute -z-10 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-[280px] w-[280px] rounded-full bg-blue-500/15 blur-[100px] pointer-events-none" />
       
       {/* Stats grid */}
       <div className="relative grid grid-cols-2 md:grid-cols-6 gap-3">

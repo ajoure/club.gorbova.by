@@ -15,11 +15,11 @@
  }
  
  const variantColors: Record<GlassStatVariant, { text: string; iconBg: string }> = {
-   default: { text: 'text-foreground/90', iconBg: 'bg-white/20' },
-   success: { text: 'text-emerald-600 dark:text-emerald-400', iconBg: 'bg-emerald-500/15' },
-   warning: { text: 'text-amber-600 dark:text-amber-400', iconBg: 'bg-amber-500/15' },
-   danger: { text: 'text-rose-600 dark:text-rose-400', iconBg: 'bg-rose-500/15' },
-   info: { text: 'text-sky-600 dark:text-sky-400', iconBg: 'bg-sky-500/15' },
+   default: { text: 'text-white/90', iconBg: 'bg-white/10' },
+   success: { text: 'text-emerald-300', iconBg: 'bg-emerald-400/15' },
+   warning: { text: 'text-amber-300', iconBg: 'bg-amber-400/15' },
+   danger: { text: 'text-rose-300', iconBg: 'bg-rose-400/15' },
+   info: { text: 'text-sky-300', iconBg: 'bg-sky-400/15' },
  };
  
  export function GlassStatCard({
@@ -38,46 +38,41 @@
      <div
        onClick={onClick}
        className={cn(
-         // Base glass effect
-         "relative overflow-hidden rounded-2xl p-4",
-         "backdrop-blur-xl",
-         // Light: more transparent white, Dark: subtle
-         "bg-white/50 dark:bg-white/[0.06]",
-         "border border-white/60 dark:border-white/[0.12]",
-         "shadow-[0_4px_24px_rgba(0,0,0,0.03)]",
+         // Real glass effect
+         "relative overflow-hidden rounded-[28px] p-4",
+         "bg-white/[0.08]",
+         "border border-white/[0.22]",
+         "shadow-[0_18px_60px_rgba(0,0,0,0.18)]",
+         "ring-1 ring-white/[0.10]",
          "transition-all duration-300",
          // Hover & active states
-         isClickable && "cursor-pointer hover:bg-white/60 dark:hover:bg-white/[0.08] hover:border-white/70 hover:scale-[1.02]",
+         isClickable && "cursor-pointer hover:bg-white/[0.12] hover:border-white/[0.30] hover:scale-[1.02]",
          isActive && "ring-2 ring-primary/60 ring-offset-2 ring-offset-background"
        )}
+       style={{ 
+         backdropFilter: 'blur(22px) saturate(160%)', 
+         WebkitBackdropFilter: 'blur(22px) saturate(160%)' 
+       }}
      >
-       {/* Inner shine overlay */}
-       <div 
-         className="absolute inset-0 rounded-2xl pointer-events-none"
-         style={{
-           background: 'linear-gradient(135deg, rgba(255,255,255,0.4) 0%, transparent 60%)',
-         }}
-       />
-       
-       {/* Top accent line */}
-       <div 
-         className="absolute inset-x-0 top-0 h-px opacity-60"
-         style={{
-           background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
-         }}
-       />
+       {/* Realistic glare overlay */}
+       <div className="pointer-events-none absolute inset-0">
+         {/* Main glare - rotated */}
+         <div className="absolute -top-20 left-[-30%] h-56 w-[160%] rotate-[-12deg] bg-gradient-to-b from-white/35 via-white/10 to-transparent" />
+         {/* Secondary glow */}
+         <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-white/5" />
+       </div>
  
        {/* Content */}
        <div className="relative z-10 flex items-start justify-between gap-3">
          <div className="flex-1 min-w-0 space-y-1">
-           <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+           <p className="text-[10px] font-medium uppercase tracking-widest text-white/60">
              {title}
            </p>
            <p className={cn("text-xl font-medium tabular-nums tracking-tight", colors.text)}>
              {value}
            </p>
            {subtitle && (
-             <p className="text-xs text-muted-foreground tabular-nums">
+             <p className="text-xs text-white/50 tabular-nums">
                {subtitle}
              </p>
            )}
