@@ -100,7 +100,7 @@ const products: Product[] = [
     image: katerinaBusinessImage,
     isPurchased: false,
     purchaseLink: "https://club.gorbova.by/business-training",
-    courseSlug: "buh-business",
+    courseSlug: "buhgalteriya-kak-biznes", // PATCH-A: Match real module slug from DB
     duration: "12 модулей",
   },
 ];
@@ -427,15 +427,25 @@ export default function Learning() {
     return product;
   }), [modules, businessTrainingAccess, clubAccess]);
 
-  // Filter modules by menu_section_key for each tab
+  // PATCH-A: Filter modules by menu_section_key, EXCLUDE buh-business to prevent duplicate
+  // (buh-business is shown via static ProductCard with real data from enrichedProducts)
+  const BUH_BUSINESS_SLUG = "buhgalteriya-kak-biznes";
+  
   const libraryModules = modules.filter(m => 
-    m.menu_section_key === "products-library" && m.is_active
+    m.menu_section_key === "products-library" && 
+    m.is_active &&
+    m.slug !== BUH_BUSINESS_SLUG // Exclude to prevent duplicate
   );
   const allProductsModules = modules.filter(m => 
-    m.menu_section_key === "products" && m.is_active
+    m.menu_section_key === "products" && 
+    m.is_active &&
+    m.slug !== BUH_BUSINESS_SLUG // Exclude to prevent duplicate
   );
 
   const purchasedProducts = enrichedProducts.filter(p => p.isPurchased && p.courseSlug);
+  
+  // PATCH-B: Track loading state to avoid flash empty
+  const isLibraryLoading = loading;
   const libraryItemsCount = purchasedProducts.length + libraryModules.length;
 
   return (
@@ -483,7 +493,21 @@ export default function Learning() {
 
           {/* Library Tab */}
           <TabsContent value="library" className="mt-6">
-            {libraryItemsCount === 0 ? (
+            {/* PATCH-B: Show skeleton while loading, not empty state */}
+            {isLibraryLoading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                {[1, 2, 3].map((i) => (
+                  <GlassCard key={i} className="h-80 animate-pulse">
+                    <div className="h-48 bg-muted rounded-t-2xl" />
+                    <div className="p-5 space-y-3">
+                      <div className="h-4 bg-muted rounded w-3/4" />
+                      <div className="h-3 bg-muted rounded w-full" />
+                      <div className="h-3 bg-muted rounded w-2/3" />
+                    </div>
+                  </GlassCard>
+                ))}
+              </div>
+            ) : libraryItemsCount === 0 ? (
               <GlassCard className="text-center py-16">
                 <FolderOpen className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
                 <h3 className="text-xl font-semibold mb-2">Библиотека пуста</h3>

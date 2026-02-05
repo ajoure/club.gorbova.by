@@ -5,12 +5,16 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
+import { useTrainingLessons } from "@/hooks/useTrainingLessons";
 import { toast } from "sonner";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
 import { 
   Calendar, 
   Lock, 
@@ -25,10 +29,13 @@ import {
   Info,
   XCircle,
   CreditCard,
-  ShoppingCart
+  ShoppingCart,
+  Play
 } from "lucide-react";
 
-const TOTAL_LESSONS = 12;
+// PATCH-C: Unified constants
+const BUH_PRODUCT_ID = "85046734-2282-4ded-b0d3-8c66c8f5bc2b";
+const BUH_MODULE_SLUG = "buhgalteriya-kak-biznes";
 
 export default function BusinessTrainingContent() {
   const navigate = useNavigate();
@@ -39,22 +46,39 @@ export default function BusinessTrainingContent() {
   
   const [paymentOpen, setPaymentOpen] = useState(false);
 
+  // PATCH-D: Fetch real module by slug
+  const { data: moduleData, isLoading: moduleLoading } = useQuery({
+    queryKey: ["buh-business-module"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("training_modules")
+        .select("id, title, description, cover_image")
+        .eq("slug", BUH_MODULE_SLUG)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // PATCH-D: Fetch real lessons from module (inherits published_at filtering)
+  const { lessons, loading: lessonsLoading } = useTrainingLessons(moduleData?.id);
+
   // Fetch product data for payment
   const { data: productData } = usePublicProduct("business-training.gorbova.by", user?.id);
 
-  // Check access
+  // PATCH-C: Unified access check - entitlement OR subscription(by product_id) OR prereg paid
   const { data: accessData, isLoading: accessLoading } = useQuery({
     queryKey: ["buh-business-access", user?.id],
     queryFn: async () => {
       if (!user?.id) return { hasAccess: false, type: null, preregistrationId: null };
       
-      // Check preregistration
+      // Check preregistration (new/contacted = reservation only, paid = access)
       const { data: preregistration } = await supabase
         .from("course_preregistrations")
         .select("id, status")
         .eq("user_id", user.id)
         .eq("product_code", "buh_business")
-        .in("status", ["new", "contacted"])
+        .in("status", ["new", "contacted", "paid"])
         .maybeSingle();
       
       // Check entitlements (active)
@@ -66,6 +90,15 @@ export default function BusinessTrainingContent() {
         .eq("status", "active")
         .maybeSingle();
 
+      // PATCH-C: Check subscription by specific product_id
+      const { data: subscription } = await supabase
+        .from("subscriptions_v2")
+        .select("id, status")
+        .eq("user_id", user.id)
+        .eq("product_id", BUH_PRODUCT_ID)
+        .in("status", ["active", "trial"])
+        .maybeSingle();
+
       // Check expired entitlements
       const { data: expiredEntitlement } = await supabase
         .from("entitlements")
@@ -75,10 +108,12 @@ export default function BusinessTrainingContent() {
         .eq("status", "expired")
         .maybeSingle();
       
-      if (entitlement) {
-        return { hasAccess: true, type: "active" as const, expiresAt: entitlement.expires_at, preregistrationId: null };
+      // PATCH-C: Paid access = entitlement OR subscription OR prereg(paid)
+      if (entitlement || subscription || preregistration?.status === "paid") {
+        return { hasAccess: true, type: "active" as const, expiresAt: entitlement?.expires_at, preregistrationId: null };
       }
-      if (preregistration) {
+      // Reservation (new/contacted) = access to page but limited functionality
+      if (preregistration && preregistration.status !== "paid") {
         return { hasAccess: true, type: "preregistration" as const, preregistrationId: preregistration.id };
       }
       if (expiredEntitlement) {
@@ -138,12 +173,29 @@ export default function BusinessTrainingContent() {
   const tariff = productData?.tariffs?.[0];
   const price = payNowOffer?.amount || 250;
 
-  // Loading state
-  if (authLoading || accessLoading) {
+  // Loading state - PATCH-B: don't show "Доступ закрыт" while loading
+  if (authLoading || accessLoading || moduleLoading) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  // STOP-guard: Module not found
+  if (!moduleData) {
+    return (
+      <DashboardLayout>
+        <div className="text-center py-12">
+          <Lock className="h-16 w-16 mx-auto text-muted-foreground/50 mb-4" />
+          <h2 className="text-xl font-semibold mb-2">Тренинг скоро появится</h2>
+          <p className="text-muted-foreground mb-6">Материалы находятся в разработке</p>
+          <Button onClick={() => navigate("/products")}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Назад к продуктам
+          </Button>
         </div>
       </DashboardLayout>
     );
@@ -202,8 +254,9 @@ export default function BusinessTrainingContent() {
     );
   }
 
-  const completedCount = 0;
-  const totalCount = TOTAL_LESSONS;
+  // PATCH-D: Use real lessons count from module
+  const completedCount = lessons.filter(l => l.is_completed).length;
+  const totalCount = lessons.length || 12; // Fallback if no lessons yet
   const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
 
   return (
@@ -435,23 +488,65 @@ export default function BusinessTrainingContent() {
           <Progress value={progress} className="h-2" />
         </div>
 
-        {/* Lessons List - Hidden Names */}
+        {/* PATCH-D: Lessons List - Real lessons from module */}
         <div 
-          className="p-6 text-center rounded-2xl backdrop-blur-xl border border-border/30"
+          className="rounded-2xl backdrop-blur-xl border border-border/30 overflow-hidden"
           style={{
             background: "linear-gradient(135deg, hsl(var(--card) / 0.4), hsl(var(--card) / 0.2))",
             boxShadow: "0 12px 40px rgba(0, 0, 0, 0.05), inset 0 1px 0 hsl(0 0% 100% / 0.1)"
           }}
         >
-          <Lock className="h-12 w-12 mx-auto text-muted-foreground/40 mb-4" />
-          <h3 className="font-semibold mb-2 text-foreground">Программа тренинга</h3>
-          <p className="text-muted-foreground/90 text-sm mb-4">
-            {totalCount} уроков — расписание и темы будут доступны после старта 5 февраля
-          </p>
-          <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground/80">
-            <Calendar className="h-3 w-3" />
-            <span>Первый урок: 5 февраля 2026</span>
+          <div className="p-4 border-b border-border/30">
+            <h3 className="font-semibold text-foreground flex items-center gap-2">
+              <BookOpen className="h-4 w-4" />
+              Программа тренинга
+            </h3>
           </div>
+          
+          {lessonsLoading ? (
+            <div className="p-4 space-y-3">
+              {[1, 2, 3].map(i => (
+                <Skeleton key={i} className="h-12 rounded-lg" />
+              ))}
+            </div>
+          ) : lessons.length === 0 ? (
+            <div className="p-6 text-center">
+              <Lock className="h-10 w-10 mx-auto text-muted-foreground/40 mb-3" />
+              <p className="text-muted-foreground/90 text-sm">
+                Материалы скоро появятся
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-border/30">
+              {lessons.map((lesson, idx) => (
+                <button
+                  key={lesson.id}
+                  onClick={() => accessData.type === "active" && navigate(`/library/${BUH_MODULE_SLUG}/${lesson.slug}`)}
+                  disabled={accessData.type !== "active"}
+                  className="w-full p-4 flex items-center gap-3 hover:bg-card/30 transition-colors text-left disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <div className={`
+                    h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-sm font-medium
+                    ${lesson.is_completed 
+                      ? 'bg-primary/20 text-primary' 
+                      : 'bg-muted text-muted-foreground'
+                    }
+                  `}>
+                    {lesson.is_completed ? <Check className="h-4 w-4" /> : idx + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-foreground truncate">{lesson.title}</p>
+                    {lesson.description && (
+                      <p className="text-xs text-muted-foreground truncate">{lesson.description}</p>
+                    )}
+                  </div>
+                  {accessData.type === "active" && (
+                    <Play className="h-4 w-4 text-muted-foreground shrink-0" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Action Buttons */}

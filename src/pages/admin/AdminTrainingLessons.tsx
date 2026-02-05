@@ -19,6 +19,7 @@ import { TimezoneSelector } from "@/components/admin/payments/TimezoneSelector";
 import { format, parseISO } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import { ru } from "date-fns/locale";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -425,13 +426,24 @@ export default function AdminTrainingLessons() {
   const handleCreate = useCallback(async () => {
     if (!formData.title || !formData.slug || !moduleId) return;
     
-    // Build published_at from date/time/timezone
+    // PATCH-E: Build published_at as wall-clock time in selected timezone
+    // Using TZ database offset calculation instead of local time interpretation
     let publishedAt: string | null = null;
     if (publishDate) {
+      // Validate time format
+      if (!/^\d{2}:\d{2}$/.test(publishTime)) {
+        toast.error("Неверный формат времени (HH:mm)");
+        return;
+      }
       const [hours, minutes] = publishTime.split(":").map(Number);
-      const combined = new Date(publishDate);
-      combined.setHours(hours, minutes, 0, 0);
-      publishedAt = formatInTimeZone(combined, publishTimezone, "yyyy-MM-dd'T'HH:mm:ssXXX");
+      // Create ISO string for the selected date/time in the target timezone
+      const dateStr = format(publishDate, "yyyy-MM-dd");
+      // Format: "2026-02-05T18:00:00" + timezone offset
+      publishedAt = formatInTimeZone(
+        new Date(`${dateStr}T${publishTime}:00`), 
+        publishTimezone, 
+        "yyyy-MM-dd'T'HH:mm:ssXXX"
+      );
     }
     
     const success = await createLesson({
@@ -449,13 +461,20 @@ export default function AdminTrainingLessons() {
   const handleUpdate = useCallback(async () => {
     if (!editingLesson || !formData.title || !formData.slug) return;
     
-    // Build published_at from date/time/timezone
+    // PATCH-E: Build published_at as wall-clock time in selected timezone
     let publishedAt: string | null = null;
     if (publishDate) {
-      const [hours, minutes] = publishTime.split(":").map(Number);
-      const combined = new Date(publishDate);
-      combined.setHours(hours, minutes, 0, 0);
-      publishedAt = formatInTimeZone(combined, publishTimezone, "yyyy-MM-dd'T'HH:mm:ssXXX");
+      // Validate time format
+      if (!/^\d{2}:\d{2}$/.test(publishTime)) {
+        toast.error("Неверный формат времени (HH:mm)");
+        return;
+      }
+      const dateStr = format(publishDate, "yyyy-MM-dd");
+      publishedAt = formatInTimeZone(
+        new Date(`${dateStr}T${publishTime}:00`), 
+        publishTimezone, 
+        "yyyy-MM-dd'T'HH:mm:ssXXX"
+      );
     }
     
     const success = await updateLesson(editingLesson.id, {
