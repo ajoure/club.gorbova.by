@@ -1,123 +1,39 @@
 
-# План: Исправить ошибку бота + добавить кнопки форматирования
+# План: Добавить RLS-политику для чтения прогресса администраторами
 
-## Проблема 1: "Нет активного бота"
+## Проблема
+На странице `/admin/training-lessons/{moduleId}/progress/{lessonId}` отображается "Пока никто не начал прохождение" и все счётчики = 0, хотя в базе данных есть 10+ записей прогресса учеников.
 
-**Причина:** Код ищет `.eq("is_active", true)`, но в таблице `telegram_bots`:
-- Поле называется `status` (не `is_active`)
-- Значение `'active'` (строка, не boolean)
+**Причина**: Текущая RLS-политика на таблице `lesson_progress_state` разрешает чтение только собственных записей (`auth.uid() = user_id`). Администраторы не могут видеть прогресс других пользователей.
 
-**Файл:** `src/components/admin/communication/BroadcastsTabContent.tsx`
+## Решение
+Добавить RLS-политику, которая позволяет пользователям с ролями `admin` и `superadmin` читать все записи в таблице `lesson_progress_state`.
 
-**Строка 340:**
-```text
-БЫЛО:   .eq("is_active", true)
-СТАЛО:  .eq("status", "active")
+## SQL миграция
+
+```sql
+CREATE POLICY "Admins can read all progress state"
+ON public.lesson_progress_state
+FOR SELECT
+USING (
+  EXISTS (
+    SELECT 1 FROM public.user_roles
+    WHERE user_roles.user_id = auth.uid()
+    AND user_roles.role IN ('admin', 'superadmin')
+  )
+);
 ```
 
----
+## Затрагиваемые файлы
+Только изменение на уровне базы данных (добавление RLS-политики). Код страницы `AdminLessonProgress.tsx` корректен и не требует изменений.
 
-## Проблема 2: Кнопки форматирования
+## Ожидаемый результат
+- Администраторы видят все записи прогресса учеников
+- Счётчики "Всего учеников", "Завершили", "Точка А", "Точка B" показывают реальные данные
+- Таблица "Список учеников" отображает всех учеников с их прогрессом
+- Обычные пользователи по-прежнему видят только свой прогресс
 
-Нужно добавить toolbar над Textarea с кнопками:
-- **B** — жирный (`*текст*`)
-- **I** — курсив (`_текст_`)
-- **</>** — код (`` `текст` ``)
-- **🔗** — ссылка (`[текст](url)`)
-
-### Реализация
-
-1. **Создать компонент TelegramTextToolbar**
-
-```typescript
-interface Props {
-  textareaRef: React.RefObject<HTMLTextAreaElement>;
-  value: string;
-  onChange: (value: string) => void;
-}
-
-function TelegramTextToolbar({ textareaRef, value, onChange }: Props) {
-  const wrapSelection = (prefix: string, suffix: string) => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selectedText = value.substring(start, end);
-    
-    const newText = 
-      value.substring(0, start) + 
-      prefix + selectedText + suffix + 
-      value.substring(end);
-    
-    onChange(newText);
-    
-    // Restore cursor position
-    setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(
-        start + prefix.length,
-        end + prefix.length
-      );
-    }, 0);
-  };
-
-  return (
-    <div className="flex gap-1 mb-2">
-      <Button variant="outline" size="sm" onClick={() => wrapSelection('*', '*')}>
-        <Bold className="h-4 w-4" />
-      </Button>
-      <Button variant="outline" size="sm" onClick={() => wrapSelection('_', '_')}>
-        <Italic className="h-4 w-4" />
-      </Button>
-      <Button variant="outline" size="sm" onClick={() => wrapSelection('`', '`')}>
-        <Code className="h-4 w-4" />
-      </Button>
-      <Button variant="outline" size="sm" onClick={() => {
-        const url = prompt('Введите URL:');
-        if (url) wrapSelection('[', `](${url})`);
-      }}>
-        <Link className="h-4 w-4" />
-      </Button>
-    </div>
-  );
-}
-```
-
-2. **Добавить ref для textarea и toolbar в UI**
-
-```typescript
-// State
-const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-// В JSX перед Textarea:
-<TelegramTextToolbar 
-  textareaRef={textareaRef}
-  value={message}
-  onChange={setMessage}
-/>
-
-<Textarea
-  ref={textareaRef}
-  placeholder="Введите текст сообщения..."
-  value={message}
-  onChange={(e) => setMessage(e.target.value)}
-  rows={6}
-/>
-```
-
----
-
-## Файлы для изменения
-
-| Файл | Изменение |
-|------|-----------|
-| `src/components/admin/communication/BroadcastsTabContent.tsx` | Исправить запрос бота + добавить toolbar |
-
----
-
-## Результат
-
-1. Кнопка "Тест себе" успешно отправляет сообщение
-2. Над текстовым полем появятся кнопки: **B**, _I_, `</>`, 🔗
-3. При выделении текста и нажатии кнопки — текст оборачивается в нужные символы
+## Проверка (DoD)
+1. Зайти под админом на `/admin/training-lessons/{moduleId}/progress/{lessonId}`
+2. Убедиться, что счётчики показывают реальные данные (не 0)
+3. Убедиться, что таблица учеников отображает записи
