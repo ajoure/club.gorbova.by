@@ -55,6 +55,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
+import { TelegramTextToolbar } from "./TelegramTextToolbar";
 
 interface BroadcastFilters {
   hasActiveSubscription: boolean;
@@ -101,6 +102,7 @@ const [includeButton, setIncludeButton] = useState(true);
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [filters, setFilters] = useState<BroadcastFilters>({
     hasActiveSubscription: false,
@@ -337,7 +339,7 @@ const [includeButton, setIncludeButton] = useState(true);
       const { data: bots } = await (supabase as any)
         .from("telegram_bots")
         .select("id")
-        .eq("is_active", true)
+        .eq("status", "active")
         .limit(1);
       
       if (!bots?.length) throw new Error("Нет активного бота");
@@ -575,7 +577,13 @@ const [includeButton, setIncludeButton] = useState(true);
 
                   <div className="space-y-2">
                     <Label>Текст сообщения {mediaFile && "(подпись)"}</Label>
+                    <TelegramTextToolbar 
+                      textareaRef={textareaRef}
+                      value={message}
+                      onChange={setMessage}
+                    />
                     <Textarea
+                      ref={textareaRef}
                       placeholder="Введите текст сообщения для рассылки..."
                       value={message}
                       onChange={(e) => setMessage(e.target.value)}
