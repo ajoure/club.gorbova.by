@@ -80,13 +80,12 @@ export function useTrainingLessons(moduleId?: string) {
     try {
       setLoading(true);
       
-      // PATCH-1: Filter only active lessons for regular users
-      // Admin bypass happens later in enrichedLessons filtering
+      // PATCH-1: Fetch ALL lessons (admin sees inactive too)
+      // Filtering by is_active and published_at happens after enrichment
       const { data: lessonsData, error } = await supabase
         .from("training_lessons")
         .select("*")
         .eq("module_id", moduleId)
-        .eq("is_active", true)
         .order("sort_order", { ascending: true });
 
       if (error) throw error;
@@ -121,14 +120,20 @@ export function useTrainingLessons(moduleId?: string) {
         attachments: attachmentsData?.filter(a => a.lesson_id === lesson.id) || [],
       })) || [];
 
-      // PATCH-1: Add isScheduled flag instead of filtering out
+      // PATCH-1: Filter and flag lessons based on admin status
       const now = new Date();
-      const lessonsWithScheduleFlag = enrichedLessons.map(lesson => ({
-        ...lesson,
-        isScheduled: !isAdminUser && lesson.published_at 
-          ? new Date(lesson.published_at) > now 
-          : false,
-      }));
+      const lessonsWithScheduleFlag = enrichedLessons
+        // Filter: admin sees all, user sees only is_active=true
+        .filter(lesson => isAdminUser || lesson.is_active)
+        // Filter: admin sees all, user doesn't see future published_at
+        .filter(lesson => isAdminUser || !lesson.published_at || new Date(lesson.published_at) <= now)
+        .map(lesson => ({
+          ...lesson,
+          // isScheduled flag for UI badge (only for non-admins with future date)
+          isScheduled: !isAdminUser && lesson.published_at 
+            ? new Date(lesson.published_at) > now 
+            : false,
+        }));
 
       setLessons(lessonsWithScheduleFlag);
     } catch (error) {

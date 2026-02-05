@@ -8,8 +8,8 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Progress } from "@/components/ui/progress";
 import { useTrainingModules } from "@/hooks/useTrainingModules";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { ModuleCard } from "@/components/training/ModuleCard";
 import { 
   ShoppingBag, 
@@ -27,7 +27,7 @@ import {
 import productClubImage from "@/assets/product-club.png";
 import productCourseImage from "@/assets/product-course.png";
 import productConsultationImage from "@/assets/product-consultation.png";
-import katerinaBusinessImage from "@/assets/katerina-business.jpg";
+// katerinaBusinessImage removed - buh-business now uses real module from DB
 
 interface Product {
   id: string;
@@ -76,8 +76,7 @@ const products: Product[] = [
     lessonCount: 25,
     duration: "7 недель",
   },
-  // PATCH-C: Removed hardcoded "Бухгалтерия как бизнес" to prevent duplication
-  // Real module from DB (training_modules) will be shown via libraryModules/allProductsModules
+  // PATCH-C: Removed hardcoded "Бухгалтерия как бизнес" - real module from DB used instead
   {
     id: "3",
     title: "Консультация эксперта",
@@ -89,19 +88,6 @@ const products: Product[] = [
     isPurchased: false,
     purchaseLink: "/consultation",
     duration: "1-2 часа",
-  },
-  {
-    id: "4",
-    title: "Бухгалтерия как бизнес",
-    description: "Пошаговый квест для бухгалтеров, которые хотят работать на себя и зарабатывать больше",
-    badge: "Тренинг",
-    badgeVariant: "secondary",
-    price: "250 BYN/мес",
-    image: katerinaBusinessImage,
-    isPurchased: false,
-    purchaseLink: "https://club.gorbova.by/business-training",
-    courseSlug: "buhgalteriya-kak-biznes", // PATCH-A: Match real module slug from DB
-    duration: "12 модулей",
   },
 ];
 
@@ -318,58 +304,7 @@ export default function Learning() {
   
   const { modules, loading } = useTrainingModules();
   
-  // PATCH-J: Check buh_business access - preregistration new/contacted = RESERVE only, not access
-  // Using SPECIFIC product_id to avoid false matches with other subscriptions
-  const BUH_PRODUCT_ID = "85046734-2282-4ded-b0d3-8c66c8f5bc2b";
-  
-  const { data: businessTrainingAccess } = useQuery({
-    queryKey: ["buh-business-access", user?.id],
-    queryFn: async () => {
-      if (!user?.id) return { 
-        hasReservation: false, 
-        hasPaidAccess: false,
-        reservationStatus: null as string | null,
-      };
-      
-      // Check preregistration (any status for reservation badge)
-      const { data: preregistration } = await supabase
-        .from("course_preregistrations")
-        .select("id, status")
-        .eq("user_id", user.id)
-        .eq("product_code", "buh_business")
-        .in("status", ["new", "contacted", "paid"])
-        .maybeSingle();
-      
-      // Check entitlements for actual access
-      const { data: entitlement } = await supabase
-        .from("entitlements")
-        .select("id, status")
-        .eq("user_id", user.id)
-        .eq("product_code", "buh_business")
-        .eq("status", "active")
-        .maybeSingle();
-      
-      // PATCH-J: Check active subscription FOR BUH_BUSINESS ONLY (by product_id)
-      const { data: subscription } = await supabase
-        .from("subscriptions_v2")
-        .select("id, status, product_id")
-        .eq("user_id", user.id)
-        .eq("product_id", BUH_PRODUCT_ID)
-        .in("status", ["active", "trial"])
-        .maybeSingle();
-      
-      // PATCH-J: Paid access = entitlement(buh_business) OR subscription(buh_business) OR prereg(status='paid')
-      // new/contacted = reservation only, NOT access
-      const hasPaidAccess = !!entitlement || !!subscription || preregistration?.status === "paid";
-      
-      return {
-        hasReservation: !!preregistration && preregistration.status !== "paid",
-        hasPaidAccess,
-        reservationStatus: preregistration?.status || null,
-      };
-    },
-    enabled: !!user?.id,
-  });
+  // PATCH: Removed buh_business static access check - using real module from DB now
 
   // Check if user has active club subscription
   const { data: clubAccess } = useQuery({
@@ -404,18 +339,6 @@ export default function Learning() {
       };
     }
     
-    // Special handling for buh-business (PATCH-2: use correct slug)
-    if (product.courseSlug === "buhgalteriya-kak-biznes") {
-      const hasPaid = businessTrainingAccess?.hasPaidAccess || false;
-      const hasReserve = businessTrainingAccess?.hasReservation || false;
-      
-      return {
-        ...product,
-        isPurchased: hasPaid,
-        badge: hasPaid ? "Активно" : hasReserve ? "Бронь" : product.badge,
-      };
-    }
-    
     if (matchingModule) {
       return {
         ...product,
@@ -425,21 +348,16 @@ export default function Learning() {
       };
     }
     return product;
-  }), [modules, businessTrainingAccess, clubAccess]);
+  }), [modules, clubAccess]);
 
-  // PATCH-A: Filter modules by menu_section_key, EXCLUDE buh-business to prevent duplicate
-  // (buh-business is shown via static ProductCard with real data from enrichedProducts)
-  const BUH_BUSINESS_SLUG = "buhgalteriya-kak-biznes";
-  
+  // PATCH-A: Filter modules by menu_section_key - NO exclusions, real modules from DB
   const libraryModules = modules.filter(m => 
     m.menu_section_key === "products-library" && 
-    m.is_active &&
-    m.slug !== BUH_BUSINESS_SLUG // Exclude to prevent duplicate
+    m.is_active
   );
   const allProductsModules = modules.filter(m => 
     m.menu_section_key === "products" && 
-    m.is_active &&
-    m.slug !== BUH_BUSINESS_SLUG // Exclude to prevent duplicate
+    m.is_active
   );
 
   const purchasedProducts = enrichedProducts.filter(p => p.isPurchased && p.courseSlug);
