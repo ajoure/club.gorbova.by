@@ -57,7 +57,7 @@ export function ModuleCard({ module, variant = "default" }: ModuleCardProps) {
             <div className="absolute top-3 right-3">
               <Badge variant="secondary" className="gap-1 bg-background/80 backdrop-blur-sm">
                 <Lock className="h-3 w-3" />
-                Нет доступа
+                {module.slug === "buhgalteriya-kak-biznes" ? "Для участников клуба" : "Нет доступа"}
               </Badge>
             </div>
           )}

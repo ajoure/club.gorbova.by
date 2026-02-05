@@ -182,18 +182,37 @@ export default function LibraryModule() {
           <Card className="mb-6 border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800">
             <CardContent className="py-8 text-center">
               <Lock className="h-12 w-12 mx-auto mb-4 text-amber-600 dark:text-amber-500" />
-              <h3 className="text-lg font-semibold mb-2 text-amber-900 dark:text-amber-100">
-                Контент доступен участникам тарифов FULL и BUSINESS
-              </h3>
-              <p className="text-amber-700 dark:text-amber-300 mb-4 max-w-md mx-auto">
-                Оформите подписку на Gorbova Club, чтобы получить доступ к этим материалам
-              </p>
-              <Button 
-                onClick={() => window.location.href = 'https://club.gorbova.by'}
-                className="bg-amber-600 hover:bg-amber-700 text-white"
-              >
-                Узнать о Клубе
-              </Button>
+              {moduleSlug === "buhgalteriya-kak-biznes" ? (
+                <>
+                  <h3 className="text-lg font-semibold mb-2 text-amber-900 dark:text-amber-100">
+                    Доступен участникам Gorbova Club
+                  </h3>
+                  <p className="text-amber-700 dark:text-amber-300 mb-4 max-w-md mx-auto">
+                    Тренинг «Бухгалтерия как бизнес» приобретается отдельно и доступен только участникам клуба на любом тарифе
+                  </p>
+                  <Button 
+                    onClick={() => window.location.href = 'https://business-training.gorbova.by'}
+                    className="bg-amber-600 hover:bg-amber-700 text-white"
+                  >
+                    Подробнее о тренинге
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-lg font-semibold mb-2 text-amber-900 dark:text-amber-100">
+                    Контент доступен участникам тарифов FULL и BUSINESS
+                  </h3>
+                  <p className="text-amber-700 dark:text-amber-300 mb-4 max-w-md mx-auto">
+                    Оформите подписку на Gorbova Club, чтобы получить доступ к этим материалам
+                  </p>
+                  <Button 
+                    onClick={() => window.location.href = 'https://club.gorbova.by'}
+                    className="bg-amber-600 hover:bg-amber-700 text-white"
+                  >
+                    Узнать о Клубе
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
         )}

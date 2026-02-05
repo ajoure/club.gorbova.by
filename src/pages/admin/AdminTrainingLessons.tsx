@@ -394,17 +394,23 @@ export default function AdminTrainingLessons() {
   const openEditDialog = useCallback((lesson: TrainingLesson) => {
     setEditingLesson(lesson);
     
-    // Parse published_at into separate fields
+    // Parse published_at into separate fields - IN SELECTED TIMEZONE
+    // PATCH: Use formatInTimeZone to show correct time in Minsk timezone
     let parsedDate: Date | undefined;
     let parsedTime = "12:00";
+    const tz = "Europe/Minsk"; // Default timezone for editing
+    
     if (lesson.published_at) {
       try {
-        parsedDate = parseISO(lesson.published_at);
-        parsedTime = format(parsedDate, "HH:mm");
+        const utcDate = parseISO(lesson.published_at);
+        parsedDate = utcDate; // Store the UTC date
+        // Format time IN THE SELECTED TIMEZONE (not browser local time)
+        parsedTime = formatInTimeZone(utcDate, tz, "HH:mm");
       } catch {}
     }
     setPublishDate(parsedDate);
     setPublishTime(parsedTime);
+    setPublishTimezone(tz); // Set timezone to Minsk
     
     setFormData({
       module_id: lesson.module_id,
