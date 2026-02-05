@@ -1,10 +1,10 @@
-import { useMemo } from "react";
-import { CheckCircle2, XCircle, RotateCcw, Percent, TrendingUp, Loader2, Clock } from "lucide-react";
+ import { useMemo } from "react";
+ import { CheckCircle2, XCircle, RotateCcw, Percent, TrendingUp, Loader2 } from "lucide-react";
 import { usePaymentsServerStats } from "@/hooks/usePaymentsServerStats";
-import { cn } from "@/lib/utils";
+ import { GlassStatCard } from "./GlassStatCard";
 
-// Payment filter types - PATCH-C3: Added 'processing'
-export type StatsFilterType = 'successful' | 'refunded' | 'cancelled' | 'failed' | 'processing' | null;
+ // Payment filter types
+ export type StatsFilterType = 'successful' | 'refunded' | 'cancelled' | 'failed' | null;
 
 interface PaymentsStatsPanelProps {
   dateRange: { from: string; to?: string };
@@ -13,94 +13,11 @@ interface PaymentsStatsPanelProps {
   onFilterChange?: (filter: StatsFilterType) => void;
 }
 
-interface StatCardProps {
-  title: string;
-  amount: number;
-  count: number;
-  icon: React.ReactNode;
-  colorClass: string;
-  accentGradient: string;
-  currency?: string;
-  subtitle?: string;
-  filterKey?: StatsFilterType;
-  isActive?: boolean;
-  isClickable?: boolean;
-  onClick?: () => void;
-}
-
-// Glassmorphism stat card with clickable filter support
-function StatCard({ 
-  title, 
-  amount, 
-  count, 
-  icon, 
-  colorClass, 
-  accentGradient, 
-  currency = "BYN", 
-  subtitle,
-  isActive = false,
-  isClickable = true,
-  onClick 
-}: StatCardProps) {
-  return (
-    <div 
-      onClick={onClick}
-      className={cn(
-        "group relative rounded-xl p-3 md:p-4",
-        // Glassmorphism: transparent, backdrop-blur
-        "bg-gradient-to-br from-white/5 to-white/[0.02]",
-        "dark:from-slate-500/10 dark:to-slate-600/5",
-        "backdrop-blur-xl",
-        "border border-white/10 dark:border-slate-500/20",
-        "shadow-lg shadow-black/5",
-        "overflow-hidden",
-        "transition-all duration-300",
-        // Hover effects
-        isClickable && "cursor-pointer hover:scale-[1.02] hover:border-white/20 dark:hover:border-slate-400/30",
-        // Active state
-        isActive && "ring-2 ring-primary ring-offset-1 ring-offset-background",
-        isActive && "border-primary/50"
-      )}
-    >
-      {/* Gradient accent line top with glow */}
-      <div className={`absolute inset-x-0 top-0 h-px bg-gradient-to-r ${accentGradient} opacity-60`} />
-      <div className={`absolute inset-x-4 top-0 h-px bg-gradient-to-r ${accentGradient} blur-sm opacity-40`} />
-      
-      {/* Inner shine overlay */}
-      <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-white/[0.03] via-transparent to-transparent pointer-events-none" />
-      
-      {/* Header: icon + title */}
-      <div className="relative z-10 flex items-center gap-2 mb-2.5">
-        <div className="shrink-0 opacity-90">{icon}</div>
-        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          {title}
-        </span>
-      </div>
-      
-      {/* Amount - main value */}
-      <div className={cn(
-        "relative z-10 text-lg md:text-xl font-bold tabular-nums",
-        colorClass,
-        "flex items-baseline gap-1.5 flex-wrap tracking-tight"
-      )}>
-        <span className="drop-shadow-sm">
-          {amount.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </span>
-        <span className="text-xs text-muted-foreground font-medium">{currency}</span>
-      </div>
-      
-      {/* Count and subtitle */}
-      <div className="relative z-10 flex items-center gap-2 text-xs text-muted-foreground mt-2">
-        <span className="tabular-nums">{count.toLocaleString('ru-RU')} шт</span>
-        {subtitle && (
-          <>
-            <span className="w-1 h-1 rounded-full bg-muted-foreground/50" />
-            <span>{subtitle}</span>
-          </>
-        )}
-      </div>
-    </div>
-  );
+ const formatAmount = (amount: number) => {
+   return new Intl.NumberFormat('ru-BY', {
+     minimumFractionDigits: 2,
+     maximumFractionDigits: 2,
+   }).format(amount);
 }
 
 export default function PaymentsStatsPanel({ 
@@ -121,7 +38,6 @@ export default function PaymentsStatsPanel({
         refunded: { count: 0, amount: 0 },
         failed: { count: 0, amount: 0 },
         cancelled: { count: 0, amount: 0 },
-        processing: { count: 0, amount: 0 },
         fees: { amount: 0, percent: 0 },
         netRevenue: 0,
       };
@@ -142,7 +58,6 @@ export default function PaymentsStatsPanel({
       refunded: { count: serverStats.refunded_count, amount: serverStats.refunded_amount },
       failed: { count: serverStats.failed_count, amount: serverStats.failed_amount },
       cancelled: { count: serverStats.cancelled_count, amount: serverStats.cancelled_amount },
-      processing: { count: serverStats.processing_count, amount: serverStats.processing_amount },
       fees: { amount: serverStats.commission_total, percent: feePercent },
       netRevenue,
     };
@@ -156,7 +71,7 @@ export default function PaymentsStatsPanel({
 
   if (isLoading) {
     return (
-      <div className="rounded-xl border border-white/10 dark:border-slate-500/20 bg-gradient-to-br from-white/5 to-white/[0.02] dark:from-slate-500/10 dark:to-slate-600/5 backdrop-blur-xl p-6 shadow-lg">
+       <div className="rounded-2xl border border-white/[0.12] backdrop-blur-2xl p-6 shadow-[0_8px_32px_rgba(0,0,0,0.08)]" style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%)' }}>
         <div className="flex items-center justify-center gap-3 text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span className="text-xs font-medium">Загрузка статистики...</span>
@@ -166,80 +81,60 @@ export default function PaymentsStatsPanel({
   }
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-      <StatCard
+     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+       <GlassStatCard
         title="Успешные"
-        amount={stats.successful.amount}
-        count={stats.successful.count}
+         value={formatAmount(stats.successful.amount)}
+         subtitle={`${stats.successful.count} шт`}
         icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />}
-        colorClass="text-emerald-500"
-        accentGradient="from-emerald-500 to-emerald-400"
+         variant="success"
         isActive={activeFilter === 'successful'}
         isClickable={!!onFilterChange}
         onClick={() => handleFilterClick('successful')}
       />
-      <StatCard
+       <GlassStatCard
         title="Возвраты"
-        amount={stats.refunded.amount}
-        count={stats.refunded.count}
+         value={formatAmount(stats.refunded.amount)}
+         subtitle={`${stats.refunded.count} шт`}
         icon={<RotateCcw className="h-4 w-4 text-amber-500" />}
-        colorClass="text-amber-500"
-        accentGradient="from-amber-500 to-amber-400"
+         variant="warning"
         isActive={activeFilter === 'refunded'}
         isClickable={!!onFilterChange}
         onClick={() => handleFilterClick('refunded')}
       />
-      {/* PATCH-C3: Added Processing card */}
-      <StatCard
-        title="В обработке"
-        amount={stats.processing.amount}
-        count={stats.processing.count}
-        icon={<Clock className="h-4 w-4 text-blue-500" />}
-        colorClass="text-blue-500"
-        accentGradient="from-blue-500 to-blue-400"
-        isActive={activeFilter === 'processing'}
-        isClickable={!!onFilterChange}
-        onClick={() => handleFilterClick('processing')}
-      />
-      <StatCard
+       <GlassStatCard
         title="Отмены"
-        amount={stats.cancelled.amount}
-        count={stats.cancelled.count}
-        icon={<XCircle className="h-4 w-4 text-orange-500" />}
-        colorClass="text-orange-500"
-        accentGradient="from-orange-500 to-orange-400"
+         value={formatAmount(stats.cancelled.amount)}
+         subtitle={`${stats.cancelled.count} шт`}
+         icon={<XCircle className="h-4 w-4 text-rose-500" />}
+         variant="danger"
         isActive={activeFilter === 'cancelled'}
         isClickable={!!onFilterChange}
         onClick={() => handleFilterClick('cancelled')}
       />
-      <StatCard
+       <GlassStatCard
         title="Ошибки"
-        amount={stats.failed.amount}
-        count={stats.failed.count}
+         value={formatAmount(stats.failed.amount)}
+         subtitle={`${stats.failed.count} шт`}
         icon={<XCircle className="h-4 w-4 text-rose-500" />}
-        colorClass="text-rose-500"
-        accentGradient="from-rose-500 to-rose-400"
+         variant="danger"
         isActive={activeFilter === 'failed'}
         isClickable={!!onFilterChange}
         onClick={() => handleFilterClick('failed')}
       />
-      <StatCard
+       <GlassStatCard
         title="Комиссия"
-        amount={stats.fees.amount}
-        count={stats.successful.count}
-        subtitle={`${stats.fees.percent.toFixed(1)}%`}
+         value={formatAmount(stats.fees.amount)}
+         subtitle={`${stats.fees.percent.toFixed(1)}% от оборота`}
         icon={<Percent className="h-4 w-4 text-sky-500" />}
-        colorClass="text-sky-500"
-        accentGradient="from-sky-500 to-sky-400"
+         variant="info"
         isClickable={false}
       />
-      <StatCard
+       <GlassStatCard
         title="Чистая выручка"
-        amount={stats.netRevenue}
-        count={stats.successful.count - stats.refunded.count}
+         value={formatAmount(stats.netRevenue)}
+         subtitle={`${stats.successful.count - stats.refunded.count - stats.cancelled.count} платежей`}
         icon={<TrendingUp className="h-4 w-4 text-purple-500" />}
-        colorClass="text-purple-500"
-        accentGradient="from-purple-500 via-fuchsia-500 to-pink-400"
         isClickable={false}
       />
     </div>
