@@ -1,61 +1,166 @@
 
-# План: Исправление видимости запланированных уроков
+# План: Исправление ошибки "removeChild" при переходе между шагами квеста
 
-## Проблема
+## Диагноз проблемы
 
-В хуке `useTrainingLessons.tsx` (строка 129) уроки с `published_at > now` полностью **скрываются** от пользователей:
+При клике на "Я просмотрел видео" или "Перейти к следующему шагу" возникает критическая ошибка:
 
-```typescript
-.filter(lesson => isAdminUser || !lesson.published_at || new Date(lesson.published_at) <= now)
+```
+NotFoundError: Failed to execute 'removeChild' on 'Node': 
+The node to be removed is not a child of this node.
 ```
 
-Но по бизнес-требованиям (memory: visibility-and-scheduling-policy) уроки с будущей датой должны **отображаться** со статусом "Скоро" (locked, с указанием даты/времени открытия).
+**Причина:** Kinescope Player SDK напрямую манипулирует DOM внутри контейнера, а React ожидает, что DOM структура соответствует его virtual DOM. Когда React пытается удалить/обновить компонент, происходит конфликт.
 
-## Решение
+**Последовательность проблемы:**
+1. Пользователь нажимает "Я просмотрел видео"
+2. Вызывается `handleVideoComplete` → `markBlockCompleted` → `updateState`
+3. React начинает ре-рендер KvestLessonView
+4. VideoUnskippableBlock меняет `isCompleted` с false на true
+5. React пытается удалить/заменить DOM элементы
+6. **CRASH:** Kinescope изменил DOM, React не может найти ожидаемые элементы
 
-Убрать фильтрацию по `published_at` и оставить только флаг `isScheduled` для UI:
+---
 
-### Изменения в `src/hooks/useTrainingLessons.tsx`
+## Решение: Изоляция DOM Kinescope от React
 
-**Было (строки 125-136):**
+### PATCH-1: Использовать React ref вместо document.getElementById
+
+Заменить прямое манипулирование DOM на React ref, который не конфликтует с reconciliation.
+
+**Файл:** `src/hooks/useKinescopePlayer.ts`
+
 ```typescript
-const lessonsWithScheduleFlag = enrichedLessons
-  .filter(lesson => isAdminUser || lesson.is_active)
-  .filter(lesson => isAdminUser || !lesson.published_at || new Date(lesson.published_at) <= now)  // <-- ЭТО СКРЫВАЕТ
-  .map(lesson => ({
-    ...lesson,
-    isScheduled: !isAdminUser && lesson.published_at 
-      ? new Date(lesson.published_at) > now 
-      : false,
-  }));
+// БЫЛО:
+const container = document.getElementById(containerId);
+if (container) {
+  while (container.firstChild) {
+    container.removeChild(container.firstChild);
+  }
+}
+
+// СТАНЕТ:
+// Не очищаем DOM вручную - позволяем Kinescope SDK управлять своим контейнером
+// Kinescope.IframePlayer.create сам очистит и заполнит контейнер
 ```
 
-**Станет:**
+### PATCH-2: Добавить ключ стабильности для VideoUnskippableBlock
+
+Когда `isCompleted` меняется, React пытается обновить компонент. Проблема в том, что содержимое рендерится условно (разный JSX для completed/not completed). Нужно использовать `key` для полной перемонтировки компонента.
+
+**Файл:** `src/components/lesson/KvestLessonView.tsx`
+
+В `renderBlockWithProps` для `video_unskippable` добавить условный рендеринг с уникальным ключом:
+
 ```typescript
-const lessonsWithScheduleFlag = enrichedLessons
-  // Filter: admin sees all, user sees only is_active=true
-  .filter(lesson => isAdminUser || lesson.is_active)
-  // НЕ фильтруем по published_at — урок показываем, но с флагом isScheduled
-  .map(lesson => {
-    const publishedAt = lesson.published_at ? new Date(lesson.published_at) : null;
-    const isScheduled = publishedAt && publishedAt > now;
-    return {
-      ...lesson,
-      // isScheduled = true для уроков с будущей датой (показываем "Скоро")
-      isScheduled: Boolean(isScheduled),
-    };
-  });
+case 'video_unskippable':
+  // Для completed блока - простой статичный UI без Kinescope
+  if (isCompleted) {
+    return (
+      <div key={`${blockId}-completed`} className="opacity-80">
+        <LessonBlockRenderer 
+          {...commonProps}
+          kvestProps={{ isCompleted: true }}
+        />
+      </div>
+    );
+  }
+  // Для активного блока - полный Kinescope player
+  return (
+    <div key={`${blockId}-active`}>
+      <LessonBlockRenderer 
+        {...commonProps}
+        kvestProps={{
+          watchedPercent: videoProgress,
+          onProgress: (percent: number) => handleVideoProgress(blockId, percent),
+          onComplete: () => handleVideoComplete(blockId),
+          isCompleted: false,
+          allowBypassEmptyVideo: allowBypassEmptyVideo,
+        }}
+      />
+    </div>
+  );
 ```
 
-## Результат
+### PATCH-3: Улучшить cleanup в useKinescopePlayer
 
-| До исправления | После исправления |
-|----------------|-------------------|
-| Урок с `published_at = 05.02.2026 19:00` не виден вообще до 19:00 | Урок виден с бейджем "Скоро: 5 фев в 19:00", заблокирован для просмотра |
+Обеспечить корректное уничтожение player'а без конфликтов с React:
+
+```typescript
+return () => {
+  // 1. Сначала отключаем observer
+  if (observer) {
+    observer.disconnect();
+    observer = null;
+  }
+  
+  // 2. Отменяем RAF
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  
+  // 3. Помечаем как unmounted
+  isMounted = false;
+  isReadyRef.current = false;
+  
+  // 4. Уничтожаем player (он сам очистит свой DOM)
+  if (player) {
+    try {
+      player.destroy();
+    } catch {
+      // ignore
+    }
+    player = null;
+  }
+  playerRef.current = null;
+  
+  // 5. НЕ очищаем container вручную - React сам удалит DOM элемент
+};
+```
+
+### PATCH-4: Предотвратить forceFill после unmount
+
+В функции `forceFill` и `throttledForceFill` добавить дополнительную проверку:
+
+```typescript
+const forceFill = () => {
+  // Guard: exit if unmounted
+  if (!isMounted) return;
+  
+  const containerEl = document.getElementById(containerId);
+  // Guard: exit if container not in DOM (React removed it)
+  if (!containerEl || !containerEl.isConnected) return;
+  
+  // ... rest of forceFill logic
+};
+```
+
+---
+
+## Файлы для изменения
+
+| Файл | Изменение |
+|------|-----------|
+| `src/hooks/useKinescopePlayer.ts` | Убрать ручную очистку DOM, улучшить cleanup |
+| `src/components/lesson/KvestLessonView.tsx` | Добавить key для изоляции completed/active состояний |
+
+---
+
+## Техническое объяснение
+
+React использует Virtual DOM для отслеживания изменений. Когда внешняя библиотека (Kinescope) напрямую добавляет/удаляет DOM элементы, React "теряет" связь между своим virtual DOM и реальным DOM.
+
+**Паттерн решения:**
+1. Изолировать внешнюю библиотеку в контейнер, который React не модифицирует
+2. Использовать `key` prop для полной перемонтировки при существенных изменениях
+3. Позволить внешней библиотеке управлять своим DOM через её API (destroy), а не через React
+
+---
 
 ## DoD
 
-1. Урок "Тест: В какой роли вы находитесь" виден в списке уроков модуля
-2. Отображается бейдж "Скоро: 5 фев в 19:00" (или текущая дата/время публикации)
-3. При клике — не переходит (заблокирован) или показывает placeholder
-4. После наступления времени публикации — урок открывается нормально
+1. Нажать "Я просмотрел видео" → страница НЕ становится белой
+2. Переход к следующему шагу происходит плавно
+3. Консоль браузера НЕ содержит "removeChild" ошибок
+4. При возврате на вкладку страница НЕ перезагружается (это отдельная проблема bfcache, но должна обрабатываться корректно)
