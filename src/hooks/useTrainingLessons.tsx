@@ -40,6 +40,8 @@ export interface TrainingLesson {
   // Computed fields
   is_completed?: boolean;
   attachments?: LessonAttachment[];
+  // PATCH: Scheduled lessons flag
+  isScheduled?: boolean;
 }
 
 export interface TrainingLessonFormData {
@@ -119,18 +121,16 @@ export function useTrainingLessons(moduleId?: string) {
         attachments: attachmentsData?.filter(a => a.lesson_id === lesson.id) || [],
       })) || [];
 
-      // PATCH-1: Filter lessons by published_at for non-admin users
+      // PATCH-1: Add isScheduled flag instead of filtering out
       const now = new Date();
-      const filteredLessons = enrichedLessons.filter(lesson => {
-        // Admin sees all lessons
-        if (isAdminUser) return true;
-        // No published_at = visible
-        if (!lesson.published_at) return true;
-        // published_at in past or now = visible
-        return new Date(lesson.published_at) <= now;
-      });
+      const lessonsWithScheduleFlag = enrichedLessons.map(lesson => ({
+        ...lesson,
+        isScheduled: !isAdminUser && lesson.published_at 
+          ? new Date(lesson.published_at) > now 
+          : false,
+      }));
 
-      setLessons(filteredLessons);
+      setLessons(lessonsWithScheduleFlag);
     } catch (error) {
       console.error("Error fetching lessons:", error);
       toast.error("Ошибка загрузки уроков");

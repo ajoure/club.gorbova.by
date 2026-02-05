@@ -51,7 +51,8 @@ export function VideoUnskippableBlock({
 }: VideoUnskippableBlockProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [localWatched, setLocalWatched] = useState(watchedPercent);
-  const [videoStarted, setVideoStarted] = useState(false);
+  // PATCH: Initialize videoStarted based on watchedPercent (for page reload case)
+  const [videoStarted, setVideoStarted] = useState(watchedPercent > 0);
   const [fallbackTimer, setFallbackTimer] = useState<number | null>(null);
   const [fallbackElapsed, setFallbackElapsed] = useState(0);
   const fallbackIntervalRef = useRef<NodeJS.Timeout | null>(null);

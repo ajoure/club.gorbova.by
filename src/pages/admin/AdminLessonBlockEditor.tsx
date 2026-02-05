@@ -7,10 +7,11 @@ import { LessonBlockEditor } from "@/components/admin/lesson-editor/LessonBlockE
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
 import { LessonThumbnailEditor } from "@/components/admin/trainings/LessonThumbnailEditor";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
+import { useLessonProgressState } from "@/hooks/useLessonProgressState";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ArrowLeft, BookOpen, Eye, Edit, RefreshCw, ImageIcon, ChevronDown } from "lucide-react";
+import { ArrowLeft, BookOpen, Eye, Edit, RefreshCw, ImageIcon, ChevronDown, RotateCcw, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
 export default function AdminLessonBlockEditor() {
@@ -22,6 +23,9 @@ export default function AdminLessonBlockEditor() {
   
   // Fetch blocks for preview mode - with refetch capability
   const { blocks, loading: blocksLoading, refetch } = useLessonBlocks(lessonId);
+  
+  // Progress state for reset functionality
+  const { reset: resetProgress, state: progressState } = useLessonProgressState(lessonId);
 
   // Refetch blocks when switching to preview mode
   const handleTogglePreview = useCallback(async () => {
@@ -157,8 +161,20 @@ export default function AdminLessonBlockEditor() {
               variant="outline"
               onClick={() => window.open(`/library/${module.slug}/${lesson.slug}`, '_blank')}
             >
-              <Eye className="mr-2 h-4 w-4" />
+              <ExternalLink className="mr-2 h-4 w-4" />
               На сайте
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={async () => {
+                await resetProgress();
+                toast.success("Прогресс урока сброшен");
+              }}
+              disabled={!progressState}
+              title="Сбросить свой прогресс прохождения урока"
+            >
+              <RotateCcw className="mr-2 h-4 w-4" />
+              Сбросить прогресс
             </Button>
           </div>
         </div>

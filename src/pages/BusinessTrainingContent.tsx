@@ -30,7 +30,8 @@ import {
   XCircle,
   CreditCard,
   ShoppingCart,
-  Play
+  Play,
+  Timer
 } from "lucide-react";
 
 // PATCH-C: Unified constants
@@ -518,33 +519,56 @@ export default function BusinessTrainingContent() {
             </div>
           ) : (
             <div className="divide-y divide-border/30">
-              {lessons.map((lesson, idx) => (
-                <button
-                  key={lesson.id}
-                  onClick={() => accessData.type === "active" && navigate(`/library/${BUH_MODULE_SLUG}/${lesson.slug}`)}
-                  disabled={accessData.type !== "active"}
-                  className="w-full p-4 flex items-center gap-3 hover:bg-card/30 transition-colors text-left disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  <div className={`
-                    h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-sm font-medium
-                    ${lesson.is_completed 
-                      ? 'bg-primary/20 text-primary' 
-                      : 'bg-muted text-muted-foreground'
-                    }
-                  `}>
-                    {lesson.is_completed ? <Check className="h-4 w-4" /> : idx + 1}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-foreground truncate">{lesson.title}</p>
-                    {lesson.description && (
-                      <p className="text-xs text-muted-foreground truncate">{lesson.description}</p>
-                    )}
-                  </div>
-                  {accessData.type === "active" && (
-                    <Play className="h-4 w-4 text-muted-foreground shrink-0" />
-                  )}
-                </button>
-              ))}
+              {lessons.map((lesson, idx) => {
+                const isScheduledLesson = lesson.isScheduled;
+                const isDisabled = accessData.type !== "active" || isScheduledLesson;
+                
+                return (
+                  <button
+                    key={lesson.id}
+                    onClick={() => !isDisabled && navigate(`/library/${BUH_MODULE_SLUG}/${lesson.slug}`)}
+                    disabled={isDisabled}
+                    className="w-full p-4 flex items-center gap-3 hover:bg-card/30 transition-colors text-left disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    <div className={`
+                      h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-sm font-medium
+                      ${lesson.is_completed 
+                        ? 'bg-primary/20 text-primary' 
+                        : isScheduledLesson
+                          ? 'bg-amber-500/20 text-amber-600'
+                          : 'bg-muted text-muted-foreground'
+                      }
+                    `}>
+                      {lesson.is_completed ? (
+                        <Check className="h-4 w-4" />
+                      ) : isScheduledLesson ? (
+                        <Lock className="h-4 w-4" />
+                      ) : (
+                        idx + 1
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-foreground truncate">{lesson.title}</p>
+                      {isScheduledLesson && lesson.published_at ? (
+                        <p className="text-xs text-amber-600 flex items-center gap-1">
+                          <Timer className="h-3 w-3" />
+                          Откроется {format(new Date(lesson.published_at), "d MMMM 'в' HH:mm", { locale: ru })}
+                        </p>
+                      ) : lesson.description ? (
+                        <p className="text-xs text-muted-foreground truncate">{lesson.description}</p>
+                      ) : null}
+                    </div>
+                    {isScheduledLesson ? (
+                      <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/30 shrink-0">
+                        <Clock className="h-3 w-3 mr-1" />
+                        Скоро
+                      </Badge>
+                    ) : accessData.type === "active" ? (
+                      <Play className="h-4 w-4 text-muted-foreground shrink-0" />
+                    ) : null}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
