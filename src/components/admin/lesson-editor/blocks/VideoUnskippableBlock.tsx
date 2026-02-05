@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useId } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -15,6 +15,7 @@ import {
   SelectValue 
 } from "@/components/ui/select";
 import { Video, AlertTriangle, CheckCircle2, Play, Clock } from "lucide-react";
+import { useKinescopePlayer, extractKinescopeVideoId } from "@/hooks/useKinescopePlayer";
 
 export interface VideoUnskippableContent {
   url: string;
@@ -59,6 +60,69 @@ export function VideoUnskippableBlock({
   const [apiWorking, setApiWorking] = useState(false);
   const [apiDetectionDone, setApiDetectionDone] = useState(false);
   const apiDetectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Generate stable container ID for Kinescope player
+  const kinescopeContainerId = useId().replace(/:/g, '-');
+  
+  // Extract Kinescope video ID from URL
+  const isKinescope = content.provider === 'kinescope' || content.url?.includes('kinescope.io');
+  const kinescopeVideoId = isKinescope ? extractKinescopeVideoId(content.url || "") : null;
+
+  // Use Kinescope Player API hook for Kinescope videos (player mode only)
+  const shouldUseKinescopeHook = isKinescope && kinescopeVideoId && !isEditing && !isCompleted;
+  
+  const kinescopePlayer = useKinescopePlayer({
+    videoId: shouldUseKinescopeHook ? kinescopeVideoId : "",
+    containerId: `kinescope-unskippable-${kinescopeContainerId}`,
+    onReady: () => {
+      if (shouldUseKinescopeHook) {
+        console.info('[VideoUnskippableBlock] Kinescope API ready');
+        setApiWorking(true);
+        setApiDetectionDone(true);
+        // Stop API detection timeout
+        if (apiDetectionTimeoutRef.current) {
+          clearTimeout(apiDetectionTimeoutRef.current);
+          apiDetectionTimeoutRef.current = null;
+        }
+      }
+    },
+    onTimeUpdate: (currentTime, duration, percent) => {
+      if (shouldUseKinescopeHook) {
+        console.info('[VideoUnskippableBlock] Kinescope timeupdate:', { currentTime, duration, percent });
+        setApiWorking(true);
+        setVideoStarted(true);
+        setLocalWatched(prev => Math.max(prev, percent));
+        onProgress?.(percent);
+        
+        // Stop fallback timer if running
+        if (fallbackIntervalRef.current) {
+          clearInterval(fallbackIntervalRef.current);
+          fallbackIntervalRef.current = null;
+          setFallbackTimer(null);
+        }
+      }
+    },
+    onPlay: () => {
+      if (shouldUseKinescopeHook) {
+        console.info('[VideoUnskippableBlock] Kinescope play event');
+        setApiWorking(true);
+        setVideoStarted(true);
+      }
+    },
+    onEnded: () => {
+      if (shouldUseKinescopeHook) {
+        console.info('[VideoUnskippableBlock] Kinescope ended event');
+        setLocalWatched(100);
+        onProgress?.(100);
+      }
+    },
+    onError: (error) => {
+      if (shouldUseKinescopeHook) {
+        console.error('[VideoUnskippableBlock] Kinescope error:', error);
+        setApiDetectionDone(true);
+      }
+    }
+  });
 
   const threshold = content.threshold_percent || 95;
   const isThresholdReached = localWatched >= threshold;
@@ -129,9 +193,10 @@ export function VideoUnskippableBlock({
     'timeupdate', 'ended', 'play', 'pause'
   ];
 
-  // Kinescope Player API integration via postMessage
+  // Kinescope Player API integration via postMessage (legacy - kept for non-IframePlayer fallback)
+  // When using IframePlayer API (shouldUseKinescopeHook=true), this listener won't receive events
   useEffect(() => {
-    if (isEditing || isCompleted) return;
+    if (isEditing || isCompleted || shouldUseKinescopeHook) return;
 
     const handleMessage = (event: MessageEvent) => {
       // PATCH-B: Проверка origin через host — kinescope.io или *.kinescope.io
@@ -216,14 +281,15 @@ export function VideoUnskippableBlock({
     
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [isEditing, isCompleted, onProgress]);
+  }, [isEditing, isCompleted, shouldUseKinescopeHook, onProgress]);
   
   // PATCH-E: Вычислить embedUrl до эффекта (стабильное значение для deps)
   const embedUrl = getEmbedUrl();
   
   // PATCH-E: Автодетекция API — 5 сек ожидания, потом показываем fallback
+  // Skip for Kinescope IframePlayer API - it reports ready/error via hook callbacks
   useEffect(() => {
-    if (isEditing || isCompleted || apiWorking) return;
+    if (isEditing || isCompleted || apiWorking || shouldUseKinescopeHook) return;
     
     if (embedUrl && content.duration_seconds) {
       apiDetectionTimeoutRef.current = setTimeout(() => {
@@ -238,7 +304,7 @@ export function VideoUnskippableBlock({
         clearTimeout(apiDetectionTimeoutRef.current);
       }
     };
-  }, [isEditing, isCompleted, apiWorking, embedUrl, content.duration_seconds]);
+  }, [isEditing, isCompleted, apiWorking, embedUrl, content.duration_seconds, shouldUseKinescopeHook]);
 
   // Fallback timer when Kinescope API doesn't work
   const startFallbackTimer = useCallback(() => {
@@ -422,18 +488,28 @@ export function VideoUnskippableBlock({
         <h3 className="text-lg font-semibold">{content.title}</h3>
       )}
 
-      {embedUrl ? (
+      {(embedUrl || shouldUseKinescopeHook) ? (
         <div className="aspect-video bg-black rounded-lg overflow-hidden relative">
-          <iframe
-            ref={iframeRef}
-            src={embedUrl}
-            className="w-full h-full"
-            allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
-            allowFullScreen
-          />
+          {/* For Kinescope: use div container for IframePlayer API */}
+          {shouldUseKinescopeHook ? (
+            <div 
+              id={`kinescope-unskippable-${kinescopeContainerId}`}
+              className="w-full h-full absolute inset-0"
+              style={{ position: 'relative' }}
+            />
+          ) : (
+            /* For YouTube/Vimeo: use standard iframe with postMessage */
+            <iframe
+              ref={iframeRef}
+              src={embedUrl!}
+              className="w-full h-full"
+              allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+              allowFullScreen
+            />
+          )}
           
           {/* PATCH-E: Overlay for starting fallback timer ONLY if API is not working AND detection done */}
-          {!videoStarted && content.duration_seconds && !apiWorking && apiDetectionDone && (
+          {!videoStarted && content.duration_seconds && !apiWorking && apiDetectionDone && !shouldUseKinescopeHook && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50">
               <Button
                 variant="secondary"

@@ -23,6 +23,7 @@ interface KinescopePlayer {
   unmute(): Promise<void>;
   setCurrentTime?(seconds: number): Promise<void>; // may not exist in all versions
   getCurrentTime(): Promise<number>;
+  getDuration(): Promise<number>;
   destroy(): void;
   on(event: string, callback: (...args: any[]) => void): void;
   off(event: string, callback: (...args: any[]) => void): void;
@@ -84,6 +85,12 @@ interface UseKinescopePlayerOptions {
   onError?: (error: Error) => void;
   /** Callback when seek+play was successfully applied */
   onSeekApplied?: (seconds: number, nonce: number) => void;
+  /** Callback for timeupdate events (progress tracking) */
+  onTimeUpdate?: (currentTime: number, duration: number, percent: number) => void;
+  /** Callback when video playback starts */
+  onPlay?: () => void;
+  /** Callback when video ends */
+  onEnded?: () => void;
 }
 
 interface PendingSeekRequest {
@@ -102,6 +109,9 @@ export function useKinescopePlayer({
   onReady,
   onError,
   onSeekApplied,
+  onTimeUpdate,
+  onPlay,
+  onEnded,
 }: UseKinescopePlayerOptions) {
   const playerRef = useRef<KinescopePlayer | null>(null);
   const pendingSeekRef = useRef<PendingSeekRequest | null>(null);
@@ -326,6 +336,52 @@ export function useKinescopePlayer({
         }
         
         console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player ready with size stabilizer:`, { videoId, containerId });
+
+        // Subscribe to player events for progress tracking
+        let cachedDuration = 0;
+        
+        // Listen for duration change (usually fires once on ready)
+        player.on('durationchange', async () => {
+          if (!isMounted) return;
+          try {
+            cachedDuration = await player.getDuration() || 0;
+            console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Duration:`, cachedDuration);
+          } catch {
+            // Ignore errors
+          }
+        });
+        
+        // Listen for timeupdate events
+        player.on('timeupdate', async () => {
+          if (!isMounted) return;
+          try {
+            const currentTime = await player.getCurrentTime();
+            // Try to get duration if not cached
+            if (!cachedDuration) {
+              cachedDuration = await player.getDuration() || 0;
+            }
+            if (cachedDuration > 0 && onTimeUpdate) {
+              const percent = Math.round((currentTime / cachedDuration) * 100);
+              onTimeUpdate(currentTime, cachedDuration, percent);
+            }
+          } catch {
+            // Ignore errors
+          }
+        });
+        
+        // Listen for play event
+        player.on('play', () => {
+          if (!isMounted) return;
+          console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Play event`);
+          onPlay?.();
+        });
+        
+        // Listen for ended event
+        player.on('ended', () => {
+          if (!isMounted) return;
+          console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Ended event`);
+          onEnded?.();
+        });
 
         // If initial autoplay timecode was provided, set it as pending
         if (autoplayTimecode != null && autoplayTimecode > 0) {
