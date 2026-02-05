@@ -81,17 +81,13 @@ Deno.serve(async (req: Request) => {
 
     const telegramChatId = profile.telegram_user_id;
 
-    // Get bot token using admin client (bypasses RLS)
-    const { data: bot, error: botError } = await supabaseAdmin
-      .from("telegram_bots")
-      .select("bot_token")
-      .eq("id", botId)
-      .single();
-
-    if (botError || !bot?.bot_token) {
-      console.error("Bot lookup failed:", botError, "botId:", botId);
-      return new Response(JSON.stringify({ error: "Bot not found" }), { 
-        status: 404, 
+    // Get bot token from environment (security policy: tokens stored in secrets, not DB)
+    const botToken = Deno.env.get("PRIMARY_TELEGRAM_BOT_TOKEN");
+    
+    if (!botToken) {
+      console.error("PRIMARY_TELEGRAM_BOT_TOKEN not configured");
+      return new Response(JSON.stringify({ error: "Bot token not configured" }), { 
+        status: 500, 
         headers: { ...corsHeaders, "Content-Type": "application/json" } 
       });
     }
@@ -105,7 +101,7 @@ Deno.serve(async (req: Request) => {
     } : undefined;
 
     // Send test message
-    const telegramUrl = `https://api.telegram.org/bot${bot.bot_token}/sendMessage`;
+    const telegramUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
     const telegramResponse = await fetch(telegramUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
