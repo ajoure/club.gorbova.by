@@ -329,3 +329,21 @@ verify_jwt = false
 
 [functions.sync-payments-with-statement]
 verify_jwt = false
+
+[functions.admin-fix-payments-integrity]
+verify_jwt = false
+
+[functions.admin-search-profiles]
+verify_jwt = false
+
+[functions.admin-payments-diagnostics]
+verify_jwt = false
+
+[functions.admin-bepaid-emergency-unlink]
+verify_jwt = false
+
+[functions.admin-bepaid-full-reconcile]
+verify_jwt = false
+
+[functions.admin-bepaid-reconcile-amounts]
+verify_jwt = false
