@@ -46,8 +46,7 @@ const routeLabels: Record<string, string> = {
   
   // Admin - CRM
   "/admin": "Администрирование",
-  "/admin/inbox": "Входящие",
-  "/admin/broadcasts": "Рассылки",
+  // "/admin/inbox" and "/admin/broadcasts" removed - redirects to /admin/communication
   "/admin/contacts": "Контакты",
   "/admin/contacts/duplicates": "Дубликаты",
   "/admin/deals": "Сделки",

@@ -156,7 +156,7 @@ export function AdminSidebar() {
 
   // Check if path is active
   const isPathActive = (path: string): boolean => {
-    if (path === "/admin/inbox") return location.pathname === path;
+    // /admin/inbox removed - now redirects to /admin/communication
     if (path === "/admin/contacts") return location.pathname === path || location.pathname.startsWith("/admin/contacts/");
     if (path === "/admin/deals") return location.pathname === path || location.pathname.startsWith("/admin/deals/");
     if (path === "/admin/refunds-v2") return location.pathname === path;

@@ -317,3 +317,6 @@ verify_jwt = false
 
 [functions.telegram-send-test]
 verify_jwt = false
+
+[functions.bepaid-list-subscriptions]
+verify_jwt = false

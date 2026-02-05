@@ -153,10 +153,10 @@ const AdminSystemAudit = lazy(() => import("./pages/admin/AdminSystemAudit"));
 const AdminSystemHealth = lazy(() => import("./pages/admin/AdminSystemHealth"));
 const AdminConsents = lazy(() => import("./pages/admin/AdminConsents"));
 const AdminPreregistrations = lazy(() => import("./pages/admin/AdminPreregistrations"));
-const AdminInbox = lazy(() => import("./pages/admin/AdminInbox"));
+// AdminInbox removed - redirects to /admin/communication
 const AdminExecutors = lazy(() => import("./pages/admin/AdminExecutors"));
 const AdminDocumentTemplates = lazy(() => import("./pages/admin/AdminDocumentTemplates"));
-const AdminBroadcasts = lazy(() => import("./pages/admin/AdminBroadcasts"));
+// AdminBroadcasts removed - redirects to /admin/communication?tab=broadcasts
 const AdminTrainingModules = lazy(() => import("./pages/admin/AdminTrainingModules"));
 const AdminTrainingLessons = lazy(() => import("./pages/admin/AdminTrainingLessons"));
 const AdminLessonBlockEditor = lazy(() => import("./pages/admin/AdminLessonBlockEditor"));
@@ -171,7 +171,7 @@ const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingIn
 const AdminPaymentDiagnostics = lazy(() => import("./pages/admin/AdminPaymentDiagnostics"));
 const AdminTelegramDiagnostics = lazy(() => import("./pages/admin/AdminTelegramDiagnostics"));
 const AdminKbImport = lazy(() => import("./pages/admin/AdminKbImport"));
-const AdminBepaidSubscriptions = lazy(() => import("./pages/admin/AdminBepaidSubscriptions"));
+// AdminBepaidSubscriptions removed - redirects to /admin/payments/bepaid-subscriptions
 
 // Page loader component for Suspense fallback
 const PageLoader = () => (
@@ -275,9 +275,9 @@ const App = () => {
               
               {/* Admin routes - CRM */}
               <Route path="/admin" element={<Navigate to="/admin/deals" replace />} />
-              <Route path="/admin/inbox" element={<ProtectedRoute><LazyRoute><AdminInbox /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/inbox" element={<Navigate to="/admin/communication" replace />} />
               <Route path="/admin/communication" element={<ProtectedRoute><LazyRoute><AdminCommunication /></LazyRoute></ProtectedRoute>} />
-              <Route path="/admin/broadcasts" element={<ProtectedRoute><LazyRoute><AdminBroadcasts /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/broadcasts" element={<Navigate to="/admin/communication?tab=broadcasts" replace />} />
               <Route path="/admin/contacts" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminContacts /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/contacts/duplicates" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminDuplicates /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/deals" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminDeals /></AdminLayout></LazyRoute></ProtectedRoute>} />
@@ -327,7 +327,7 @@ const App = () => {
               <Route path="/admin/payments/auto-renewals" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/statement" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments/bepaid-subscriptions" element={<ProtectedRoute><LazyRoute><AdminPaymentsHub /></LazyRoute></ProtectedRoute>} />
-              <Route path="/admin/bepaid-subscriptions" element={<ProtectedRoute><LazyRoute><AdminBepaidSubscriptions /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/bepaid-subscriptions" element={<Navigate to="/admin/payments/bepaid-subscriptions" replace />} />
               {/* Legacy redirects */}
               <Route path="/admin/installments" element={<Navigate to="/admin/payments" replace />} />
               <Route path="/admin/preregistrations" element={<Navigate to="/admin/payments/preorders" replace />} />
