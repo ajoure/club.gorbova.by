@@ -17,7 +17,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { TimezoneSelector } from "@/components/admin/payments/TimezoneSelector";
 import { format, parseISO } from "date-fns";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
 import {
@@ -435,15 +435,13 @@ export default function AdminTrainingLessons() {
         toast.error("Неверный формат времени (HH:mm)");
         return;
       }
-      const [hours, minutes] = publishTime.split(":").map(Number);
-      // Create ISO string for the selected date/time in the target timezone
+      // PATCH-3: Build wall-clock date and interpret in selected timezone
       const dateStr = format(publishDate, "yyyy-MM-dd");
-      // Format: "2026-02-05T18:00:00" + timezone offset
-      publishedAt = formatInTimeZone(
-        new Date(`${dateStr}T${publishTime}:00`), 
-        publishTimezone, 
-        "yyyy-MM-dd'T'HH:mm:ssXXX"
-      );
+      // Create a Date object treating the input as wall-clock time in the selected TZ
+      const wallClockDate = new Date(`${dateStr}T${publishTime}:00`);
+      // fromZonedTime interprets wallClockDate as if it's in publishTimezone and returns UTC
+      const utcDate = fromZonedTime(wallClockDate, publishTimezone);
+      publishedAt = utcDate.toISOString();
     }
     
     const success = await createLesson({
@@ -469,12 +467,11 @@ export default function AdminTrainingLessons() {
         toast.error("Неверный формат времени (HH:mm)");
         return;
       }
+      // PATCH-3: Build wall-clock date and interpret in selected timezone
       const dateStr = format(publishDate, "yyyy-MM-dd");
-      publishedAt = formatInTimeZone(
-        new Date(`${dateStr}T${publishTime}:00`), 
-        publishTimezone, 
-        "yyyy-MM-dd'T'HH:mm:ssXXX"
-      );
+      const wallClockDate = new Date(`${dateStr}T${publishTime}:00`);
+      const utcDate = fromZonedTime(wallClockDate, publishTimezone);
+      publishedAt = utcDate.toISOString();
     }
     
     const success = await updateLesson(editingLesson.id, {

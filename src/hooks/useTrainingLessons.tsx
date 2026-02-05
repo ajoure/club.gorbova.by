@@ -78,10 +78,13 @@ export function useTrainingLessons(moduleId?: string) {
     try {
       setLoading(true);
       
+      // PATCH-1: Filter only active lessons for regular users
+      // Admin bypass happens later in enrichedLessons filtering
       const { data: lessonsData, error } = await supabase
         .from("training_lessons")
         .select("*")
         .eq("module_id", moduleId)
+        .eq("is_active", true)
         .order("sort_order", { ascending: true });
 
       if (error) throw error;

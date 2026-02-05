@@ -404,8 +404,8 @@ export default function Learning() {
       };
     }
     
-    // Special handling for buh-business
-    if (product.courseSlug === "buh-business") {
+    // Special handling for buh-business (PATCH-2: use correct slug)
+    if (product.courseSlug === "buhgalteriya-kak-biznes") {
       const hasPaid = businessTrainingAccess?.hasPaidAccess || false;
       const hasReserve = businessTrainingAccess?.hasReservation || false;
       
