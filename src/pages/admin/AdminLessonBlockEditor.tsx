@@ -7,8 +7,7 @@ import { LessonBlockEditor } from "@/components/admin/lesson-editor/LessonBlockE
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
 import { LessonThumbnailEditor } from "@/components/admin/trainings/LessonThumbnailEditor";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
-import { useLessonProgressState } from "@/hooks/useLessonProgressState";
-import { useUserProgress } from "@/hooks/useUserProgress";
+import { useResetProgress } from "@/hooks/useResetProgress";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -25,9 +24,8 @@ export default function AdminLessonBlockEditor() {
   // Fetch blocks for preview mode - with refetch capability
   const { blocks, loading: blocksLoading, refetch } = useLessonBlocks(lessonId);
   
-  // Progress state for reset functionality
-  const { reset: resetProgress, state: progressState } = useLessonProgressState(lessonId);
-  const { resetLessonProgress } = useUserProgress(lessonId || '');
+  // Progress reset via canonical Edge Function
+  const { resetProgress: resetViaEdge } = useResetProgress();
 
   // Refetch blocks when switching to preview mode
   const handleTogglePreview = useCallback(async () => {
@@ -170,19 +168,19 @@ export default function AdminLessonBlockEditor() {
               variant="outline"
               onClick={async () => {
                 try {
-                  // Reset both tables with proper await
-                  const stateResult = await resetProgress('lesson_all');
-                  const progressResult = await resetLessonProgress();
+                  // Reset via canonical Edge Function (service role)
+                  const result = await resetViaEdge(lessonId!, 'lesson_all');
                   
-                  // Invalidate all related queries
-                  queryClient.invalidateQueries({ queryKey: ['lesson-progress'] });
-                  queryClient.invalidateQueries({ queryKey: ['user-progress', lessonId] });
+                  if (!result.ok) {
+                    toast.error(`Ошибка: ${result.error}`);
+                    return;
+                  }
                   
                   // Force refetch blocks to update UI
                   await refetch();
                   
-                  console.log('[AdminReset] Progress reset:', { stateResult, progressResult });
-                  toast.success("Прогресс урока сброшен");
+                  console.log('[AdminReset] Done:', result);
+                  toast.success(`Прогресс сброшен: удалено ${result.affected?.lesson_progress_state || 0} + ${result.affected?.user_lesson_progress || 0} записей`);
                 } catch (error) {
                   console.error('[AdminReset] Error:', error);
                   toast.error("Ошибка сброса прогресса");

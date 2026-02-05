@@ -311,3 +311,6 @@ verify_jwt = false
 
 [functions.generate-point-b-summary]
 verify_jwt = false
+
+[functions.reset-lesson-progress]
+verify_jwt = false
