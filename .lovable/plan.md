@@ -1,319 +1,169 @@
 
-# План v2: Исправление System Health + Функция игнорирования инвариантов
+# Критический фикс: "Ошибка запуска проверки" + стабилизация system-health
 
-## Принятые коррекции
+## Диагностика
 
-| Коррекция | Принято | Детали |
-|-----------|---------|--------|
-| Роль → `super_admin` | ✅ | В v2 системе код роли = `super_admin` (с подчёркиванием) |
-| OPTIONS ≠ абсолютный truth | ✅ | Добавляем POST fallback при OPTIONS timeout |
-| UNIQUE(check_key) → убрать | ✅ | Разрешаем несколько записей, активна = `expires_at IS NULL OR expires_at > now()` |
-| Игнор ≠ OK визуально | ✅ | Muted секция с жёлтым индикатором и причиной |
-| Добавить `source` колонку | ✅ | `manual`, `auto`, `migration` для post-mortem |
-
----
-
-## STEP 1: Миграция — таблица `system_health_ignored_checks`
-
-```sql
-CREATE TABLE public.system_health_ignored_checks (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  check_key TEXT NOT NULL,
-  ignored_by UUID REFERENCES auth.users(id),
-  reason TEXT NOT NULL,
-  source TEXT DEFAULT 'manual' CHECK (source IN ('manual', 'auto', 'migration')),
-  ignored_at TIMESTAMPTZ DEFAULT now(),
-  expires_at TIMESTAMPTZ, -- NULL = permanent
-  created_at TIMESTAMPTZ DEFAULT now()
-  -- БЕЗ UNIQUE(check_key) — один check_key может иметь несколько записей
-);
-
--- Индекс для быстрого поиска активных игноров
-CREATE INDEX idx_ignored_checks_active ON system_health_ignored_checks (check_key) 
-WHERE expires_at IS NULL OR expires_at > now();
-
--- RLS: только super_admin может читать/писать
-ALTER TABLE system_health_ignored_checks ENABLE ROW LEVEL SECURITY;
-
--- Функция проверки super_admin через user_roles_v2
-CREATE OR REPLACE FUNCTION public.is_super_admin(_user_id UUID)
-RETURNS BOOLEAN
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (
-    SELECT 1 
-    FROM user_roles_v2 ur
-    JOIN roles r ON ur.role_id = r.id
-    WHERE ur.user_id = _user_id
-    AND r.code = 'super_admin'
-  )
-$$;
-
--- Политика: только super_admin может всё
-CREATE POLICY "Super admins can manage ignored checks"
-  ON system_health_ignored_checks
-  FOR ALL
-  TO authenticated
-  USING (public.is_super_admin(auth.uid()))
-  WITH CHECK (public.is_super_admin(auth.uid()));
+### Корневая проблема
+Network log показывает:
+```
+POST https://...supabase.co/functions/v1/system-health-full-check
+Error: Load failed
 ```
 
----
+Это происходит при нажатии "Запустить полный чек". Причины:
+1. Функция `system-health-full-check` проверяет 172 функции с timeout 8000ms каждая
+2. Общее время выполнения превышает лимит Supabase Edge Functions (150 секунд)
+3. Браузер разрывает соединение (Load failed)
 
-## STEP 2: Исправление Edge Functions healthcheck
+### Факты из логов
+- audit_logs: последний успешный `system.health.full_check` был 6 часов назад
+- Последняя проверка заняла 27.9 секунд (172 функции × 8000ms timeout в батчах по 20)
+- 122 функции возвращают 404 NOT_DEPLOYED — это ожидаемо в preview/test среде
 
-**Файл:** `src/hooks/useEdgeFunctionsHealth.ts`
+### Почему "122 NOT_DEPLOYED" — это НЕ баг
+Вы работаете в **preview-среде** (796a93b9-74cc-403c-8ec5-cafdb2a5beaa.lovableproject.com), а не в production (gorbova.lovable.app). 
 
-### Изменения:
-
-1. **Увеличить таймаут:** 10s → 15s
-2. **Добавить POST fallback:** если OPTIONS timeout/error — пробуем POST с ping payload
-3. **Новая логика статусов:**
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│                   Edge Function Check Logic                  │
-├─────────────────────────────────────────────────────────────┤
-│ 1. OPTIONS запрос (15s timeout)                             │
-│    ├─ 200/204 → status = "ok"                               │
-│    ├─ 404 или body содержит NOT_FOUND → status = "not_found"│
-│    └─ timeout/error → переход к шагу 2                      │
-│                                                             │
-│ 2. POST запрос (10s timeout, body: {"ping": true})          │
-│    ├─ 200/401/400/403 → status = "ok" (функция существует)  │
-│    ├─ 404 или NOT_FOUND → status = "not_found"              │
-│    └─ timeout/error → status = "error"                      │
-│                                                             │
-│ Особые случаи:                                              │
-│    • OPTIONS timeout + POST 200 → status = "ok" (slow cors) │
-│    • OPTIONS 404 = абсолютный blocker, POST не нужен        │
-└─────────────────────────────────────────────────────────────┘
-```
-
-4. **Новый статус "slow_preflight"** — OPTIONS таймаутит, но функция работает
+CI деплоит функции только в production. В preview-среде большинство функций физически отсутствует — это нормальное поведение.
 
 ---
 
-## STEP 3: Обновить хук `useSystemHealthRuns.ts`
+## План исправлений
 
-### Добавить:
+### 1. Увеличить надёжность вызова (frontend)
+**Файл**: `src/hooks/useSystemHealthFullCheck.ts`
+
+Изменения:
+- Добавить обработку timeout/network ошибок
+- Показывать понятное сообщение вместо красного overlay
 
 ```typescript
-// Интерфейс для игнорируемых проверок
-export interface IgnoredCheck {
-  id: string;
-  check_key: string;
-  ignored_by: string;
-  reason: string;
-  source: "manual" | "auto" | "migration";
-  ignored_at: string;
-  expires_at: string | null;
-}
-
-// Хук для получения активных игноров
-export function useIgnoredChecks() {
-  return useQuery({
-    queryKey: ["system-health-ignored"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("system_health_ignored_checks")
-        .select("*")
-        .or("expires_at.is.null,expires_at.gt.now()");
-      if (error) throw error;
-      return data as IgnoredCheck[];
-    },
-  });
-}
-
-// Мутация для добавления игнора (только super_admin)
-export function useIgnoreCheck() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ 
-      checkKey, 
-      reason, 
-      expiresAt 
-    }: { 
-      checkKey: string; 
-      reason: string; 
-      expiresAt?: Date | null;
-    }) => {
-      const { error } = await supabase
-        .from("system_health_ignored_checks")
-        .insert({ 
-          check_key: checkKey, 
-          reason,
-          expires_at: expiresAt?.toISOString() || null,
-          source: "manual"
-        });
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["system-health-ignored"] });
-      toast.success("Проверка добавлена в игнорируемые");
-    },
-    onError: (error) => {
-      toast.error("Ошибка", { description: String(error) });
-    },
-  });
-}
-
-// Мутация для удаления игнора
-export function useUnignoreCheck() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from("system_health_ignored_checks")
-        .delete()
-        .eq("id", id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["system-health-ignored"] });
-      toast.success("Игнорирование отменено");
-    },
-  });
+// В useTriggerFullCheck:
+mutationFn: async () => {
+  try {
+    const { data, error } = await supabase.functions.invoke("system-health-full-check", {
+      body: { source: "manual" },
+    });
+    if (error) throw error;
+    return data as FullCheckResponse;
+  } catch (e) {
+    // Различаем network error от business error
+    if (e instanceof Error && (e.message.includes("Load failed") || e.message.includes("Failed to fetch"))) {
+      throw new Error("Превышено время ожидания. Проверка может выполняться в фоне — обновите страницу через 30 секунд.");
+    }
+    throw e;
+  }
 }
 ```
 
----
+### 2. Добавить плашку "Preview-среда" в UI
+**Файл**: `src/components/admin/system-health/FullSystemCheck.tsx`
 
-## STEP 4: Новый компонент `IgnoreCheckDialog.tsx`
-
-**Файл:** `src/components/admin/system-health/IgnoreCheckDialog.tsx`
-
-UI элементы:
-- Заголовок: "Игнорировать: {check_name}"
-- Textarea: "Причина игнорирования" (обязательно)
-- Switch: "Временно" + DatePicker для `expires_at`
-- Предупреждение: "Игнорируемые проверки НЕ считаются пройденными"
-- Кнопки: "Отмена" / "Игнорировать"
-
----
-
-## STEP 5: Обновить `InvariantCheckCard.tsx`
-
-### Изменения:
-
-1. **Новый prop:** `isIgnored?: boolean`, `ignoredInfo?: IgnoredCheck`
-2. **Новый variant:** `"ignored"` — жёлтый/muted стиль
-3. **Кнопка "Игнорировать"** — только если `variant === "error"` и `isSuperAdmin`
-4. **Отображение причины** — если `isIgnored`, показывать reason и expires_at
-
-Визуальный контракт для ignored:
-```text
-┌──────────────────────────────────────────────────┐
-│ 🟡 [muted bg] INV-8: Нет классификации           │
-│     Игнорируется: 1070 исторических записей      │
-│     До: 2026-03-01 (или "постоянно")             │
-│     Кем: admin@example.com                       │
-│     ────────────────────────────────             │
-│     [Отменить игнорирование]                     │
-└──────────────────────────────────────────────────┘
-```
-
----
-
-## STEP 6: Обновить `AdminSystemHealth.tsx`
-
-### Изменения:
-
-1. Подключить `useIgnoredChecks()` и `useHasRole('super_admin')` через хук `useSuperAdmin()`
-2. Разделить проверки на 3 группы:
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│ ❌ Требуют внимания (X)           ← failedChecks - ignored  │
-├─────────────────────────────────────────────────────────────┤
-│ 🟡 Игнорируемые (Y)               ← failedChecks ∩ ignored  │
-│     [muted, collapsed by default]                           │
-├─────────────────────────────────────────────────────────────┤
-│ ✅ Пройдено (Z)                   ← passedChecks            │
-└─────────────────────────────────────────────────────────────┘
-```
-
-3. Передавать `isSuperAdmin` в `InvariantCheckCard` для показа кнопки игнорирования
-
----
-
-## STEP 7: Хук `useSuperAdmin`
-
-**Файл:** `src/hooks/useSuperAdmin.ts`
+Изменения:
+- Определить preview по hostname
+- Показать warning banner с объяснением
 
 ```typescript
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+const isPreviewEnv = window.location.hostname.includes('lovableproject.com') 
+                   || window.location.hostname.includes('id-preview--');
 
-export function useSuperAdmin() {
-  return useQuery({
-    queryKey: ["is-super-admin"],
-    queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return false;
-      
-      const { data, error } = await supabase
-        .rpc("is_super_admin", { _user_id: user.id });
-      
-      if (error) {
-        console.error("useSuperAdmin error:", error);
-        return false;
-      }
-      return data === true;
-    },
-  });
+// В JSX:
+{isPreviewEnv && (
+  <div className="bg-yellow-500/10 border border-yellow-500/50 rounded-lg p-3 mb-4">
+    <AlertTriangle className="h-4 w-4 inline mr-2 text-yellow-600" />
+    <strong>Preview-среда:</strong> Большинство функций не задеплоено. Для полной картины используйте 
+    <a href="https://gorbova.lovable.app/admin/system-health" target="_blank" className="underline ml-1">
+      production
+    </a>.
+  </div>
+)}
+```
+
+### 3. Оптимизировать system-health-full-check (сократить время)
+**Файл**: `supabase/functions/system-health-full-check/index.ts`
+
+Изменения:
+- Уменьшить timeout с 8000ms до 5000ms для OPTIONS проверок
+- Увеличить batch size с 20 до 30
+- Добавить ранний выход если слишком много NOT_DEPLOYED (preview detection)
+
+```typescript
+// В функции checkFunctionAvailability:
+const timeout = entry.healthcheck_method === "OPTIONS" ? 5000 : entry.timeout_ms;
+
+// После проверки первого батча:
+if (notDeployedCount > 50) {
+  console.log("[FULL-CHECK] Preview environment detected (>50 NOT_DEPLOYED). Early exit.");
+  // Помечаем остальные как NOT_DEPLOYED без запросов
 }
 ```
 
----
+### 4. Исправить useRemediate чтобы 403 не вызывал crash overlay
+**Файл**: `src/hooks/useSystemHealthFullCheck.ts`
 
-## Структура файлов
-
-```text
-src/
-├── hooks/
-│   ├── useEdgeFunctionsHealth.ts     # MODIFY: POST fallback, 15s timeout
-│   ├── useSystemHealthRuns.ts        # MODIFY: add ignore hooks
-│   └── useSuperAdmin.ts              # NEW: проверка super_admin
-├── components/admin/system-health/
-│   ├── InvariantCheckCard.tsx        # MODIFY: ignore button, ignored variant
-│   ├── IgnoreCheckDialog.tsx         # NEW: диалог игнорирования
-│   └── EdgeFunctionsHealth.tsx       # (без изменений)
-└── pages/admin/
-    └── AdminSystemHealth.tsx         # MODIFY: 3 группы проверок
-
-supabase/migrations/
-└── 20260206_ignored_checks.sql       # NEW: таблица + RLS + функция
+```typescript
+// В useRemediate:
+mutationFn: async (mode: "dry-run" | "execute") => {
+  const { data, error } = await supabase.functions.invoke("system-health-remediate", {
+    body: { mode },
+  });
+  
+  if (error) {
+    // 403 — не crash, а бизнес-ошибка
+    if (error.message?.includes("403") || error.message?.includes("Forbidden")) {
+      return {
+        mode,
+        plan: [],
+        executed: false,
+        results: [],
+        timestamp: new Date().toISOString(),
+        error: "forbidden",
+      } as RemediateResponse & { error?: string };
+    }
+    throw error;
+  }
+  return data as RemediateResponse;
+},
+onSuccess: (data) => {
+  if ((data as any).error === "forbidden") {
+    toast.error("Доступ запрещён", { description: "Требуется роль super_admin" });
+    return;
+  }
+  // ... остальная логика
+}
 ```
 
----
+### 5. Console warning fix (косметика)
+**Файл**: `src/components/admin/system-health/FullSystemCheck.tsx`
 
-## DoD Checklist
-
-| Проверка | Ожидаемый результат |
-|----------|---------------------|
-| Edge Functions: таймаут | 15s (вместо 10s) |
-| Edge Functions: POST fallback | При OPTIONS timeout → POST ping |
-| Edge Functions: меньше "Load failed" | Retry + fallback logic |
-| Инварианты: кнопка "Игнорировать" | Видна ТОЛЬКО super_admin |
-| Инварианты: 3 секции | Ошибки / Игнорируемые / Пройдено |
-| Игнорируемые: визуально muted | Жёлтый индикатор, НЕ зелёный |
-| Игнорируемые: показывает причину | Reason + expires_at + кем |
-| БД: таблица с `source` колонкой | manual / auto / migration |
-| БД: нет UNIQUE(check_key) | Несколько записей разрешено |
-| RLS: только super_admin | Проверка через `user_roles_v2.roles.code = 'super_admin'` |
+React warning "Function components cannot be given refs" — добавить forwardRef если нужно, или убрать ref.
 
 ---
 
-## Приоритет выполнения
+## Файлы для изменения
 
-1. **P0:** Миграция БД (таблица + RLS)
-2. **P0:** `useSuperAdmin` хук
-3. **P1:** Edge Functions healthcheck fix (POST fallback)
-4. **P1:** Ignore hooks в `useSystemHealthRuns.ts`
-5. **P2:** `IgnoreCheckDialog.tsx`
-6. **P2:** Обновление `InvariantCheckCard.tsx`
-7. **P2:** Обновление `AdminSystemHealth.tsx` (3 группы)
+| Файл | Что делаем |
+|------|-----------|
+| `src/hooks/useSystemHealthFullCheck.ts` | Обработка timeout, 403 как бизнес-ошибка |
+| `src/components/admin/system-health/FullSystemCheck.tsx` | Preview banner, forwardRef fix |
+| `supabase/functions/system-health-full-check/index.ts` | Timeout optimization, preview detection |
+
+---
+
+## Что НЕ делаем
+
+- Не добавляем auto-redeploy (по вашему решению)
+- Не меняем RLS/RBAC
+- Не трогаем платежи/доступы
+- Не удаляем существующую логику
+
+---
+
+## DoD (Definition of Done)
+
+| Проверка | Как убедиться |
+|----------|---------------|
+| Нет "Load failed" overlay при запуске чека | Нажать "Запустить полный чек" — должен показать результат или понятную ошибку |
+| Preview banner виден | На lovableproject.com домене показывается жёлтая плашка |
+| 403 remediate не вызывает crash | Нажать "Автолечение" без прав — toast "Доступ запрещён", без красного overlay |
+| Чек завершается быстрее | duration_ms < 25000 |
+| audit_logs пишется | `SELECT * FROM audit_logs WHERE action LIKE 'system.health.%' ORDER BY created_at DESC LIMIT 5` |
