@@ -466,22 +466,21 @@ jobs:
         if: always()
         env:
           SUPABASE_URL: https://hdjgkjceownmmnrqqtuz.supabase.co
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           # ============================================
-          # LOG DEPLOY TO DATABASE: For 404 correlation
+          # LOG DEPLOY VIA EDGE FUNCTION: Uses CRON_SECRET for auth
           # ============================================
           
-          # Skip if no service key configured
-          if [ -z "$SUPABASE_SERVICE_KEY" ]; then
-            echo "⚠️ SUPABASE_SERVICE_ROLE_KEY not configured, skipping deploy log"
+          if [ -z "$CRON_SECRET" ]; then
+            echo "⚠️ CRON_SECRET not configured, skipping deploy log"
             exit 0
           fi
           
           REGISTRY_FILE="supabase/functions.registry.txt"
           mapfile -t FUNCS < <(grep -vE '^\s*(#|$)' "$REGISTRY_FILE" | tr -d '\r' | xargs -n1)
           
-          # Build JSON arrays
+          # Build JSON arrays using jq
           DEPLOYED_JSON=$(printf '%s\n' "${FUNCS[@]}" | jq -R . | jq -s .)
           FAILED_JSON=$(echo "$FAILED_LIST" | xargs -n1 | jq -R . | jq -s . 2>/dev/null || echo "[]")
           
@@ -492,12 +491,14 @@ jobs:
             STATUS="failed"
           fi
           
-          # POST to deploy_logs
-          curl -s -X POST "$SUPABASE_URL/rest/v1/deploy_logs" \
-            -H "apikey: $SUPABASE_SERVICE_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+          STARTED_AT="${{ github.event.head_commit.timestamp }}"
+          FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          
+          # Call Edge Function instead of REST API
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "$SUPABASE_URL/functions/v1/log-deployment" \
             -H "Content-Type: application/json" \
-            -H "Prefer: return=minimal" \
+            -H "X-Cron-Secret: $CRON_SECRET" \
             -d "{
               \"run_id\": \"${{ github.run_id }}\",
               \"commit_sha\": \"${{ github.sha }}\",
@@ -505,10 +506,20 @@ jobs:
               \"deployed_functions\": $DEPLOYED_JSON,
               \"failed_functions\": $FAILED_JSON,
               \"status\": \"$STATUS\",
-              \"finished_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
-            }"
+              \"started_at\": \"$STARTED_AT\",
+              \"finished_at\": \"$FINISHED_AT\"
+            }")
           
-          echo "✅ Deploy log recorded: run_id=${{ github.run_id }}, status=$STATUS"
+          HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Deploy log recorded via Edge Function"
+            echo "$BODY"
+          else
+            echo "⚠️ Failed to log deploy (HTTP $HTTP_STATUS): $BODY"
+            # Don't fail the pipeline if logging fails
+          fi
 
       - name: Deployment Complete
         run: |

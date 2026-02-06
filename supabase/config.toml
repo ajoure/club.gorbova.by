@@ -350,3 +350,6 @@ verify_jwt = false
 
 [functions.bepaid-get-subscription-details]
 verify_jwt = false
+
+[functions.log-deployment]
+verify_jwt = false
