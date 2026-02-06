@@ -8,10 +8,10 @@ on:
     # This ensures functions are always deployed after publish
   workflow_dispatch:
 
-# PATCH: Prevent parallel deploys (cancel old if new starts)
+# PATCH: Queue deploys, never cancel (prevents 404 during deploy window)
 concurrency:
   group: edge-functions-deploy-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false  # CRITICAL: false to avoid leaving functions 404
 
 jobs:
   deploy:
@@ -170,20 +170,38 @@ jobs:
           DEPLOYED_COUNT=0
           FAILED_COUNT=0
           
+          FAILED_LIST=""
+          
           for i in "${!FUNCS[@]}"; do
             func="${FUNCS[$i]}"
             idx=$((i + 1))
             
             echo ""
             echo "--- [$idx/$TOTAL] Deploying: $func ---"
-            if supabase functions deploy "$func"; then
-              echo "✅ Deployed: $func"
-              DEPLOYED_COUNT=$((DEPLOYED_COUNT + 1))
-            else
-              echo "❌ FAILED to deploy: $func"
+            
+            # PATCH: Retry loop (3 attempts)
+            DEPLOY_OK=0
+            for attempt in 1 2 3; do
+              if supabase functions deploy "$func"; then
+                echo "✅ Deployed: $func"
+                DEPLOYED_COUNT=$((DEPLOYED_COUNT + 1))
+                DEPLOY_OK=1
+                break
+              fi
+              echo "⚠️ Attempt $attempt failed for $func, retrying..."
+              sleep 5
+            done
+            
+            if [ "$DEPLOY_OK" = "0" ]; then
+              echo "❌ FAILED after 3 attempts: $func"
               FAILED_COUNT=$((FAILED_COUNT + 1))
+              FAILED_LIST="$FAILED_LIST $func"
             fi
           done
+          
+          # Save for later steps
+          echo "FAILED_LIST=$FAILED_LIST" >> $GITHUB_ENV
+          echo "DEPLOYED_COUNT=$DEPLOYED_COUNT" >> $GITHUB_ENV
           
           echo ""
           echo "========================================"
@@ -378,6 +396,61 @@ jobs:
           echo "CANARY_LOG=$CANARY_LOG" >> $GITHUB_ENV
           echo "✅ All canary checks passed!"
 
+      - name: Wait Until Ready - Registry Verification
+        env:
+          SUPABASE_URL: https://hdjgkjceownmmnrqqtuz.supabase.co
+        run: |
+          # ============================================
+          # WAIT UNTIL READY: Poll registry functions until all respond non-404
+          # ============================================
+          echo ""
+          echo "Waiting for all registry functions to be ready..."
+          
+          REGISTRY_FILE="supabase/functions.registry.txt"
+          mapfile -t FUNCS < <(grep -vE '^\s*(#|$)' "$REGISTRY_FILE" | tr -d '\r' | xargs -n1)
+          
+          MAX_ATTEMPTS=20
+          SLEEP_INTERVAL=6
+          
+          for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            echo ""
+            echo "=== Ready check attempt $attempt/$MAX_ATTEMPTS ==="
+            
+            NOT_READY=0
+            NOT_READY_LIST=""
+            
+            for func in "${FUNCS[@]}"; do
+              RESPONSE=$(curl -s -w "\n%{http_code}" -m 10 \
+                -X POST \
+                -H "Content-Type: application/json" \
+                -d '{"ping":true}' \
+                "$SUPABASE_URL/functions/v1/$func" 2>&1)
+              
+              HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
+              BODY=$(echo "$RESPONSE" | sed '$d')
+              
+              if [ "$HTTP_STATUS" = "404" ] || echo "$BODY" | grep -q '"code":"NOT_FOUND"'; then
+                NOT_READY=$((NOT_READY + 1))
+                NOT_READY_LIST="$NOT_READY_LIST $func"
+              fi
+            done
+            
+            if [ "$NOT_READY" = "0" ]; then
+              echo "✅ All ${#FUNCS[@]} registry functions are ready!"
+              break
+            fi
+            
+            echo "⏳ $NOT_READY functions still not ready:$NOT_READY_LIST"
+            
+            if [ "$attempt" = "$MAX_ATTEMPTS" ]; then
+              echo "::error::Timeout waiting for functions to be ready after $((MAX_ATTEMPTS * SLEEP_INTERVAL)) seconds"
+              echo "Still not ready:$NOT_READY_LIST"
+              exit 1
+            fi
+            
+            sleep $SLEEP_INTERVAL
+          done
+
       - name: Upload Verification Logs
         uses: actions/upload-artifact@v4
         if: always()
@@ -389,6 +462,54 @@ jobs:
             verify-canary-*.log
           retention-days: 7
 
+      - name: Log Deployment to Database
+        if: always()
+        env:
+          SUPABASE_URL: https://hdjgkjceownmmnrqqtuz.supabase.co
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          # ============================================
+          # LOG DEPLOY TO DATABASE: For 404 correlation
+          # ============================================
+          
+          # Skip if no service key configured
+          if [ -z "$SUPABASE_SERVICE_KEY" ]; then
+            echo "⚠️ SUPABASE_SERVICE_ROLE_KEY not configured, skipping deploy log"
+            exit 0
+          fi
+          
+          REGISTRY_FILE="supabase/functions.registry.txt"
+          mapfile -t FUNCS < <(grep -vE '^\s*(#|$)' "$REGISTRY_FILE" | tr -d '\r' | xargs -n1)
+          
+          # Build JSON arrays
+          DEPLOYED_JSON=$(printf '%s\n' "${FUNCS[@]}" | jq -R . | jq -s .)
+          FAILED_JSON=$(echo "$FAILED_LIST" | xargs -n1 | jq -R . | jq -s . 2>/dev/null || echo "[]")
+          
+          # Determine status
+          if [ "${{ job.status }}" = "success" ]; then
+            STATUS="completed"
+          else
+            STATUS="failed"
+          fi
+          
+          # POST to deploy_logs
+          curl -s -X POST "$SUPABASE_URL/rest/v1/deploy_logs" \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d "{
+              \"run_id\": \"${{ github.run_id }}\",
+              \"commit_sha\": \"${{ github.sha }}\",
+              \"run_number\": ${{ github.run_number }},
+              \"deployed_functions\": $DEPLOYED_JSON,
+              \"failed_functions\": $FAILED_JSON,
+              \"status\": \"$STATUS\",
+              \"finished_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+            }"
+          
+          echo "✅ Deploy log recorded: run_id=${{ github.run_id }}, status=$STATUS"
+
       - name: Deployment Complete
         run: |
           echo ""
@@ -398,4 +519,5 @@ jobs:
           echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           echo "Commit: ${{ github.sha }}"
           echo "Run ID: ${{ github.run_id }}"
+          echo "Deployed: $DEPLOYED_COUNT functions"
           echo "========================================"

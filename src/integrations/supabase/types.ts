@@ -1068,6 +1068,48 @@ export type Database = {
         }
         Relationships: []
       }
+      deploy_logs: {
+        Row: {
+          commit_sha: string
+          created_at: string
+          deployed_functions: string[]
+          duration_ms: number | null
+          failed_functions: string[] | null
+          finished_at: string | null
+          id: string
+          run_id: string
+          run_number: number | null
+          started_at: string
+          status: string
+        }
+        Insert: {
+          commit_sha: string
+          created_at?: string
+          deployed_functions?: string[]
+          duration_ms?: number | null
+          failed_functions?: string[] | null
+          finished_at?: string | null
+          id?: string
+          run_id: string
+          run_number?: number | null
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          commit_sha?: string
+          created_at?: string
+          deployed_functions?: string[]
+          duration_ms?: number | null
+          failed_functions?: string[] | null
+          finished_at?: string | null
+          id?: string
+          run_id?: string
+          run_number?: number | null
+          started_at?: string
+          status?: string
+        }
+        Relationships: []
+      }
       document_generation_rules: {
         Row: {
           auto_send_email: boolean | null
