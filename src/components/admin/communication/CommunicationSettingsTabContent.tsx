@@ -40,6 +40,7 @@ import {
   Play,
   AlertTriangle,
 } from "lucide-react";
+import { OlegSettingsSection } from "./OlegSettingsSection";
 
 interface EmailTemplate {
   id: string;
@@ -412,6 +413,9 @@ export function CommunicationSettingsTabContent() {
             Для привязки Telegram используйте профиль пользователя в разделе «Клиенты»
           </p>
         </GlassCard>
+
+        {/* AI Bot "Oleg" Settings */}
+        <OlegSettingsSection />
 
         {/* Media Pipeline Health */}
         <GlassCard className="p-6">

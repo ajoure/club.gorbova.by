@@ -204,6 +204,105 @@ async function logAudit(supabase: any, event: any) {
   await supabase.from('telegram_access_audit').insert(event);
 }
 
+// ==========================================
+// AI SUPPORT INTEGRATION HELPER
+// ==========================================
+interface AIInvokeParams {
+  telegramUserId: number;
+  messageText: string;
+  botId: string;
+  messageId: number;
+  botToken: string;
+  chatId: number;
+  profileUserId: string;
+}
+
+async function invokeAISupport(supabase: any, params: AIInvokeParams) {
+  try {
+    // Check if AI is enabled for this bot
+    const { data: settings } = await supabase
+      .from('ai_bot_settings')
+      .select('toggles')
+      .eq('bot_id', params.botId)
+      .maybeSingle();
+    
+    const toggles = settings?.toggles;
+    if (!toggles?.auto_reply_enabled) {
+      console.log('[AI Support] Auto-reply disabled for bot', params.botId);
+      return;
+    }
+    
+    // Check for active handoff
+    const { data: activeHandoff } = await supabase
+      .from('ai_handoffs')
+      .select('id')
+      .eq('telegram_user_id', params.telegramUserId)
+      .eq('bot_id', params.botId)
+      .in('status', ['open', 'waiting_human'])
+      .maybeSingle();
+    
+    if (activeHandoff) {
+      console.log('[AI Support] Active handoff exists, skipping AI');
+      return;
+    }
+    
+    // Invoke telegram-ai-support function
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    
+    const response = await fetch(`${supabaseUrl}/functions/v1/telegram-ai-support`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+      },
+      body: JSON.stringify({
+        telegramUserId: params.telegramUserId,
+        messageText: params.messageText,
+        botId: params.botId,
+        messageId: params.messageId,
+        chatId: params.chatId,
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[AI Support] Function error:', response.status, errorText);
+      return;
+    }
+    
+    const data = await response.json();
+    console.log('[AI Support] Response:', JSON.stringify(data));
+    
+    // Send reply if AI generated one
+    if (data?.reply) {
+      const sendResult = await sendMessage(params.botToken, params.chatId, data.reply);
+      console.log('[AI Support] Message sent:', sendResult?.ok);
+      
+      // Save outgoing AI message to telegram_messages
+      if (sendResult?.ok && sendResult?.result?.message_id) {
+        await supabase.from('telegram_messages').insert({
+          user_id: params.profileUserId,
+          telegram_user_id: params.telegramUserId,
+          bot_id: params.botId,
+          direction: 'outgoing',
+          message_text: data.reply,
+          message_id: sendResult.result.message_id,
+          status: 'sent',
+          meta: {
+            ai_generated: true,
+            intent: data.intent,
+            confidence: data.confidence,
+            used_tools: data.used_tools,
+          },
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[AI Support] Error:', err);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -802,6 +901,20 @@ Deno.serve(async (req) => {
             } catch (qErr) {
               console.error("[WEBHOOK] queue media_jobs failed:", qErr);
             }
+          }
+          
+          // ========== AI SUPPORT INTEGRATION ==========
+          // Invoke AI support for text messages (non-blocking)
+          if (msg.text && !fileId) {
+            invokeAISupport(supabase, {
+              telegramUserId,
+              messageText: msg.text,
+              botId,
+              messageId: msg.message_id,
+              botToken,
+              chatId,
+              profileUserId: profile.user_id,
+            }).catch(err => console.error('[AI Support] Invocation error:', err));
           }
 
           // Best-effort audit log (non-blocking)

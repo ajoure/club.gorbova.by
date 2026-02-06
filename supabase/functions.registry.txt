@@ -18,6 +18,8 @@ telegram-process-access-queue
 telegram-revoke-access
 telegram-webhook
 
+telegram-ai-support
+
 # P1 — Important (32)
 admin-manual-charge
 admin-payments-diagnostics

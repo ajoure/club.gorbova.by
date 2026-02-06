@@ -38,6 +38,192 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_bot_settings: {
+        Row: {
+          active_prompt_packages: string[] | null
+          bot_id: string | null
+          confidence_threshold: number | null
+          created_at: string | null
+          id: string
+          max_messages_per_minute: number | null
+          quiet_hours: Json | null
+          sliders: Json | null
+          style_preset: string | null
+          templates: Json | null
+          toggles: Json | null
+          updated_at: string | null
+        }
+        Insert: {
+          active_prompt_packages?: string[] | null
+          bot_id?: string | null
+          confidence_threshold?: number | null
+          created_at?: string | null
+          id?: string
+          max_messages_per_minute?: number | null
+          quiet_hours?: Json | null
+          sliders?: Json | null
+          style_preset?: string | null
+          templates?: Json | null
+          toggles?: Json | null
+          updated_at?: string | null
+        }
+        Update: {
+          active_prompt_packages?: string[] | null
+          bot_id?: string | null
+          confidence_threshold?: number | null
+          created_at?: string | null
+          id?: string
+          max_messages_per_minute?: number | null
+          quiet_hours?: Json | null
+          sliders?: Json | null
+          style_preset?: string | null
+          templates?: Json | null
+          toggles?: Json | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_bot_settings_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: true
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_bot_settings_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: true
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_handoffs: {
+        Row: {
+          assigned_to: string | null
+          bot_id: string | null
+          created_at: string | null
+          id: string
+          last_message_id: number | null
+          meta: Json | null
+          reason: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string | null
+          telegram_user_id: number
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          assigned_to?: string | null
+          bot_id?: string | null
+          created_at?: string | null
+          id?: string
+          last_message_id?: number | null
+          meta?: Json | null
+          reason?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string | null
+          telegram_user_id: number
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          assigned_to?: string | null
+          bot_id?: string | null
+          created_at?: string | null
+          id?: string
+          last_message_id?: number | null
+          meta?: Json | null
+          reason?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string | null
+          telegram_user_id?: number
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_handoffs_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_handoffs_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_prompt_packages: {
+        Row: {
+          category: string | null
+          code: string
+          content: string
+          created_at: string | null
+          description: string | null
+          enabled: boolean | null
+          id: string
+          is_system: boolean | null
+          name: string
+          updated_at: string | null
+        }
+        Insert: {
+          category?: string | null
+          code: string
+          content: string
+          created_at?: string | null
+          description?: string | null
+          enabled?: boolean | null
+          id?: string
+          is_system?: boolean | null
+          name: string
+          updated_at?: string | null
+        }
+        Update: {
+          category?: string | null
+          code?: string
+          content?: string
+          created_at?: string | null
+          description?: string | null
+          enabled?: boolean | null
+          id?: string
+          is_system?: boolean | null
+          name?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      ai_rate_limits: {
+        Row: {
+          action_type: string
+          count: number | null
+          id: string
+          telegram_user_id: number
+          window_start: string | null
+        }
+        Insert: {
+          action_type: string
+          count?: number | null
+          id?: string
+          telegram_user_id: number
+          window_start?: string | null
+        }
+        Update: {
+          action_type?: string
+          count?: number | null
+          id?: string
+          telegram_user_id?: number
+          window_start?: string | null
+        }
+        Relationships: []
+      }
       audience_insights: {
         Row: {
           channel_id: string | null
@@ -7140,6 +7326,111 @@ export type Database = {
             columns: ["subscription_id"]
             isOneToOne: false
             referencedRelation: "subscriptions_v2_safe"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_ai_conversations: {
+        Row: {
+          bot_id: string | null
+          created_at: string | null
+          id: string
+          last_confidence: number | null
+          last_intent: string | null
+          last_message_at: string | null
+          last_topics_summary: string | null
+          messages: Json | null
+          style_detected: Json | null
+          telegram_user_id: number
+          updated_at: string | null
+          user_id: string | null
+          user_tone_preference: Json | null
+        }
+        Insert: {
+          bot_id?: string | null
+          created_at?: string | null
+          id?: string
+          last_confidence?: number | null
+          last_intent?: string | null
+          last_message_at?: string | null
+          last_topics_summary?: string | null
+          messages?: Json | null
+          style_detected?: Json | null
+          telegram_user_id: number
+          updated_at?: string | null
+          user_id?: string | null
+          user_tone_preference?: Json | null
+        }
+        Update: {
+          bot_id?: string | null
+          created_at?: string | null
+          id?: string
+          last_confidence?: number | null
+          last_intent?: string | null
+          last_message_at?: string | null
+          last_topics_summary?: string | null
+          messages?: Json | null
+          style_detected?: Json | null
+          telegram_user_id?: number
+          updated_at?: string | null
+          user_id?: string | null
+          user_tone_preference?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_ai_conversations_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_ai_conversations_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_ai_processed_messages: {
+        Row: {
+          bot_id: string | null
+          id: string
+          processed_at: string | null
+          response_sent: boolean | null
+          telegram_message_id: number
+          telegram_user_id: number
+        }
+        Insert: {
+          bot_id?: string | null
+          id?: string
+          processed_at?: string | null
+          response_sent?: boolean | null
+          telegram_message_id: number
+          telegram_user_id: number
+        }
+        Update: {
+          bot_id?: string | null
+          id?: string
+          processed_at?: string | null
+          response_sent?: boolean | null
+          telegram_message_id?: number
+          telegram_user_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "telegram_ai_processed_messages_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_ai_processed_messages_bot_id_fkey"
+            columns: ["bot_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_bots_safe"
             referencedColumns: ["id"]
           },
         ]
