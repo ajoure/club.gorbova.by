@@ -3,8 +3,9 @@
 # Format: one function name per line, # = comment
 # ============================================
 
-# P0 — Business Critical (12)
+# P0 — Business Critical (13)
 bepaid-webhook
+grant-access-for-order
 cancel-trial
 direct-charge
 nightly-payments-invariants
