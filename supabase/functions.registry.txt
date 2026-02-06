@@ -60,3 +60,4 @@ email-test-connection
 bepaid-queue-cron
 bepaid-receipts-cron
 bepaid-subscription-audit-cron
+log-deployment
