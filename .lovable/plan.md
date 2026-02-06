@@ -1,6 +1,16 @@
-
-
 # План: Исправление System Health + Healthcheck Dashboard + Audit Log
+
+## ✅ Статус: ВЫПОЛНЕНО (2026-02-06)
+
+### Выполненные шаги:
+
+1. ✅ **STEP 1: Deploy `nightly-payments-invariants`** — функция задеплоена, возвращает 401 (не 404)
+2. ✅ **STEP 2: CI Smoke Checks** — добавлены `nightly-system-health` и `nightly-payments-invariants` в TIER-1
+3. ⏳ **STEP 3: Telegram webhook bot_id** — требует ручного вызова Telegram API (см. ниже)
+4. ✅ **STEP 4: Edge Functions Health dashboard** — добавлена вкладка в /admin/system-health
+5. ✅ **STEP 5: AuditLogViewer** — добавлена вкладка Audit Log
+
+---
 
 ## Диагностика (что найдено)
 
