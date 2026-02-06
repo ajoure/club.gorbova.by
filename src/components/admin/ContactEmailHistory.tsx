@@ -52,27 +52,40 @@ interface EmailLog {
 export function ContactEmailHistory({ userId, profileId, email, clientName }: ContactEmailHistoryProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Fetch outgoing email logs
+  // Fetch outgoing email logs - prioritize search by email (most reliable)
   const { data: emails, isLoading: isLoadingLogs } = useQuery({
     queryKey: ["email-logs", userId, profileId, email],
     queryFn: async () => {
-      let query = supabase
-        .from("email_logs")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(50);
-
-      // Build OR conditions for broader search
+      // PRIMARY: Search by email (most reliable - works even if user_id/profile_id is NULL)
+      if (email) {
+        const { data: byEmail, error } = await supabase
+          .from("email_logs")
+          .select("*")
+          .or(`to_email.eq.${email},from_email.eq.${email}`)
+          .order("created_at", { ascending: false })
+          .limit(50);
+        
+        if (!error && byEmail && byEmail.length > 0) {
+          return byEmail as EmailLog[];
+        }
+      }
+      
+      // FALLBACK: Search by user_id/profile_id
       const conditions: string[] = [];
       if (userId) conditions.push(`user_id.eq.${userId}`);
       if (profileId) conditions.push(`profile_id.eq.${profileId}`);
-      if (email) conditions.push(`to_email.eq.${email}`, `from_email.eq.${email}`);
-
-      if (conditions.length > 0) {
-        query = query.or(conditions.join(','));
+      
+      if (conditions.length === 0) {
+        return [] as EmailLog[];
       }
 
-      const { data, error } = await query;
+      const { data, error } = await supabase
+        .from("email_logs")
+        .select("*")
+        .or(conditions.join(','))
+        .order("created_at", { ascending: false })
+        .limit(50);
+        
       if (error) throw error;
       return data as EmailLog[];
     },

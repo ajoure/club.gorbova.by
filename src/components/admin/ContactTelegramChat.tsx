@@ -823,12 +823,34 @@ export function ContactTelegramChat({
       // PATCH: Show message_text for ANY event that has it (not just manual/system notifications)
       const hasMessageText = !!event.message_text;
       
+      // PATCH: Show extended info for access grant events
+      const meta = event.meta as Record<string, unknown> | undefined;
+      let displayText = getEventLabel(event.action);
+      
+      if (event.action === 'AUTO_GRANT' || event.action === 'MANUAL_GRANT') {
+        const clubName = (meta?.club_name || meta?.product_name || '') as string;
+        const accessEndDate = meta?.access_end_date as string | undefined;
+        const validUntil = meta?.valid_until as string | undefined;
+        const endDate = accessEndDate || (validUntil ? new Date(validUntil).toLocaleDateString('ru-RU') : null);
+        
+        const prefix = event.action === 'AUTO_GRANT' ? 'Авто-выдача' : 'Ручная выдача';
+        if (clubName && endDate) {
+          displayText = `${prefix}: ${clubName} до ${endDate}`;
+        } else if (clubName) {
+          displayText = `${prefix}: ${clubName}`;
+        } else if (endDate) {
+          displayText = `${prefix} до ${endDate}`;
+        } else {
+          displayText = prefix;
+        }
+      }
+      
       return (
         <div key={event.id} className="flex justify-center my-2">
           <div className="flex flex-col items-center gap-1 max-w-[85%]">
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-xs text-muted-foreground">
               {EVENT_ICONS[event.action] || <Bell className="w-3 h-3" />}
-              <span>{getEventLabel(event.action)}</span>
+              <span>{displayText}</span>
               <span className="opacity-60">
                 {format(new Date(event.created_at), "dd.MM HH:mm", { locale: ru })}
               </span>
