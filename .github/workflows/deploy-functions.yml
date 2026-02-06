@@ -8,9 +8,15 @@ on:
     # This ensures functions are always deployed after publish
   workflow_dispatch:
 
+# PATCH: Prevent parallel deploys (cancel old if new starts)
+concurrency:
+  group: edge-functions-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     
     steps:
       - name: Checkout repository
@@ -23,6 +29,32 @@ jobs:
         with:
           version: latest
 
+      - name: Validate Project Reference
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          EXPECTED_PROJECT_REF: hdjgkjceownmmnrqqtuz
+        run: |
+          # Extract PROJECT_REF from SUPABASE_URL dynamically
+          DERIVED_REF=$(echo "$SUPABASE_URL" | sed -E 's#https://([^.]+)\..*#\1#')
+          
+          echo "========================================"
+          echo "PROJECT REFERENCE VALIDATION"
+          echo "========================================"
+          echo "SUPABASE_URL: $SUPABASE_URL"
+          echo "DERIVED_REF: $DERIVED_REF"
+          echo "EXPECTED_REF: $EXPECTED_PROJECT_REF"
+          echo "GITHUB_SHA: ${{ github.sha }}"
+          echo "GITHUB_RUN_ID: ${{ github.run_id }}"
+          echo "GITHUB_RUN_NUMBER: ${{ github.run_number }}"
+          echo "========================================"
+          
+          if [ "$DERIVED_REF" != "$EXPECTED_PROJECT_REF" ]; then
+            echo "::error::Wrong project ref! Expected $EXPECTED_PROJECT_REF, got $DERIVED_REF"
+            exit 1
+          fi
+          
+          echo "✅ Project reference validated successfully"
+
       - name: Deploy Edge Functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -31,6 +63,7 @@ jobs:
           
           echo "========================================"
           echo "DEPLOYMENT STRATEGY: Full deterministic deploy"
+          echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           echo "========================================"
           
           # Deploy ALL functions that have index.ts (deterministic, not diff-based)
@@ -78,12 +111,19 @@ jobs:
             echo "::error::$FAILED_COUNT functions failed to deploy!"
             exit 1
           fi
-          
+
+      - name: Smoke Checks - Critical Functions
+        env:
+          SUPABASE_URL: https://hdjgkjceownmmnrqqtuz.supabase.co
+        run: |
           # ============================================
           # SMOKE CHECKS: Verify critical functions are reachable
           # ============================================
           echo ""
           echo "Running smoke checks for critical functions..."
+          
+          SMOKE_LOG="smoke-checks-$(date -u +%Y%m%d-%H%M%S).log"
+          echo "=== SMOKE CHECK STARTED $(date -u '+%Y-%m-%d %H:%M:%S UTC') ===" > "$SMOKE_LOG"
           
           # P0: Must-exist functions (business critical)
           CRITICAL_FUNCTIONS=(
@@ -100,16 +140,14 @@ jobs:
             "users-admin-actions"
           )
           
-          SUPABASE_URL="https://hdjgkjceownmmnrqqtuz.supabase.co"
-          ORIGIN="https://796a93b9-74cc-403c-8ec5-cafdb2a5beaa.lovableproject.com"
           SMOKE_FAILED=0
           
           for func in "${CRITICAL_FUNCTIONS[@]}"; do
-            echo ""
-            echo "=== Smoke check: $func ==="
+            echo "" | tee -a "$SMOKE_LOG"
+            echo "=== Smoke check: $func ===" | tee -a "$SMOKE_LOG"
             
-            # POST existence check (primary)
-            POST_RESPONSE=$(curl -s -w "\n%{http_code}" \
+            # POST existence check with timeout
+            POST_RESPONSE=$(curl -s -w "\n%{http_code}" -m 15 \
               -X POST \
               -H "Content-Type: application/json" \
               -d '{"ping":true}' \
@@ -118,22 +156,29 @@ jobs:
             POST_STATUS=$(echo "$POST_RESPONSE" | tail -1)
             POST_BODY=$(echo "$POST_RESPONSE" | sed '$d')
             
+            echo "HTTP Status: $POST_STATUS" | tee -a "$SMOKE_LOG"
+            echo "Response: $POST_BODY" | tee -a "$SMOKE_LOG"
+            
             if [ "$POST_STATUS" = "404" ]; then
-              echo "❌ FAIL: $func returned 404 NOT_FOUND"
+              echo "❌ FAIL: $func returned 404 NOT_FOUND" | tee -a "$SMOKE_LOG"
               SMOKE_FAILED=1
             elif [ "$POST_STATUS" = "000" ]; then
-              echo "❌ FAIL: $func - connection failed"
+              echo "❌ FAIL: $func - connection failed (timeout)" | tee -a "$SMOKE_LOG"
               SMOKE_FAILED=1
             elif echo "$POST_BODY" | grep -q '"code":"NOT_FOUND"'; then
-              echo "❌ FAIL: $func returned NOT_FOUND in body"
+              echo "❌ FAIL: $func returned NOT_FOUND in body" | tee -a "$SMOKE_LOG"
               SMOKE_FAILED=1
             else
-              echo "✅ OK: $func returned HTTP $POST_STATUS (function exists)"
+              # 200, 400, 401, 403 = function exists and responds
+              echo "✅ OK: $func returned HTTP $POST_STATUS (function exists)" | tee -a "$SMOKE_LOG"
             fi
           done
           
-          echo ""
-          echo "========================================"
+          echo "" | tee -a "$SMOKE_LOG"
+          echo "=== SMOKE CHECK COMPLETED $(date -u '+%Y-%m-%d %H:%M:%S UTC') ===" | tee -a "$SMOKE_LOG"
+          
+          # Save log path for artifact upload
+          echo "SMOKE_LOG=$SMOKE_LOG" >> $GITHUB_ENV
           
           if [ "$SMOKE_FAILED" = "1" ]; then
             echo "::error::Smoke checks failed! One or more critical functions are not reachable."
@@ -141,5 +186,130 @@ jobs:
           fi
           
           echo "✅ All smoke checks passed!"
+
+      - name: Canary Verify - CORS Preflight
+        env:
+          SUPABASE_URL: https://hdjgkjceownmmnrqqtuz.supabase.co
+          ORIGIN: https://gorbova.lovable.app
+        run: |
+          # ============================================
+          # CANARY VERIFY: OPTIONS preflight for UI functions
+          # ============================================
           echo ""
-          echo "DEPLOYMENT COMPLETE: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Running CORS preflight canary checks..."
+          
+          VERIFY_LOG="verify-cors-$(date -u +%Y%m%d-%H%M%S).log"
+          echo "=== CORS VERIFY STARTED $(date -u '+%Y-%m-%d %H:%M:%S UTC') ===" > "$VERIFY_LOG"
+          
+          CORS_FUNCTIONS=("public-product" "bepaid-create-token")
+          CORS_FAILED=0
+          
+          for func in "${CORS_FUNCTIONS[@]}"; do
+            echo "" | tee -a "$VERIFY_LOG"
+            echo "=== OPTIONS preflight: $func ===" | tee -a "$VERIFY_LOG"
+            
+            OPTIONS_RESPONSE=$(curl -s -i -m 10 -X OPTIONS \
+              -H "Origin: $ORIGIN" \
+              -H "Access-Control-Request-Method: POST" \
+              -H "Access-Control-Request-Headers: content-type,authorization,x-supabase-client-platform" \
+              "$SUPABASE_URL/functions/v1/$func" 2>&1)
+            
+            echo "$OPTIONS_RESPONSE" >> "$VERIFY_LOG"
+            
+            # Check for required CORS headers
+            if echo "$OPTIONS_RESPONSE" | grep -qi "access-control-allow-headers.*x-supabase-client"; then
+              echo "✅ CORS OK: $func has x-supabase-client-* headers" | tee -a "$VERIFY_LOG"
+            else
+              echo "⚠️ CORS WARNING: $func may be missing x-supabase-client-* headers" | tee -a "$VERIFY_LOG"
+              # Don't fail pipeline, just warn (CORS update is gradual)
+            fi
+            
+            # Check it's not 404
+            if echo "$OPTIONS_RESPONSE" | grep -q "HTTP/[0-9.]* 404"; then
+              echo "❌ FAIL: $func returned 404 on OPTIONS" | tee -a "$VERIFY_LOG"
+              CORS_FAILED=1
+            fi
+          done
+          
+          echo "" | tee -a "$VERIFY_LOG"
+          echo "=== CORS VERIFY COMPLETED ===" | tee -a "$VERIFY_LOG"
+          
+          echo "VERIFY_LOG=$VERIFY_LOG" >> $GITHUB_ENV
+          
+          if [ "$CORS_FAILED" = "1" ]; then
+            echo "::error::CORS canary failed! Critical UI functions not responding to OPTIONS."
+            exit 1
+          fi
+          
+          echo "✅ CORS canary checks passed!"
+
+      - name: Canary Verify - Business Logic
+        env:
+          SUPABASE_URL: https://hdjgkjceownmmnrqqtuz.supabase.co
+        run: |
+          # ============================================
+          # CANARY VERIFY: Business logic endpoints
+          # ============================================
+          echo ""
+          echo "Running business logic canary checks..."
+          
+          CANARY_LOG="verify-canary-$(date -u +%Y%m%d-%H%M%S).log"
+          echo "=== CANARY VERIFY STARTED $(date -u '+%Y-%m-%d %H:%M:%S UTC') ===" > "$CANARY_LOG"
+          
+          # public-product uses query param, not body (as per contract)
+          echo "=== Canary: public-product (query param) ===" | tee -a "$CANARY_LOG"
+          PP_RESPONSE=$(curl -s -m 20 \
+            "$SUPABASE_URL/functions/v1/public-product?domain=gorbova.lovable.app" 2>&1)
+          echo "$PP_RESPONSE" | head -c 500 >> "$CANARY_LOG"
+          echo "" >> "$CANARY_LOG"
+          
+          # Check it's not a raw 404/NOT_FOUND
+          if echo "$PP_RESPONSE" | grep -q '"code":"NOT_FOUND"'; then
+            echo "❌ FAIL: public-product function NOT_FOUND" | tee -a "$CANARY_LOG"
+            exit 1
+          fi
+          echo "✅ public-product responds (may be 404 product not found - that's OK)" | tee -a "$CANARY_LOG"
+          
+          # integration-healthcheck
+          echo "" | tee -a "$CANARY_LOG"
+          echo "=== Canary: integration-healthcheck ===" | tee -a "$CANARY_LOG"
+          IH_RESPONSE=$(curl -s -m 20 -X POST \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            "$SUPABASE_URL/functions/v1/integration-healthcheck" 2>&1)
+          echo "$IH_RESPONSE" | head -c 500 >> "$CANARY_LOG"
+          echo "" >> "$CANARY_LOG"
+          
+          if echo "$IH_RESPONSE" | grep -q '"code":"NOT_FOUND"'; then
+            echo "❌ FAIL: integration-healthcheck NOT_FOUND" | tee -a "$CANARY_LOG"
+            exit 1
+          fi
+          echo "✅ integration-healthcheck responds" | tee -a "$CANARY_LOG"
+          
+          echo "" | tee -a "$CANARY_LOG"
+          echo "=== CANARY VERIFY COMPLETED ===" | tee -a "$CANARY_LOG"
+          
+          echo "CANARY_LOG=$CANARY_LOG" >> $GITHUB_ENV
+          echo "✅ All canary checks passed!"
+
+      - name: Upload Verification Logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deployment-verification-logs
+          path: |
+            smoke-checks-*.log
+            verify-cors-*.log
+            verify-canary-*.log
+          retention-days: 7
+
+      - name: Deployment Complete
+        run: |
+          echo ""
+          echo "========================================"
+          echo "DEPLOYMENT COMPLETE"
+          echo "========================================"
+          echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Commit: ${{ github.sha }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "========================================"
