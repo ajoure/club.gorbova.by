@@ -295,9 +295,9 @@ export function VideoUnskippableBlock({
     if (embedUrl && content.duration_seconds) {
       apiDetectionTimeoutRef.current = setTimeout(() => {
         if (!apiWorking) {
-          setApiDetectionDone(true); // API не ответил за 5 сек
+          setApiDetectionDone(true); // API не ответил за 3 сек
         }
-      }, 5000);
+      }, 3000); // PATCH: Уменьшено с 5000 до 3000 мс для быстрого fallback
     }
     
     return () => {

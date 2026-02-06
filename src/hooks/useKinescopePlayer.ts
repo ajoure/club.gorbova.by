@@ -54,7 +54,8 @@ function loadKinescopeScript(): Promise<void> {
     }
 
     const script = document.createElement("script");
-    script.src = "https://player.kinescope.io/latest/iframe.player.js";
+    // PATCH: Фиксированная версия SDK вместо /latest/ для стабильности
+    script.src = "https://player.kinescope.io/v1.0/iframe.player.js";
     script.async = true;
     script.onload = () => {
       // Wait a tick for Kinescope to initialize
