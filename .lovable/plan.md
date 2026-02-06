@@ -1,74 +1,165 @@
-ЖЁСТКИЕ ПРАВИЛА ИСПОЛНЕНИЯ ДЛЯ LOVABLE.DEV
-1) Ничего не ломать и не трогать лишнее. Только add-only / минимальный diff.
-2) Dry-run → execute для любых массовых/опасных операций. STOP-предохранители обязательны.
-3) Никаких хардкод-UUID/токенов/секретов. Никаких внутренних ID/таблиц в ответах пользователю.
-4) Безопасность: no-PII в логах/промптах. Доступ только к данным самого пользователя. Service role only где нужно.
-5) Финал: отчёт с пруфами (UI-скрины из 7500084@gmail.com + логи + SQL-check + diff-summary).
-6) “SYSTEM ACTOR Proof” обязателен: реальные записи в audit_logs с actor_type='system', actor_user_id=NULL, actor_label заполнен.
 
-ТЗ: AI-КОНТАКТ-ЦЕНТР TELEGRAM — БОТ “ОЛЕГ” (Urban Online)
+# План: Исправление сохранения пакетов промптов + полная сводка
 
-0) ЦЕЛЬ
-Сделать Telegram-бота “Олег” для private DM, который закрывает:
-- Support (поддержка)
-- Sales (продажи/продление/апсейл)
-- Smalltalk (общение + возврат к прошлой теме)
-- Handoff (эскалация на человека)
+## Обнаруженные проблемы
 
-Интеграция через существующую Edge Function:
-- supabase/functions/telegram-webhook/index.ts
-Новая Edge Function:
-- supabase/functions/telegram-ai-support/index.ts
-Настройки через UI админки Contact Center (Oleg Settings).
+### Проблема 1: RLS блокирует сохранение
+**Причина:** На таблице `ai_prompt_packages` есть только политика для `service_role`:
+```
+Policy: "Service role only" FOR ALL TO service_role USING (true)
+```
+Клиентский код использует `anon` ключ → INSERT блокируется.
 
-1) ТРИГГЕРЫ / КОГДА ВЫЗЫВАТЬ AI
-AI включается только если:
-- chatType === 'private'
-- msg.text существует
-- msg.text НЕ начинается с '/'
-- нет активного handoff (ai_handoffs.status IN ('open','waiting_human'))
-- auto_reply_enabled=true для данного bot_id
-- не превышены rate limits
-Команды (/start,/help,/buy) не трогать.
+**Решение:** Добавить RLS политики для администраторов:
+- SELECT: админы могут видеть все пакеты
+- INSERT: админы могут создавать пакеты (с `is_system = false`)
+- UPDATE: админы могут редактировать не-системные пакеты
+- DELETE: админы могут удалять не-системные пакеты
 
-2) КЛЮЧЕВЫЕ ТРЕБОВАНИЯ (безопасность/качество)
-2.1 Идемпотентность: не отвечать дважды на один Telegram message_id.
-2.2 No-PII: не логировать и не включать в промпт email/телефон/адрес/платёжные данные.
-2.3 Изоляция данных: tools возвращают только “свои” данные по telegram_user_id/user_id.
-2.4 No internal: не показывать UUID, токены, названия таблиц, конфиги, edge routes.
-2.5 Режим “человек подключён”: при handoff waiting_human/open бот НЕ продолжает “умничать”.
+### Проблема 2: Нет полной сводки после анализа
+**Текущее UI показывает:**
+- Название пакета
+- Краткое "Что Олег понял" (`summary`)
+- Пример ответа (`exampleResponse`)
 
-3) ФАЗА 1 — БАЗА ДАННЫХ (МИГРАЦИИ)
+**Не показывается:**
+- Извлечённые правила (`extractedRules`) — массив конкретных правил
+- Категория с описанием — в каких ситуациях будет использоваться
+- Характерные фразы/обращения
 
-ВАЖНОЕ УТОЧНЕНИЕ ПО ТИПАМ:
-- bot_id: использовать тот тип, который реально в проекте: если telegram_bots.id = uuid → uuid. Если text → text.
-НЕЛЬЗЯ смешивать: в запросах и настройках bot_id должен быть одного типа везде.
+**Также:** В типе `analysisResult` отсутствует поле `extractedRules`.
 
-3.1 telegram_ai_conversations (диалоги/контекст)
-Добавить поддержку идемпотентности без “processed_message_ids в json” (чтобы не раздувать json):
-- либо отдельная таблица telegram_ai_processed_messages
-- либо уникальная запись outbox по message_id
+---
 
-Рекомендуемая схема:
-A) telegram_ai_conversations (контекст)
+## Фаза 1: Миграция — RLS политики для ai_prompt_packages
+
 ```sql
-CREATE TABLE telegram_ai_conversations (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  telegram_user_id bigint NOT NULL,
-  user_id uuid REFERENCES auth.users(id),
-  bot_id uuid REFERENCES telegram_bots(id),
-  messages jsonb DEFAULT '[]'::jsonb,
-  last_message_at timestamptz DEFAULT now(),
-  last_topics_summary text,
-  last_intent text,
-  last_confidence numeric,
-  user_tone_preference jsonb,
-  style_detected jsonb,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
+-- Разрешить админам SELECT все пакеты
+CREATE POLICY "Admins can view prompt packages"
+ON ai_prompt_packages FOR SELECT
+TO authenticated
+USING (public.has_role(auth.uid(), 'admin'));
+
+-- Разрешить админам создавать не-системные пакеты
+CREATE POLICY "Admins can create prompt packages"
+ON ai_prompt_packages FOR INSERT
+TO authenticated
+WITH CHECK (
+  public.has_role(auth.uid(), 'admin') 
+  AND (is_system IS NULL OR is_system = false)
 );
 
-CREATE UNIQUE INDEX idx_tg_ai_conv_user_bot ON telegram_ai_conversations(telegram_user_id, bot_id);
+-- Разрешить админам обновлять не-системные пакеты
+CREATE POLICY "Admins can update non-system packages"
+ON ai_prompt_packages FOR UPDATE
+TO authenticated
+USING (
+  public.has_role(auth.uid(), 'admin') 
+  AND (is_system IS NULL OR is_system = false)
+);
 
-ALTER TABLE telegram_ai_conversations ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Service role only" ON telegram_ai_conversations FOR ALL TO service_role USING (true);
+-- Разрешить админам удалять не-системные пакеты
+CREATE POLICY "Admins can delete non-system packages"
+ON ai_prompt_packages FOR DELETE
+TO authenticated
+USING (
+  public.has_role(auth.uid(), 'admin') 
+  AND (is_system IS NULL OR is_system = false)
+);
+```
+
+---
+
+## Фаза 2: UI — добавить extractedRules в тип и показать полную сводку
+
+### 2.1 Обновить тип analysisResult (строка 221-228)
+```typescript
+const [analysisResult, setAnalysisResult] = useState<{
+  suggestedName: string;
+  suggestedCode: string;
+  summary: string;
+  exampleResponse: string;
+  extractedRules: string[];  // ← ДОБАВИТЬ
+  processedContent: string;
+  category: string;
+} | null>(null);
+```
+
+### 2.2 Добавить отображение extractedRules и категории
+
+После блока "Что Олег понял из файла:" добавить:
+
+```tsx
+{/* Извлечённые правила */}
+{analysisResult.extractedRules && analysisResult.extractedRules.length > 0 && (
+  <div className="space-y-2">
+    <Label className="flex items-center gap-1.5">
+      📋 Извлечённые правила:
+    </Label>
+    <ul className="bg-background rounded-lg p-3 text-sm border space-y-1">
+      {analysisResult.extractedRules.map((rule, idx) => (
+        <li key={idx} className="flex items-start gap-2">
+          <span className="text-primary mt-0.5">•</span>
+          <span>{rule}</span>
+        </li>
+      ))}
+    </ul>
+  </div>
+)}
+
+{/* Категория и когда применяется */}
+<div className="space-y-2">
+  <Label className="flex items-center gap-1.5">
+    🏷️ Категория:
+  </Label>
+  <div className="bg-background rounded-lg p-3 text-sm border">
+    <Badge variant="outline" className="mb-2">
+      {CATEGORY_LABELS[analysisResult.category] || analysisResult.category}
+    </Badge>
+    <p className="text-muted-foreground text-xs">
+      {CATEGORY_DESCRIPTIONS[analysisResult.category]}
+    </p>
+  </div>
+</div>
+```
+
+### 2.3 Добавить константы для категорий
+
+```typescript
+const CATEGORY_LABELS: Record<string, string> = {
+  tone: "Стиль общения",
+  support: "Поддержка",
+  sales: "Продажи",
+  policy: "Правила/политики",
+  custom: "Пользовательский",
+};
+
+const CATEGORY_DESCRIPTIONS: Record<string, string> = {
+  tone: "Применяется ко всем ответам для формирования тона и стиля общения",
+  support: "Используется при ответах на вопросы о подписках, доступе и помощи",
+  sales: "Активируется в режиме продаж: предложения, апсейл, ссылки на оплату",
+  policy: "Правила и ограничения, которые бот соблюдает всегда",
+  custom: "Пользовательские правила для специфических ситуаций",
+};
+```
+
+---
+
+## Технические детали
+
+| Файл | Изменения |
+|------|-----------|
+| SQL миграция | +4 RLS политики для админов |
+| OlegSettingsSection.tsx | +extractedRules в тип, +UI блоки, +константы категорий |
+
+**Оценка объёма:** ~40 строк SQL, ~60 строк TSX
+
+---
+
+## Критерии приёмки (DoD)
+
+| Проверка | Ожидаемый результат |
+|----------|---------------------|
+| Сохранение пакета | Работает без ошибки RLS |
+| После анализа | Показывает: summary, extractedRules, category, exampleResponse |
+| Системные пакеты | Админы не могут удалить/изменить is_system=true |
