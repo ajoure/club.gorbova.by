@@ -17,8 +17,8 @@ telegram-grant-access
 telegram-process-access-queue
 telegram-revoke-access
 telegram-webhook
-
 telegram-ai-support
+telegram-ai-analyze-prompt
 
 # P1 — Important (32)
 admin-manual-charge
