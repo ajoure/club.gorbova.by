@@ -2198,6 +2198,13 @@ export type Database = {
             referencedRelation: "subscriptions_v2"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "grace_notification_events_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2_safe"
+            referencedColumns: ["id"]
+          },
         ]
       }
       habit_challenges: {
@@ -2589,6 +2596,13 @@ export type Database = {
             columns: ["subscription_id"]
             isOneToOne: false
             referencedRelation: "subscriptions_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "installment_payments_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2_safe"
             referencedColumns: ["id"]
           },
         ]
@@ -5508,6 +5522,13 @@ export type Database = {
             referencedRelation: "subscriptions_v2"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "provider_subscriptions_subscription_v2_id_fkey"
+            columns: ["subscription_v2_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2_safe"
+            referencedColumns: ["id"]
+          },
         ]
       }
       provider_webhook_orphans: {
@@ -5969,6 +5990,45 @@ export type Database = {
             columns: ["payment_id"]
             isOneToOne: false
             referencedRelation: "payments_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subscription_payment_credentials: {
+        Row: {
+          created_at: string | null
+          id: string
+          payment_token: string
+          subscription_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          payment_token: string
+          subscription_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          payment_token?: string
+          subscription_id?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subscription_payment_credentials_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: true
+            referencedRelation: "subscriptions_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscription_payment_credentials_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: true
+            referencedRelation: "subscriptions_v2_safe"
             referencedColumns: ["id"]
           },
         ]
@@ -6896,6 +6956,13 @@ export type Database = {
             columns: ["subscription_id"]
             isOneToOne: false
             referencedRelation: "subscriptions_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_access_queue_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2_safe"
             referencedColumns: ["id"]
           },
         ]
@@ -8270,6 +8337,157 @@ export type Database = {
         }
         Relationships: []
       }
+      subscriptions_v2_safe: {
+        Row: {
+          access_end_at: string | null
+          access_start_at: string | null
+          auto_renew: boolean | null
+          auto_renew_disabled_at: string | null
+          auto_renew_disabled_by: string | null
+          auto_renew_disabled_by_user_id: string | null
+          billing_type: string | null
+          cancel_at: string | null
+          cancel_reason: string | null
+          canceled_at: string | null
+          charge_attempts: number | null
+          created_at: string | null
+          flow_id: string | null
+          grace_period_ends_at: string | null
+          grace_period_started_at: string | null
+          grace_period_status: string | null
+          has_payment_token: boolean | null
+          id: string | null
+          is_trial: boolean | null
+          keep_access_until_trial_end: boolean | null
+          meta: Json | null
+          next_charge_at: string | null
+          order_id: string | null
+          payment_method_id: string | null
+          product_id: string | null
+          profile_id: string | null
+          status: Database["public"]["Enums"]["subscription_status"] | null
+          tariff_id: string | null
+          trial_canceled_at: string | null
+          trial_canceled_by: string | null
+          trial_end_at: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          access_end_at?: string | null
+          access_start_at?: string | null
+          auto_renew?: boolean | null
+          auto_renew_disabled_at?: string | null
+          auto_renew_disabled_by?: string | null
+          auto_renew_disabled_by_user_id?: string | null
+          billing_type?: string | null
+          cancel_at?: string | null
+          cancel_reason?: string | null
+          canceled_at?: string | null
+          charge_attempts?: number | null
+          created_at?: string | null
+          flow_id?: string | null
+          grace_period_ends_at?: string | null
+          grace_period_started_at?: string | null
+          grace_period_status?: string | null
+          has_payment_token?: never
+          id?: string | null
+          is_trial?: boolean | null
+          keep_access_until_trial_end?: boolean | null
+          meta?: Json | null
+          next_charge_at?: string | null
+          order_id?: string | null
+          payment_method_id?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          status?: Database["public"]["Enums"]["subscription_status"] | null
+          tariff_id?: string | null
+          trial_canceled_at?: string | null
+          trial_canceled_by?: string | null
+          trial_end_at?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          access_end_at?: string | null
+          access_start_at?: string | null
+          auto_renew?: boolean | null
+          auto_renew_disabled_at?: string | null
+          auto_renew_disabled_by?: string | null
+          auto_renew_disabled_by_user_id?: string | null
+          billing_type?: string | null
+          cancel_at?: string | null
+          cancel_reason?: string | null
+          canceled_at?: string | null
+          charge_attempts?: number | null
+          created_at?: string | null
+          flow_id?: string | null
+          grace_period_ends_at?: string | null
+          grace_period_started_at?: string | null
+          grace_period_status?: string | null
+          has_payment_token?: never
+          id?: string | null
+          is_trial?: boolean | null
+          keep_access_until_trial_end?: boolean | null
+          meta?: Json | null
+          next_charge_at?: string | null
+          order_id?: string | null
+          payment_method_id?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          status?: Database["public"]["Enums"]["subscription_status"] | null
+          tariff_id?: string | null
+          trial_canceled_at?: string | null
+          trial_canceled_by?: string | null
+          trial_end_at?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fk_subscriptions_v2_profile"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscriptions_v2_flow_id_fkey"
+            columns: ["flow_id"]
+            isOneToOne: false
+            referencedRelation: "flows"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscriptions_v2_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscriptions_v2_payment_method_id_fkey"
+            columns: ["payment_method_id"]
+            isOneToOne: false
+            referencedRelation: "payment_methods"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscriptions_v2_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscriptions_v2_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_bots_safe: {
         Row: {
           bot_id: number | null
@@ -8895,6 +9113,10 @@ export type Database = {
       search_global: {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: Json
+      }
+      subscription_has_payment_token: {
+        Args: { p_subscription_id: string }
+        Returns: boolean
       }
       trigger_card_verification: { Args: never; Returns: undefined }
       try_backfill_lock: { Args: { p_lock_id: number }; Returns: boolean }

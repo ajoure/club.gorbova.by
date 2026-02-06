@@ -235,7 +235,7 @@ interface AutoRenewal {
   status: string;
   charge_attempts: number;
   payment_method_id: string | null;
-  payment_token: string | null;
+  has_payment_token: boolean;
   meta: any;
   product_name: string | null;
   tariff_name: string | null;
@@ -409,8 +409,9 @@ export function AutoRenewalsTabContent() {
   const { data: renewals, isLoading, refetch } = useQuery({
     queryKey: ['auto-renewals'],
     queryFn: async () => {
+      // Use the safe view that excludes payment_token for security
       const { data, error } = await supabase
-        .from('subscriptions_v2')
+        .from('subscriptions_v2_safe')
         .select(`
           id,
           user_id,
@@ -420,7 +421,7 @@ export function AutoRenewalsTabContent() {
           status,
           charge_attempts,
           payment_method_id,
-          payment_token,
+          has_payment_token,
           meta,
           is_trial,
           tariff_id,
@@ -499,7 +500,7 @@ export function AutoRenewalsTabContent() {
           status: sub.status,
           charge_attempts: sub.charge_attempts || 0,
           payment_method_id: sub.payment_method_id,
-          payment_token: sub.payment_token,
+          has_payment_token: (sub as any).has_payment_token ?? false,
           meta: sub.meta,
           product_name: product?.name || null,
           tariff_name: tariff?.name || null,
@@ -645,7 +646,7 @@ export function AutoRenewalsTabContent() {
         result = result.filter(r => !r.payment_method_id);
         break;
       case 'no_token':
-        result = result.filter(r => !r.payment_token);
+        result = result.filter(r => !r.has_payment_token);
         break;
       case 'pm_inactive':
         result = result.filter(r => r.pm_status && r.pm_status !== 'active');
