@@ -186,6 +186,12 @@ export const EVENT_LABELS: Record<string, string> = {
   // ===== System fixes =====
   "system.trigger_fix_telegram_status": "🔧 Исправлен триггер Telegram",
   "telegram.backfill_grant": "🔄 Массовое восстановление доступов",
+  
+  // ===== Telegram invite errors =====
+  "telegram.invite_failed": "❌ Ошибка отправки приглашения",
+  "telegram.unban_failed": "❌ Ошибка разблокировки",
+  "telegram.rate_limited": "⏳ Rate limit, повтор позже",
+  "telegram.kicked_user_no_link": "⚠️ Нет ссылки (пользователь исключён)",
 };
 
 /**

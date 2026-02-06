@@ -48,13 +48,44 @@ async function telegramRequest(botToken: string, method: string, params: Record<
   return result;
 }
 
-async function unbanUser(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string }> {
-  const result = await telegramRequest(botToken, 'unbanChatMember', {
+async function unbanUser(
+  botToken: string, 
+  chatId: number, 
+  userId: number
+): Promise<{ success: boolean; error?: string; was_banned?: boolean; status?: string }> {
+  // Step 1: Check current member status
+  const chatMember = await telegramRequest(botToken, 'getChatMember', {
     chat_id: chatId,
     user_id: userId,
-    only_if_banned: true,
   });
-  return { success: true };
+  
+  const status = chatMember.result?.status;
+  console.log(`[unbanUser] User ${userId} status in chat ${chatId}: ${status}`);
+  
+  // Already a member — no action needed
+  if (status === 'member' || status === 'administrator' || status === 'creator') {
+    return { success: true, was_banned: false, status };
+  }
+  
+  // Needs unban (kicked, left, or restricted)
+  if (status === 'kicked' || status === 'left' || status === 'restricted') {
+    // CRITICAL FIX: Use only_if_banned: false to also lift 'kicked' status
+    const result = await telegramRequest(botToken, 'unbanChatMember', {
+      chat_id: chatId,
+      user_id: userId,
+      only_if_banned: false, // Works for both kicked and banned
+    });
+    
+    if (!result.ok) {
+      console.error(`[unbanUser] Unban failed for user ${userId}:`, result);
+      return { success: false, error: result.description, was_banned: true, status };
+    }
+    
+    console.log(`[unbanUser] Successfully unbanned user ${userId} (was: ${status})`);
+    return { success: true, was_banned: true, status };
+  }
+  
+  return { success: true, was_banned: false, status };
 }
 
 // Create invite link with join request mode if enabled
@@ -343,8 +374,13 @@ Deno.serve(async (req) => {
 
       // Process chat
       if (club.chat_id) {
-        await unbanUser(botToken, club.chat_id, telegramUserId);
-        chatUnbanned = true;
+        const unbanResult = await unbanUser(botToken, club.chat_id, telegramUserId);
+        chatUnbanned = unbanResult.was_banned || false;
+        
+        if (!unbanResult.success) {
+          console.error(`[grant-access] Failed to unban user ${telegramUserId} from chat:`, unbanResult.error);
+          // Log the error but continue - user might still be able to join
+        }
 
         const inviteResult = await createInviteLink(
           botToken, 
@@ -352,13 +388,30 @@ Deno.serve(async (req) => {
           `Chat access for ${profile.email || user_id}`,
           joinRequestMode
         );
-        chatInviteLink = inviteResult.link || club.chat_invite_link || null;
+        
+        // CRITICAL FIX: Don't fallback to static links for kicked/banned users
+        if (inviteResult.link) {
+          chatInviteLink = inviteResult.link;
+        } else if (inviteResult.error) {
+          console.error(`[grant-access] Failed to create chat invite for ${profile.email}:`, inviteResult.error);
+          // Only use static link if user is already a member (not kicked/banned)
+          if (unbanResult.status === 'member' || unbanResult.status === 'administrator') {
+            chatInviteLink = club.chat_invite_link || null;
+          } else {
+            chatInviteLink = null; // Don't send broken static link
+            console.warn(`[grant-access] Skipping static chat link - user status: ${unbanResult.status}`);
+          }
+        }
       }
 
       // Process channel
       if (club.channel_id) {
-        await unbanUser(botToken, club.channel_id, telegramUserId);
-        channelUnbanned = true;
+        const unbanResult = await unbanUser(botToken, club.channel_id, telegramUserId);
+        channelUnbanned = unbanResult.was_banned || false;
+        
+        if (!unbanResult.success) {
+          console.error(`[grant-access] Failed to unban user ${telegramUserId} from channel:`, unbanResult.error);
+        }
 
         const inviteResult = await createInviteLink(
           botToken, 
@@ -366,7 +419,20 @@ Deno.serve(async (req) => {
           `Channel access for ${profile.email || user_id}`,
           joinRequestMode
         );
-        channelInviteLink = inviteResult.link || club.channel_invite_link || null;
+        
+        // CRITICAL FIX: Don't fallback to static links for kicked/banned users
+        if (inviteResult.link) {
+          channelInviteLink = inviteResult.link;
+        } else if (inviteResult.error) {
+          console.error(`[grant-access] Failed to create channel invite for ${profile.email}:`, inviteResult.error);
+          // Only use static link if user is already a member
+          if (unbanResult.status === 'member' || unbanResult.status === 'administrator') {
+            channelInviteLink = club.channel_invite_link || null;
+          } else {
+            channelInviteLink = null;
+            console.warn(`[grant-access] Skipping static channel link - user status: ${unbanResult.status}`);
+          }
+        }
       }
 
       // Calculate active_until
