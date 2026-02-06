@@ -1,0 +1,195 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import type { Json } from "@/integrations/supabase/types";
+
+export interface AutoFix {
+  target: string;
+  action: string;
+  result: "success" | "failed";
+  details?: string;
+}
+
+export interface SystemHealthReport {
+  id: string;
+  status: "OK" | "DEGRADED" | "CRITICAL";
+  edge_functions_total: number;
+  edge_functions_deployed: number;
+  edge_functions_missing: string[];
+  invariants_total: number;
+  invariants_passed: number;
+  invariants_failed: number;
+  auto_fixes: AutoFix[];
+  auto_fixes_count: number;
+  report_json: Record<string, unknown>;
+  source: string;
+  duration_ms: number | null;
+  telegram_notified: boolean;
+  created_at: string;
+}
+
+export interface FullCheckResponse {
+  status: "OK" | "DEGRADED" | "CRITICAL";
+  edge_functions: {
+    total: number;
+    deployed: number;
+    missing: string[];
+    results: Array<{
+      name: string;
+      exists: boolean;
+      http_status: number | null;
+      status: string;
+      is_tier1: boolean;
+    }>;
+  };
+  invariants: {
+    total: number;
+    passed: number;
+    failed: number;
+    results: Array<{
+      code: string;
+      name: string;
+      passed: boolean;
+      count: number;
+      severity: string;
+      samples?: unknown[];
+    }>;
+  };
+  auto_fixes: AutoFix[];
+  duration_ms: number;
+  timestamp: string;
+}
+
+// Helper to safely parse auto_fixes from DB
+function parseAutoFixes(json: Json): AutoFix[] {
+  if (!Array.isArray(json)) return [];
+  return json.map((item) => ({
+    target: String((item as Record<string, unknown>)?.target || ""),
+    action: String((item as Record<string, unknown>)?.action || ""),
+    result: ((item as Record<string, unknown>)?.result === "success" ? "success" : "failed") as "success" | "failed",
+    details: (item as Record<string, unknown>)?.details ? String((item as Record<string, unknown>).details) : undefined,
+  }));
+}
+
+export function useSystemHealthReports() {
+  return useQuery({
+    queryKey: ["system-health-reports"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("system_health_reports")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(30);
+
+      if (error) {
+        if (error.code === "42501" || error.message.includes("permission")) {
+          return [];
+        }
+        throw error;
+      }
+      
+      return (data || []).map((row) => ({
+        ...row,
+        status: row.status as "OK" | "DEGRADED" | "CRITICAL",
+        auto_fixes: parseAutoFixes(row.auto_fixes),
+        report_json: (row.report_json || {}) as Record<string, unknown>,
+      })) as SystemHealthReport[];
+    },
+  });
+}
+
+export function useLatestFullCheck() {
+  return useQuery({
+    queryKey: ["system-health-latest-full"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("system_health_reports")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        if (error.code === "42501" || error.message.includes("permission")) {
+          return null;
+        }
+        throw error;
+      }
+      
+      if (!data) return null;
+      
+      return {
+        ...data,
+        status: data.status as "OK" | "DEGRADED" | "CRITICAL",
+        auto_fixes: parseAutoFixes(data.auto_fixes),
+        report_json: (data.report_json || {}) as Record<string, unknown>,
+      } as SystemHealthReport;
+    },
+  });
+}
+
+export function useTriggerFullCheck() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("system-health-full-check", {
+        body: { source: "manual" },
+      });
+
+      if (error) throw error;
+      return data as FullCheckResponse;
+    },
+    onSuccess: (data) => {
+      const statusMessages = {
+        OK: "Система работает штатно",
+        DEGRADED: "Обнаружены некритичные проблемы",
+        CRITICAL: "Обнаружены критические проблемы!",
+      };
+      
+      const statusVariants: Record<string, "success" | "warning" | "error"> = {
+        OK: "success",
+        DEGRADED: "warning",
+        CRITICAL: "error",
+      };
+
+      toast[statusVariants[data.status] || "info"](
+        `Полный чек: ${data.status}`,
+        { description: statusMessages[data.status] }
+      );
+
+      queryClient.invalidateQueries({ queryKey: ["system-health-reports"] });
+      queryClient.invalidateQueries({ queryKey: ["system-health-latest-full"] });
+    },
+    onError: (error) => {
+      toast.error("Ошибка запуска проверки", {
+        description: String(error),
+      });
+    },
+  });
+}
+
+// Status badge helpers
+export const STATUS_CONFIG = {
+  OK: {
+    label: "OK",
+    variant: "default" as const,
+    color: "text-green-600",
+    bgColor: "bg-green-100",
+    icon: "CheckCircle",
+  },
+  DEGRADED: {
+    label: "DEGRADED",
+    variant: "secondary" as const,
+    color: "text-yellow-600",
+    bgColor: "bg-yellow-100",
+    icon: "AlertTriangle",
+  },
+  CRITICAL: {
+    label: "CRITICAL",
+    variant: "destructive" as const,
+    color: "text-red-600",
+    bgColor: "bg-red-100",
+    icon: "XCircle",
+  },
+};

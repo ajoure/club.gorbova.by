@@ -6386,6 +6386,63 @@ export type Database = {
         }
         Relationships: []
       }
+      system_health_reports: {
+        Row: {
+          auto_fixes: Json | null
+          auto_fixes_count: number
+          created_at: string
+          duration_ms: number | null
+          edge_functions_deployed: number
+          edge_functions_missing: string[] | null
+          edge_functions_total: number
+          id: string
+          invariants_failed: number
+          invariants_passed: number
+          invariants_total: number
+          report_json: Json
+          source: string
+          status: string
+          telegram_notified: boolean | null
+          triggered_by: string | null
+        }
+        Insert: {
+          auto_fixes?: Json | null
+          auto_fixes_count?: number
+          created_at?: string
+          duration_ms?: number | null
+          edge_functions_deployed?: number
+          edge_functions_missing?: string[] | null
+          edge_functions_total?: number
+          id?: string
+          invariants_failed?: number
+          invariants_passed?: number
+          invariants_total?: number
+          report_json?: Json
+          source?: string
+          status: string
+          telegram_notified?: boolean | null
+          triggered_by?: string | null
+        }
+        Update: {
+          auto_fixes?: Json | null
+          auto_fixes_count?: number
+          created_at?: string
+          duration_ms?: number | null
+          edge_functions_deployed?: number
+          edge_functions_missing?: string[] | null
+          edge_functions_total?: number
+          id?: string
+          invariants_failed?: number
+          invariants_passed?: number
+          invariants_total?: number
+          report_json?: Json
+          source?: string
+          status?: string
+          telegram_notified?: boolean | null
+          triggered_by?: string | null
+        }
+        Relationships: []
+      }
       system_health_runs: {
         Row: {
           created_at: string

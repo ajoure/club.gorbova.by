@@ -18,7 +18,8 @@ import { InvariantCheckCard } from "@/components/admin/system-health/InvariantCh
 import { HealthRunHistory } from "@/components/admin/system-health/HealthRunHistory";
 import { EdgeFunctionsHealth } from "@/components/admin/system-health/EdgeFunctionsHealth";
 import { AuditLogViewer } from "@/components/admin/system-health/AuditLogViewer";
-import { Loader2, Play, RefreshCw, Activity, CheckCircle, XCircle, History, Zap, FileText, AlertTriangle, ChevronDown } from "lucide-react";
+import { FullSystemCheck } from "@/components/admin/system-health/FullSystemCheck";
+import { Loader2, Play, RefreshCw, Activity, CheckCircle, XCircle, History, Zap, FileText, AlertTriangle, ChevronDown, Server } from "lucide-react";
 
 export default function AdminSystemHealth() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -117,8 +118,12 @@ export default function AdminSystemHealth() {
               checks={latestHealth?.checks || []}
             />
 
-            <Tabs defaultValue="current" className="space-y-4">
+            <Tabs defaultValue="full-check" className="space-y-4">
               <TabsList className="flex-wrap h-auto gap-1">
+                <TabsTrigger value="full-check" className="gap-2">
+                  <Server className="h-4 w-4" />
+                  Полный чек
+                </TabsTrigger>
                 <TabsTrigger value="current" className="gap-2">
                   <Activity className="h-4 w-4" />
                   Инварианты
@@ -141,6 +146,10 @@ export default function AdminSystemHealth() {
                   Audit Log
                 </TabsTrigger>
               </TabsList>
+
+              <TabsContent value="full-check">
+                <FullSystemCheck />
+              </TabsContent>
 
               <TabsContent value="current" className="space-y-6">
                 {/* Failed Checks - Require Attention */}
