@@ -169,11 +169,11 @@ const DEFAULT_SLIDERS = {
 };
 
 const DEFAULT_TEMPLATES = {
-  greeting_template: "Привет! Я Олег. Чем могу помочь?",
-  followup_template: "Как там ваша ситуация — получилось?",
-  escalation_template: "Передаю ваш вопрос руководителю.",
-  fallback_template: "Не совсем понял. Можете уточнить?",
-  sales_close_template: "Готово! Вот ссылка на оплату:",
+  greeting_template: "",
+  followup_template: "",
+  escalation_template: "",
+  fallback_template: "",
+  sales_close_template: "",
 };
 
 // ============ КОМПОНЕНТ ЛЕЙБЛА С ПОДСКАЗКОЙ ============
@@ -640,9 +640,14 @@ export function OlegSettingsSection() {
               <div className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4" />
                 Шаблоны сообщений
+                <Badge variant="outline" className="text-[10px] font-normal ml-1">опционально</Badge>
               </div>
             </AccordionTrigger>
             <AccordionContent className="pt-4 pb-2 space-y-4">
+              <p className="text-sm text-muted-foreground mb-4">
+                Оставьте поля пустыми — Олег будет генерировать ответы через AI самостоятельно. 
+                Заполните только если хотите использовать фиксированные фразы.
+              </p>
               {Object.entries(TEMPLATE_LABELS).map(([key, { label, tooltip, placeholder }]) => (
                 <div key={key} className="space-y-2">
                   <LabelWithTooltip label={label} tooltip={tooltip} />

@@ -81,7 +81,7 @@ interface ConversationContext {
 // CONSTANTS
 // =============================================
 
-const LOVABLE_API_URL = 'https://api.lovable.dev/v1/chat/completions';
+const LOVABLE_API_URL = 'https://ai.gateway.lovable.dev/v1/chat/completions';
 
 const PRESET_DESCRIPTIONS: Record<string, string> = {
   strict: 'Отвечай коротко, по делу, без смайлов и лишних слов. Дисциплина важнее теплоты.',
@@ -164,7 +164,9 @@ function buildSystemPrompt(
     lastTopicsSummary: string | null;
     userTonePreference: { formality: string; style: string } | null;
   },
-  productsCatalog: string
+  productsCatalog: string,
+  botIdentity: { name: string; position: string },
+  isFirstMessage: boolean
 ): string {
   const presetDescription = PRESET_DESCRIPTIONS[settings.style_preset] || PRESET_DESCRIPTIONS.friendly;
   
@@ -189,7 +191,37 @@ function buildSystemPrompt(
     ? 'Пользователь предпочитает обращение на "ты".'
     : '';
   
-  return `Ты — Олег, бот поддержки клуба «Буква закона» Катерины Горбовой.
+  // Build templates section - only include if templates are non-empty
+  const templatesSection = [];
+  if (settings.templates.greeting_template?.trim()) {
+    templatesSection.push(`Шаблон приветствия: "${settings.templates.greeting_template}"`);
+  }
+  if (settings.templates.followup_template?.trim()) {
+    templatesSection.push(`Шаблон возврата к теме: "${settings.templates.followup_template}"`);
+  }
+  if (settings.templates.escalation_template?.trim()) {
+    templatesSection.push(`Шаблон передачи оператору: "${settings.templates.escalation_template}"`);
+  }
+  if (settings.templates.sales_close_template?.trim()) {
+    templatesSection.push(`Шаблон закрытия продажи: "${settings.templates.sales_close_template}"`);
+  }
+  
+  const templatesText = templatesSection.length > 0
+    ? `== ШАБЛОНЫ (ИСПОЛЬЗУЙ ЕСЛИ УМЕСТНО) ==\n${templatesSection.join('\n')}`
+    : '';
+  
+  // First message greeting instruction
+  const greetingInstruction = isFirstMessage
+    ? `== ПЕРВОЕ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЯ ==
+Это ПЕРВОЕ сообщение от этого пользователя. ОБЯЗАТЕЛЬНО:
+1. Поздоровайся и представься: "Привет${userContext.firstName ? ', ' + userContext.firstName : ''}! Я ${botIdentity.name}${botIdentity.position ? ', ' + botIdentity.position : ''}."
+2. Спроси, чем можешь помочь
+3. Будь дружелюбным и открытым`
+    : '';
+  
+  return `Ты — ${botIdentity.name}, ${botIdentity.position} клуба «Буква закона» Катерины Горбовой.
+
+${greetingInstruction}
 
 == ТВОЯ ЛИЧНОСТЬ ==
 ${presetDescription}
@@ -210,18 +242,27 @@ ${productsCatalog}
 == АКТИВНЫЕ МОДУЛИ ==
 ${packagesContent}
 
+${templatesText}
+
+== КРИТИЧЕСКИ ВАЖНО — ГЕНЕРАЦИЯ ОТВЕТОВ ==
+1. КАЖДЫЙ ОТВЕТ ГЕНЕРИРУЙ УНИКАЛЬНО через AI — НЕ используй шаблонные фразы
+2. НЕ повторяй одни и те же фразы типа "Не понял", "Уточните" 
+3. Задавай КОНКРЕТНЫЕ уточняющие вопросы, которые продвигают диалог
+4. Если не понял — спроси по-другому, предложи варианты
+5. Адаптируй тон к собеседнику: если он формален — будь формален, если дружелюбен — будь тёплым
+
 == ИНСТРУМЕНТЫ ==
 У тебя есть доступ к функциям:
 - get_user_subscriptions: показать активные подписки пользователя
 - get_product_catalog: получить список продуктов и тарифов
 - generate_payment_link: создать ссылку на оплату
 
-== ОГРАНИЧЕНИЯ (КРИТИЧЕСКИ ВАЖНО) ==
+== ОГРАНИЧЕНИЯ ==
 - НИКОГДА не выдавай данные других пользователей
 - НИКОГДА не упоминай внутренние ID, токены, названия таблиц
 - НЕ логируй и не упоминай email/телефон/адрес
-- При неясном вопросе — уточняй
-- При низкой уверенности в ответе — передай человеку
+- При неясном вопросе — уточняй КОНКРЕТНО, а не общими фразами
+- При низкой уверенности — передай человеку
 
 == ФОРМАТ ОТВЕТА ==
 Отвечай кратко и по делу. Используй HTML-форматирование для Telegram:
@@ -488,11 +529,11 @@ Deno.serve(async (req) => {
         risk_aversion: 60,
       },
       templates: {
-        greeting_template: 'Привет! Я Олег. Чем могу помочь?',
-        followup_template: 'Как там ваша ситуация — получилось?',
-        escalation_template: 'Передаю ваш вопрос руководителю. Вернёмся с ответом.',
-        fallback_template: 'Не совсем понял вопрос. Можете уточнить?',
-        sales_close_template: 'Готово! Вот ссылка на оплату:',
+        greeting_template: '',
+        followup_template: '',
+        escalation_template: '',
+        fallback_template: '',
+        sales_close_template: '',
       },
       quiet_hours: { enabled: false, start: '22:00', end: '08:00', message: '' },
       active_prompt_packages: ['support_base', 'tone_katerina'],
@@ -680,8 +721,12 @@ Deno.serve(async (req) => {
         },
       });
       
+      // Use custom template if set, otherwise AI will generate
+      const escalationReply = settings.templates.escalation_template?.trim() 
+        || 'Передаю ваш вопрос коллегам. Они свяжутся с вами в ближайшее время.';
+      
       return jsonResponse({
-        reply: settings.templates.escalation_template,
+        reply: escalationReply,
         intent: 'handoff',
         confidence: detectedConfidence,
         used_tools: [],
@@ -693,6 +738,14 @@ Deno.serve(async (req) => {
     // ==========================================
     // 10. BUILD SYSTEM PROMPT
     // ==========================================
+    const botIdentity = {
+      name: settingsRow?.bot_name || 'Олег',
+      position: settingsRow?.bot_position || 'AI-ассистент поддержки',
+    };
+    
+    // Check if this is first message
+    const isFirstMessage = !conversationContext.messages || conversationContext.messages.length === 0;
+    
     const systemPrompt = buildSystemPrompt(
       settings,
       promptPackages || [],
@@ -702,7 +755,9 @@ Deno.serve(async (req) => {
         lastTopicsSummary: conversationContext.last_topics_summary,
         userTonePreference: conversationContext.user_tone_preference as any,
       },
-      productsCatalog
+      productsCatalog,
+      botIdentity,
+      isFirstMessage
     );
     
     // ==========================================
@@ -745,8 +800,11 @@ Deno.serve(async (req) => {
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
       console.error(`[AI Support] Lovable AI error: ${aiResponse.status} - ${errorText}`);
+      // Use custom fallback if set, otherwise generate natural response
+      const fallbackReply = settings.templates.fallback_template?.trim() 
+        || 'Произошла техническая ошибка. Попробуйте ещё раз или напишите "оператор" для связи с человеком.';
       return jsonResponse({
-        reply: settings.templates.fallback_template,
+        reply: fallbackReply,
         intent: 'unknown',
         confidence: 0,
         used_tools: [],
@@ -811,13 +869,14 @@ Deno.serve(async (req) => {
       
       if (followupResponse.ok) {
         const followupData = await followupResponse.json();
-        finalReply = followupData.choices?.[0]?.message?.content || settings.templates.fallback_template;
+        // AI should always generate response, no fallback template needed
+        finalReply = followupData.choices?.[0]?.message?.content || 'Произошла ошибка при обработке. Попробуйте переформулировать вопрос.';
       } else {
-        finalReply = settings.templates.fallback_template;
+        finalReply = 'Произошла техническая ошибка. Попробуйте ещё раз через минуту.';
       }
     } else {
-      // Direct response without tools
-      finalReply = aiChoice?.message?.content || settings.templates.fallback_template;
+      // Direct response without tools - AI always generates unique responses
+      finalReply = aiChoice?.message?.content || 'Не получилось сгенерировать ответ. Пожалуйста, напишите ваш вопрос ещё раз.';
     }
     
     // ==========================================
