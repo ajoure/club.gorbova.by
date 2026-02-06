@@ -22,7 +22,7 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table";
-import { Plus, Trash2, CheckCircle2, Settings2 } from "lucide-react";
+import { Plus, Trash2, CheckCircle2, Settings2, RotateCcw } from "lucide-react";
 
 export interface DiagnosticTableColumn {
   id: string;
@@ -54,6 +54,8 @@ interface DiagnosticTableBlockProps {
   onRowsChange?: (rows: Record<string, unknown>[]) => void;
   onComplete?: () => void;
   isCompleted?: boolean;
+  // Reset handler
+  onReset?: () => void;
 }
 
 // Default columns for Point A diagnostic (updated per spec)
@@ -87,7 +89,8 @@ export function DiagnosticTableBlock({
   rows = [],
   onRowsChange,
   onComplete,
-  isCompleted = false
+  isCompleted = false,
+  onReset
 }: DiagnosticTableBlockProps) {
   const [showColumnSettings, setShowColumnSettings] = useState(false);
   const columns = content.columns || DEFAULT_COLUMNS;
@@ -451,9 +454,22 @@ export function DiagnosticTableBlock({
           {content.submitButtonText || 'Диагностика завершена'}
         </Button>
       ) : (
-        <div className="flex items-center justify-center gap-2 text-primary py-2">
-          <CheckCircle2 className="h-5 w-5" />
-          <span className="font-medium">Диагностика завершена</span>
+        <div className="flex flex-col items-center gap-3 py-2">
+          <div className="flex items-center gap-2 text-primary">
+            <CheckCircle2 className="h-5 w-5" />
+            <span className="font-medium">Диагностика завершена</span>
+          </div>
+          {onReset && (
+            <Button 
+              variant="ghost" 
+              size="sm"
+              onClick={onReset}
+              className="gap-2 text-muted-foreground hover:text-foreground"
+            >
+              <RotateCcw className="h-4 w-4" />
+              Редактировать данные
+            </Button>
+          )}
         </div>
       )}
 

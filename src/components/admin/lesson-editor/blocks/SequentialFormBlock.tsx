@@ -21,7 +21,8 @@ import {
   Trash2,
   Lightbulb,
   Sparkles,
-  Loader2
+  Loader2,
+  RotateCcw
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -56,6 +57,8 @@ interface SequentialFormBlockProps {
   // PATCH-4/5: AI summary props
   savedSummary?: string;
   onSummaryGenerated?: (summary: string) => void;
+  // Reset handler
+  onReset?: () => void;
 }
 
 // Default 10 steps for Point B
@@ -88,7 +91,8 @@ export function SequentialFormBlock({
   isCompleted = false,
   userRole,
   savedSummary,
-  onSummaryGenerated
+  onSummaryGenerated,
+  onReset
 }: SequentialFormBlockProps) {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
@@ -486,9 +490,22 @@ export function SequentialFormBlock({
 
       {/* Completion status */}
       {isCompleted && !summary && (
-        <div className="flex items-center justify-center gap-2 text-primary py-4">
-          <CheckCircle2 className="h-5 w-5" />
-          <span className="font-medium">Формула сформирована</span>
+        <div className="flex flex-col items-center gap-3 py-4">
+          <div className="flex items-center gap-2 text-primary">
+            <CheckCircle2 className="h-5 w-5" />
+            <span className="font-medium">Формула сформирована</span>
+          </div>
+          {onReset && (
+            <Button 
+              variant="ghost" 
+              size="sm"
+              onClick={onReset}
+              className="gap-2 text-muted-foreground hover:text-foreground"
+            >
+              <RotateCcw className="h-4 w-4" />
+              Заполнить заново
+            </Button>
+          )}
         </div>
       )}
 
@@ -524,6 +541,19 @@ export function SequentialFormBlock({
               })}
             </div>
           </div>
+          {onReset && (
+            <div className="relative mt-4 flex justify-center">
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={onReset}
+                className="gap-2 text-muted-foreground hover:text-foreground"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Заполнить заново
+              </Button>
+            </div>
+          )}
         </div>
       )}
 

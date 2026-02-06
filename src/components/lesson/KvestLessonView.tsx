@@ -252,6 +252,18 @@ export function KvestLessonView({
     }
   }, [updateState, markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
 
+  // Handler for diagnostic table reset
+  const handleDiagnosticTableReset = useCallback((blockId: string) => {
+    console.log('[KvestLessonView] DiagnosticTable reset:', blockId.slice(0, 8));
+    updateState({ 
+      pointA_completed: false,
+      pointA_rows: [],
+      completedSteps: (state?.completedSteps || []).filter(id => id !== blockId),
+      currentStepIndex: Math.max(0, currentStepIndex - 1)
+    });
+    toast.success("Данные сброшены — можете заполнить заново");
+  }, [state?.completedSteps, currentStepIndex, updateState]);
+
   // Handler for sequential form (memoized)
   const handleSequentialFormUpdate = useCallback((answers: Record<string, string>) => {
     updateState({ pointB_answers: answers });
@@ -261,6 +273,18 @@ export function KvestLessonView({
     updateState({ pointB_completed: true });
     markBlockCompleted(blockId);
   }, [updateState, markBlockCompleted]);
+
+  // Handler for sequential form reset
+  const handleSequentialFormReset = useCallback((blockId: string) => {
+    console.log('[KvestLessonView] SequentialForm reset:', blockId.slice(0, 8));
+    updateState({ 
+      pointB_completed: false,
+      pointB_answers: {},
+      pointB_summary: undefined,
+      completedSteps: (state?.completedSteps || []).filter(id => id !== blockId)
+    });
+    toast.success("Данные сброшены — можете заполнить заново");
+  }, [state?.completedSteps, updateState]);
 
   // PATCH-5: Handler for AI summary generation
   const handleSummaryGenerated = useCallback((summary: string) => {
@@ -345,7 +369,7 @@ export function KvestLessonView({
       
       case 'diagnostic_table':
         return (
-          <div className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
+          <div className={isReadOnly ? "opacity-80" : ""}>
             <LessonBlockRenderer 
               {...commonProps}
               kvestProps={{
@@ -353,6 +377,7 @@ export function KvestLessonView({
                 onRowsChange: isReadOnly ? undefined : handleDiagnosticTableUpdate,
                 onComplete: isReadOnly ? undefined : () => handleDiagnosticTableComplete(blockId),
                 isCompleted: state?.pointA_completed || false,
+                onReset: (state?.pointA_completed) ? () => handleDiagnosticTableReset(blockId) : undefined,
               }}
             />
           </div>
@@ -360,7 +385,7 @@ export function KvestLessonView({
       
       case 'sequential_form':
         return (
-          <div className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
+          <div className={isReadOnly ? "opacity-80" : ""}>
             <LessonBlockRenderer 
               {...commonProps}
               kvestProps={{
@@ -370,6 +395,7 @@ export function KvestLessonView({
                 isCompleted: state?.pointB_completed || false,
                 savedSummary: savedSummary,  // PATCH-5: Pass saved summary
                 onSummaryGenerated: isReadOnly ? undefined : handleSummaryGenerated,  // PATCH-5
+                onReset: (state?.pointB_completed) ? () => handleSequentialFormReset(blockId) : undefined,
               }}
             />
           </div>
@@ -396,8 +422,10 @@ export function KvestLessonView({
     handleVideoComplete,
     handleDiagnosticTableUpdate,
     handleDiagnosticTableComplete,
+    handleDiagnosticTableReset,
     handleSequentialFormUpdate,
     handleSequentialFormComplete,
+    handleSequentialFormReset,
     handleSummaryGenerated,
   ]);
 

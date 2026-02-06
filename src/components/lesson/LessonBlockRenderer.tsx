@@ -58,6 +58,9 @@ export interface KvestBlockProps {
   isCompleted?: boolean;
   userRole?: string | null;
   
+  // Reset handler for diagnostic_table and sequential_form
+  onReset?: () => void;
+  
   // PATCH-V1/V2: Admin bypass for empty video URL
   allowBypassEmptyVideo?: boolean;
 }
@@ -344,6 +347,7 @@ export function LessonBlockRenderer({
             onRowsChange={kvestProps?.onRowsChange}
             onComplete={kvestProps?.onComplete}
             isCompleted={kvestProps?.isCompleted}
+            onReset={kvestProps?.onReset}
           />
         );
       case 'sequential_form':
@@ -358,6 +362,7 @@ export function LessonBlockRenderer({
             isCompleted={kvestProps?.isCompleted}
             savedSummary={kvestProps?.savedSummary}
             onSummaryGenerated={kvestProps?.onSummaryGenerated}
+            onReset={kvestProps?.onReset}
           />
         );
       case 'role_description':
