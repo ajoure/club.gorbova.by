@@ -57,6 +57,8 @@ jobs:
             "bepaid-create-token"
             "admin-payments-diagnostics"
             "integration-healthcheck"
+            "nightly-system-health"
+            "nightly-payments-invariants"
           )
           
           SUPABASE_URL="https://hdjgkjceownmmnrqqtuz.supabase.co"

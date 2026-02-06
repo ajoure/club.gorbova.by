@@ -15,7 +15,9 @@ import {
 import { SystemHealthOverview } from "@/components/admin/system-health/SystemHealthOverview";
 import { InvariantCheckCard } from "@/components/admin/system-health/InvariantCheckCard";
 import { HealthRunHistory } from "@/components/admin/system-health/HealthRunHistory";
-import { Loader2, Play, RefreshCw, Activity, CheckCircle, XCircle, Clock, History } from "lucide-react";
+import { EdgeFunctionsHealth } from "@/components/admin/system-health/EdgeFunctionsHealth";
+import { AuditLogViewer } from "@/components/admin/system-health/AuditLogViewer";
+import { Loader2, Play, RefreshCw, Activity, CheckCircle, XCircle, Clock, History, Zap, FileText } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { ru } from "date-fns/locale";
 
@@ -94,14 +96,22 @@ export default function AdminSystemHealth() {
             />
 
             <Tabs defaultValue="current" className="space-y-4">
-              <TabsList>
+              <TabsList className="flex-wrap h-auto gap-1">
                 <TabsTrigger value="current" className="gap-2">
                   <Activity className="h-4 w-4" />
-                  Текущее состояние
+                  Инварианты
+                </TabsTrigger>
+                <TabsTrigger value="functions" className="gap-2">
+                  <Zap className="h-4 w-4" />
+                  Edge Functions
                 </TabsTrigger>
                 <TabsTrigger value="history" className="gap-2">
                   <History className="h-4 w-4" />
                   История ({runs?.length || 0})
+                </TabsTrigger>
+                <TabsTrigger value="audit" className="gap-2">
+                  <FileText className="h-4 w-4" />
+                  Audit Log
                 </TabsTrigger>
               </TabsList>
 
@@ -166,12 +176,20 @@ export default function AdminSystemHealth() {
                 )}
               </TabsContent>
 
+              <TabsContent value="functions">
+                <EdgeFunctionsHealth />
+              </TabsContent>
+
               <TabsContent value="history">
                 <HealthRunHistory
                   runs={runs || []}
                   selectedRunId={selectedRunId}
                   onSelectRun={setSelectedRunId}
                 />
+              </TabsContent>
+
+              <TabsContent value="audit">
+                <AuditLogViewer />
               </TabsContent>
             </Tabs>
           </>
