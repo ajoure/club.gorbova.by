@@ -17,7 +17,8 @@ telegram-process-access-queue
 telegram-revoke-access
 telegram-webhook
 
-# P1 — Important (31)
+# P1 — Important (32)
+admin-manual-charge
 admin-payments-diagnostics
 auth-actions
 auth-check-email
