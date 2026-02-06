@@ -30,6 +30,17 @@ export interface SystemHealthCheck {
   created_at: string;
 }
 
+export interface IgnoredCheck {
+  id: string;
+  check_key: string;
+  ignored_by: string;
+  reason: string;
+  source: "manual" | "auto" | "migration";
+  ignored_at: string;
+  expires_at: string | null;
+  created_at: string;
+}
+
 export function useSystemHealthRuns() {
   return useQuery({
     queryKey: ["system-health-runs"],
@@ -122,6 +133,83 @@ export function useTriggerHealthCheck() {
       toast.error("Ошибка запуска проверки", {
         description: String(error),
       });
+    },
+  });
+}
+
+// ============ IGNORED CHECKS ============
+
+export function useIgnoredChecks() {
+  return useQuery({
+    queryKey: ["system-health-ignored"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("system_health_ignored_checks")
+        .select("*")
+        .or("expires_at.is.null,expires_at.gt.now()");
+      
+      if (error) {
+        // If user doesn't have access (not super_admin), return empty array
+        if (error.code === "42501" || error.message.includes("permission")) {
+          return [];
+        }
+        throw error;
+      }
+      return data as IgnoredCheck[];
+    },
+  });
+}
+
+export function useIgnoreCheck() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: async ({ 
+      checkKey, 
+      reason, 
+      expiresAt 
+    }: { 
+      checkKey: string; 
+      reason: string; 
+      expiresAt?: Date | null;
+    }) => {
+      const { error } = await supabase
+        .from("system_health_ignored_checks")
+        .insert({ 
+          check_key: checkKey, 
+          reason,
+          expires_at: expiresAt?.toISOString() || null,
+          source: "manual"
+        });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["system-health-ignored"] });
+      toast.success("Проверка добавлена в игнорируемые");
+    },
+    onError: (error) => {
+      toast.error("Ошибка", { description: String(error) });
+    },
+  });
+}
+
+export function useUnignoreCheck() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("system_health_ignored_checks")
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["system-health-ignored"] });
+      toast.success("Игнорирование отменено");
+    },
+    onError: (error) => {
+      toast.error("Ошибка", { description: String(error) });
     },
   });
 }

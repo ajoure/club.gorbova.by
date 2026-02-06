@@ -1,48 +1,70 @@
 import { useState } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   useSystemHealthRuns,
   useLatestSystemHealth,
   useTriggerHealthCheck,
+  useIgnoredChecks,
   CATEGORY_LABELS,
-  SystemHealthRun,
 } from "@/hooks/useSystemHealthRuns";
+import { useSuperAdmin } from "@/hooks/useSuperAdmin";
 import { SystemHealthOverview } from "@/components/admin/system-health/SystemHealthOverview";
 import { InvariantCheckCard } from "@/components/admin/system-health/InvariantCheckCard";
 import { HealthRunHistory } from "@/components/admin/system-health/HealthRunHistory";
 import { EdgeFunctionsHealth } from "@/components/admin/system-health/EdgeFunctionsHealth";
 import { AuditLogViewer } from "@/components/admin/system-health/AuditLogViewer";
-import { Loader2, Play, RefreshCw, Activity, CheckCircle, XCircle, Clock, History, Zap, FileText } from "lucide-react";
-import { formatDistanceToNow, format } from "date-fns";
-import { ru } from "date-fns/locale";
+import { Loader2, Play, RefreshCw, Activity, CheckCircle, XCircle, History, Zap, FileText, AlertTriangle, ChevronDown } from "lucide-react";
 
 export default function AdminSystemHealth() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [ignoredExpanded, setIgnoredExpanded] = useState(false);
+  
   const { data: runs, isLoading: runsLoading, refetch: refetchRuns } = useSystemHealthRuns();
   const { data: latestHealth, isLoading: latestLoading } = useLatestSystemHealth();
+  const { data: ignoredChecks = [] } = useIgnoredChecks();
+  const { data: isSuperAdmin = false } = useSuperAdmin();
   const triggerCheck = useTriggerHealthCheck();
-
-  const activeRun = selectedRunId 
-    ? runs?.find(r => r.id === selectedRunId)
-    : latestHealth?.run;
 
   const isLoading = runsLoading || latestLoading;
 
-  // Group checks by category
-  const checksByCategory = (latestHealth?.checks || []).reduce((acc, check) => {
+  // Create a Set of ignored check keys for fast lookup
+  const ignoredCheckKeys = new Set(ignoredChecks.map(ic => ic.check_key));
+
+  // Helper to get ignore info for a check
+  const getIgnoreInfo = (checkKey: string) => {
+    const invCode = checkKey?.split(":")[0]?.trim() || checkKey;
+    return ignoredChecks.find(ic => ic.check_key === invCode);
+  };
+
+  // Separate checks into 3 groups
+  const allChecks = latestHealth?.checks || [];
+  
+  const failedChecksRaw = allChecks.filter(c => c.status === "failed");
+  const passedChecks = allChecks.filter(c => c.status === "passed");
+  
+  // Split failed into: actual errors vs ignored
+  const failedChecks = failedChecksRaw.filter(c => {
+    const invCode = c.check_key?.split(":")[0]?.trim() || c.check_key;
+    return !ignoredCheckKeys.has(invCode);
+  });
+  
+  const ignoredFailedChecks = failedChecksRaw.filter(c => {
+    const invCode = c.check_key?.split(":")[0]?.trim() || c.check_key;
+    return ignoredCheckKeys.has(invCode);
+  });
+
+  // Group passed checks by category
+  const checksByCategory = passedChecks.reduce((acc, check) => {
     const category = check.category || "system";
     if (!acc[category]) acc[category] = [];
     acc[category].push(check);
     return acc;
-  }, {} as Record<string, typeof latestHealth.checks>);
-
-  const failedChecks = latestHealth?.checks?.filter(c => c.status === "failed") || [];
-  const passedChecks = latestHealth?.checks?.filter(c => c.status === "passed") || [];
+  }, {} as Record<string, typeof passedChecks>);
 
   return (
     <AdminLayout>
@@ -100,6 +122,11 @@ export default function AdminSystemHealth() {
                 <TabsTrigger value="current" className="gap-2">
                   <Activity className="h-4 w-4" />
                   Инварианты
+                  {failedChecks.length > 0 && (
+                    <Badge variant="destructive" className="ml-1 h-5 px-1.5">
+                      {failedChecks.length}
+                    </Badge>
+                  )}
                 </TabsTrigger>
                 <TabsTrigger value="functions" className="gap-2">
                   <Zap className="h-4 w-4" />
@@ -116,7 +143,7 @@ export default function AdminSystemHealth() {
               </TabsList>
 
               <TabsContent value="current" className="space-y-6">
-                {/* Failed Checks First */}
+                {/* Failed Checks - Require Attention */}
                 {failedChecks.length > 0 && (
                   <div className="space-y-3">
                     <h3 className="text-lg font-semibold flex items-center gap-2 text-destructive">
@@ -125,29 +152,72 @@ export default function AdminSystemHealth() {
                     </h3>
                     <div className="grid gap-4 md:grid-cols-2">
                       {failedChecks.map((check) => (
-                        <InvariantCheckCard key={check.id} check={check} variant="error" />
+                        <InvariantCheckCard 
+                          key={check.id} 
+                          check={check} 
+                          variant="error"
+                          isSuperAdmin={isSuperAdmin}
+                        />
                       ))}
                     </div>
                   </div>
                 )}
 
+                {/* Ignored Checks - Muted Section */}
+                {ignoredFailedChecks.length > 0 && (
+                  <Collapsible open={ignoredExpanded} onOpenChange={setIgnoredExpanded}>
+                    <CollapsibleTrigger asChild>
+                      <div className="flex items-center gap-2 cursor-pointer group">
+                        <h3 className="text-lg font-semibold flex items-center gap-2 text-warning-foreground">
+                          <AlertTriangle className="h-5 w-5" />
+                          Игнорируемые ({ignoredFailedChecks.length})
+                        </h3>
+                        <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${ignoredExpanded ? "rotate-180" : ""}`} />
+                        <span className="text-xs text-muted-foreground group-hover:underline">
+                          {ignoredExpanded ? "свернуть" : "развернуть"}
+                        </span>
+                      </div>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-3">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {ignoredFailedChecks.map((check) => {
+                          const ignoreInfo = getIgnoreInfo(check.check_key);
+                          return (
+                            <InvariantCheckCard 
+                              key={check.id} 
+                              check={check} 
+                              variant="ignored"
+                              isSuperAdmin={isSuperAdmin}
+                              ignoredInfo={ignoreInfo}
+                            />
+                          );
+                        })}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+
                 {/* Passed Checks by Category */}
                 {Object.entries(checksByCategory).map(([category, checks]) => {
-                  const categoryPassedChecks = checks.filter(c => c.status === "passed");
-                  if (categoryPassedChecks.length === 0) return null;
+                  if (checks.length === 0) return null;
 
                   return (
                     <div key={category} className="space-y-3">
                       <h3 className="text-lg font-semibold flex items-center gap-2">
-                        <CheckCircle className="h-5 w-5 text-green-500" />
+                        <CheckCircle className="h-5 w-5 text-primary" />
                         {CATEGORY_LABELS[category] || category} 
                         <Badge variant="secondary" className="ml-2">
-                          {categoryPassedChecks.length} OK
+                          {checks.length} OK
                         </Badge>
                       </h3>
                       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                        {categoryPassedChecks.map((check) => (
-                          <InvariantCheckCard key={check.id} check={check} variant="success" />
+                        {checks.map((check) => (
+                          <InvariantCheckCard 
+                            key={check.id} 
+                            check={check} 
+                            variant="success"
+                            isSuperAdmin={isSuperAdmin}
+                          />
                         ))}
                       </div>
                     </div>

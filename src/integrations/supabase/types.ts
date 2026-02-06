@@ -6353,6 +6353,39 @@ export type Database = {
           },
         ]
       }
+      system_health_ignored_checks: {
+        Row: {
+          check_key: string
+          created_at: string | null
+          expires_at: string | null
+          id: string
+          ignored_at: string | null
+          ignored_by: string | null
+          reason: string
+          source: string | null
+        }
+        Insert: {
+          check_key: string
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string
+          ignored_at?: string | null
+          ignored_by?: string | null
+          reason: string
+          source?: string | null
+        }
+        Update: {
+          check_key?: string
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string
+          ignored_at?: string | null
+          ignored_by?: string | null
+          reason?: string
+          source?: string | null
+        }
+        Relationships: []
+      }
       system_health_runs: {
         Row: {
           created_at: string
