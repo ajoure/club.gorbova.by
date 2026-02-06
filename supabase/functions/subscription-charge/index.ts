@@ -1847,7 +1847,7 @@ Deno.serve(async (req) => {
       .from('subscriptions_v2')
       .select(`
         *,
-        tariffs(id, name, access_days)
+        tariffs(id, name, access_days, getcourse_offer_id)
       `)
       .lte('next_charge_at', endOfDayIso)  // Use end of day instead of nowIso
       .in('status', ['active', 'trial', 'past_due'])
@@ -1909,7 +1909,7 @@ Deno.serve(async (req) => {
       .from('subscriptions_v2')
       .select(`
         *,
-        tariffs(id, name, access_days, trial_auto_charge)
+        tariffs(id, name, access_days, trial_auto_charge, getcourse_offer_id)
       `)
       .eq('status', 'trial')
       .eq('is_trial', true)
