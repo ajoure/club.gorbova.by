@@ -169,6 +169,69 @@ export function useTriggerFullCheck() {
   });
 }
 
+// Remediation types
+export interface RemediationPlan {
+  target: string;
+  action: string;
+  reason: string;
+  auto_fix_policy: string;
+  safe: boolean;
+}
+
+export interface RemediationResult {
+  target: string;
+  action: string;
+  result: "success" | "failed" | "skipped";
+  details?: string;
+}
+
+export interface RemediateResponse {
+  mode: "dry-run" | "execute";
+  plan: RemediationPlan[];
+  executed: boolean;
+  results: RemediationResult[];
+  timestamp: string;
+}
+
+export function useRemediate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (mode: "dry-run" | "execute") => {
+      const { data, error } = await supabase.functions.invoke("system-health-remediate", {
+        body: { mode },
+      });
+
+      if (error) throw error;
+      return data as RemediateResponse;
+    },
+    onSuccess: (data) => {
+      if (data.mode === "dry-run") {
+        toast.info(`План автолечения: ${data.plan.length} действий`, {
+          description: `Безопасных: ${data.plan.filter(p => p.safe).length}`,
+        });
+      } else {
+        const successCount = data.results.filter(r => r.result === "success").length;
+        const failedCount = data.results.filter(r => r.result === "failed").length;
+        
+        if (failedCount > 0) {
+          toast.warning(`Автолечение: ${successCount} успешно, ${failedCount} ошибок`);
+        } else {
+          toast.success(`Автолечение: ${successCount} успешно`);
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["system-health-reports"] });
+      queryClient.invalidateQueries({ queryKey: ["system-health-latest-full"] });
+    },
+    onError: (error) => {
+      toast.error("Ошибка автолечения", {
+        description: String(error),
+      });
+    },
+  });
+}
+
 // Status badge helpers
 export const STATUS_CONFIG = {
   OK: {

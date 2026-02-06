@@ -5,89 +5,38 @@ import { corsHeaders } from "../_shared/cors.ts";
  * SYSTEM-HEALTH-FULL-CHECK — Единый оркестратор проверки системы
  * 
  * Выполняет:
- * 1. Инвентаризацию Edge Functions (runtime, не хардкод)
+ * 1. Чтение списка функций из edge_functions_registry (НЕ хардкод!)
  * 2. Проверку доступности (404 detection)
- * 3. Проверку P0 бизнес-инвариантов
- * 4. Автолечение (ТОЛЬКО safe cases)
+ * 3. Проверку CORS для category=browser
+ * 4. Проверку P0 бизнес-инвариантов
  * 5. Логирование в system_health_reports + audit_logs
  * 6. Telegram-уведомление при проблемах
+ * 
+ * ВАЖНО: Автолечение вынесено в отдельную функцию system-health-remediate
  */
 
-// P0 Tier-1 функции (критичные для бизнеса)
-const TIER1_FUNCTIONS = [
-  "subscription-charge",
-  "telegram-process-access-queue",
-  "telegram-grant-access",
-  "telegram-revoke-access",
-  "bepaid-webhook",
-  "payment-methods-webhook",
-  "nightly-system-health",
-  "nightly-payments-invariants",
-  "direct-charge",
-  "cancel-trial",
-];
-
-// Функции для проверки (все кроме _shared)
-async function getDeployedFunctionsList(projectRef: string, anonKey: string): Promise<string[]> {
-  // В production мы не имеем доступа к файловой системе
-  // Поэтому используем статический список из repo + проверяем доступность
-  // TODO: В будущем можно добавить endpoint для получения списка
-  return [
-    "admin-backfill-2026-orders", "admin-backfill-bepaid-statement-dates", "admin-backfill-bepaid-statement-fields",
-    "admin-backfill-recurring-snapshot", "admin-batch-disable-auto-renew", "admin-bepaid-emergency-unlink",
-    "admin-bepaid-full-reconcile", "admin-bepaid-reconcile-amounts", "admin-billing-alignment",
-    "admin-false-notifications-report", "admin-fix-club-billing-dates", "admin-fix-false-payments",
-    "admin-fix-payments-integrity", "admin-fix-sub-orders-gc", "admin-fix-uid-contract",
-    "admin-import-bepaid-statement-csv", "admin-legacy-cards-report", "admin-link-contact",
-    "admin-link-payment-to-order", "admin-manual-charge", "admin-materialize-queue-payments",
-    "admin-payments-diagnostics", "admin-purge-imported-transactions", "admin-purge-payments-by-uid",
-    "admin-reconcile-bepaid-legacy", "admin-reconcile-processing-payments", "admin-regrant-wrongly-revoked",
-    "admin-repair-mismatch-orders", "admin-search-profiles", "admin-unlinked-payments-report",
-    "ai-import-analyzer", "amocrm-contacts-import", "amocrm-import-rollback", "amocrm-mass-import",
-    "amocrm-sync", "amocrm-webhook", "analyze-all-loyalty", "analyze-audience", "analyze-contact-loyalty",
-    "analyze-task-priority", "auth-actions", "auth-check-email", "backfill-payment-classification",
-    "bepaid-admin-create-subscription-link", "bepaid-archive-import", "bepaid-auto-process",
-    "bepaid-cancel-subscriptions", "bepaid-create-subscription-checkout", "bepaid-create-subscription",
-    "bepaid-create-token", "bepaid-discrepancy-alert", "bepaid-docs-backfill", "bepaid-fetch-receipt",
-    "bepaid-fetch-transactions", "bepaid-get-payment-docs", "bepaid-get-receipt", "bepaid-get-subscription-details",
-    "bepaid-list-subscriptions", "bepaid-polling-backfill", "bepaid-process-refunds", "bepaid-queue-cron",
-    "bepaid-raw-transactions", "bepaid-receipts-cron", "bepaid-receipts-sync", "bepaid-reconcile-file",
-    "bepaid-recover-payment", "bepaid-report-import", "bepaid-subscription-audit-cron", "bepaid-subscription-audit",
-    "bepaid-sync-orchestrator", "bepaid-uid-resync", "bepaid-webhook", "buh-business-notify",
-    "cancel-preregistration", "cancel-trial", "cleanup-demo-contacts", "cleanup-telegram-orphans",
-    "course-prereg-notify", "detect-duplicates", "diagnose-admin-notifications", "direct-charge",
-    "document-auto-generate", "email-fetch-inbox", "email-mass-broadcast", "email-test-connection",
-    "export-schema", "generate-affirmation", "generate-cover", "generate-document-pdf", "generate-from-template",
-    "generate-invoice-act", "generate-lesson-notification", "generate-point-b-summary", "getcourse-backfill",
-    "getcourse-cancel-deal", "getcourse-content-scraper", "getcourse-grant-access", "getcourse-import-deals",
-    "getcourse-import-file", "getcourse-sync", "getcourse-webhook", "grant-access-for-order", "ilex-api",
-    "ilex-fetch", "import-telegram-history", "installment-charge-cron", "installment-notifications",
-    "integration-healthcheck", "integration-sync", "kinescope-api", "merge-clients", "migrate-data-export",
-    "mns-response-generator", "monitor-news", "nightly-payments-invariants", "nightly-system-health",
-    "payment-method-verify-recurring", "payment-methods-tokenize", "payment-methods-webhook",
-    "payments-autolink-by-card", "payments-reconcile", "preregistration-charge-cron", "public-product",
-    "reassign-demo-orders", "refunds-recompute-order-status", "reset-lesson-progress", "roles-admin",
-    "scan-card-duplicates", "send-email", "send-invoice", "send-recovery-notifications", "stylize-sarcasm",
-    "subscription-actions", "subscription-admin-actions", "subscription-charge", "subscription-grace-reminders",
-    "subscription-renewal-reminders", "subscriptions-reconcile", "sync-payments-with-statement",
-    "sync-telegram-history", "system-health-full-check", "telegram-admin-chat", "telegram-bot-actions",
-    "telegram-check-expired", "telegram-club-members", "telegram-cron-sync", "telegram-daily-summary",
-    "telegram-grant-access", "telegram-kick-violators", "telegram-learn-style", "telegram-link-manage",
-    "telegram-mass-broadcast", "telegram-media-worker-cron", "telegram-media-worker", "telegram-notify-admins",
-    "telegram-process-access-queue", "telegram-process-pending", "telegram-publish-news", "telegram-revoke-access",
-    "telegram-send-notification", "telegram-send-reminders", "telegram-send-test", "telegram-webhook",
-    "test-full-trial-flow", "test-getcourse-sync", "test-installment-flow", "test-payment-complete",
-    "test-payment-direct", "test-quiz-progress-rls", "test-quiz-progress", "unmerge-clients", "users-admin-actions",
-  ];
+interface RegistryEntry {
+  name: string;
+  tier: string;
+  category: string;
+  must_exist: boolean;
+  healthcheck_method: string;
+  expected_status: number[];
+  timeout_ms: number;
+  auto_fix_policy: string;
+  enabled: boolean;
+  notes: string | null;
 }
 
 interface FunctionCheckResult {
   name: string;
   exists: boolean;
   http_status: number | null;
-  status: "OK" | "NOT_DEPLOYED" | "ERROR" | "TIMEOUT";
-  is_tier1: boolean;
-  auto_fixed?: boolean;
+  status: "OK" | "NOT_DEPLOYED" | "ERROR" | "TIMEOUT" | "CORS_ERROR";
+  tier: string;
+  category: string;
+  auto_fix_policy: string;
+  cors_ok?: boolean;
   error?: string;
 }
 
@@ -98,13 +47,6 @@ interface InvariantResult {
   count: number;
   severity: "CRITICAL" | "WARNING" | "INFO";
   samples?: any[];
-}
-
-interface AutoFix {
-  target: string;
-  action: string;
-  result: "success" | "failed";
-  details?: string;
 }
 
 interface FullCheckReport {
@@ -121,85 +63,128 @@ interface FullCheckReport {
     failed: number;
     results: InvariantResult[];
   };
-  auto_fixes: AutoFix[];
+  auto_fixes: any[]; // Now always empty - remediation is separate
   duration_ms: number;
   timestamp: string;
 }
 
-// STEP 2: Проверка доступности функции
+// Check single function availability based on registry settings
 async function checkFunctionAvailability(
-  functionName: string,
-  projectRef: string,
-  anonKey: string
+  entry: RegistryEntry,
+  projectRef: string
 ): Promise<FunctionCheckResult> {
-  const url = `https://${projectRef}.supabase.co/functions/v1/${functionName}`;
-  const isTier1 = TIER1_FUNCTIONS.includes(functionName);
+  const url = `https://${projectRef}.supabase.co/functions/v1/${entry.name}`;
   
   try {
-    // OPTIONS preflight check
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), entry.timeout_ms);
+    
+    const method = entry.healthcheck_method === "POST" ? "POST" : "OPTIONS";
+    
+    const headers: Record<string, string> = method === "OPTIONS" 
+      ? {
+          "Origin": "https://lovable.app",
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": "authorization,content-type,apikey",
+        }
+      : {
+          "Content-Type": "application/json",
+        };
     
     const response = await fetch(url, {
-      method: "OPTIONS",
-      headers: {
-        "Origin": "https://lovable.app",
-        "Access-Control-Request-Method": "POST",
-        "Access-Control-Request-Headers": "authorization,content-type,apikey",
-      },
+      method,
+      headers,
+      body: method === "POST" ? JSON.stringify({ ping: true }) : undefined,
       signal: controller.signal,
     });
     
     clearTimeout(timeoutId);
     
+    // Check for NOT_DEPLOYED (404)
     if (response.status === 404) {
+      const text = await response.text().catch(() => "");
+      if (text.includes('"code":"NOT_FOUND"') || text.includes("Function not found")) {
+        return {
+          name: entry.name,
+          exists: false,
+          http_status: 404,
+          status: "NOT_DEPLOYED",
+          tier: entry.tier,
+          category: entry.category,
+          auto_fix_policy: entry.auto_fix_policy,
+        };
+      }
+    }
+    
+    // Check CORS headers for browser functions
+    let corsOk = true;
+    if (entry.category === "browser" && method === "OPTIONS") {
+      const allowHeaders = response.headers.get("Access-Control-Allow-Headers") || "";
+      corsOk = allowHeaders.includes("x-supabase-client-platform");
+    }
+    
+    // Check if status is in expected list
+    const statusOk = entry.expected_status.includes(response.status);
+    
+    if (!corsOk) {
       return {
-        name: functionName,
-        exists: false,
-        http_status: 404,
-        status: "NOT_DEPLOYED",
-        is_tier1: isTier1,
+        name: entry.name,
+        exists: true,
+        http_status: response.status,
+        status: "CORS_ERROR",
+        tier: entry.tier,
+        category: entry.category,
+        auto_fix_policy: entry.auto_fix_policy,
+        cors_ok: false,
+        error: "Missing x-supabase-client-* in CORS headers",
       };
     }
     
-    // 200, 400, 401, 403 = function exists
     return {
-      name: functionName,
+      name: entry.name,
       exists: true,
       http_status: response.status,
-      status: "OK",
-      is_tier1: isTier1,
+      status: statusOk ? "OK" : "ERROR",
+      tier: entry.tier,
+      category: entry.category,
+      auto_fix_policy: entry.auto_fix_policy,
+      cors_ok: corsOk,
+      error: statusOk ? undefined : `Unexpected status ${response.status}`,
     };
   } catch (error) {
     if (error.name === "AbortError") {
       return {
-        name: functionName,
+        name: entry.name,
         exists: false,
         http_status: null,
         status: "TIMEOUT",
-        is_tier1: isTier1,
-        error: "Request timeout (10s)",
+        tier: entry.tier,
+        category: entry.category,
+        auto_fix_policy: entry.auto_fix_policy,
+        error: `Request timeout (${entry.timeout_ms}ms)`,
       };
     }
     
     return {
-      name: functionName,
+      name: entry.name,
       exists: false,
       http_status: null,
       status: "ERROR",
-      is_tier1: isTier1,
+      tier: entry.tier,
+      category: entry.category,
+      auto_fix_policy: entry.auto_fix_policy,
       error: String(error),
     };
   }
 }
 
-// STEP 3: Проверка P0 бизнес-инвариантов
+// Check P0 business invariants
 async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]> {
   const results: InvariantResult[] = [];
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   
-  // INV-P0-1: Автопродления за 24ч (должны быть если есть активные подписки)
+  // INV-P0-1: Auto-renewals in 24h (should exist if active auto_renew subscriptions exist)
   try {
     const { count: chargedCount } = await supabase
       .from("audit_logs")
@@ -214,7 +199,6 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
       .eq("status", "active")
       .eq("auto_renew", true);
     
-    // Если есть активные подписки с auto_renew, должны быть списания
     const hasActiveAutoRenew = (activeSubsCount || 0) > 0;
     const hasCharges = (chargedCount || 0) > 0;
     
@@ -236,7 +220,7 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
     });
   }
   
-  // INV-P0-2: Renewal orders созданы
+  // INV-P0-2: Renewal orders created
   try {
     const { data: renewalOrders, count } = await supabase
       .from("orders_v2")
@@ -249,12 +233,12 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
     results.push({
       code: "INV-P0-2",
       name: "Renewal orders за 24ч",
-      passed: true, // Informational
+      passed: true,
       count: count || 0,
       severity: "INFO",
       samples: renewalOrders,
     });
-  } catch (e) {
+  } catch {
     results.push({
       code: "INV-P0-2",
       name: "Renewal orders за 24ч",
@@ -276,7 +260,7 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
       .from("telegram_access_queue")
       .select("*", { count: "exact", head: true })
       .eq("status", "pending")
-      .lt("created_at", new Date(now.getTime() - 60 * 60 * 1000).toISOString()); // older than 1 hour
+      .lt("created_at", new Date(now.getTime() - 60 * 60 * 1000).toISOString());
     
     const stalledQueue = (pendingCount || 0) > 5;
     
@@ -287,7 +271,7 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
       count: completedCount || 0,
       severity: stalledQueue ? "WARNING" : "INFO",
     });
-  } catch (e) {
+  } catch {
     results.push({
       code: "INV-P0-3",
       name: "Telegram queue",
@@ -313,7 +297,7 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
       count: cronCount || 0,
       severity: (cronCount || 0) === 0 ? "CRITICAL" : "INFO",
     });
-  } catch (e) {
+  } catch {
     results.push({
       code: "INV-P0-4",
       name: "Cron jobs за 24ч",
@@ -334,11 +318,11 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
     results.push({
       code: "INV-P0-5",
       name: "Успешные платежи за 24ч",
-      passed: true, // Informational
+      passed: true,
       count: paymentsCount || 0,
       severity: "INFO",
     });
-  } catch (e) {
+  } catch {
     results.push({
       code: "INV-P0-5",
       name: "Успешные платежи за 24ч",
@@ -351,13 +335,12 @@ async function checkBusinessInvariants(supabase: any): Promise<InvariantResult[]
   return results;
 }
 
-// STEP 6: Telegram notification
+// Telegram notification
 async function sendTelegramAlert(
   supabase: any,
   report: FullCheckReport,
   previousStatus: string | null
 ): Promise<boolean> {
-  // Отправляем только если статус != OK или изменился
   if (report.status === "OK" && previousStatus === "OK") {
     return false;
   }
@@ -389,7 +372,6 @@ async function sendTelegramAlert(
   
   let message = `${statusEmoji} ПОЛНЫЙ ЧЕК СИСТЕМЫ: ${report.status}\n\n`;
   
-  // Edge Functions summary
   const missingCount = report.edge_functions.missing.length;
   if (missingCount > 0) {
     message += `❌ Edge Functions: ${missingCount} не задеплоено\n`;
@@ -402,7 +384,6 @@ async function sendTelegramAlert(
     message += `✅ Edge Functions: ${report.edge_functions.deployed}/${report.edge_functions.total} OK\n\n`;
   }
   
-  // Invariants summary
   const failedInvariants = report.invariants.results.filter(i => !i.passed && i.severity !== "INFO");
   if (failedInvariants.length > 0) {
     message += `❌ Инварианты:\n`;
@@ -412,16 +393,6 @@ async function sendTelegramAlert(
     message += "\n";
   } else {
     message += `✅ Инварианты: ${report.invariants.passed}/${report.invariants.total} OK\n\n`;
-  }
-  
-  // Auto-fixes
-  if (report.auto_fixes.length > 0) {
-    message += `🔧 Автолечение:\n`;
-    for (const fix of report.auto_fixes) {
-      const emoji = fix.result === "success" ? "✅" : "❌";
-      message += `   ${emoji} ${fix.target}: ${fix.action}\n`;
-    }
-    message += "\n";
   }
   
   message += `⏱ ${nowStr} Минск\n`;
@@ -475,7 +446,6 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
     const projectRef = supabaseUrl.replace("https://", "").replace(".supabase.co", "");
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
     
     console.log(`[FULL-CHECK] Starting full system check (source: ${source})`);
     
@@ -489,26 +459,49 @@ Deno.serve(async (req) => {
     
     const previousStatus = lastReport?.status || null;
     
-    // STEP 1: Get function list
-    const functionsList = await getDeployedFunctionsList(projectRef, anonKey);
-    console.log(`[FULL-CHECK] Checking ${functionsList.length} functions...`);
+    // STEP 1: Read function list from registry (NO HARDCODE!)
+    const { data: registry, error: registryError } = await supabase
+      .from("edge_functions_registry")
+      .select("*")
+      .eq("enabled", true)
+      .order("tier", { ascending: true });
+    
+    if (registryError) {
+      console.error("[FULL-CHECK] Failed to read registry:", registryError);
+      return new Response(
+        JSON.stringify({ error: "Failed to read edge_functions_registry", details: registryError }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    if (!registry || registry.length === 0) {
+      console.error("[FULL-CHECK] Registry is empty!");
+      return new Response(
+        JSON.stringify({ error: "edge_functions_registry is empty - seed it first" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    console.log(`[FULL-CHECK] Checking ${registry.length} functions from registry...`);
     
     // STEP 2: Check availability (parallel, batched)
     const batchSize = 20;
     const functionResults: FunctionCheckResult[] = [];
     
-    for (let i = 0; i < functionsList.length; i += batchSize) {
-      const batch = functionsList.slice(i, i + batchSize);
+    for (let i = 0; i < registry.length; i += batchSize) {
+      const batch = registry.slice(i, i + batchSize);
       const batchResults = await Promise.all(
-        batch.map(fn => checkFunctionAvailability(fn, projectRef, anonKey))
+        batch.map((entry: RegistryEntry) => checkFunctionAvailability(entry, projectRef))
       );
       functionResults.push(...batchResults);
     }
     
     const deployedCount = functionResults.filter(r => r.exists).length;
-    const missingFunctions = functionResults.filter(r => !r.exists).map(r => r.name);
+    const missingFunctions = functionResults
+      .filter(r => r.status === "NOT_DEPLOYED")
+      .map(r => r.name);
     
-    console.log(`[FULL-CHECK] Functions: ${deployedCount}/${functionsList.length} deployed`);
+    console.log(`[FULL-CHECK] Functions: ${deployedCount}/${registry.length} deployed`);
     
     // STEP 3: Check business invariants
     const invariantResults = await checkBusinessInvariants(supabase);
@@ -517,45 +510,28 @@ Deno.serve(async (req) => {
     
     console.log(`[FULL-CHECK] Invariants: ${passedInvariants}/${invariantResults.length} passed`);
     
-    // STEP 4: Auto-healing (SAFE CASES ONLY)
-    const autoFixes: AutoFix[] = [];
+    // STEP 4: Determine final status
+    // P0 function missing = CRITICAL
+    const missingP0 = functionResults.filter(
+      r => r.status === "NOT_DEPLOYED" && r.tier === "P0"
+    );
     
-    // Auto-fix: Trigger stalled cron if no cron jobs in 24h
-    const cronInvariant = invariantResults.find(i => i.code === "INV-P0-4");
-    if (cronInvariant && !cronInvariant.passed) {
-      try {
-        // Trigger nightly-system-health with diagnostics mode
-        await supabase.functions.invoke("nightly-system-health", {
-          body: { source: "auto-fix", notify_owner: false },
-        });
-        autoFixes.push({
-          target: "nightly-system-health",
-          action: "triggered (diagnostics)",
-          result: "success",
-        });
-      } catch (e) {
-        autoFixes.push({
-          target: "nightly-system-health",
-          action: "triggered (diagnostics)",
-          result: "failed",
-          details: String(e),
-        });
-      }
-    }
-    
-    // STEP 5: Determine final status
     let finalStatus: "OK" | "DEGRADED" | "CRITICAL" = "OK";
     
-    if (failedCritical.length > 0 || missingFunctions.some(f => TIER1_FUNCTIONS.includes(f))) {
+    if (failedCritical.length > 0 || missingP0.length > 0) {
       finalStatus = "CRITICAL";
-    } else if (missingFunctions.length > 0 || invariantResults.some(i => !i.passed && i.severity === "WARNING")) {
+    } else if (
+      missingFunctions.length > 0 || 
+      invariantResults.some(i => !i.passed && i.severity === "WARNING") ||
+      functionResults.some(r => r.status === "CORS_ERROR")
+    ) {
       finalStatus = "DEGRADED";
     }
     
     const report: FullCheckReport = {
       status: finalStatus,
       edge_functions: {
-        total: functionsList.length,
+        total: registry.length,
         deployed: deployedCount,
         missing: missingFunctions,
         results: functionResults,
@@ -566,28 +542,28 @@ Deno.serve(async (req) => {
         failed: invariantResults.length - passedInvariants,
         results: invariantResults,
       },
-      auto_fixes: autoFixes,
+      auto_fixes: [], // Empty - remediation is now separate
       duration_ms: Date.now() - startTime,
       timestamp: new Date().toISOString(),
     };
     
-    // STEP 6: Save report
+    // STEP 5: Save report
     const { data: savedReport, error: saveError } = await supabase
       .from("system_health_reports")
       .insert({
         status: finalStatus,
-        edge_functions_total: functionsList.length,
+        edge_functions_total: registry.length,
         edge_functions_deployed: deployedCount,
         edge_functions_missing: missingFunctions,
         invariants_total: invariantResults.length,
         invariants_passed: passedInvariants,
         invariants_failed: invariantResults.length - passedInvariants,
-        auto_fixes: autoFixes,
-        auto_fixes_count: autoFixes.length,
+        auto_fixes: [],
+        auto_fixes_count: 0,
         report_json: report,
         source,
         duration_ms: Date.now() - startTime,
-        triggered_by: null, // TODO: extract from auth header
+        triggered_by: null,
       })
       .select("id")
       .single();
@@ -606,7 +582,7 @@ Deno.serve(async (req) => {
         .eq("id", savedReport.id);
     }
     
-    // Audit log
+    // Audit log with SYSTEM ACTOR PROOF
     await supabase.from("audit_logs").insert({
       action: "system.health.full_check",
       actor_type: "system",
@@ -616,11 +592,16 @@ Deno.serve(async (req) => {
         report_id: savedReport?.id,
         status: finalStatus,
         duration_ms: Date.now() - startTime,
-        edge_functions: { total: functionsList.length, deployed: deployedCount, missing: missingFunctions.length },
+        edge_functions: { 
+          total: registry.length, 
+          deployed: deployedCount, 
+          missing: missingFunctions.length,
+          missing_p0: missingP0.map(f => f.name),
+        },
         invariants: { total: invariantResults.length, passed: passedInvariants },
-        auto_fixes_count: autoFixes.length,
         source,
         telegram_notified: telegramSent,
+        registry_source: true, // Proof that we used registry
       },
     });
     

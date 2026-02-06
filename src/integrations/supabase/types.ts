@@ -1282,6 +1282,51 @@ export type Database = {
           },
         ]
       }
+      edge_functions_registry: {
+        Row: {
+          auto_fix_policy: string
+          category: string
+          created_at: string | null
+          enabled: boolean
+          expected_status: number[]
+          healthcheck_method: string
+          must_exist: boolean
+          name: string
+          notes: string | null
+          tier: string
+          timeout_ms: number
+          updated_at: string | null
+        }
+        Insert: {
+          auto_fix_policy?: string
+          category?: string
+          created_at?: string | null
+          enabled?: boolean
+          expected_status?: number[]
+          healthcheck_method?: string
+          must_exist?: boolean
+          name: string
+          notes?: string | null
+          tier?: string
+          timeout_ms?: number
+          updated_at?: string | null
+        }
+        Update: {
+          auto_fix_policy?: string
+          category?: string
+          created_at?: string | null
+          enabled?: boolean
+          expected_status?: number[]
+          healthcheck_method?: string
+          must_exist?: boolean
+          name?: string
+          notes?: string | null
+          tier?: string
+          timeout_ms?: number
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       eisenhower_tasks: {
         Row: {
           category_id: string | null

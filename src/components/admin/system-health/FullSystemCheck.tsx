@@ -5,11 +5,22 @@ import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   useTriggerFullCheck,
   useLatestFullCheck,
+  useRemediate,
   STATUS_CONFIG,
   type FullCheckResponse,
-  type SystemHealthReport,
+  type RemediateResponse,
 } from "@/hooks/useSystemHealthFullCheck";
 import {
   Loader2,
@@ -22,25 +33,50 @@ import {
   Clock,
   Wrench,
   Server,
+  Shield,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 
 export function FullSystemCheck() {
   const [checkResult, setCheckResult] = useState<FullCheckResponse | null>(null);
+  const [remediatePlan, setRemediatePlan] = useState<RemediateResponse | null>(null);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     functions: false,
     invariants: true,
     fixes: true,
+    plan: true,
   });
 
   const { data: latestReport, isLoading: latestLoading } = useLatestFullCheck();
   const triggerCheck = useTriggerFullCheck();
+  const remediate = useRemediate();
 
   const handleRunCheck = async () => {
     try {
       const result = await triggerCheck.mutateAsync();
       setCheckResult(result);
+      setRemediatePlan(null);
+    } catch {
+      // Error handled by mutation
+    }
+  };
+
+  const handleDryRun = async () => {
+    try {
+      const result = await remediate.mutateAsync("dry-run");
+      setRemediatePlan(result);
+    } catch {
+      // Error handled by mutation
+    }
+  };
+
+  const handleExecuteRemediate = async () => {
+    setShowConfirmDialog(false);
+    try {
+      const result = await remediate.mutateAsync("execute");
+      setRemediatePlan(result);
     } catch {
       // Error handled by mutation
     }
@@ -56,6 +92,9 @@ export function FullSystemCheck() {
   const statusConfig = STATUS_CONFIG[status] || STATUS_CONFIG.OK;
 
   const StatusIcon = status === "OK" ? CheckCircle : status === "CRITICAL" ? XCircle : AlertTriangle;
+
+  const hasPlanItems = remediatePlan && remediatePlan.plan.length > 0;
+  const safePlanItems = remediatePlan?.plan.filter(p => p.safe) || [];
 
   return (
     <div className="space-y-4">
@@ -95,6 +134,26 @@ export function FullSystemCheck() {
                 <>
                   <Play className="h-5 w-5 mr-2" />
                   Запустить полный чек
+                </>
+              )}
+            </Button>
+
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={handleDryRun}
+              disabled={remediate.isPending || !displayData}
+              className="w-full sm:w-auto"
+            >
+              {remediate.isPending ? (
+                <>
+                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                  Анализ...
+                </>
+              ) : (
+                <>
+                  <Shield className="h-5 w-5 mr-2" />
+                  Автолечение (SAFE)
                 </>
               )}
             </Button>
@@ -144,14 +203,105 @@ export function FullSystemCheck() {
               </div>
               <div className="bg-muted/50 rounded-lg p-3 text-center">
                 <div className="text-2xl font-bold text-yellow-600">
-                  {displayData.auto_fixes?.length || 0}
+                  {remediatePlan?.plan.length || displayData.auto_fixes?.length || 0}
                 </div>
-                <div className="text-xs text-muted-foreground">автоисправлений</div>
+                <div className="text-xs text-muted-foreground">план автолечения</div>
               </div>
             </div>
           )}
         </CardContent>
       </Card>
+
+      {/* Remediation Plan Preview */}
+      {hasPlanItems && (
+        <Collapsible
+          open={expandedSections.plan}
+          onOpenChange={() => toggleSection("plan")}
+        >
+          <Card className="border-yellow-500/50">
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-yellow-600" />
+                    План автолечения ({remediatePlan.plan.length})
+                    {remediatePlan.executed && (
+                      <Badge variant="secondary" className="ml-2">Выполнено</Badge>
+                    )}
+                  </CardTitle>
+                  <ChevronDown
+                    className={`h-4 w-4 transition-transform ${
+                      expandedSections.plan ? "rotate-180" : ""
+                    }`}
+                  />
+                </div>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="pt-0">
+                <ScrollArea className="h-[250px]">
+                  <div className="space-y-2">
+                    {remediatePlan.plan.map((item, idx) => {
+                      const result = remediatePlan.results.find(r => r.target === item.target);
+                      
+                      return (
+                        <div
+                          key={idx}
+                          className={`flex items-center justify-between p-3 rounded-lg ${
+                            item.safe ? "bg-green-500/10" : "bg-yellow-500/10"
+                          }`}
+                        >
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              {item.safe ? (
+                                <CheckCircle className="h-4 w-4 text-green-600" />
+                              ) : (
+                                <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                              )}
+                              <code className="text-sm font-medium">{item.target}</code>
+                              <Badge variant="outline" className="text-xs">
+                                {item.action}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">{item.reason}</p>
+                          </div>
+                          {result && (
+                            <Badge
+                              variant={
+                                result.result === "success"
+                                  ? "default"
+                                  : result.result === "failed"
+                                  ? "destructive"
+                                  : "secondary"
+                              }
+                              className="ml-2"
+                            >
+                              {result.result}
+                            </Badge>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+                
+                {!remediatePlan.executed && safePlanItems.length > 0 && (
+                  <div className="mt-4 pt-4 border-t">
+                    <Button
+                      onClick={() => setShowConfirmDialog(true)}
+                      disabled={remediate.isPending}
+                      className="w-full"
+                    >
+                      <Wrench className="h-4 w-4 mr-2" />
+                      Выполнить {safePlanItems.length} безопасных действий
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+      )}
 
       {/* Detailed Results */}
       {displayData && (
@@ -279,7 +429,7 @@ export function FullSystemCheck() {
             </Card>
           </Collapsible>
 
-          {/* Auto-fixes */}
+          {/* Auto-fixes (legacy, from old reports) */}
           {displayData.auto_fixes?.length > 0 && (
             <Collapsible
               open={expandedSections.fixes}
@@ -328,6 +478,36 @@ export function FullSystemCheck() {
           )}
         </div>
       )}
+
+      {/* Confirmation Dialog */}
+      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Подтвердить автолечение?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Будет выполнено {safePlanItems.length} безопасных действий:
+              <ul className="mt-2 space-y-1">
+                {safePlanItems.slice(0, 5).map((item, idx) => (
+                  <li key={idx} className="text-sm">
+                    • {item.target}: {item.action}
+                  </li>
+                ))}
+                {safePlanItems.length > 5 && (
+                  <li className="text-sm text-muted-foreground">
+                    ... и ещё {safePlanItems.length - 5}
+                  </li>
+                )}
+              </ul>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleExecuteRemediate}>
+              Выполнить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
