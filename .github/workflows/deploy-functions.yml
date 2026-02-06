@@ -46,6 +46,7 @@ jobs:
           
           # ============================================
           # SMOKE CHECKS: Verify TIER-1 UI-used functions are reachable
+          # Includes OPTIONS preflight + POST existence checks
           # ============================================
           echo "Running smoke checks for TIER-1 functions..."
           
@@ -59,30 +60,74 @@ jobs:
           )
           
           SUPABASE_URL="https://hdjgkjceownmmnrqqtuz.supabase.co"
+          ORIGIN="https://796a93b9-74cc-403c-8ec5-cafdb2a5beaa.lovableproject.com"
           SMOKE_FAILED=0
           
           for func in "${TIER1_FUNCTIONS[@]}"; do
-            echo "Smoke check: $func"
-            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            echo ""
+            echo "=== Smoke check: $func ==="
+            
+            # --- OPTIONS preflight check (CORS) ---
+            echo "  [OPTIONS] Checking CORS preflight..."
+            OPTIONS_HEADERS=$(curl -s -i -X OPTIONS \
+              -H "Origin: $ORIGIN" \
+              -H "Access-Control-Request-Method: POST" \
+              -H "Access-Control-Request-Headers: authorization, apikey, content-type" \
+              "$SUPABASE_URL/functions/v1/$func" 2>&1)
+            
+            OPTIONS_STATUS=$(echo "$OPTIONS_HEADERS" | head -1 | grep -oE '[0-9]{3}' | head -1)
+            
+            # Check for 404 NOT_FOUND in OPTIONS
+            if echo "$OPTIONS_HEADERS" | grep -q '"code":"NOT_FOUND"'; then
+              echo "  ❌ OPTIONS FAIL: $func returned NOT_FOUND (function not deployed)"
+              SMOKE_FAILED=1
+              continue
+            fi
+            
+            # Check for Access-Control-Allow-Methods header
+            if echo "$OPTIONS_HEADERS" | grep -qi "Access-Control-Allow-Methods:"; then
+              ALLOW_METHODS=$(echo "$OPTIONS_HEADERS" | grep -i "Access-Control-Allow-Methods:" | head -1)
+              echo "  ✅ OPTIONS OK: $ALLOW_METHODS"
+              
+              # Verify POST and OPTIONS are in Allow-Methods
+              if ! echo "$ALLOW_METHODS" | grep -qi "POST"; then
+                echo "  ⚠️ WARNING: POST not in Allow-Methods"
+              fi
+            else
+              echo "  ⚠️ WARNING: No Access-Control-Allow-Methods header in response"
+            fi
+            
+            # --- POST existence check ---
+            echo "  [POST] Checking function exists..."
+            POST_RESPONSE=$(curl -s -w "\n%{http_code}" \
               -X POST \
               -H "Content-Type: application/json" \
               -d '{}' \
-              "$SUPABASE_URL/functions/v1/$func" || echo "000")
+              "$SUPABASE_URL/functions/v1/$func")
             
-            if [ "$RESPONSE" = "404" ]; then
-              echo "❌ FAIL: $func returned 404 NOT_FOUND"
+            POST_STATUS=$(echo "$POST_RESPONSE" | tail -1)
+            POST_BODY=$(echo "$POST_RESPONSE" | sed '$d')
+            
+            if [ "$POST_STATUS" = "404" ]; then
+              echo "  ❌ POST FAIL: $func returned 404 NOT_FOUND"
               SMOKE_FAILED=1
-            elif [ "$RESPONSE" = "000" ]; then
-              echo "❌ FAIL: $func - connection failed"
+            elif [ "$POST_STATUS" = "000" ]; then
+              echo "  ❌ POST FAIL: $func - connection failed"
+              SMOKE_FAILED=1
+            elif echo "$POST_BODY" | grep -q '"code":"NOT_FOUND"'; then
+              echo "  ❌ POST FAIL: $func returned NOT_FOUND in body"
               SMOKE_FAILED=1
             else
-              echo "✅ OK: $func returned $RESPONSE (function exists)"
+              echo "  ✅ POST OK: $func returned HTTP $POST_STATUS (function exists)"
             fi
           done
           
+          echo ""
+          echo "========================================"
+          
           if [ "$SMOKE_FAILED" = "1" ]; then
-            echo "::error::Smoke checks failed! One or more TIER-1 functions are not reachable."
+            echo "::error::Smoke checks failed! One or more TIER-1 functions are not reachable or missing CORS."
             exit 1
           fi
           
-          echo "All smoke checks passed!"
+          echo "✅ All smoke checks passed!"
