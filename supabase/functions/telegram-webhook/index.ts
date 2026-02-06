@@ -2,7 +2,8 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info, x-cron-secret, x-internal-key, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
 interface TelegramUpdate {
@@ -217,9 +218,20 @@ Deno.serve(async (req) => {
     const botId = url.searchParams.get('bot_id');
     
     if (!botId) {
+      // Healthcheck / monitoring pings may call webhook without bot_id.
+      // This must not be treated as an error, otherwise it can break the admin UI checks.
+      const body = await req.json().catch(() => null) as any;
+      if (body && typeof body === 'object' && body.ping === true) {
+        return new Response(JSON.stringify({ ok: true, pong: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       console.error('No bot_id provided');
       return new Response(JSON.stringify({ ok: false, error: 'No bot_id' }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
