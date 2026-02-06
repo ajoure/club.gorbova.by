@@ -1,265 +1,272 @@
-name: Full Audit - Supabase Edge Functions
 
-on:
-  workflow_dispatch:
-    inputs:
-      fail_on_404:
-        description: "Fail workflow if any function is NOT_DEPLOYED (404/NOT_FOUND)"
-        required: true
-        default: "true"
-        type: choice
-        options:
-          - "true"
-          - "false"
-      fail_on_boot:
-        description: "Fail workflow if any function appears to have BOOT_ERROR (runtime/module error)"
-        required: true
-        default: "false"
-        type: choice
-        options:
-          - "true"
-          - "false"
-      concurrency_limit:
-        description: "Max concurrent checks (1..20). Lower = safer, higher = faster."
-        required: true
-        default: "8"
-        type: choice
-        options:
-          - "1"
-          - "2"
-          - "4"
-          - "6"
-          - "8"
-          - "10"
-          - "12"
-          - "16"
-          - "20"
+# План: Edge Function `log-deployment` для записи деплоев в БД
 
-  # OPTIONAL: enable when ready
-  # schedule:
-  #   - cron: "*/30 * * * *"
+## Цель
 
-concurrency:
-  group: functions-full-audit
-  cancel-in-progress: true
+Создать Edge Function которая принимает данные о деплое от GitHub Actions CI и записывает их в таблицу `deploy_logs`. Это позволит логировать деплои **без необходимости хранить `SUPABASE_SERVICE_ROLE_KEY` в GitHub Secrets**.
 
-jobs:
-  audit:
-    runs-on: ubuntu-latest
-    env:
-      # !!! Set these in GitHub Secrets (recommended)
-      # SUPABASE_URL: https://<project_ref>.supabase.co
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      AUDIT_ORIGIN: https://gorbova.lovable.app
+---
 
-    steps:
-      - uses: actions/checkout@v4
+## Архитектура решения
 
-      - name: Guard - required env
-        run: |
-          set -euo pipefail
-          if [ -z "${SUPABASE_URL:-}" ]; then
-            echo "::error::Missing SUPABASE_URL. Set GitHub Secret SUPABASE_URL=https://<project_ref>.supabase.co"
-            exit 1
-          fi
-          echo "SUPABASE_URL=$SUPABASE_URL"
-          echo "GITHUB_SHA=${GITHUB_SHA}"
-          echo "GITHUB_RUN_ID=${GITHUB_RUN_ID}"
-          echo "UTC_NOW=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+```text
+GitHub Actions CI                        Edge Function                   Database
+      |                                       |                              |
+      | POST /functions/v1/log-deployment     |                              |
+      | + X-Cron-Secret: $CRON_SECRET         |                              |
+      |-------------------------------------->|                              |
+      |                                       |  1. Validate X-Cron-Secret   |
+      |                                       |  2. Parse body               |
+      |                                       |  3. INSERT into deploy_logs  |
+      |                                       |----------------------------->|
+      |                                       |                              |
+      |<--------------------------------------| { success: true, id: "..." } |
+```
 
-      - name: Build functions list (repo)
-        run: |
-          set -euo pipefail
-          mkdir -p audit_out
-          find supabase/functions -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort > audit_out/functions.list
-          echo "TOTAL_FUNCTIONS=$(wc -l < audit_out/functions.list)" | tee audit_out/summary.txt
-          echo "Total functions in repo: $(wc -l < audit_out/functions.list)"
-          head -n 50 audit_out/functions.list > audit_out/functions.list.head50 || true
+Секрет `CRON_SECRET` уже существует в проекте и используется для авторизации системных вызовов.
 
-      - name: Run full audit (OPTIONS + POST)
-        env:
-          FAIL_ON_404: ${{ inputs.fail_on_404 }}
-          FAIL_ON_BOOT: ${{ inputs.fail_on_boot }}
-          CONCURRENCY_LIMIT: ${{ inputs.concurrency_limit }}
-        run: |
-          set -euo pipefail
+---
 
-          LIST="audit_out/functions.list"
-          NOW="$(date -u +%Y%m%d-%H%M%S)"
-          LOG="audit_out/functions-audit-$NOW.log"
-          JSON="audit_out/functions-audit-$NOW.json"
+## Изменения
 
-          echo "=== FULL AUDIT STARTED ===" | tee "$LOG"
-          echo "UTC: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" | tee -a "$LOG"
-          echo "SUPABASE_URL: $SUPABASE_URL" | tee -a "$LOG"
-          echo "ORIGIN: $AUDIT_ORIGIN" | tee -a "$LOG"
-          echo "fail_on_404=$FAIL_ON_404 fail_on_boot=$FAIL_ON_BOOT concurrency_limit=$CONCURRENCY_LIMIT" | tee -a "$LOG"
-          echo "Total in repo: $(wc -l < "$LIST")" | tee -a "$LOG"
-          echo "" | tee -a "$LOG"
+### 1. Новый файл: `supabase/functions/log-deployment/index.ts`
 
-          # Worker script (one function)
-          cat > audit_out/_audit_one.sh <<'SH'
-          #!/usr/bin/env bash
-          set -euo pipefail
+```typescript
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
 
-          func="$1"
+interface DeployLogPayload {
+  run_id: string;
+  commit_sha: string;
+  run_number?: number;
+  deployed_functions: string[];
+  failed_functions?: string[];
+  status: 'in_progress' | 'completed' | 'failed';
+  started_at?: string;
+  finished_at?: string;
+}
 
-          # --- OPTIONS preflight ---
-          OPT_RAW="$(curl -s -i -m 10 -X OPTIONS \
-            -H "Origin: ${AUDIT_ORIGIN}" \
-            -H "Access-Control-Request-Method: POST" \
-            -H "Access-Control-Request-Headers: content-type,authorization,x-supabase-client-platform" \
-            "${SUPABASE_URL}/functions/v1/${func}" 2>&1 || true)"
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
 
-          OPT_HTTP="$(echo "$OPT_RAW" | head -n 1 | awk '{print $2}' | tr -d '\r')"
-          OPT_ALLOW_HEADERS="$(echo "$OPT_RAW" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^access-control-allow-headers:/{sub(/^access-control-allow-headers:[ ]*/,""); print; exit}')"
-          OPT_ALLOW_METHODS="$(echo "$OPT_RAW" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^access-control-allow-methods:/{sub(/^access-control-allow-methods:[ ]*/,""); print; exit}')"
+  try {
+    // AUTH: Validate X-Cron-Secret header
+    const cronSecret = Deno.env.get('CRON_SECRET');
+    const providedSecret = req.headers.get('X-Cron-Secret') || req.headers.get('x-cron-secret');
+    
+    if (!cronSecret || providedSecret !== cronSecret) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized: invalid or missing X-Cron-Secret' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
-          # --- POST ping existence ---
-          POST_RAW="$(curl -s -w "\n%{http_code}" -m 15 \
-            -X POST -H "Content-Type: application/json" \
-            -d '{"ping":true}' \
-            "${SUPABASE_URL}/functions/v1/${func}" 2>&1 || true)"
+    // Parse payload
+    const payload: DeployLogPayload = await req.json();
+    
+    // Validate required fields
+    if (!payload.run_id || !payload.commit_sha || !payload.status) {
+      return new Response(
+        JSON.stringify({ error: 'Missing required fields: run_id, commit_sha, status' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
-          POST_HTTP="$(echo "$POST_RAW" | tail -1 | tr -d '\r')"
-          POST_BODY="$(echo "$POST_RAW" | sed '$d' | head -c 1200 | tr '\n' ' ')"
+    // Create Supabase admin client (uses SUPABASE_SERVICE_ROLE_KEY internally)
+    const { createClient } = await import('npm:@supabase/supabase-js@2');
+    const supabaseAdmin = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    );
 
-          # --- classify ---
-          status="OK"
+    // Calculate duration if both timestamps provided
+    let duration_ms: number | null = null;
+    if (payload.started_at && payload.finished_at) {
+      const start = new Date(payload.started_at).getTime();
+      const end = new Date(payload.finished_at).getTime();
+      if (!isNaN(start) && !isNaN(end)) {
+        duration_ms = end - start;
+      }
+    }
 
-          # connection failure
-          if [ "${POST_HTTP}" = "000" ] || echo "$POST_BODY" | grep -qiE "connection.*failed|timed out|Could not resolve|TLS"; then
-            status="CONNECTION_FAILED"
-          # not deployed
-          elif [ "${POST_HTTP}" = "404" ] || echo "$POST_BODY" | grep -q '"code":"NOT_FOUND"'; then
-            status="NOT_DEPLOYED"
-          else
-            # possible boot error (heuristic)
-            if echo "$POST_BODY" | grep -qiE "BOOT_ERROR|Uncaught|Module not found|Cannot find module|SyntaxError|TypeError|ReferenceError|Internal Server Error"; then
-              # Only mark BOOT_ERROR if server responded 500-ish or body looks like runtime crash
-              if [ "${POST_HTTP}" = "500" ] || echo "$POST_BODY" | grep -qiE "BOOT_ERROR|Module not found|SyntaxError"; then
-                status="BOOT_ERROR"
-              fi
-            fi
+    // Insert deploy log
+    const { data, error } = await supabaseAdmin
+      .from('deploy_logs')
+      .insert({
+        run_id: payload.run_id,
+        commit_sha: payload.commit_sha,
+        run_number: payload.run_number || null,
+        deployed_functions: payload.deployed_functions || [],
+        failed_functions: payload.failed_functions || [],
+        status: payload.status,
+        started_at: payload.started_at || new Date().toISOString(),
+        finished_at: payload.finished_at || null,
+        duration_ms,
+      })
+      .select('id')
+      .single();
 
-            # CORS check (warning only if function exists)
-            if [ "${OPT_HTTP}" = "404" ] || [ -z "${OPT_HTTP}" ]; then
-              # OPTIONS path not responding or function missing on OPTIONS
-              if [ "$status" = "OK" ]; then
-                status="CORS_404"
-              fi
-            else
-              # If allow-headers is missing x-supabase-client-* => warning
-              if [ "$status" = "OK" ]; then
-                if [ -z "$OPT_ALLOW_HEADERS" ]; then
-                  status="CORS_WARNING"
-                elif ! echo "$OPT_ALLOW_HEADERS" | grep -qi "x-supabase-client-platform"; then
-                  status="CORS_WARNING"
-                fi
-              fi
-            fi
-          fi
+    if (error) {
+      console.error('Failed to insert deploy log:', error);
+      return new Response(
+        JSON.stringify({ error: `DB error: ${error.message}` }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
-          # Print compact line for log consumption
-          echo "${func}|${OPT_HTTP:-}|${POST_HTTP:-}|${status}|${OPT_ALLOW_METHODS:-}|${OPT_ALLOW_HEADERS:-}|${POST_BODY}"
-          SH
-          chmod +x audit_out/_audit_one.sh
+    return new Response(
+      JSON.stringify({ success: true, id: data.id }),
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
 
-          # Prepare JSON header
-          echo "[" > "$JSON"
-          first=1
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('log-deployment error:', message);
+    return new Response(
+      JSON.stringify({ error: message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+});
+```
 
-          # Run with controlled concurrency
-          export SUPABASE_URL AUDIT_ORIGIN
+### 2. Обновить `supabase/config.toml`
 
-          # shellcheck disable=SC2016
-          run_one() {
-            local f="$1"
-            audit_out/_audit_one.sh "$f"
-          }
+Добавить конфигурацию для новой функции:
 
-          # Read list and parallelize
-          C_LIMIT="${CONCURRENCY_LIMIT:-8}"
-          if ! [[ "$C_LIMIT" =~ ^[0-9]+$ ]]; then C_LIMIT=8; fi
-          if [ "$C_LIMIT" -lt 1 ]; then C_LIMIT=1; fi
-          if [ "$C_LIMIT" -gt 20 ]; then C_LIMIT=20; fi
+```toml
+[functions.log-deployment]
+verify_jwt = false
+```
 
-          echo "Concurrency limit: $C_LIMIT" | tee -a "$LOG"
+### 3. Добавить в `supabase/functions.registry.txt`
 
-          # Use xargs -P for parallel audit
-          export -f run_one || true
+```text
+log-deployment
+```
 
-          # xargs will call subshell, so call script directly
-          mapfile -t lines < <(cat "$LIST" | xargs -I{} -P "$C_LIMIT" bash audit_out/_audit_one.sh "{}")
+### 4. Обновить `.github/workflows/deploy-functions.yml`
 
-          # Summaries
-          not_deployed=0
-          boot_error=0
-          cors_warn=0
-          cors_404=0
-          conn_failed=0
-          ok=0
+Заменить секцию "Log Deployment to Database" (строки 465-511):
 
-          for line in "${lines[@]}"; do
-            IFS='|' read -r name opt_http post_http st allow_methods allow_headers snippet <<<"$line"
+**Было:** прямой POST в REST API с `SUPABASE_SERVICE_ROLE_KEY`
 
-            # log line
-            printf "%-40s OPT:%-4s POST:%-4s %-16s\n" "$name" "${opt_http:-}" "${post_http:-}" "$st" | tee -a "$LOG"
+**Станет:** вызов Edge Function с `CRON_SECRET`:
 
-            # counters
-            case "$st" in
-              OK) ok=$((ok+1));;
-              NOT_DEPLOYED) not_deployed=$((not_deployed+1));;
-              BOOT_ERROR) boot_error=$((boot_error+1));;
-              CORS_WARNING) cors_warn=$((cors_warn+1));;
-              CORS_404) cors_404=$((cors_404+1));;
-              CONNECTION_FAILED) conn_failed=$((conn_failed+1));;
-              *) ;;
-            esac
+```yaml
+- name: Log Deployment to Database
+  if: always()
+  env:
+    SUPABASE_URL: https://hdjgkjceownmmnrqqtuz.supabase.co
+    CRON_SECRET: ${{ secrets.CRON_SECRET }}
+  run: |
+    # ============================================
+    # LOG DEPLOY VIA EDGE FUNCTION: Uses CRON_SECRET for auth
+    # ============================================
+    
+    if [ -z "$CRON_SECRET" ]; then
+      echo "⚠️ CRON_SECRET not configured, skipping deploy log"
+      exit 0
+    fi
+    
+    REGISTRY_FILE="supabase/functions.registry.txt"
+    mapfile -t FUNCS < <(grep -vE '^\s*(#|$)' "$REGISTRY_FILE" | tr -d '\r' | xargs -n1)
+    
+    # Build JSON arrays using jq
+    DEPLOYED_JSON=$(printf '%s\n' "${FUNCS[@]}" | jq -R . | jq -s .)
+    FAILED_JSON=$(echo "$FAILED_LIST" | xargs -n1 | jq -R . | jq -s . 2>/dev/null || echo "[]")
+    
+    # Determine status
+    if [ "${{ job.status }}" = "success" ]; then
+      STATUS="completed"
+    else
+      STATUS="failed"
+    fi
+    
+    STARTED_AT="${{ github.event.head_commit.timestamp }}"
+    FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    
+    # Call Edge Function instead of REST API
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+      "$SUPABASE_URL/functions/v1/log-deployment" \
+      -H "Content-Type: application/json" \
+      -H "X-Cron-Secret: $CRON_SECRET" \
+      -d "{
+        \"run_id\": \"${{ github.run_id }}\",
+        \"commit_sha\": \"${{ github.sha }}\",
+        \"run_number\": ${{ github.run_number }},
+        \"deployed_functions\": $DEPLOYED_JSON,
+        \"failed_functions\": $FAILED_JSON,
+        \"status\": \"$STATUS\",
+        \"started_at\": \"$STARTED_AT\",
+        \"finished_at\": \"$FINISHED_AT\"
+      }")
+    
+    HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    
+    if [ "$HTTP_STATUS" = "200" ]; then
+      echo "✅ Deploy log recorded via Edge Function"
+      echo "$BODY"
+    else
+      echo "⚠️ Failed to log deploy (HTTP $HTTP_STATUS): $BODY"
+      # Don't fail the pipeline if logging fails
+    fi
+```
 
-            # JSON entry
-            esc_snippet="$(echo "${snippet:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-            esc_hdrs="$(echo "${allow_headers:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-            esc_meth="$(echo "${allow_methods:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+### 5. Добавить `CRON_SECRET` в GitHub Secrets
 
-            entry="{\"name\":\"$name\",\"options_http\":\"${opt_http:-}\",\"post_http\":\"${post_http:-}\",\"status\":\"$st\",\"allow_methods\":\"$esc_meth\",\"allow_headers\":\"$esc_hdrs\",\"post_body_snippet\":\"$esc_snippet\"}"
+Секрет `CRON_SECRET` уже существует в Lovable Cloud. Нужно добавить его в GitHub Actions:
 
-            if [ $first -eq 1 ]; then first=0; else echo "," >> "$JSON"; fi
-            echo "$entry" >> "$JSON"
-          done
+1. GitHub → Repository → Settings → Secrets and variables → Actions
+2. New repository secret: `CRON_SECRET`
+3. Значение: скопировать из Lovable Cloud View → Secrets
 
-          echo "]" >> "$JSON"
+---
 
-          echo "" | tee -a "$LOG"
-          echo "=== SUMMARY ===" | tee -a "$LOG"
-          echo "OK=$ok" | tee -a "$LOG"
-          echo "NOT_DEPLOYED=$not_deployed" | tee -a "$LOG"
-          echo "BOOT_ERROR=$boot_error" | tee -a "$LOG"
-          echo "CORS_WARNING=$cors_warn" | tee -a "$LOG"
-          echo "CORS_404=$cors_404" | tee -a "$LOG"
-          echo "CONNECTION_FAILED=$conn_failed" | tee -a "$LOG"
-          echo "JSON=$JSON" | tee -a "$LOG"
+## Безопасность
 
-          echo "AUDIT_JSON=$JSON" >> $GITHUB_ENV
-          echo "AUDIT_LOG=$LOG" >> $GITHUB_ENV
+| Аспект | Решение |
+|--------|---------|
+| Авторизация | `X-Cron-Secret` header — только CI знает секрет |
+| RLS | Функция использует `service_role` клиент, обходит RLS |
+| Валидация | Проверка обязательных полей перед INSERT |
+| Идемпотентность | `run_id` уникален, повторный вызов создаст дубликат (допустимо) |
 
-          # Fail conditions
-          if [ "${FAIL_ON_404}" = "true" ] && [ "$not_deployed" -gt 0 ]; then
-            echo "::error::Full audit found NOT_DEPLOYED functions: $not_deployed"
-            exit 1
-          fi
+---
 
-          if [ "${FAIL_ON_BOOT}" = "true" ] && [ "$boot_error" -gt 0 ]; then
-            echo "::error::Full audit found BOOT_ERROR functions: $boot_error"
-            exit 1
-          fi
+## Проверка (DoD)
 
-          echo "✅ Full audit completed (no blocking failures)."
+| Критерий | Как проверить |
+|----------|---------------|
+| Function deployed | `curl -X OPTIONS .../log-deployment` → 200 |
+| Auth works | POST без X-Cron-Secret → 401 |
+| Insert works | POST с валидным payload → 200 + запись в `deploy_logs` |
+| CI integration | После push в main → запись в `deploy_logs` |
 
-      - name: Upload audit artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: functions-full-audit
-          path: audit_out/
-          retention-days: 14
+---
+
+## Файлы для изменения
+
+| Файл | Действие |
+|------|----------|
+| `supabase/functions/log-deployment/index.ts` | Создать |
+| `supabase/config.toml` | Добавить секцию |
+| `supabase/functions.registry.txt` | Добавить строку |
+| `.github/workflows/deploy-functions.yml` | Изменить Log step |
+
+---
+
+## Следующий шаг после одобрения
+
+1. Создать Edge Function
+2. Добавить в registry + config.toml
+3. Задеплоить функцию
+4. Обновить CI workflow
+5. Протестировать: вручную вызвать с `CRON_SECRET`
+6. Инструкция: добавить `CRON_SECRET` в GitHub Secrets
