@@ -667,14 +667,26 @@ Deno.serve(async (req) => {
         meta: { dm_sent: dmSent, dm_error: dmError, valid_until: activeUntil, join_request_mode: joinRequestMode },
       });
 
-      // Legacy log
+      // Legacy log - with extended meta for UI display
+      const clubName = club.name || club.slug || 'Клуб';
+      const accessEndDate = activeUntil 
+        ? new Date(activeUntil).toLocaleDateString('ru-RU') 
+        : null;
+      
       await supabase.from('telegram_logs').insert({
         user_id,
         club_id: club.id,
         action: is_manual ? 'MANUAL_GRANT' : 'AUTO_GRANT',
         target: 'both',
         status: (chatInviteLink || channelInviteLink) ? 'ok' : 'partial',
-        meta: { chat_invite_link: chatInviteLink, channel_invite_link: channelInviteLink, valid_until: activeUntil },
+        meta: { 
+          chat_invite_link: chatInviteLink, 
+          channel_invite_link: channelInviteLink, 
+          valid_until: activeUntil,
+          club_name: clubName,
+          access_end_date: accessEndDate,
+        },
+        message_text: `🔑 Доступ в «${clubName}»${accessEndDate ? ` до ${accessEndDate}` : ''}`,
       });
 
       results.push({

@@ -52,6 +52,8 @@ telegram-mass-broadcast
 telegram-notify-admins
 telegram-send-notification
 telegram-send-test
+telegram-media-worker
+telegram-media-worker-cron
 users-admin-actions
 email-fetch-inbox
 email-test-connection
