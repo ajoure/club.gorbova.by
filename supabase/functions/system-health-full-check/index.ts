@@ -69,6 +69,7 @@ interface FullCheckReport {
 }
 
 // Check single function availability based on registry settings
+// Optimized: OPTIONS timeout reduced to 5s, POST uses registry timeout
 async function checkFunctionAvailability(
   entry: RegistryEntry,
   projectRef: string
@@ -77,7 +78,9 @@ async function checkFunctionAvailability(
   
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), entry.timeout_ms);
+    // Reduce timeout for OPTIONS (preflight) to 5s for faster checks
+    const timeout = entry.healthcheck_method === "OPTIONS" ? 5000 : Math.min(entry.timeout_ms, 6000);
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
     
     const method = entry.healthcheck_method === "POST" ? "POST" : "OPTIONS";
     
@@ -485,8 +488,10 @@ Deno.serve(async (req) => {
     console.log(`[FULL-CHECK] Checking ${registry.length} functions from registry...`);
     
     // STEP 2: Check availability (parallel, batched)
-    const batchSize = 20;
+    // Increased batch size from 20 to 30 for faster completion
+    const batchSize = 30;
     const functionResults: FunctionCheckResult[] = [];
+    let previewDetected = false;
     
     for (let i = 0; i < registry.length; i += batchSize) {
       const batch = registry.slice(i, i + batchSize);
@@ -494,6 +499,37 @@ Deno.serve(async (req) => {
         batch.map((entry: RegistryEntry) => checkFunctionAvailability(entry, projectRef))
       );
       functionResults.push(...batchResults);
+      
+      // Early exit detection: if >50% of first batch is NOT_DEPLOYED, likely preview env
+      if (i === 0) {
+        const notDeployedCount = batchResults.filter(r => r.status === "NOT_DEPLOYED").length;
+        if (notDeployedCount > batchSize * 0.5) {
+          console.log(`[FULL-CHECK] Preview environment detected: ${notDeployedCount}/${batchSize} NOT_DEPLOYED in first batch`);
+          previewDetected = true;
+        }
+      }
+      
+      // If preview detected and >60 functions already NOT_DEPLOYED, skip remaining
+      const currentNotDeployed = functionResults.filter(r => r.status === "NOT_DEPLOYED").length;
+      if (previewDetected && currentNotDeployed > 60 && i + batchSize < registry.length) {
+        console.log(`[FULL-CHECK] Early exit: ${currentNotDeployed} NOT_DEPLOYED, marking remaining as NOT_DEPLOYED without requests`);
+        
+        // Mark remaining functions as NOT_DEPLOYED without making requests
+        for (let j = i + batchSize; j < registry.length; j++) {
+          const entry = registry[j] as RegistryEntry;
+          functionResults.push({
+            name: entry.name,
+            exists: false,
+            http_status: null,
+            status: "NOT_DEPLOYED",
+            tier: entry.tier,
+            category: entry.category,
+            auto_fix_policy: entry.auto_fix_policy,
+            error: "Skipped (preview environment detected)",
+          });
+        }
+        break;
+      }
     }
     
     const deployedCount = functionResults.filter(r => r.exists).length;

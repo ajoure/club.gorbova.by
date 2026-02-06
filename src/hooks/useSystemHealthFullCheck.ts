@@ -133,12 +133,25 @@ export function useTriggerFullCheck() {
 
   return useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("system-health-full-check", {
-        body: { source: "manual" },
-      });
+      try {
+        const { data, error } = await supabase.functions.invoke("system-health-full-check", {
+          body: { source: "manual" },
+        });
 
-      if (error) throw error;
-      return data as FullCheckResponse;
+        if (error) throw error;
+        return data as FullCheckResponse;
+      } catch (e) {
+        // Distinguish network/timeout errors from business errors
+        if (e instanceof Error && (
+          e.message.includes("Load failed") || 
+          e.message.includes("Failed to fetch") ||
+          e.message.includes("network") ||
+          e.message.includes("timeout")
+        )) {
+          throw new Error("Превышено время ожидания. Проверка может выполняться в фоне — обновите страницу через 30 секунд.");
+        }
+        throw e;
+      }
     },
     onSuccess: (data) => {
       const statusMessages = {
@@ -163,7 +176,7 @@ export function useTriggerFullCheck() {
     },
     onError: (error) => {
       toast.error("Ошибка запуска проверки", {
-        description: String(error),
+        description: String(error.message || error),
       });
     },
   });
@@ -193,19 +206,63 @@ export interface RemediateResponse {
   timestamp: string;
 }
 
+export interface RemediateResponseWithError extends RemediateResponse {
+  error?: "forbidden" | "network";
+}
+
 export function useRemediate() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (mode: "dry-run" | "execute") => {
-      const { data, error } = await supabase.functions.invoke("system-health-remediate", {
-        body: { mode },
-      });
+    mutationFn: async (mode: "dry-run" | "execute"): Promise<RemediateResponseWithError> => {
+      try {
+        const { data, error } = await supabase.functions.invoke("system-health-remediate", {
+          body: { mode },
+        });
 
-      if (error) throw error;
-      return data as RemediateResponse;
+        if (error) {
+          // 403/Forbidden is a business error, not crash
+          if (error.message?.includes("403") || error.message?.includes("Forbidden") || error.message?.includes("forbidden")) {
+            return {
+              mode,
+              plan: [],
+              executed: false,
+              results: [],
+              timestamp: new Date().toISOString(),
+              error: "forbidden",
+            };
+          }
+          throw error;
+        }
+        return data as RemediateResponseWithError;
+      } catch (e) {
+        // Network/timeout errors
+        if (e instanceof Error && (
+          e.message.includes("Load failed") || 
+          e.message.includes("Failed to fetch")
+        )) {
+          return {
+            mode,
+            plan: [],
+            executed: false,
+            results: [],
+            timestamp: new Date().toISOString(),
+            error: "network",
+          };
+        }
+        throw e;
+      }
     },
     onSuccess: (data) => {
+      if (data.error === "forbidden") {
+        toast.error("Доступ запрещён", { description: "Требуется роль super_admin" });
+        return;
+      }
+      if (data.error === "network") {
+        toast.error("Ошибка сети", { description: "Не удалось связаться с сервером" });
+        return;
+      }
+
       if (data.mode === "dry-run") {
         toast.info(`План автолечения: ${data.plan.length} действий`, {
           description: `Безопасных: ${data.plan.filter(p => p.safe).length}`,
@@ -226,7 +283,7 @@ export function useRemediate() {
     },
     onError: (error) => {
       toast.error("Ошибка автолечения", {
-        description: String(error),
+        description: String(error.message || error),
       });
     },
   });

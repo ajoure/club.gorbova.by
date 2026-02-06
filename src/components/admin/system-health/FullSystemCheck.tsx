@@ -96,8 +96,37 @@ export function FullSystemCheck() {
   const hasPlanItems = remediatePlan && remediatePlan.plan.length > 0;
   const safePlanItems = remediatePlan?.plan.filter(p => p.safe) || [];
 
+  // Detect preview environment
+  const isPreviewEnv = typeof window !== "undefined" && (
+    window.location.hostname.includes("lovableproject.com") ||
+    window.location.hostname.includes("id-preview--") ||
+    window.location.hostname.includes("localhost")
+  );
+
   return (
     <div className="space-y-4">
+      {/* Preview Environment Warning */}
+      {isPreviewEnv && (
+        <div className="bg-warning/10 border border-warning/50 rounded-lg p-3 flex items-start gap-2">
+          <AlertTriangle className="h-5 w-5 text-warning mt-0.5 flex-shrink-0" />
+          <div className="text-sm">
+            <strong className="text-warning-foreground">Preview-среда:</strong>{" "}
+            <span className="text-muted-foreground">
+              Большинство Edge Functions не задеплоено в preview. Результаты "NOT_DEPLOYED" здесь ожидаемы.
+              Для полной картины используйте{" "}
+              <a 
+                href="https://gorbova.lovable.app/admin/system-health" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="underline text-primary hover:text-primary/80"
+              >
+                production
+              </a>.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Main Action Card */}
       <Card className="border-2 border-primary/20">
         <CardHeader className="pb-3">
