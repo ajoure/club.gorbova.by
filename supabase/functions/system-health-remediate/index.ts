@@ -95,12 +95,12 @@ Deno.serve(async (req) => {
       );
     }
     
-    // Check superadmin role
+    // Check superadmin role (note: role code is "super_admin" with underscore)
     const { data: roleCheck } = await supabase
       .from("user_roles_v2")
       .select("role_id, roles!inner(code)")
       .eq("user_id", user.id)
-      .eq("roles.code", "superadmin")
+      .eq("roles.code", "super_admin")
       .maybeSingle();
     
     if (!roleCheck) {
