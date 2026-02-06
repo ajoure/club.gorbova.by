@@ -1,169 +1,150 @@
 
-# Критический фикс: "Ошибка запуска проверки" + стабилизация system-health
-
-## Диагностика
-
-### Корневая проблема
-Network log показывает:
-```
-POST https://...supabase.co/functions/v1/system-health-full-check
-Error: Load failed
-```
-
-Это происходит при нажатии "Запустить полный чек". Причины:
-1. Функция `system-health-full-check` проверяет 172 функции с timeout 8000ms каждая
-2. Общее время выполнения превышает лимит Supabase Edge Functions (150 секунд)
-3. Браузер разрывает соединение (Load failed)
-
-### Факты из логов
-- audit_logs: последний успешный `system.health.full_check` был 6 часов назад
-- Последняя проверка заняла 27.9 секунд (172 функции × 8000ms timeout в батчах по 20)
-- 122 функции возвращают 404 NOT_DEPLOYED — это ожидаемо в preview/test среде
-
-### Почему "122 NOT_DEPLOYED" — это НЕ баг
-Вы работаете в **preview-среде** (796a93b9-74cc-403c-8ec5-cafdb2a5beaa.lovableproject.com), а не в production (gorbova.lovable.app). 
-
-CI деплоит функции только в production. В preview-среде большинство функций физически отсутствует — это нормальное поведение.
+Цель: провести расследование, почему с 5 февраля (после публикации) часть существующих backend‑функций стала «NOT_DEPLOYED/404», почему «чинится и снова ломается», и сделать так, чтобы это больше не повторялось (без авто‑redeploy из админки, как вы согласовали).
 
 ---
 
-## План исправлений
+## 0) Что уже удалось установить по фактам (сейчас)
 
-### 1. Увеличить надёжность вызова (frontend)
-**Файл**: `src/hooks/useSystemHealthFullCheck.ts`
+### 0.1 Симптомы в UI = “Load failed”, но первопричина часто 404/NOT_FOUND
+В текущих network‑логах браузера видно:
+- `GET /functions/v1/public-product?...` → **Error: Load failed**
 
-Изменения:
-- Добавить обработку timeout/network ошибок
-- Показывать понятное сообщение вместо красного overlay
+Это типично для ситуации, когда endpoint отвечает 404/NOT_FOUND **без корректных CORS‑заголовков** → браузер не показывает 404, а показывает “Load failed”.
 
-```typescript
-// В useTriggerFullCheck:
-mutationFn: async () => {
-  try {
-    const { data, error } = await supabase.functions.invoke("system-health-full-check", {
-      body: { source: "manual" },
-    });
-    if (error) throw error;
-    return data as FullCheckResponse;
-  } catch (e) {
-    // Различаем network error от business error
-    if (e instanceof Error && (e.message.includes("Load failed") || e.message.includes("Failed to fetch"))) {
-      throw new Error("Превышено время ожидания. Проверка может выполняться в фоне — обновите страницу через 30 секунд.");
-    }
-    throw e;
-  }
-}
-```
+Параллельно в `function_edge_logs` (логи вызовов функций) видно явные:
+- `OPTIONS | 404 | .../functions/v1/public-product?...`
+- `POST | 404 | .../functions/v1/payment-method-verify-recurring`
+- `POST | 404 | .../functions/v1/telegram-check-expired`
+- `POST | 404 | .../functions/v1/telegram-media-worker-cron`
+и т.д.
 
-### 2. Добавить плашку "Preview-среда" в UI
-**Файл**: `src/components/admin/system-health/FullSystemCheck.tsx`
+То есть часть функций реально **не развернута** в том backend‑окружении, куда обращается приложение.
 
-Изменения:
-- Определить preview по hostname
-- Показать warning banner с объяснением
+### 0.2 В репозитории код функций есть
+В `supabase/functions/` папки присутствуют (включая `public-product/`, `payment-method-verify-recurring/`, `integration-healthcheck/`, и т.д.). Значит проблема не в “функции удалили из кода”, а на уровне **деплоя/среды**.
 
-```typescript
-const isPreviewEnv = window.location.hostname.includes('lovableproject.com') 
-                   || window.location.hostname.includes('id-preview--');
-
-// В JSX:
-{isPreviewEnv && (
-  <div className="bg-yellow-500/10 border border-yellow-500/50 rounded-lg p-3 mb-4">
-    <AlertTriangle className="h-4 w-4 inline mr-2 text-yellow-600" />
-    <strong>Preview-среда:</strong> Большинство функций не задеплоено. Для полной картины используйте 
-    <a href="https://gorbova.lovable.app/admin/system-health" target="_blank" className="underline ml-1">
-      production
-    </a>.
-  </div>
-)}
-```
-
-### 3. Оптимизировать system-health-full-check (сократить время)
-**Файл**: `supabase/functions/system-health-full-check/index.ts`
-
-Изменения:
-- Уменьшить timeout с 8000ms до 5000ms для OPTIONS проверок
-- Увеличить batch size с 20 до 30
-- Добавить ранний выход если слишком много NOT_DEPLOYED (preview detection)
-
-```typescript
-// В функции checkFunctionAvailability:
-const timeout = entry.healthcheck_method === "OPTIONS" ? 5000 : entry.timeout_ms;
-
-// После проверки первого батча:
-if (notDeployedCount > 50) {
-  console.log("[FULL-CHECK] Preview environment detected (>50 NOT_DEPLOYED). Early exit.");
-  // Помечаем остальные как NOT_DEPLOYED без запросов
-}
-```
-
-### 4. Исправить useRemediate чтобы 403 не вызывал crash overlay
-**Файл**: `src/hooks/useSystemHealthFullCheck.ts`
-
-```typescript
-// В useRemediate:
-mutationFn: async (mode: "dry-run" | "execute") => {
-  const { data, error } = await supabase.functions.invoke("system-health-remediate", {
-    body: { mode },
-  });
-  
-  if (error) {
-    // 403 — не crash, а бизнес-ошибка
-    if (error.message?.includes("403") || error.message?.includes("Forbidden")) {
-      return {
-        mode,
-        plan: [],
-        executed: false,
-        results: [],
-        timestamp: new Date().toISOString(),
-        error: "forbidden",
-      } as RemediateResponse & { error?: string };
-    }
-    throw error;
-  }
-  return data as RemediateResponse;
-},
-onSuccess: (data) => {
-  if ((data as any).error === "forbidden") {
-    toast.error("Доступ запрещён", { description: "Требуется роль super_admin" });
-    return;
-  }
-  // ... остальная логика
-}
-```
-
-### 5. Console warning fix (косметика)
-**Файл**: `src/components/admin/system-health/FullSystemCheck.tsx`
-
-React warning "Function components cannot be given refs" — добавить forwardRef если нужно, или убрать ref.
+### 0.3 Нехватка исторических логов именно на 5 февраля
+Доступная сейчас ретенция `function_edge_logs` очень короткая (видим события в основном за последние часы), поэтому “точное время первого 404 5 февраля” из этих логов восстановить нельзя. Зато можно построить достоверную причинно‑следственную схему и поставить «черный ящик», чтобы следующий раз был 100% трассируем.
 
 ---
 
-## Файлы для изменения
+## 1) Главная гипотеза причины (почему “после publish” и “чинится и снова ломается”)
 
-| Файл | Что делаем |
-|------|-----------|
-| `src/hooks/useSystemHealthFullCheck.ts` | Обработка timeout, 403 как бизнес-ошибка |
-| `src/components/admin/system-health/FullSystemCheck.tsx` | Preview banner, forwardRef fix |
-| `supabase/functions/system-health-full-check/index.ts` | Timeout optimization, preview detection |
+У вас есть GitHub Actions деплой функций: `.github/workflows/deploy-functions.yml`.
+
+Критический момент:
+- Workflow запускается **только если изменялись файлы в `supabase/functions/**`** (см. `paths:`).
+- При этом вы сказали: проблемы начались после **публикации** (“Публиковали изменения”), и ломается **и в preview, и на опубликованном сайте**.
+
+На практике это часто выглядит так:
+1) Публикация/релиз пересобирает/переключает окружение (или меняет версию backend‑слоя), после чего функции оказываются в состоянии “не задеплоены / не доступны”.
+2) Но GitHub workflow **не запускается** (потому что publish мог не менять `supabase/functions/**`), и функции не “переустанавливаются”.
+3) Вы “чините” точечно (деплоите 1‑2 функции), но следующая публикация/сборка снова возвращает систему в состояние без полного набора функций → ощущение “нерешаемо, оно снова возникает”.
+
+Второй возможный фактор (усиливает эффект):
+- Разные окружения (preview vs published) могут иметь разные состояния развернутых функций. Без явной диагностики “какое окружение к какому backend подключено” это воспринимается как “отвязалось”.
 
 ---
 
-## Что НЕ делаем
+## 2) План расследования (доказательно, с привязкой ко времени/событию)
 
-- Не добавляем auto-redeploy (по вашему решению)
-- Не меняем RLS/RBAC
-- Не трогаем платежи/доступы
-- Не удаляем существующую логику
+### 2.1 Собрать “карту реальных падений” по критичным областям
+Сфокусируемся на P0 для вас: **платежи, интеграции, админка**.
+Действия (read-only/безопасно):
+- Составить allowlist функций, которые реально критичны (пример: `public-product`, `payment-method-verify-recurring`, `payment-methods-tokenize`, `bepaid-create-token`, `bepaid-list-subscriptions`, `admin-payments-diagnostics`, `integration-healthcheck`, `integration-sync`, `amocrm-sync`, `getcourse-sync`, и т.п.).
+- Для каждой функции сделать проверку доступности (OPTIONS + POST/GET ping) в обоих сценариях:
+  - вызов “как из браузера” (CORS preflight)
+  - вызов “как сервер” (простой POST ping)
+
+Результат: таблица “функция → статус (404 / CORS / OK)”.
+
+### 2.2 Ввести “идентификатор среды” (чтобы доказать, где именно ломается)
+Нужен стабильный способ увидеть в UI:
+- какой backend endpoint/окружение сейчас используется
+- какая “версия/деплой” backend‑функций
+
+Для этого добавим легковесную диагностическую backend‑функцию (например `backend-env-info`) и маленький блок в админке:
+- показывает: `env_kind` (preview/published), `projectRef` (внутренне), `timestamp`, `edge_runtime` сведения (что доступно), и “canary checks” 3–5 ключевых функций.
+- это не рефакторинг, а точечный диагностический слой.
+
+Так вы сможете сами увидеть: “после publish мы начали ходить в окружение X, где функций 0/не те”.
+
+### 2.3 Зафиксировать момент “после каких событий”
+Так как логов вызовов функций на 5 февраля уже недостаточно, мы поставим аудит на будущее:
+- при каждом успешном деплое функций CI будет писать запись в БД (например `deployment_events`) или в `audit_logs` с типом `system.edge_functions.deployed` и метаданными:
+  - время
+  - сколько функций попытались развернуть
+  - сколько smoke‑checks прошло
+  - идентификатор workflow run (если передадим)
+Это даст 100% ответ “после какого деплоя началось”.
 
 ---
 
-## DoD (Definition of Done)
+## 3) План устранения первопричины (чтобы не повторялось)
 
-| Проверка | Как убедиться |
-|----------|---------------|
-| Нет "Load failed" overlay при запуске чека | Нажать "Запустить полный чек" — должен показать результат или понятную ошибку |
-| Preview banner виден | На lovableproject.com домене показывается жёлтая плашка |
-| 403 remediate не вызывает crash | Нажать "Автолечение" без прав — toast "Доступ запрещён", без красного overlay |
-| Чек завершается быстрее | duration_ms < 25000 |
-| audit_logs пишется | `SELECT * FROM audit_logs WHERE action LIKE 'system.health.%' ORDER BY created_at DESC LIMIT 5` |
+### 3.1 Исправить CI так, чтобы publish не мог оставить backend без функций
+Точечные правки в `.github/workflows/deploy-functions.yml`:
+
+1) Убрать ограничение `paths: supabase/functions/**`
+- чтобы деплой функций запускался на **любой push в main** (включая publish‑коммиты), а не только когда правили функции.
+- это ключевой стабилизатор “после publish”.
+
+2) Сделать список деплоя детерминированным и полным
+- вместо `git diff HEAD~1 HEAD` (который на merge/нескольких коммитах может давать сюрпризы) — просто деплоить все директории в `supabase/functions/*/` где есть `index.ts`.
+
+3) Усилить smoke‑checks (не только TIER‑1)
+- добавить второй уровень smoke‑checks: “must_exist” функции (платежи/интеграции/админка) — короткая проверка OPTIONS/POST.
+- Fail-fast сохраняем.
+
+Это не auto‑redeploy из админки, а нормальная инженерная гарантия: “после publish функции всегда оказываются на месте”.
+
+### 3.2 Добавить “canary” в систему (раннее обнаружение)
+- В `nightly-system-health` или отдельном легком cron‑чеке: проверять 5–10 самых важных функций.
+- Если 404/NOT_FOUND — сразу уведомление вам, и в отчете явно: “не развернуты функции” (а не “нет прав”).
+
+---
+
+## 4) План “привести систему в рабочее состояние сейчас” (безопасно, с предохранителями)
+
+Так как сейчас реально видны 404 на важных функциях, потребуется контролируемый redeploy.
+
+Ограничения (по вашим правилам “STOP‑предохранители”):
+- Деплоим батчами по 5–10 функций
+- После каждого батча — проверка доступности (и запись результата)
+- Начинаем строго с платежей/интеграций/админки (то, что у вас критично)
+
+Батчи (пример, финальный список уточним по результатам пункта 2.1):
+- Batch A (Payments): `payment-method-verify-recurring`, `payment-methods-tokenize`, `bepaid-create-token`, `bepaid-list-subscriptions`, `bepaid-get-subscription-details`, `admin-payments-diagnostics`
+- Batch B (Integrations): `integration-healthcheck`, `integration-sync`, `amocrm-sync`, `getcourse-sync`, `getcourse-webhook`
+- Batch C (Admin critical): `users-admin-actions`, `roles-admin`, `subscription-actions`, `subscription-admin-actions`
+- Batch D (Public entrypoints): `public-product` (и всё, что реально дергается лендингом/публичными страницами)
+
+Важно: это не “массовая операция без контроля” — это управляемая процедура с проверкой после каждого шага.
+
+---
+
+## 5) DoD (что будет считаться завершением расследования и фикса)
+
+1) Доказательство причины:
+- В админке отображается “Backend Env Info” и видно отличие окружений/версий до/после publish (или факт, что после publish CI не запускался из‑за `paths` и поэтому функции не поднимались).
+- В БД/аудите есть запись “деплой функций прошел” с временем.
+
+2) Доказательство исправления “здесь и сейчас”:
+- `public-product` перестает давать “Load failed” в preview и на опубликованном сайте.
+- Ключевые платежные и интеграционные функции перестают отвечать 404 (проверка OPTIONS/POST).
+
+3) Доказательство “не повторится”:
+- CI запускает деплой функций на каждый push в main (включая publish‑коммиты).
+- Smoke checks падают, если функция недоступна → нельзя “тихо” уехать в 404.
+
+4) Отчет с пруфами (как вы требуете):
+- Скриншоты UI (админка) после фикса: запуск проверок/статус без ошибок
+- SQL-пруфы: выборки из таблиц деплой‑эвентов/аудит‑логов (SELECT)
+- Diff‑summary: какие файлы изменены (workflow + диагностическая функция + минимальные UI изменения)
+
+---
+
+## Что мне нужно будет сделать в режиме Execute (после этого плана)
+1) Внести правки в GitHub workflow (CI).
+2) Добавить диагностическую backend‑функцию + маленький блок в админке.
+3) Провести контролируемый redeploy ключевых функций батчами и подтвердить пруфами (скрины + SELECT).
