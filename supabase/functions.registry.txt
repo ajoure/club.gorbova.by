@@ -1,0 +1,58 @@
+# ============================================
+# EDGE FUNCTIONS REGISTRY — Source of truth for CI deployment
+# Format: one function name per line, # = comment
+# ============================================
+
+# P0 — Business Critical (12)
+bepaid-webhook
+cancel-trial
+direct-charge
+nightly-payments-invariants
+nightly-system-health
+payment-methods-webhook
+subscription-charge
+system-health-full-check
+telegram-grant-access
+telegram-process-access-queue
+telegram-revoke-access
+telegram-webhook
+
+# P1 — Important (31)
+admin-payments-diagnostics
+auth-actions
+auth-check-email
+bepaid-create-token
+bepaid-get-subscription-details
+bepaid-list-subscriptions
+integration-healthcheck
+integration-sync
+payment-method-verify-recurring
+payment-methods-tokenize
+public-product
+send-email
+email-mass-broadcast
+getcourse-sync
+amocrm-sync
+subscription-actions
+subscription-admin-actions
+subscription-grace-reminders
+subscription-renewal-reminders
+system-health-remediate
+telegram-admin-chat
+telegram-bot-actions
+telegram-check-expired
+telegram-club-members
+telegram-cron-sync
+telegram-daily-summary
+telegram-kick-violators
+telegram-link-manage
+telegram-mass-broadcast
+telegram-notify-admins
+telegram-send-notification
+telegram-send-test
+users-admin-actions
+email-fetch-inbox
+email-test-connection
+bepaid-queue-cron
+bepaid-receipts-cron
+bepaid-subscription-audit-cron

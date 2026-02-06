@@ -51,11 +51,20 @@ interface InvariantResult {
 
 interface FullCheckReport {
   status: "OK" | "DEGRADED" | "CRITICAL";
+  project_ref: string;
+  expected_project_ref: string;
   edge_functions: {
     total: number;
     deployed: number;
     missing: string[];
     results: FunctionCheckResult[];
+  };
+  // NEW: Structured breakdown by tier
+  breakdown: {
+    p0_missing: string[];
+    p1_missing: string[];
+    p2_missing: string[];
+    cors_errors: string[];
   };
   invariants: {
     total: number;
@@ -449,7 +458,9 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
     const projectRef = supabaseUrl.replace("https://", "").replace(".supabase.co", "");
+    const expectedProjectRef = "hdjgkjceownmmnrqqtuz"; // PINNED for safety
     
+    console.log(`[FULL-CHECK] Project ref: ${projectRef} (expected: ${expectedProjectRef})`);
     console.log(`[FULL-CHECK] Starting full system check (source: ${source})`);
     
     // Get previous status for comparison
@@ -546,31 +557,55 @@ Deno.serve(async (req) => {
     
     console.log(`[FULL-CHECK] Invariants: ${passedInvariants}/${invariantResults.length} passed`);
     
-    // STEP 4: Determine final status
-    // P0 function missing = CRITICAL
-    const missingP0 = functionResults.filter(
-      r => r.status === "NOT_DEPLOYED" && r.tier === "P0"
-    );
+    // STEP 4: Build breakdown by tier
+    const missingP0 = functionResults
+      .filter(r => r.status === "NOT_DEPLOYED" && r.tier === "P0")
+      .map(r => r.name);
+    const missingP1 = functionResults
+      .filter(r => r.status === "NOT_DEPLOYED" && r.tier === "P1")
+      .map(r => r.name);
+    const missingP2 = functionResults
+      .filter(r => r.status === "NOT_DEPLOYED" && r.tier === "P2")
+      .map(r => r.name);
+    const corsErrors = functionResults
+      .filter(r => r.status === "CORS_ERROR")
+      .map(r => r.name);
+    
+    console.log(`[FULL-CHECK] Breakdown: P0 missing=${missingP0.length}, P1 missing=${missingP1.length}, P2 missing=${missingP2.length}, CORS errors=${corsErrors.length}`);
+    
+    // STEP 5: Determine final status (ONLY P0 affects CRITICAL)
+    // - CRITICAL: P0 missing OR critical invariants failed
+    // - DEGRADED: P1 missing OR CORS errors in P0/P1
+    // - OK: everything else (P2 missing is INFO only)
     
     let finalStatus: "OK" | "DEGRADED" | "CRITICAL" = "OK";
     
     if (failedCritical.length > 0 || missingP0.length > 0) {
       finalStatus = "CRITICAL";
     } else if (
-      missingFunctions.length > 0 || 
+      missingP1.length > 0 || 
       invariantResults.some(i => !i.passed && i.severity === "WARNING") ||
-      functionResults.some(r => r.status === "CORS_ERROR")
+      corsErrors.length > 0
     ) {
       finalStatus = "DEGRADED";
     }
+    // NOTE: P2 missing does NOT affect status — it's INFO only
     
     const report: FullCheckReport = {
       status: finalStatus,
+      project_ref: projectRef,
+      expected_project_ref: expectedProjectRef,
       edge_functions: {
         total: registry.length,
         deployed: deployedCount,
         missing: missingFunctions,
         results: functionResults,
+      },
+      breakdown: {
+        p0_missing: missingP0,
+        p1_missing: missingP1,
+        p2_missing: missingP2,
+        cors_errors: corsErrors,
       },
       invariants: {
         total: invariantResults.length,
@@ -627,12 +662,19 @@ Deno.serve(async (req) => {
       meta: {
         report_id: savedReport?.id,
         status: finalStatus,
+        project_ref: projectRef,
+        expected_project_ref: expectedProjectRef,
         duration_ms: Date.now() - startTime,
         edge_functions: { 
           total: registry.length, 
           deployed: deployedCount, 
           missing: missingFunctions.length,
-          missing_p0: missingP0.map(f => f.name),
+        },
+        breakdown: {
+          p0_missing: missingP0,
+          p1_missing: missingP1,
+          p2_missing_count: missingP2.length,
+          cors_errors: corsErrors,
         },
         invariants: { total: invariantResults.length, passed: passedInvariants },
         source,

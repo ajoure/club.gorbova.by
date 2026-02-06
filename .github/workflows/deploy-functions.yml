@@ -55,46 +55,133 @@ jobs:
           
           echo "✅ Project reference validated successfully"
 
-      - name: Deploy Edge Functions
+      - name: Lint Guards - Prevent Known Issues
+        run: |
+          echo "========================================"
+          echo "LINT GUARDS — Pre-deployment validation"
+          echo "========================================"
+          
+          ERRORS=0
+          
+          # 1. Block esm.sh imports (causes cold-start issues)
+          echo "Checking for esm.sh imports..."
+          if grep -RIn "https://esm\.sh/" supabase/functions --include="*.ts"; then
+            echo "::error::Found esm.sh imports - use npm: specifier instead"
+            ERRORS=1
+          else
+            echo "✅ No esm.sh imports found"
+          fi
+          
+          # 2. Block serve() usage (must use Deno.serve)
+          echo "Checking for deprecated serve() usage..."
+          if grep -RIn "([^A-Za-z0-9_]|^)serve\(" supabase/functions --include="*.ts" | grep -v "Deno\.serve"; then
+            echo "::error::Found serve() usage - use Deno.serve() instead"
+            ERRORS=1
+          else
+            echo "✅ No deprecated serve() usage found"
+          fi
+          
+          # 3. Warn on functions without OPTIONS handler (browser functions need this)
+          echo "Checking for OPTIONS handlers..."
+          MISSING_OPTIONS=0
+          for d in supabase/functions/*/; do
+            f="${d}index.ts"
+            [ -f "$f" ] || continue
+            if ! grep -q "OPTIONS" "$f"; then
+              func_name=$(basename "$d")
+              echo "::warning::No OPTIONS handling found in $func_name"
+              MISSING_OPTIONS=$((MISSING_OPTIONS + 1))
+            fi
+          done
+          if [ "$MISSING_OPTIONS" -gt 0 ]; then
+            echo "⚠️ $MISSING_OPTIONS functions without OPTIONS handler"
+          else
+            echo "✅ All functions have OPTIONS handlers"
+          fi
+          
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "::error::Lint guards failed! Fix the issues above before deploying."
+            exit 1
+          fi
+          
+          echo "✅ All lint guards passed"
+
+      - name: Validate Registry File
+        run: |
+          REGISTRY_FILE="supabase/functions.registry.txt"
+          
+          if [ ! -f "$REGISTRY_FILE" ]; then
+            echo "::error::Registry file not found: $REGISTRY_FILE"
+            exit 1
+          fi
+          
+          echo "Validating registry file format..."
+          BAD=0
+          LINE_NUM=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            LINE_NUM=$((LINE_NUM + 1))
+            line="$(echo "$line" | tr -d '\r' | xargs)"
+            
+            # Skip empty lines and comments
+            [[ -z "$line" || "$line" =~ ^#.* ]] && continue
+            
+            # Validate function name format: lowercase letters, numbers, hyphens only
+            if [[ ! "$line" =~ ^[a-z0-9-]+$ ]]; then
+              echo "::error::Line $LINE_NUM: Invalid function name format: '$line'"
+              BAD=1
+            fi
+            
+            # Check if function directory exists
+            if [ ! -d "supabase/functions/$line" ]; then
+              echo "::error::Line $LINE_NUM: Function directory not found: supabase/functions/$line"
+              BAD=1
+            fi
+          done < "$REGISTRY_FILE"
+          
+          if [ "$BAD" = "1" ]; then
+            echo "::error::Registry validation failed!"
+            exit 1
+          fi
+          
+          # Count functions
+          FUNC_COUNT=$(grep -vE '^\s*(#|$)' "$REGISTRY_FILE" | wc -l | xargs)
+          echo "✅ Registry validated: $FUNC_COUNT functions"
+
+      - name: Deploy Edge Functions (Registry-Driven)
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           supabase link --project-ref hdjgkjceownmmnrqqtuz
           
+          REGISTRY_FILE="supabase/functions.registry.txt"
+          
           echo "========================================"
-          echo "DEPLOYMENT STRATEGY: Full deterministic deploy"
+          echo "DEPLOYMENT STRATEGY: Registry-driven deploy"
           echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           echo "========================================"
           
-          # Deploy ALL functions that have index.ts (deterministic, not diff-based)
+          # Read functions from registry
+          mapfile -t FUNCS < <(grep -vE '^\s*(#|$)' "$REGISTRY_FILE" | tr -d '\r' | xargs -n1)
+          
+          TOTAL=${#FUNCS[@]}
+          echo "Deploying from registry: $TOTAL functions"
+          echo ""
+          
           DEPLOYED_COUNT=0
           FAILED_COUNT=0
-          SKIPPED_COUNT=0
           
-          for dir in supabase/functions/*/; do
-            func_name=$(basename "$dir")
+          for i in "${!FUNCS[@]}"; do
+            func="${FUNCS[$i]}"
+            idx=$((i + 1))
             
-            # Skip shared modules (directories starting with _)
-            if [[ "$func_name" == _* ]]; then
-              echo "⏭️ Skipping shared module: $func_name"
-              SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
-              continue
-            fi
-            
-            if [ -f "$dir/index.ts" ]; then
-              echo ""
-              echo "--- Deploying: $func_name ---"
-              if supabase functions deploy "$func_name"; then
-                echo "✅ Deployed: $func_name"
-                DEPLOYED_COUNT=$((DEPLOYED_COUNT + 1))
-              else
-                echo "❌ FAILED to deploy: $func_name"
-                FAILED_COUNT=$((FAILED_COUNT + 1))
-                # Continue deploying others, but mark as failed
-              fi
+            echo ""
+            echo "--- [$idx/$TOTAL] Deploying: $func ---"
+            if supabase functions deploy "$func"; then
+              echo "✅ Deployed: $func"
+              DEPLOYED_COUNT=$((DEPLOYED_COUNT + 1))
             else
-              echo "⏭️ Skipping (no index.ts): $func_name"
-              SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+              echo "❌ FAILED to deploy: $func"
+              FAILED_COUNT=$((FAILED_COUNT + 1))
             fi
           done
           
@@ -102,9 +189,8 @@ jobs:
           echo "========================================"
           echo "DEPLOYMENT SUMMARY"
           echo "========================================"
-          echo "✅ Deployed: $DEPLOYED_COUNT"
+          echo "✅ Deployed: $DEPLOYED_COUNT / $TOTAL"
           echo "❌ Failed: $FAILED_COUNT"
-          echo "⏭️ Skipped: $SKIPPED_COUNT"
           echo "========================================"
           
           if [ "$FAILED_COUNT" -gt 0 ]; then

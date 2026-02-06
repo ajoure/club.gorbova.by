@@ -30,6 +30,8 @@ export interface SystemHealthReport {
 
 export interface FullCheckResponse {
   status: "OK" | "DEGRADED" | "CRITICAL";
+  project_ref: string;
+  expected_project_ref: string;
   edge_functions: {
     total: number;
     deployed: number;
@@ -39,8 +41,18 @@ export interface FullCheckResponse {
       exists: boolean;
       http_status: number | null;
       status: string;
-      is_tier1: boolean;
+      tier: string;
+      category: string;
+      auto_fix_policy: string;
+      cors_ok?: boolean;
+      error?: string;
     }>;
+  };
+  breakdown: {
+    p0_missing: string[];
+    p1_missing: string[];
+    p2_missing: string[];
+    cors_errors: string[];
   };
   invariants: {
     total: number;
