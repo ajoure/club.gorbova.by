@@ -185,7 +185,8 @@ function buildSystemPrompt(
   productsCatalog: string,
   botIdentity: { name: string; position: string },
   isNewDayConversation: boolean,
-  nameUsagePolicy: string
+  nameUsagePolicy: string,
+  styleProfileContent: string = ''
 ): string {
   const presetDescription = PRESET_DESCRIPTIONS[settings.style_preset] || PRESET_DESCRIPTIONS.friendly;
   
@@ -284,6 +285,8 @@ ${productsCatalog}
 
 == АКТИВНЫЕ МОДУЛИ ==
 ${packagesContent}
+
+${styleProfileContent ? styleProfileContent : ''}
 
 ${templatesText}
 
@@ -756,6 +759,36 @@ Deno.serve(async (req) => {
       .eq('enabled', true);
     
     // ==========================================
+    // 7.1 LOAD STYLE PROFILE (from telegram_publish_channels)
+    // ==========================================
+    let styleProfileContent = '';
+    const { data: channelWithStyle } = await supabase
+      .from('telegram_publish_channels')
+      .select('settings')
+      .not('settings->style_profile', 'is', null)
+      .limit(1)
+      .maybeSingle();
+    
+    if (channelWithStyle?.settings?.style_profile) {
+      const sp = channelWithStyle.settings.style_profile;
+      const traits = sp.personality_traits?.slice(0, 5)?.join(', ') || '';
+      const patterns = sp.communication_patterns?.slice(0, 3)?.join('\n- ') || '';
+      const guidelines = sp.writing_guidelines?.slice(0, 5)?.join('\n- ') || '';
+      const phrases = sp.characteristic_phrases?.slice(0, 5)?.join('», «') || '';
+      
+      styleProfileContent = `== СТИЛЬ ОБЩЕНИЯ КАТЕРИНЫ ==
+Тон: ${sp.tone || 'экспертный и дружелюбный'}
+${sp.tone_details ? `Детали: ${sp.tone_details}` : ''}
+${traits ? `Черты личности: ${traits}` : ''}
+${patterns ? `Паттерны общения:\n- ${patterns}` : ''}
+${guidelines ? `Правила для написания:\n- ${guidelines}` : ''}
+${phrases ? `Характерные фразы: «${phrases}»` : ''}
+${sp.vocabulary_level ? `Уровень лексики: ${sp.vocabulary_level}` : ''}
+
+ВАЖНО: Подражай этому стилю в своих ответах!`;
+    }
+    
+    // ==========================================
     // 8. BUILD PRODUCTS CATALOG
     // ==========================================
     const { data: products } = await supabase
@@ -881,7 +914,8 @@ Deno.serve(async (req) => {
       productsCatalog,
       botIdentity,
       isNewDayConversation,
-      nameUsagePolicy
+      nameUsagePolicy,
+      styleProfileContent
     );
     
     // ==========================================
@@ -946,8 +980,8 @@ Deno.serve(async (req) => {
     let finalReply = '';
     
     if (aiChoice?.message?.tool_calls) {
-      // Execute tools
-      const toolResults: string[] = [];
+      // Execute tools - store id + content for proper tool response format
+      const toolResults: Array<{ id: string; content: string }> = [];
       
       for (const toolCall of aiChoice.message.tool_calls) {
         const toolName = toolCall.function.name;
@@ -962,18 +996,19 @@ Deno.serve(async (req) => {
         });
         
         if (error) {
-          toolResults.push(`Tool ${toolName} error: ${error}`);
+          toolResults.push({ id: toolCall.id, content: `Tool ${toolName} error: ${error}` });
         } else {
-          toolResults.push(`Tool ${toolName} result:\n${result}`);
+          toolResults.push({ id: toolCall.id, content: `Tool ${toolName} result:\n${result}` });
         }
       }
       
-      // Call AI again with tool results
+      // Call AI again with tool results - CRITICAL: include tool_call_id for each tool response
       aiMessages.push(aiChoice.message);
-      for (let i = 0; i < aiChoice.message.tool_calls.length; i++) {
+      for (const tr of toolResults) {
         aiMessages.push({
           role: 'tool',
-          content: toolResults[i],
+          tool_call_id: tr.id,  // Required by OpenAI-compatible APIs
+          content: tr.content,
         });
       }
       
@@ -996,6 +1031,9 @@ Deno.serve(async (req) => {
         // AI should always generate response, no fallback template needed
         finalReply = followupData.choices?.[0]?.message?.content || 'Произошла ошибка при обработке. Попробуйте переформулировать вопрос.';
       } else {
+        // Log detailed error for debugging
+        const errorText = await followupResponse.text();
+        console.error(`[AI Support] Followup AI error: ${followupResponse.status} - ${errorText}`);
         finalReply = 'Произошла техническая ошибка. Попробуйте ещё раз через минуту.';
       }
     } else {

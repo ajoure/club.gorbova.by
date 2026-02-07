@@ -374,6 +374,7 @@ function generateAudienceInsightsPrompt(insights: AudienceInsight[], summary: st
   const objections = insights.filter(i => i.insight_type === 'objection');
   const questions = insights.filter(i => i.insight_type === 'question');
   const problems = insights.filter(i => i.insight_type === 'problem');
+  const topics = insights.filter(i => i.insight_type === 'topic');
   
   const formatInsight = (p: AudienceInsight, idx: number) => {
     const examples = (p.examples || []).slice(0, 2);
@@ -382,11 +383,39 @@ function generateAudienceInsightsPrompt(insights: AudienceInsight[], summary: st
    - ${p.description || 'Без описания'}${examplesText}`;
   };
   
+  // КАРТА БОЛЕЙ - группировка по severity (используем relevance_score)
+  const criticalPains = painPoints.filter(p => p.relevance_score >= 0.7).slice(0, 3);
+  const moderatePains = painPoints.filter(p => p.relevance_score >= 0.4 && p.relevance_score < 0.7).slice(0, 3);
+  const minorPains = painPoints.filter(p => p.relevance_score < 0.4).slice(0, 2);
+  
+  const painMapSection = `=== КАРТА БОЛЕЙ АУДИТОРИИ ===
+🔴 КРИТИЧЕСКИЕ БОЛИ (решай в первую очередь):
+${criticalPains.map(formatInsight).join('\n\n') || 'Нет критических болей'}
+
+🟠 УМЕРЕННЫЕ БОЛИ:
+${moderatePains.map((p, i) => `${i + 1}. ${p.title}: ${p.description || ''}`).join('\n') || 'Нет данных'}
+
+🟢 МИНОРНЫЕ БОЛИ:
+${minorPains.map((p, i) => `${i + 1}. ${p.title}`).join('\n') || 'Нет данных'}`;
+  
+  // КОНТЕНТ-ИДЕИ на основе топиков и вопросов
+  const contentIdeas = [
+    ...topics.slice(0, 3).map(t => `📝 Пост о "${t.title}" (тема интересует аудиторию)`),
+    ...questions.slice(0, 3).map(q => `❓ FAQ: "${q.title}" (частый вопрос)`),
+    ...problems.slice(0, 2).map(p => `💡 Решение: "${p.title}" (реальная проблема клиентов)`),
+  ];
+  
+  const contentIdeasSection = contentIdeas.length > 0 
+    ? `=== ИДЕИ ДЛЯ КОНТЕНТА ===
+${contentIdeas.join('\n')}
+
+Используй эти темы для постов, stories, или ответов в диалоге!`
+    : '';
+  
   return `== ЗНАНИЕ АУДИТОРИИ ==
 (Данные автоматически обновляются. Резюме: ${summary.substring(0, 150)}...)
 
-=== ГЛАВНЫЕ БОЛИ КЛИЕНТОВ ===
-${painPoints.slice(0, 5).map(formatInsight).join('\n\n') || 'Нет данных'}
+${painMapSection}
 
 === ЧТО ИНТЕРЕСУЕТ АУДИТОРИЮ ===
 ${interests.slice(0, 5).map((p, i) => `${i + 1}. ${p.title}: ${p.description || ''}`).join('\n') || 'Нет данных'}
@@ -401,8 +430,10 @@ ${objections.slice(0, 3).map((p, i) => `${i + 1}. ${p.title}
 === ЧАСТО ЗАДАВАЕМЫЕ ВОПРОСЫ ===
 ${questions.slice(0, 5).map((p, i) => `${i + 1}. ${p.title}`).join('\n') || 'Нет данных'}
 
+${contentIdeasSection}
+
 === КАК ПРИМЕНЯТЬ В ДИАЛОГЕ ===
-- При ПРОДАЖЕ: связывай продукт с конкретной болью клиента
+- При ПРОДАЖЕ: связывай продукт с конкретной болью клиента (особенно критической!)
 - При ПОДДЕРЖКЕ: проявляй эмпатию к стрессу и страху
 - При ВОЗРАЖЕНИЯХ: используй реальные примеры успешных клиентов
 - При НЕУВЕРЕННОСТИ: направляй к эксперту (Катерине)
