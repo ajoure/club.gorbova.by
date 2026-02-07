@@ -103,8 +103,8 @@ serve(async (req) => {
     const meaningfulMessages = allMessages.filter(m => m.text && m.text.trim().length >= 10);
     console.log(`[analyze-audience] Meaningful messages: ${meaningfulMessages.length}`);
 
-    // Analyze in batches of 800 messages for better context
-    const BATCH_SIZE_FOR_AI = 800;
+    // Analyze in batches of 500 messages for faster processing (avoiding timeouts)
+    const BATCH_SIZE_FOR_AI = 500;
     const batches: string[][] = [];
     
     for (let i = 0; i < meaningfulMessages.length; i += BATCH_SIZE_FOR_AI) {
@@ -168,6 +168,10 @@ ${messagesForAnalysis}
   "summary": "Краткое резюме аудитории этой части (2-3 предложения)"
 }`;
 
+      // Use AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 sec timeout per batch
+      
       const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: { 
@@ -175,10 +179,13 @@ ${messagesForAnalysis}
           "Authorization": `Bearer ${LOVABLE_API_KEY}`,
         },
         body: JSON.stringify({
-          model: "google/gemini-2.5-pro", // Using Pro for better analysis of large context
+          model: "google/gemini-2.5-flash", // Flash is 3-5x faster, suitable for structured extraction
           messages: [{ role: "user", content: aiPrompt }],
         }),
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeoutId);
 
       if (!aiResponse.ok) {
         const errorText = await aiResponse.text();
@@ -297,17 +304,39 @@ ${messagesForAnalysis}
       console.error("[analyze-audience] Insert error:", insertError);
     }
 
+    // === PHASE 2: Generate and upsert audience_insights prompt package ===
+    const packageContent = generateAudienceInsightsPrompt(mergedInsights, finalSummary);
+    
+    const { error: packageError } = await supabase.from("ai_prompt_packages")
+      .upsert({
+        code: 'audience_insights',
+        name: 'Знание аудитории (авто)',
+        description: `Автообновление: ${new Date().toISOString().split('T')[0]}. ${mergedInsights.length} инсайтов.`,
+        category: 'sales',
+        content: packageContent,
+        is_system: true,
+        enabled: true,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'code' });
+    
+    if (packageError) {
+      console.error("[analyze-audience] Package upsert error:", packageError);
+    } else {
+      console.log("[analyze-audience] Successfully updated audience_insights prompt package");
+    }
+
     // Log the action
     await supabase.from("telegram_logs").insert({
       action: "ANALYZE_AUDIENCE",
       target: channel_id || "all",
       status: "ok",
       meta: {
-        messages_analyzed: allMessages.length,
+      messages_analyzed: allMessages.length,
         meaningful_messages: meaningfulMessages.length,
         batches_processed: batches.length,
         insights_found: mergedInsights.length,
         summary: finalSummary,
+        package_updated: !packageError,
       },
     });
 
@@ -337,6 +366,48 @@ ${messagesForAnalysis}
     });
   }
 });
+
+// Helper function to generate structured prompt from audience insights
+function generateAudienceInsightsPrompt(insights: AudienceInsight[], summary: string): string {
+  const painPoints = insights.filter(i => i.insight_type === 'pain_point');
+  const interests = insights.filter(i => i.insight_type === 'interest');
+  const objections = insights.filter(i => i.insight_type === 'objection');
+  const questions = insights.filter(i => i.insight_type === 'question');
+  const problems = insights.filter(i => i.insight_type === 'problem');
+  
+  const formatInsight = (p: AudienceInsight, idx: number) => {
+    const examples = (p.examples || []).slice(0, 2);
+    const examplesText = examples.length > 0 ? `\n   - Примеры: "${examples.join('", "')}"` : '';
+    return `${idx + 1}. ${p.title}
+   - ${p.description || 'Без описания'}${examplesText}`;
+  };
+  
+  return `== ЗНАНИЕ АУДИТОРИИ ==
+(Данные автоматически обновляются. Резюме: ${summary.substring(0, 150)}...)
+
+=== ГЛАВНЫЕ БОЛИ КЛИЕНТОВ ===
+${painPoints.slice(0, 5).map(formatInsight).join('\n\n') || 'Нет данных'}
+
+=== ЧТО ИНТЕРЕСУЕТ АУДИТОРИЮ ===
+${interests.slice(0, 5).map((p, i) => `${i + 1}. ${p.title}: ${p.description || ''}`).join('\n') || 'Нет данных'}
+
+=== ЧАСТЫЕ ПРОБЛЕМЫ ===
+${problems.slice(0, 3).map((p, i) => `${i + 1}. ${p.title}: ${p.description || ''}`).join('\n') || 'Нет данных'}
+
+=== ЧАСТЫЕ ВОЗРАЖЕНИЯ ===
+${objections.slice(0, 3).map((p, i) => `${i + 1}. ${p.title}
+   - Ответ: используй факты и примеры успешных клиентов клуба`).join('\n') || 'Нет данных'}
+
+=== ЧАСТО ЗАДАВАЕМЫЕ ВОПРОСЫ ===
+${questions.slice(0, 5).map((p, i) => `${i + 1}. ${p.title}`).join('\n') || 'Нет данных'}
+
+=== КАК ПРИМЕНЯТЬ В ДИАЛОГЕ ===
+- При ПРОДАЖЕ: связывай продукт с конкретной болью клиента
+- При ПОДДЕРЖКЕ: проявляй эмпатию к стрессу и страху
+- При ВОЗРАЖЕНИЯХ: используй реальные примеры успешных клиентов
+- При НЕУВЕРЕННОСТИ: направляй к эксперту (Катерине)
+- НИКОГДА не упоминай, что это «автоматический анализ» или «данные ИИ»`;
+}
 
 // Helper function to merge similar insights
 function mergeInsights(insights: AudienceInsight[]): AudienceInsight[] {

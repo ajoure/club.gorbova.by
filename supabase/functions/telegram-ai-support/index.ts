@@ -199,9 +199,14 @@ function buildSystemPrompt(
   
   // АВТО-ВКЛЮЧЕНИЕ ПАКЕТА ПРЕСЕТА
   const presetPackageCode = PRESET_TO_PACKAGE[settings.style_preset];
-  const effectivePackages = presetPackageCode 
+  let effectivePackages = presetPackageCode 
     ? [...new Set([presetPackageCode, ...settings.active_prompt_packages])]
-    : settings.active_prompt_packages;
+    : [...settings.active_prompt_packages];
+  
+  // АВТО-ВКЛЮЧЕНИЕ ИНСАЙТОВ АУДИТОРИИ ПРИ ПРОДАЖАХ
+  if (settings.toggles.sales_enabled && !effectivePackages.includes('audience_insights')) {
+    effectivePackages.push('audience_insights');
+  }
   
   // Collect active prompt packages (с авто-включением пакета пресета)
   const packagesContent = promptPackages

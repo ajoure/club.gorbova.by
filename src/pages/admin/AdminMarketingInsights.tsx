@@ -29,6 +29,8 @@ import {
   Sparkles,
   Copy,
   Check,
+  Bot,
+  Clock,
 } from "lucide-react";
 
 interface AudienceInsight {
@@ -234,6 +236,34 @@ export default function AdminMarketingInsights() {
             </CardContent>
           </Card>
         )}
+
+        {/* Oleg Integration Status */}
+        <Card className="border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/30">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Bot className="h-5 w-5 text-green-600" />
+                <div>
+                  <p className="font-medium flex items-center gap-2">
+                    Связь с ботом Олегом
+                    <Badge variant="outline" className="bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 border-green-300">
+                      Активна
+                    </Badge>
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Инсайты автоматически передаются боту для использования в продажах
+                  </p>
+                </div>
+              </div>
+              <div className="text-right text-sm text-muted-foreground hidden sm:block">
+                <div className="flex items-center gap-1.5">
+                  <Clock className="h-4 w-4" />
+                  <span>Автообновление: 03:00 UTC</span>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
