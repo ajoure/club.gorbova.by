@@ -121,6 +121,24 @@ const SLIDER_LABELS: Record<string, { label: string; tooltip: string }> = {
   },
 };
 
+// ============ КАТЕГОРИИ ПАКЕТОВ ПРОМПТОВ ============
+
+const CATEGORY_LABELS: Record<string, string> = {
+  tone: "Стиль общения",
+  support: "Поддержка",
+  sales: "Продажи",
+  policy: "Правила/политики",
+  custom: "Пользовательский",
+};
+
+const CATEGORY_DESCRIPTIONS: Record<string, string> = {
+  tone: "Применяется ко всем ответам для формирования тона и стиля общения",
+  support: "Используется при ответах на вопросы о подписках, доступе и помощи",
+  sales: "Активируется в режиме продаж: предложения, апсейл, ссылки на оплату",
+  policy: "Правила и ограничения, которые бот соблюдает всегда",
+  custom: "Пользовательские правила для специфических ситуаций",
+};
+
 const TEMPLATE_LABELS: Record<string, { label: string; tooltip: string; placeholder: string }> = {
   greeting_template: {
     label: "Приветствие",
@@ -218,11 +236,12 @@ export function OlegSettingsSection() {
   // File upload state
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<{
+const [analysisResult, setAnalysisResult] = useState<{
     suggestedName: string;
     suggestedCode: string;
     summary: string;
     exampleResponse: string;
+    extractedRules: string[];
     processedContent: string;
     category: string;
   } | null>(null);
@@ -777,6 +796,38 @@ export function OlegSettingsSection() {
                       </Label>
                       <div className="bg-background rounded-lg p-3 text-sm border">
                         <p className="italic text-muted-foreground">{analysisResult.summary}</p>
+                      </div>
+                    </div>
+
+                    {/* Извлечённые правила */}
+                    {analysisResult.extractedRules && analysisResult.extractedRules.length > 0 && (
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-1.5">
+                          📋 Извлечённые правила:
+                        </Label>
+                        <ul className="bg-background rounded-lg p-3 text-sm border space-y-1">
+                          {analysisResult.extractedRules.map((rule, idx) => (
+                            <li key={idx} className="flex items-start gap-2">
+                              <span className="text-primary mt-0.5">•</span>
+                              <span>{rule}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Категория и когда применяется */}
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-1.5">
+                        🏷️ Категория:
+                      </Label>
+                      <div className="bg-background rounded-lg p-3 text-sm border">
+                        <Badge variant="outline" className="mb-2">
+                          {CATEGORY_LABELS[analysisResult.category] || analysisResult.category}
+                        </Badge>
+                        <p className="text-muted-foreground text-xs">
+                          {CATEGORY_DESCRIPTIONS[analysisResult.category] || "Пользовательские правила"}
+                        </p>
                       </div>
                     </div>
 
