@@ -46,6 +46,7 @@ import {
 import { copyToClipboard, getDealUrl } from "@/utils/clipboardUtils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
@@ -84,6 +85,11 @@ export default function AdminDeals() {
   const [showBulkEditDialog, setShowBulkEditDialog] = useState(false);
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
   const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
+  
+  // Contact sheet state (modal popup instead of navigation)
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
+  const [selectedContact, setSelectedContact] = useState<any>(null);
+  
   const queryClient = useQueryClient();
 
   // Fetch deals (orders_v2) with related data
@@ -749,10 +755,12 @@ export default function AdminDeals() {
                     </TableCell>
                     <TableCell 
                       onClick={(e) => {
+                        e.preventDefault();
                         e.stopPropagation();
                         if (profile) {
-                          // Use profile.id for navigation (works for both archived and active contacts)
-                          navigate(`/admin/contacts?contact=${profile.id}&from=deals`);
+                          // Open contact in Sheet popup (not navigation)
+                          setSelectedContact(profile);
+                          setContactSheetOpen(true);
                         }
                       }}
                       className={profile ? "cursor-pointer hover:text-primary" : ""}
@@ -900,6 +908,18 @@ export default function AdminDeals() {
       <ArchiveCleanupDialog 
         open={showArchiveCleanupDialog} 
         onOpenChange={setShowArchiveCleanupDialog} 
+      />
+
+      {/* Contact Detail Sheet (popup instead of navigation) */}
+      <ContactDetailSheet
+        contact={selectedContact}
+        open={contactSheetOpen}
+        onOpenChange={(open) => {
+          setContactSheetOpen(open);
+          if (!open) {
+            setSelectedContact(null);
+          }
+        }}
       />
     </div>
   );

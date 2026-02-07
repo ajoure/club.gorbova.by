@@ -9154,6 +9154,10 @@ export type Database = {
       }
     }
     Functions: {
+      admin_dedup_bepaid_subscriptions: {
+        Args: { p_mode?: string }
+        Returns: Json
+      }
       admin_get_club_membership: {
         Args: { p_profile_id: string }
         Returns: {

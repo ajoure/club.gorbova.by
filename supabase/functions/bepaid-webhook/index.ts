@@ -1599,24 +1599,96 @@ Deno.serve(async (req) => {
           const autoChargeAfterTrial = offer?.auto_charge_after_trial ?? true;
 
           if (productV2 && tariff) {
-            // Find existing active subscription to check for tariff change (proration)
-            // IMPORTANT: exclude canceled subscriptions (canceled_at IS NOT NULL)
-            let existingSub: { id: string; access_end_at: string; canceled_at: string | null; tariff_id: string; order_id: string | null } | null = null;
+            // PATCH-A1: Guard — do NOT create subscription if order is not paid
+            // This prevents creating subscriptions from pending/failed payment attempts
+            if (orderV2.status !== 'paid') {
+              console.log(`[SUBSCRIPTION] Skipping: order.status=${orderV2.status} (not paid), order_id=${orderV2.id}`);
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.subscription_skipped_not_paid',
+                meta: {
+                  order_id: orderV2.id,
+                  order_status: orderV2.status,
+                  bepaid_uid: transactionUid,
+                  reason: 'Order status is not paid - subscription creation skipped',
+                },
+              });
+              // Continue to handle other operations (GetCourse, Telegram), but skip subscription creation
+            }
+
+            // PATCH-A2: Expand existingSub search to include 'past_due' status
+            // This prevents creating duplicates when failed/pending payment is followed by success
+            let existingSub: { id: string; access_end_at: string; canceled_at: string | null; tariff_id: string; order_id: string | null; status: string } | null = null;
+            let allCandidates: { id: string; access_end_at: string; canceled_at: string | null; tariff_id: string; order_id: string | null; status: string }[] = [];
             
-            if (!orderV2.is_trial) {
-              const { data } = await supabase
+            if (!orderV2.is_trial && orderV2.status === 'paid') {
+              // Search for ALL non-canceled subscriptions (active, trial, past_due)
+              const { data: candidates } = await supabase
                 .from('subscriptions_v2')
-                .select('id, access_end_at, canceled_at, tariff_id, order_id')
+                .select('id, access_end_at, canceled_at, tariff_id, order_id, status')
                 .eq('user_id', orderV2.user_id)
                 .eq('product_id', orderV2.product_id)
-                .in('status', ['active', 'trial'])
-                .is('canceled_at', null) // Only extend non-canceled subscriptions
-                .gte('access_end_at', now.toISOString()) // Only extend subscriptions still in the future
-                .order('access_end_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
+                .in('status', ['active', 'trial', 'past_due'])
+                .is('canceled_at', null)
+                .order('access_end_at', { ascending: false });
               
-              existingSub = data;
+              allCandidates = candidates || [];
+              
+              // PATCH-A3: STOP-guard if multiple candidates — mark for review, don't auto-merge
+              if (allCandidates.length > 1) {
+                console.warn(`[SUBSCRIPTION] Multiple candidates found (${allCandidates.length}), marking for review`);
+                await supabase.from('audit_logs').insert({
+                  actor_type: 'system',
+                  actor_user_id: null,
+                  actor_label: 'bepaid-webhook',
+                  action: 'bepaid.webhook.subscription_multi_candidate_review',
+                  meta: {
+                    order_id: orderV2.id,
+                    user_id: orderV2.user_id,
+                    product_id: orderV2.product_id,
+                    candidate_count: allCandidates.length,
+                    candidate_ids: allCandidates.map(c => c.id),
+                    needs_review: true,
+                  },
+                });
+                // Take the most recent one with valid access_end_at in future
+                const futureCandidate = allCandidates.find(c => new Date(c.access_end_at) >= now);
+                existingSub = futureCandidate || allCandidates[0];
+              } else if (allCandidates.length === 1) {
+                existingSub = allCandidates[0];
+              }
+              
+              // PATCH-A2b: If found past_due subscription with NULL order_id — attach current order_id
+              if (existingSub && existingSub.status === 'past_due' && !existingSub.order_id) {
+                console.log(`[SUBSCRIPTION] Found past_due sub ${existingSub.id} without order_id, attaching order ${orderV2.id}`);
+                await supabase
+                  .from('subscriptions_v2')
+                  .update({
+                    order_id: orderV2.id,
+                    status: 'active',
+                    updated_at: now.toISOString(),
+                  })
+                  .eq('id', existingSub.id);
+                
+                await supabase.from('audit_logs').insert({
+                  actor_type: 'system',
+                  actor_user_id: null,
+                  actor_label: 'bepaid-webhook',
+                  action: 'bepaid.webhook.subscription_order_attached',
+                  meta: {
+                    subscription_id: existingSub.id,
+                    order_id: orderV2.id,
+                    previous_status: 'past_due',
+                    new_status: 'active',
+                  },
+                });
+                
+                // Update local reference
+                existingSub.order_id = orderV2.id;
+                existingSub.status = 'active';
+              }
             }
 
             const isSameTariff = existingSub && existingSub.tariff_id === orderV2.tariff_id;
@@ -1763,68 +1835,71 @@ Deno.serve(async (req) => {
               }
             }
 
-            if (existingSub && isSameTariff && !orderV2.is_trial) {
-              // Update existing active subscription - extend it (same tariff)
-              await supabase
-                .from('subscriptions_v2')
-                .update({
-                  status: 'active',
-                  is_trial: false,
-                  access_end_at: accessEndAt.toISOString(),
-                  next_charge_at: nextChargeAt?.toISOString() || null,
-                  payment_method_id: paymentMethodId,
-                  payment_token: paymentMethodId ? paymentV2.payment_token : null, // Only save token if payment_method exists
-                  updated_at: now.toISOString(),
-                })
-                .eq('id', existingSub.id);
-              
-              console.log('Updated existing subscription:', existingSub.id, 'payment_method_id:', paymentMethodId);
-            } else {
-              // Create new subscription (new tariff or upgrade/downgrade with proration)
-              const subscriptionMeta = prorationResult ? {
-                proration: {
-                  from_tariff_id: prorationResult.oldTariffId,
-                  remaining_days: Math.round(prorationResult.remainingDays * 10) / 10,
-                  unused_value: Math.round(prorationResult.unusedValue),
-                  bonus_days: prorationResult.bonusDays,
-                }
-              } : undefined;
-              
-              const { data: newSub } = await supabase
-                .from('subscriptions_v2')
-                .insert({
-                  user_id: orderV2.user_id,
-                  product_id: orderV2.product_id,
-                  tariff_id: orderV2.tariff_id,
-                  order_id: orderV2.id,
-                  status: orderV2.is_trial ? 'trial' : 'active',
-                  is_trial: !!orderV2.is_trial,
-                  access_start_at: now.toISOString(),
-                  access_end_at: accessEndAt.toISOString(),
-                  trial_end_at: orderV2.is_trial ? accessEndAt.toISOString() : null,
-                  next_charge_at: nextChargeAt?.toISOString() || null,
-                  payment_method_id: paymentMethodId,
-                  payment_token: paymentMethodId ? paymentV2.payment_token : null, // Only save token if payment_method exists
-                  meta: subscriptionMeta,
-                })
-                .select('id')
-                .single();
-              
-              console.log('Created new subscription:', newSub?.id);
-              
-              // If tariff changed - cancel old subscription
-              if (existingSub && !isSameTariff) {
-                console.log(`Canceling old subscription ${existingSub.id} due to tariff change`);
+            // PATCH-A1 continued: Only create/update subscription if order is paid
+            if (orderV2.status === 'paid') {
+              if (existingSub && isSameTariff && !orderV2.is_trial) {
+                // Update existing active subscription - extend it (same tariff)
                 await supabase
                   .from('subscriptions_v2')
                   .update({
-                    status: 'canceled',
-                    canceled_at: now.toISOString(),
-                    cancel_reason: `Changed to tariff. Proration: ${prorationBonusDays} bonus days applied.`,
+                    status: 'active',
+                    is_trial: false,
+                    access_end_at: accessEndAt.toISOString(),
+                    next_charge_at: nextChargeAt?.toISOString() || null,
+                    payment_method_id: paymentMethodId,
+                    payment_token: paymentMethodId ? paymentV2.payment_token : null, // Only save token if payment_method exists
+                    updated_at: now.toISOString(),
                   })
                   .eq('id', existingSub.id);
+                
+                console.log('Updated existing subscription:', existingSub.id, 'payment_method_id:', paymentMethodId);
+              } else {
+                // Create new subscription (new tariff or upgrade/downgrade with proration)
+                const subscriptionMeta = prorationResult ? {
+                  proration: {
+                    from_tariff_id: prorationResult.oldTariffId,
+                    remaining_days: Math.round(prorationResult.remainingDays * 10) / 10,
+                    unused_value: Math.round(prorationResult.unusedValue),
+                    bonus_days: prorationResult.bonusDays,
+                  }
+                } : undefined;
+                
+                const { data: newSub } = await supabase
+                  .from('subscriptions_v2')
+                  .insert({
+                    user_id: orderV2.user_id,
+                    product_id: orderV2.product_id,
+                    tariff_id: orderV2.tariff_id,
+                    order_id: orderV2.id,
+                    status: orderV2.is_trial ? 'trial' : 'active',
+                    is_trial: !!orderV2.is_trial,
+                    access_start_at: now.toISOString(),
+                    access_end_at: accessEndAt.toISOString(),
+                    trial_end_at: orderV2.is_trial ? accessEndAt.toISOString() : null,
+                    next_charge_at: nextChargeAt?.toISOString() || null,
+                    payment_method_id: paymentMethodId,
+                    payment_token: paymentMethodId ? paymentV2.payment_token : null, // Only save token if payment_method exists
+                    meta: subscriptionMeta,
+                  })
+                  .select('id')
+                  .single();
+                
+                console.log('Created new subscription:', newSub?.id);
+                
+                // If tariff changed - cancel old subscription
+                if (existingSub && !isSameTariff) {
+                  console.log(`Canceling old subscription ${existingSub.id} due to tariff change`);
+                  await supabase
+                    .from('subscriptions_v2')
+                    .update({
+                      status: 'canceled',
+                      canceled_at: now.toISOString(),
+                      cancel_reason: `Changed to tariff. Proration: ${prorationBonusDays} bonus days applied.`,
+                    })
+                    .eq('id', existingSub.id);
+                }
               }
-            }
+            } // End of orderV2.status === 'paid' guard for subscription
 
             // === ALWAYS CREATE/UPDATE ENTITLEMENT (Variant 1: upsert by user_id, product_code) ===
             const productCode = productV2.code || `product_${productV2.id}`;
