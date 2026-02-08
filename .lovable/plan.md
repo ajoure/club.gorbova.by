@@ -1,190 +1,173 @@
 ЖЁСТКИЕ ПРАВИЛА ИСПОЛНЕНИЯ ДЛЯ LOVABLE.DEV (ОБЯЗАТЕЛЬНО):
-1) Ничего не ломать и не трогать лишнее. Только изменения из этого плана.
-2) Add-only где возможно. Если замена неизбежна — минимальный diff, точечно.
-3) Dry-run → execute: сначала режим тестового прогона (без записи), затем боевой.
-4) STOP-guards обязательны: лимиты, таймауты, max попыток, max items.
-5) Никаких хардкод-UUID, никаких “магических” значений без конфигов.
-6) Без PII в логах. В meta только source_id/name, стадия, коды, elapsed, items_count.
-7) Финальный отчёт обязателен: список изменённых файлов + diff-summary + SQL-пруфы + audit_logs пруфы + UI-скрины из админки Сергея (7500084@gmail.com).
+1) Ничего не ломать и не трогать лишнее. Только изменения из PATCH.
+2) Минимальный diff. Где можно — add-only.
+3) Dry-run → execute. Сначала прогоны без записи/мутирующих апдейтов, потом боевой запуск.
+4) STOP-guards обязательны: лимиты RSS, лимиты попыток, таймауты.
+5) Без PII в логах. Cookie/сессии не логировать, не писать в audit_logs.
+6) Финальный отчёт: список файлов + diff-summary + SQL-пруфы + audit_logs пруфы + UI-скрины (учётка Сергея 7500084@gmail.com).
 
 ================================================================================
-PATCH P0.9: Исправление парсинга BY/RU источников в «Редакции»
-Цель: убрать 400/404 по источникам, добавить RSS, fallback-цепочку, классификацию ошибок,
-и в UI показывать “метод/ошибка/результат” так, чтобы было видно что реально произошло.
+PATCH P0.9.1 — monitor-news: RSS hardening + iLex cookie + error classification + retry + источники ротацией
+Файл: supabase/functions/monitor-news/index.ts (основной)
 ================================================================================
 
-P0.9.0 — FIX: URL + конфиги источников (SQL)
-1) Обновить URL проблемных источников и scrape_config (rss_url/proxy_mode/fallback_url)
-2) Деактивировать Pravo.by - Нац. реестр (без сложного поиска он не живёт)
-3) Очистить last_error поля у исправленных источников
+P0.9.1-1 — RSS: усилить regex <item> + extractXmlField + decodeHtmlEntities
+A) RSS <item> regex:
+- БЫЛО: /<item>([\s\S]*?)<\/item>/gi
+- СТАНЕТ: /<item\b[^>]*>([\s\S]*?)<\/item>/gi
 
-SQL (выполнить и приложить SELECT-пруф):
-- ЦБ России:
-  url = https://cbr.ru/press/event/
-  scrape_config.rss_url = https://cbr.ru/rss/RssPress
-  scrape_config.proxy_mode = "auto"
-  scrape_config.country = "RU"
+B) extractXmlField переписать (CDATA + non-CDATA, multi-line):
+- Реализовать версию с:
+  - экранированием имени поля
+  - поддержкой атрибутов в теге
+  - захватом CDATA или обычного контента
+  - trim результата
 
-- Pravo.gov.ru:
-  url = http://publication.pravo.gov.ru/documents/block/daily
-  scrape_config.proxy_mode = "enhanced"
-  scrape_config.country = "RU"
+C) decodeHtmlEntities:
+- добавить &#39; и &apos;
+- добавить &#x...; hex сущности
+- &nbsp; -> пробел
+- убрать HTML теги
+- нормализовать пробелы (\s+ -> " ")
+- trim
 
-- Pravo.by - Нац. реестр:
-  is_active = false
+STOP-guards RSS:
+- max items: 30
+- max content: 5000
+- timeout: 15000ms
+- если RSS пустой или упал — это не крэш, а stage fail → идём дальше.
 
-- Нацбанк РБ:
-  url = https://nbrb.by/press/
-  scrape_config.proxy_mode = "enhanced"
-  scrape_config.country = "BY"
-  scrape_config.fallback_url = https://nbrb.by/press/pressrel/
+--------------------------------------------------------------------------------
 
-ПРУФ:
-SELECT name, url, is_active, scrape_config
-FROM news_sources
-WHERE name IN ('ЦБ России','Pravo.gov.ru','Pravo.by - Нац. реестр','Нацбанк РБ');
+P0.9.1-2 — iLex session cookie: прокинуть в scrapeUrlWithProxy + в вызовы
+Проблема: ilexSession получается, но не уходит ни в один запрос.
+
+A) Изменить сигнатуру:
+async function scrapeUrlWithProxy(
+  url: string,
+  firecrawlKey: string,
+  country: string,
+  proxyMode: "auto" | "enhanced",
+  sessionCookie?: string | null
+)
+
+B) Добавить Cookie в requestBody.headers:
+- Для enhanced: добавить Cookie, если sessionCookie есть
+- Для auto: тоже добавить headers.Cookie, если sessionCookie есть
+- Cookie value брать через helper extractCookieValue(setCookie)
+
+C) Helper extractCookieValue:
+- возвращать только "NAME=VALUE" (до первого ';')
+- НИГДЕ не логировать sessionCookie и extractCookieValue.
+
+D) Прокинуть ilexSession во ВСЕ вызовы scrapeUrlWithProxy в цепочке:
+- initial auto/enhanced вызовы
+- fallback_url вызовы
 
 STOP-guard:
-- Если name не совпадает (другая локализация/название) — не “угадывать”, найти по id/slug и зафиксировать в отчёте.
+- В audit_logs/meta нельзя писать cookie даже частично.
+- В console.log тоже нельзя писать cookie.
 
 --------------------------------------------------------------------------------
 
-P0.9.1 — ADD: Стандартизировать ScrapeConfig (типизация + дефолты)
-Файл: supabase/functions/monitor-news/index.ts
-Добавить интерфейс:
-- rss_url?: string
-- fallback_url?: string
-- proxy_mode?: "auto" | "enhanced"
-- country?: "BY" | "RU" | "AUTO"
-Дефолты:
-- proxy_mode = "auto"
-- country = "AUTO"
+P0.9.1-3 — classifyError: понимать RSS_* и доп. коды
+Проблема: RSS_HTTP_404, RSS_TIMEOUT, auth_required уходят в UNKNOWN.
 
-STOP-guard:
-- Если scrape_config null/пустой — код не падает, использует дефолты.
+Изменения:
+- RSS_HTTP_XXX → рекурсивно к HTTP XXX
+- RSS_*TIMEOUT или RSS_*ERROR → TIMEOUT_RENDER
+- auth_required / no_session → BLOCKED_OR_AUTH
+- no_api_key → NO_API_KEY (добавить новый ErrorClass если его нет; иначе маппить в UNKNOWN, но лучше добавить)
 
---------------------------------------------------------------------------------
-
-P0.9.2 — ADD: RSS-парсер (первый этап цепочки)
-Файл: supabase/functions/monitor-news/index.ts
-Добавить parseRssFeed(rss_url) (лёгкий парсинг XML без тяжёлых зависимостей):
-- лимит items: 30
-- лимит content на item: 5000
-- timeout fetch RSS: 15000ms
-- нормализация: title/url/content/date(ISO)
-
-Поведение:
-- если RSS вернул items > 0 → это SUCCESS, Firecrawl не вызываем
-- если RSS упал/пустой → логируем попытку и идём дальше в HTML
-
---------------------------------------------------------------------------------
-
-P0.9.3 — ADD: Классификация ошибок + audit_logs на каждую попытку
-Файл: supabase/functions/monitor-news/index.ts
-Добавить classifyError(statusCode/message):
+HTTP:
 - 404/410 → URL_INVALID
 - 400 → BAD_REQUEST
 - 401/403 → BLOCKED_OR_AUTH
+- 408 → TIMEOUT_RENDER
 - 429 → RATE_LIMIT
-- timeout/network → TIMEOUT_RENDER
 - 5xx → SERVER_ERROR
+- timeout/network → TIMEOUT_RENDER
 - parse/json/xml → PARSER_ERROR
-- иначе → UNKNOWN
 
-Логирование (после каждой стадии: rss/html_auto/html_enhanced/fallback):
-audit_logs.action = "news_scrape_attempt"
-meta:
-- source_id, source_name
-- stage
-- url_used
-- proxy_mode ("auto"/"enhanced"/"rss")
-- status_code/error_code
-- error_class
-- elapsed_ms
-- items_found
+DoD по этому пункту:
+- RSS_HTTP_404 классифицируется как URL_INVALID
+- 408 классифицируется как TIMEOUT_RENDER
+
+--------------------------------------------------------------------------------
+
+P0.9.1-4 — shouldRetryWithEnhanced: исправить на реальные коды
+Проблема: функция проверяет символьные коды, а реально приходят "403", "429", "timeout".
+
+Сделать:
+function shouldRetryWithEnhanced(errorCode: string | undefined): boolean {
+  if (!errorCode) return false;
+  return ["400","401","403","408","429","timeout","500","502","503","504"].includes(errorCode);
+}
+
+--------------------------------------------------------------------------------
+
+P0.9.1-5 — SQL: Pravo.by - Нац. реестр деактивировать + добавить RSS ФНС (как в плане)
+Выполнить SQL и приложить SELECT-пруф:
+
+1) deactivate:
+UPDATE news_sources
+SET is_active = false
+WHERE name = 'Pravo.by - Нац. реестр'
+  AND is_active = true;
+
+2) RSS ФНС:
+UPDATE news_sources
+SET scrape_config = jsonb_set(
+  COALESCE(scrape_config, '{}'::jsonb),
+  '{rss_url}',
+  '"https://www.nalog.gov.ru/rss/rn77/news/"'
+)
+WHERE name = 'ФНС России';
+
+ПРУФ:
+SELECT name, is_active, scrape_config
+FROM news_sources
+WHERE name IN ('Pravo.by - Нац. реестр','ФНС России');
 
 STOP-guard:
-- Никаких токенов/секретов/HTML в meta. Только короткие поля.
-- errorDetails.body обрезать до 200 символов (и то только если нет PII).
+- Если name не совпадает (другая локализация) — НЕ “угадывать”, найти по id/slug и зафиксировать в отчёте.
 
 --------------------------------------------------------------------------------
 
-P0.9.4 — REWORK: Единая fallback-цепочка (RSS → HTML(auto) → HTML(enhanced) → fallback_url)
-Файл: supabase/functions/monitor-news/index.ts
-Встроить стратегию:
+P0.9.1-6 — КРИТИЧНО: Ротация источников (иначе часть никогда не парсится)
+Проблема: выборка limit=10 при 25+ источниках оставляет хвост с last_scraped_at = NULL навсегда.
 
-STAGE 1: RSS
-- если config.rss_url → parseRssFeed()
-- если items>0 → return SUCCESS
+Исправление (один из вариантов, выбрать 1 и реализовать):
+Вариант A (предпочтительно): выбирать “самые давно не парсившиеся”:
+- ORDER BY COALESCE(last_scraped_at, '1970-01-01') ASC
+- LIMIT configurable (например 25) + STOP-guard по runtime.
 
-STAGE 2: HTML auto
-- scrapeUrlWithProxy(url, proxy_mode="auto", location.country из config.country)
-- если items>0 → SUCCESS
-- если ошибка (400/403/429/timeout) → stage 3
+Вариант B: пагинация/offset по кругу (хуже, но тоже норм).
 
-STAGE 3: HTML enhanced
-- scrapeUrlWithProxy(url, proxy_mode="enhanced", waitFor=5000)
-- если items>0 → SUCCESS
-
-STAGE 4: fallback_url (если задан)
-- повторить STAGE 1-3 для fallback_url, но максимум 1 проход
-
-Ограничения (STOP-guards):
-- max HTML попыток на URL: 2 (auto+enhanced)
-- max общий runtime на источник: 90 секунд
-- max items: 30
-- Если firecrawlKey отсутствует → работаем только через RSS (если есть), иначе корректный error_class.
-
-Важно про Firecrawl:
-- НЕ использовать premium:true (вызывает 400 по текущим тестам).
-- Использовать параметр proxy_mode как логический режим:
-  - auto: базовый
-  - enhanced: “дорогой” (residential/premium) согласно текущей реализации scrapeUrlWithProxy
-(если в вашей библиотеке Firecrawl это называется иначе — привести к рабочему синтаксису и приложить пруф request/response в отчёте)
-
---------------------------------------------------------------------------------
-
-P1.9.5 — UI (Редакция): показать “Метод”, “ошибка по-человечески”, “результаты”
-Файл: src/pages/admin/AdminEditorial.tsx (или текущий файл Редакции)
-1) В таблице источников добавить колонку “Метод”:
-- если scrape_config.rss_url → badge "RSS"
-- иначе если proxy_mode="enhanced" → badge "Enhanced"
-- иначе → badge "Auto"
-
-2) Ошибки показывать не голым кодом, а меткой:
-- 404 → “URL не найден”
-- 400 → “Неверный запрос/URL”
-- 403 → “Блок/гео/доступ”
-- timeout → “Таймаут/рендер”
-- 5xx → “Ошибка сервера”
-- иначе → “Ошибка: <code>”
-
-3) В scrape_logs (или статус-строке) показать:
-- найдено / сохранено (X/Y)
-- успешных источников / всего
-- completed_at
+Обязательное:
+- Источники с last_scraped_at IS NULL должны попадать первыми.
+- Не увеличивать нагрузку бесконтрольно: ограничить “sources_per_run”.
+  Например:
+  - env SOURCES_PER_RUN default 25
+  - hard cap 50
 
 STOP-guard:
-- Никаких новых вкладок/разделов “Уведомления”. Всё внутри существующего UI Редакции/логов.
+- Если общий runtime близко к лимиту функции — STOP и записать в лог “stopped_by_runtime_guard”.
+
+DoD по ротации:
+- После 2–3 запусков исчезает масса источников с last_scraped_at = NULL
+- Приложить SQL-пруф:
+  SELECT count(*) FROM news_sources WHERE last_scraped_at IS NULL;
 
 --------------------------------------------------------------------------------
 
-DoD (ПРУФЫ ОБЯЗАТЕЛЬНЫ):
-A) SQL-пруф:
-- SELECT по 4 источникам показывает новые url + scrape_config + is_active=false для Pravo.by.
-
-B) Логи:
-- В audit_logs есть записи "news_scrape_attempt" по каждому источнику минимум по 1 запуску.
-- В meta видно stage и error_class (а не “просто упало”).
-
-C) UI-пруфы (скрины):
-- Редакция: таблица источников показывает “Метод” и понятную ошибку/OK.
-- Запуск парсинга: по исправленным источникам нет 400/404 из-за старых URL.
-
-D) Функционально:
-- ЦБ России парсится через RSS (items > 0).
-- Pravo.gov.ru и Нацбанк РБ проходят через enhanced (или через RSS/auto если сработало), но с пруфами stage.
-
+DoD (обязательные пруфы):
+1) RSS hardening: ЦБ России RSS парсится стабильно, items > 0 (лог stage=rss + items_found)
+2) classifyError: RSS_HTTP_404 → URL_INVALID; 408 → TIMEOUT_RENDER (audit_logs meta)
+3) iLex cookie: параметр sessionCookie реально прокинут (без вывода cookie), stage html_* успешен на защищённом источнике, либо error_class меняется с BLOCKED на другой при наличии cookie (audit_logs).
+4) shouldRetryWithEnhanced: при 403/408/429 происходит retry stage html_enhanced (audit_logs: stage sequence)
+5) Pravo.by Нац. реестр: is_active=false (SQL-пруф)
+6) Ротация: count(last_scraped_at is null) уменьшается (SQL-пруф до/после)
 ================================================================================
-Конец PATCH P0.9
+КОНЕЦ PATCH P0.9.1
 ================================================================================
