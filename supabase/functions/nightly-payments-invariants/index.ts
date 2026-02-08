@@ -390,6 +390,105 @@ serve(async (req) => {
       description: 'Count of charge calculations in last 7 days',
     });
 
+    // INV-16: Billing Readiness Check - subscriptions due within 24h with payment issues
+    // PATCH-E: Проверяем готовность к списанию - без PII в логах
+    const tomorrow = new Date();
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    tomorrow.setUTCHours(23, 59, 59, 999);
+
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+
+    const { data: dueSubs } = await supabase
+      .from('subscriptions_v2')
+      .select(`
+        id, 
+        user_id, 
+        payment_method_id,
+        next_charge_at,
+        status
+      `)
+      .in('status', ['active', 'trial', 'past_due'])
+      .eq('auto_renew', true)
+      .lte('next_charge_at', tomorrow.toISOString())
+      .gte('next_charge_at', todayStart.toISOString())
+      .lt('charge_attempts', 3)
+      .is('canceled_at', null)
+      .limit(100);
+
+    const billingIssues: any[] = [];
+    
+    // Batch fetch payment methods for performance
+    const pmIds = [...new Set((dueSubs || []).map(s => s.payment_method_id).filter(Boolean))];
+    let pmMap: Record<string, { status: string; provider_token: string | null }> = {};
+    
+    if (pmIds.length > 0) {
+      const { data: pms } = await supabase
+        .from('payment_methods')
+        .select('id, status, provider_token')
+        .in('id', pmIds);
+      
+      pmMap = (pms || []).reduce((acc, pm) => {
+        acc[pm.id] = { status: pm.status, provider_token: pm.provider_token };
+        return acc;
+      }, {} as Record<string, { status: string; provider_token: string | null }>);
+    }
+
+    // Batch fetch profiles for masked email (no PII in samples)
+    const userIds = [...new Set((dueSubs || []).map(s => s.user_id).filter(Boolean))];
+    let profileMap: Record<string, { email: string; full_name: string | null }> = {};
+    
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('user_id, email, full_name')
+        .in('user_id', userIds);
+      
+      profileMap = (profiles || []).reduce((acc, p) => {
+        acc[p.user_id] = { email: p.email, full_name: p.full_name };
+        return acc;
+      }, {} as Record<string, { email: string; full_name: string | null }>);
+    }
+
+    for (const sub of dueSubs || []) {
+      const pm = sub.payment_method_id ? pmMap[sub.payment_method_id] : null;
+      let reason = 'ready';
+      
+      if (!sub.payment_method_id) {
+        reason = 'no_card';
+      } else if (!pm) {
+        reason = 'pm_not_found';
+      } else if (pm.status !== 'active') {
+        reason = 'pm_inactive';
+      } else if (!pm.provider_token) {
+        reason = 'no_token';
+      }
+      
+      if (reason !== 'ready') {
+        const profile = profileMap[sub.user_id];
+        // PATCH-E: Mask email for privacy (show first 3 chars + domain)
+        const maskedEmail = profile?.email 
+          ? profile.email.replace(/^(.{3}).*@/, '$1***@') 
+          : 'unknown';
+        
+        billingIssues.push({
+          email_masked: maskedEmail,
+          name: profile?.full_name?.split(' ')[0] || 'N/A', // First name only
+          reason,
+          user_id_short: sub.user_id?.slice(0, 8) + '...',
+          next_charge: sub.next_charge_at?.split('T')[0],
+        });
+      }
+    }
+
+    invariants.push({
+      name: 'INV-16: Billing readiness (24h)',
+      passed: billingIssues.length === 0,
+      count: billingIssues.length,
+      samples: billingIssues.slice(0, 10),
+      description: 'Subscriptions due within 24h with payment method issues (no_card/pm_inactive/no_token)',
+    });
+
     // Calculate summary
     const passedCount = invariants.filter(i => i.passed).length;
     const failedCount = invariants.filter(i => !i.passed).length;

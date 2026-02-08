@@ -944,12 +944,14 @@ async function chargeSubscription(
 
   // Call bePaid to charge token
   try {
-    const shopId = bepaidConfig?.shop_id || Deno.env.get('BEPAID_SHOP_ID');
-    const secretKey = bepaidConfig?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
+    // PATCH-D: STRICT credentials from bepaidConfig (no env fallback)
+    const shopId = bepaidConfig?.shop_id;
+    const secretKey = bepaidConfig?.secret_key;
     const testMode = bepaidConfig?.test_mode ?? true;
 
     if (!shopId || !secretKey) {
-      throw new Error('bePaid not configured');
+      console.error('[subscription-charge] bePaid credentials not found in integration_instances');
+      throw new Error('bePaid не настроен в интеграциях. Добавьте конфигурацию в Интеграции → bePaid.');
     }
 
     const bepaidAuth = btoa(`${shopId}:${secretKey}`);
@@ -1898,16 +1900,28 @@ Deno.serve(async (req) => {
     console.log(`Found ${allCandidates?.length || 0} total candidates, ${subscriptionsToProcess.length} after gate (skipped ${skippedAlreadyAttempted} already attempted today)`);
     console.log(`With card: ${withCard.length}, No card: ${noCard.length}`);
 
-    // Get bePaid config
-    const { data: bepaidInstance } = await supabase
+    // PATCH-D: Get bePaid config STRICTLY from integration_instances (no env fallback)
+    const { data: bepaidInstance, error: bepaidError } = await supabase
       .from('integration_instances')
       .select('config')
       .eq('provider', 'bepaid')
-      .eq('status', 'connected')
+      .in('status', ['active', 'connected'])
       .limit(1)
-      .single();
+      .maybeSingle();
 
-    const bepaidConfig = bepaidInstance?.config || {};
+    if (bepaidError || !bepaidInstance?.config?.shop_id || !bepaidInstance?.config?.secret_key) {
+      console.error('[subscription-charge] bePaid credentials not found in integration_instances');
+      return new Response(JSON.stringify({ 
+        error: 'bePaid не настроен в интеграциях', 
+        code: 'bepaid_not_configured' 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const bepaidConfig = bepaidInstance.config;
+    console.log('[subscription-charge] Using bePaid credentials from: integration_instances');
 
     const results: ChargeResult[] = [];
 

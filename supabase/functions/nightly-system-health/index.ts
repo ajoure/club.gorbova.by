@@ -117,6 +117,12 @@ const INVARIANT_TRANSLATIONS: Record<string, {
     explain: 'Успешный платёж не привязан к профилю клиента',
     action: 'Найти и привязать профиль',
   },
+  'INV-16': {
+    title: 'Готовность к списанию',
+    explain: 'Подписки к списанию на завтра без карты или токена',
+    action: 'Напомнить клиентам привязать карту',
+    urlPath: '/admin/payments/auto-renewals?filter=no_card',
+  },
 };
 
 // PATCH-6: Форматирование примеров для Telegram
