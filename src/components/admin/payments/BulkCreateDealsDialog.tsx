@@ -293,11 +293,13 @@ export function BulkCreateDealsDialog({
         
         try {
           // 1. Create order with historical created_at
+          // NOTE: user_id must be null for ghost profiles (where profile.user_id is null)
+          // Never use profile.id as user_id - they are different entities
           const { data: newOrder, error: orderError } = await supabase
             .from('orders_v2')
             .insert({
               order_number: orderNumber,
-              user_id: profile.user_id || profile.id,
+              user_id: profile.user_id || null, // Ghost profiles get null user_id
               profile_id: profile.id,
               product_id: productId,
               tariff_id: tariffId,
@@ -371,24 +373,19 @@ export function BulkCreateDealsDialog({
             });
 
             // Grant Telegram access if product has club
+            // NOTE: telegram-grant-access function already creates telegram_access_grants record
+            // Do NOT insert manually to avoid duplicates!
             if (selectedProduct?.telegram_club_id) {
-              await supabase.from('telegram_access_grants').insert({
-                user_id: profile.user_id,
-                club_id: selectedProduct.telegram_club_id,
-                source: 'admin_bulk_from_payments',
-                source_id: newOrder.id,
-                start_at: accessStart.toISOString(),
-                end_at: accessEnd.toISOString(),
-                status: 'active',
-                meta: { product_id: productId, tariff_id: tariffId },
-              });
-
               await supabase.functions.invoke('telegram-grant-access', {
                 body: {
                   user_id: profile.user_id,
                   club_id: selectedProduct.telegram_club_id,
                   duration_days: days,
                   source: 'admin_bulk_from_payments',
+                  source_id: newOrder.id,
+                  is_manual: true,
+                  tariff_name: selectedTariff?.name,
+                  product_name: selectedProduct?.name,
                 },
               });
             }
@@ -400,7 +397,15 @@ export function BulkCreateDealsDialog({
                 body: {
                   orderId: newOrder.id,
                   email: profile.email,
-                  offerId: typeof gcOfferId === 'string' ? parseInt(gcOfferId) : gcOfferId,
+                  // Guard: if gcOfferId is a non-numeric string, pass as-is
+                  offerId: (() => {
+                    if (typeof gcOfferId === 'number') return gcOfferId;
+                    if (typeof gcOfferId === 'string') {
+                      const parsed = parseInt(gcOfferId, 10);
+                      return isNaN(parsed) ? gcOfferId : parsed;
+                    }
+                    return null;
+                  })(),
                   tariffCode: selectedTariff?.code || 'admin_bulk',
                 },
               });

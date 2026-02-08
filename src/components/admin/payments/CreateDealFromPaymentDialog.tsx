@@ -355,24 +355,19 @@ export function CreateDealFromPaymentDialog({
         subscriptionId = newSub.id;
 
         // Grant Telegram access if product has club
+        // NOTE: telegram-grant-access function already creates telegram_access_grants record
+        // Do NOT insert manually to avoid duplicates!
         if (product?.telegram_club_id) {
-          await supabase.from("telegram_access_grants").insert({
-            user_id: selectedContact.user_id,
-            club_id: product.telegram_club_id,
-            source: "admin_from_payment",
-            source_id: newOrder.id,
-            start_at: accessStart.toISOString(),
-            end_at: accessEnd.toISOString(),
-            status: "active",
-            meta: { product_id: productId, tariff_id: tariffId },
-          });
-
           await supabase.functions.invoke("telegram-grant-access", {
             body: {
               user_id: selectedContact.user_id,
               club_id: product.telegram_club_id,
               duration_days: days,
               source: "admin_from_payment",
+              source_id: newOrder.id,
+              is_manual: true,
+              tariff_name: tariff?.name,
+              product_name: product?.name,
             },
           });
         }
@@ -384,7 +379,15 @@ export function CreateDealFromPaymentDialog({
             body: {
               orderId: newOrder.id,
               email: selectedContact.email,
-              offerId: typeof gcOfferId === "string" ? parseInt(gcOfferId) : gcOfferId,
+              // Guard: if gcOfferId is a non-numeric string, pass as-is
+              offerId: (() => {
+                if (typeof gcOfferId === 'number') return gcOfferId;
+                if (typeof gcOfferId === 'string') {
+                  const parsed = parseInt(gcOfferId, 10);
+                  return isNaN(parsed) ? gcOfferId : parsed;
+                }
+                return null;
+              })(),
               tariffCode: tariff?.code || "admin_from_payment",
             },
           });

@@ -252,9 +252,8 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         if (formData.tariff_id) {
           subscriptionUpdate.tariff_id = formData.tariff_id;
         }
-        if (formData.offer_id) {
-          subscriptionUpdate.offer_id = formData.offer_id;
-        }
+        // NOTE: offer_id is NOT a column in subscriptions_v2 - it belongs to orders_v2
+        // Do not add offer_id to subscriptionUpdate
 
         // If enabling auto-renew, make sure status is active
         if (formData.auto_renew && subscription.status === 'canceled') {

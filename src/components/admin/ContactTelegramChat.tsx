@@ -829,20 +829,17 @@ export function ContactTelegramChat({
       
       if (event.action === 'AUTO_GRANT' || event.action === 'MANUAL_GRANT') {
         const clubName = (meta?.club_name || meta?.product_name || '') as string;
+        const tariffName = meta?.tariff_name as string | undefined;
         const accessEndDate = meta?.access_end_date as string | undefined;
         const validUntil = meta?.valid_until as string | undefined;
         const endDate = accessEndDate || (validUntil ? new Date(validUntil).toLocaleDateString('ru-RU') : null);
         
         const prefix = event.action === 'AUTO_GRANT' ? 'Авто-выдача' : 'Ручная выдача';
-        if (clubName && endDate) {
-          displayText = `${prefix}: ${clubName} до ${endDate}`;
-        } else if (clubName) {
-          displayText = `${prefix}: ${clubName}`;
-        } else if (endDate) {
-          displayText = `${prefix} до ${endDate}`;
-        } else {
-          displayText = prefix;
-        }
+        const productInfo = clubName || 'Клуб';
+        const tariffInfo = tariffName ? ` тариф ${tariffName}` : '';
+        const dateInfo = endDate ? ` до ${endDate}` : '';
+        
+        displayText = `${prefix}: ${productInfo}${tariffInfo}${dateInfo}`;
       }
       
       return (

@@ -1109,34 +1109,22 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           subscriptionId = newSub.id;
         }
 
-        // 4. Create telegram_access_grants and grant access if product has club
+        // 4. Grant Telegram access if product has club
+        // NOTE: telegram-grant-access function already creates telegram_access_grants record
+        // Do NOT insert manually to avoid duplicates!
         if (product?.telegram_club_id) {
           try {
-            // Create access grant record
-            await supabase.from("telegram_access_grants").insert({
-              user_id: contact.user_id!,
-              club_id: product.telegram_club_id,
-              source: "admin_grant",
-              source_id: orderV2.id,
-              start_at: accessStart.toISOString(),
-              end_at: accessEnd.toISOString(),
-              status: "active",
-              meta: {
-                product_id: grantProductId,
-                tariff_id: grantTariffId,
-                granted_by: currentUser?.id,
-                granted_by_email: currentUser?.email,
-                comment: grantComment || null,
-              },
-            });
-
-            // Grant Telegram access via edge function
+            // Grant Telegram access via edge function (it handles telegram_access_grants insert)
             const { error: tgError } = await supabase.functions.invoke("telegram-grant-access", {
               body: {
                 user_id: contact.user_id,
                 club_id: product.telegram_club_id,
                 duration_days: grantDays,
                 source: "admin_grant",
+                source_id: orderV2.id,
+                is_manual: true,
+                tariff_name: tariff?.name,
+                product_name: product?.name,
               },
             });
             
@@ -1155,7 +1143,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 orderId: orderV2.id,
                 // Fallbacks (function will prefer order/tariff data when orderId is provided)
                 email: contact.email,
-                offerId: typeof gcOfferId === "string" ? parseInt(gcOfferId) : gcOfferId,
+                // Guard: if gcOfferId is a non-numeric string, pass as-is (some offer codes are alphanumeric)
+                offerId: (() => {
+                  if (typeof gcOfferId === 'number') return gcOfferId;
+                  if (typeof gcOfferId === 'string') {
+                    const parsed = parseInt(gcOfferId, 10);
+                    return isNaN(parsed) ? gcOfferId : parsed;
+                  }
+                  return null;
+                })(),
                 tariffCode: tariff?.code || "admin_grant",
               },
             });

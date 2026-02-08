@@ -15,6 +15,9 @@ interface GrantAccessRequest {
   comment?: string;
   source?: string;
   source_id?: string;
+  tariff_name?: string;      // For logging in telegram chat
+  product_name?: string;     // For logging in telegram chat
+  duration_days?: number;    // For calculating access end
 }
 
 // PATCH 13+: Throttle delay between Telegram API calls
@@ -262,7 +265,7 @@ Deno.serve(async (req) => {
     // ========== END AUTH GUARD ==========
 
     const body: GrantAccessRequest = await req.json();
-    const { user_id, club_id, is_manual, admin_id, valid_until, comment, source, source_id } = body;
+    const { user_id, club_id, is_manual, admin_id, valid_until, comment, source, source_id, tariff_name, product_name, duration_days } = body;
 
     console.log('Grant access request:', body);
 
@@ -673,6 +676,13 @@ Deno.serve(async (req) => {
         ? new Date(activeUntil).toLocaleDateString('ru-RU') 
         : null;
       
+      // Build descriptive message for admin chat display
+      const grantType = is_manual ? 'Ручная выдача' : 'Авто-выдача';
+      const productInfo = product_name || clubName;
+      const tariffInfo = tariff_name ? ` тариф ${tariff_name}` : '';
+      const dateInfo = accessEndDate ? ` до ${accessEndDate}` : '';
+      const logMessage = `🔑 ${grantType} доступа в ${productInfo}${tariffInfo}${dateInfo}`;
+      
       await supabase.from('telegram_logs').insert({
         user_id,
         club_id: club.id,
@@ -684,9 +694,13 @@ Deno.serve(async (req) => {
           channel_invite_link: channelInviteLink, 
           valid_until: activeUntil,
           club_name: clubName,
+          product_name: product_name || null,
+          tariff_name: tariff_name || null,
           access_end_date: accessEndDate,
+          source,
+          source_id,
         },
-        message_text: `🔑 Доступ в «${clubName}»${accessEndDate ? ` до ${accessEndDate}` : ''}`,
+        message_text: logMessage,
       });
 
       results.push({
