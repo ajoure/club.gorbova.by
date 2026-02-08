@@ -39,7 +39,7 @@ function sumByCurrency(payments: UnifiedPaymentType[]): Map<string, number> {
   const map = new Map<string, number>();
   for (const p of payments) {
     const cur = (p.currency || '—').toUpperCase();
-    const amt = Math.abs(Number(p.amount || 0));
+    const amt = Number(p.amount || 0);
     map.set(cur, (map.get(cur) || 0) + amt);
   }
   return map;

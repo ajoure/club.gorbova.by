@@ -33,7 +33,7 @@ export default function PaymentsBatchActions({ selectedPayments, onSuccess, onCl
     const map = new Map<string, number>();
     for (const p of selectedPayments) {
       const cur = (p.currency || '—').toUpperCase();
-      const amt = Math.abs(Number(p.amount || 0));
+      const amt = Number(p.amount || 0);
       map.set(cur, (map.get(cur) || 0) + amt);
     }
     
