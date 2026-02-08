@@ -79,6 +79,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { formatTelegramDisplay, getTelegramLink } from "@/utils/telegramUtils";
 import { formatContactName } from "@/lib/nameUtils";
+import { buildSearchIndex, matchSearchIndex } from "@/lib/multiTermSearch";
 
 // DnD imports
 import {
@@ -735,24 +736,34 @@ export default function AdminContacts() {
     }
   }, [computedDuplicateIds, purchaseMap, subscriptionMap]);
 
-  const filteredContacts = useMemo(() => {
+  // P0-guard: Build search index ONCE per contact
+  const contactsWithIndex = useMemo(() => {
     if (!contacts) return [];
+    return contacts.map(c => ({
+      ...c,
+      search_index: buildSearchIndex([
+        c.email,
+        c.full_name,
+        c.first_name,
+        c.last_name,
+        c.phone,
+        c.telegram_username,
+      ]),
+    }));
+  }, [contacts]);
+
+  const filteredContacts = useMemo(() => {
+    let result = contactsWithIndex;
     
-    let result = contacts;
+    // P0-guard: Use pre-built search_index for multi-term search
     if (search) {
-      const searchLower = search.toLowerCase();
       result = result.filter(contact => 
-        contact.email?.toLowerCase().includes(searchLower) ||
-        contact.full_name?.toLowerCase().includes(searchLower) ||
-        contact.first_name?.toLowerCase().includes(searchLower) ||
-        contact.last_name?.toLowerCase().includes(searchLower) ||
-        contact.phone?.includes(search) ||
-        contact.telegram_username?.toLowerCase().includes(searchLower)
+        matchSearchIndex(search, contact.search_index)
       );
     }
     
     return applyFilters(result, activeFilters, getContactFieldValue);
-  }, [contacts, search, activeFilters, getContactFieldValue]);
+  }, [contactsWithIndex, search, activeFilters, getContactFieldValue]);
 
   // Sorting
   const { sortedData: sortedContacts, sortKey, sortDirection, handleSort } = useTableSort({

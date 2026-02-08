@@ -58,8 +58,9 @@ export const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "contact", label: "Контакт", visible: true, width: 140, order: 7 },
   { key: "deal", label: "Сделка", visible: true, width: 120, order: 8 },
   { key: "product", label: "Продукт", visible: true, width: 130, order: 9 },
-  { key: "receipt", label: "Чек", visible: true, width: 50, order: 10 },
-  { key: "actions", label: "", visible: true, width: 50, order: 11 },
+  { key: "bepaid_description", label: "Описание bePaid", visible: false, width: 220, order: 10 },
+  { key: "receipt", label: "Чек", visible: true, width: 50, order: 11 },
+  { key: "actions", label: "", visible: true, width: 50, order: 12 },
 ];
 
 interface PaymentsTableProps {
@@ -591,6 +592,23 @@ export default function PaymentsTable({
               </Tooltip>
             )}
           </div>
+        );
+        
+      case 'bepaid_description':
+        if (!payment.bepaid_description) {
+          return <span className="text-xs text-muted-foreground">—</span>;
+        }
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-xs truncate max-w-[200px] cursor-default block">
+                {payment.bepaid_description}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-md">
+              {payment.bepaid_description}
+            </TooltipContent>
+          </Tooltip>
         );
         
       case 'receipt':
