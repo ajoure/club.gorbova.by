@@ -26,6 +26,10 @@ export interface UnifiedPayment {
   paid_at: string | null;
   created_at: string;
   
+  // Classification (PATCH-F: for card_verification)
+  payment_classification: string | null;
+  origin: string | null;
+  
   // Payer info
   customer_email: string | null;
   customer_phone: string | null;
@@ -178,7 +182,7 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           .from("payments_v2")
           .select(`
             id, provider_payment_id, order_id, user_id, profile_id,
-            amount, currency, status, transaction_type, provider, origin,
+            amount, currency, status, transaction_type, provider, origin, payment_classification,
             card_last4, card_brand, paid_at, created_at,
             receipt_url, refunds, refunded_amount, provider_response, meta,
             orders:order_id(id, order_number, status, product_id, purchase_snapshot, profile_id, profiles(id, full_name, email, phone, user_id)),
@@ -190,10 +194,10 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         // PATCH-C1: Removed strict origin filter - show all origins including manual_adjustment
         // Filter by origin based on includeImport toggle (expanded to include all legitimate origins)
         if (includeImport) {
-          query = query.in("origin", ["bepaid", "import", "statement_sync", "manual_adjustment"]);
+          query = query.in("origin", ["bepaid", "import", "statement_sync", "manual_adjustment", "card_verification"]);
         } else {
-          // Show all non-import origins
-          query = query.or("origin.eq.bepaid,origin.eq.statement_sync,origin.eq.manual_adjustment,origin.is.null");
+          // Show all non-import origins (PATCH-F: include card_verification)
+          query = query.or("origin.eq.bepaid,origin.eq.statement_sync,origin.eq.manual_adjustment,origin.eq.card_verification,origin.is.null");
         }
         
         query = query.gte("paid_at", `${fromDate}T00:00:00Z`);
@@ -316,6 +320,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           currency: p.currency,
           paid_at: p.paid_at,
           created_at: p.created_at,
+          payment_classification: (p as any).payment_classification || null,
+          origin: p.origin || null,
           customer_email: profile?.email || null,
           customer_phone: profile?.phone || null,
           card_holder,
@@ -446,6 +452,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             tracking_id: q.tracking_id,
             provider_response: null, // Queue items don't have full provider response
             commission_total: null, // Queue items don't have commission data
+            payment_classification: null, // Queue items don't have classification
+            origin: q.source || null, // Use queue source as origin
           };
         });
       

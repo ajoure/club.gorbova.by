@@ -53,6 +53,9 @@ export default function PaymentMethodsSettings() {
   const location = useLocation();
   const navigate = useNavigate();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  
+  // PATCH-E: State for polling verification status
+  const [pollingCardId, setPollingCardId] = useState<string | null>(null);
 
   // Check for tokenization result in URL params
   useEffect(() => {
@@ -99,18 +102,24 @@ export default function PaymentMethodsSettings() {
       }
       navigate(location.pathname, { replace: true });
     } else if (tokenizeStatus === 'success') {
-      // Card added successfully - check for autolink result in newest card's meta
-      const checkAutolinkResult = async () => {
+      // Card added successfully - start polling for verification status
+      const startPollingAndCheckAutolink = async () => {
         if (!user) return;
         
+        // Get the newest card
         const { data: newestCard } = await supabase
           .from('payment_methods')
-          .select('meta')
+          .select('id, meta, verification_status')
           .eq('user_id', user.id)
           .eq('status', 'active')
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
+        
+        // Start polling if card is in pending status
+        if (newestCard?.id && newestCard.verification_status === 'pending') {
+          setPollingCardId(newestCard.id);
+        }
         
         const meta = newestCard?.meta as Record<string, unknown> | null;
         const autolinkResult = meta?.autolink_result as { 
@@ -132,19 +141,60 @@ export default function PaymentMethodsSettings() {
           } else if (totalLinked > 0) {
             toast.success(`Карта добавлена. Привязано ${totalLinked} исторических транзакций.`, { duration: 5000 });
           } else {
-            toast.success('Карта успешно добавлена');
+            toast.success('Карта добавлена. Проверяем для автоплатежей...', { duration: 3000 });
           }
         } else {
-          toast.success('Карта успешно добавлена');
+          toast.success('Карта добавлена. Проверяем для автоплатежей...', { duration: 3000 });
         }
         
         queryClient.invalidateQueries({ queryKey: ['user-payment-methods'] });
       };
       
-      checkAutolinkResult();
+      startPollingAndCheckAutolink();
       navigate(location.pathname, { replace: true });
     }
   }, [location.search, navigate, location.pathname, user, queryClient]);
+
+  // PATCH-E: Polling effect for verification status
+  useEffect(() => {
+    if (!pollingCardId || !user) return;
+    
+    let pollCount = 0;
+    const maxPolls = 15; // 30 seconds max (2s * 15)
+    
+    const interval = setInterval(async () => {
+      pollCount++;
+      
+      const { data } = await supabase
+        .from('payment_methods')
+        .select('verification_status')
+        .eq('id', pollingCardId)
+        .single();
+      
+      const status = data?.verification_status;
+      
+      // Stop polling if status is no longer pending OR max polls reached
+      if (status !== 'pending' || pollCount >= maxPolls) {
+        setPollingCardId(null);
+        queryClient.invalidateQueries({ queryKey: ['user-payment-methods'] });
+        
+        // Show appropriate toast based on final status
+        if (status === 'verified') {
+          toast.success('Карта подтверждена для автоплатежей');
+        } else if (status === 'verified_refund_pending') {
+          toast.success('Карта подтверждена. Возврат 1 BYN в обработке.');
+        } else if (status === 'rejected_3ds_required' || status === 'rejected') {
+          toast.warning('Карта не подходит для автоплатежей (требует 3DS)', { duration: 6000 });
+        } else if (status === 'failed') {
+          toast.error('Не удалось проверить карту');
+        } else if (pollCount >= maxPolls && status === 'pending') {
+          toast.info('Проверка занимает больше времени. Обновите страницу позже.');
+        }
+      }
+    }, 2000);
+    
+    return () => clearInterval(interval);
+  }, [pollingCardId, user, queryClient]);
 
   // Check for pending installments - blocks card deletion
   const { data: pendingInstallments } = useUserPendingInstallments(user?.id);
@@ -712,7 +762,7 @@ export default function PaymentMethodsSettings() {
                               {method.verification_status === 'pending' && (
                                 <Badge variant="outline" className="gap-1 text-amber-600 border-amber-600">
                                   <Loader2 className="h-3 w-3 animate-spin" />
-                                  Проверяем...
+                                  Проверяем карту...
                                 </Badge>
                               )}
                               {method.verification_status === 'verified' && (
@@ -721,7 +771,22 @@ export default function PaymentMethodsSettings() {
                                   Для автоплатежей
                                 </Badge>
                               )}
-                              {method.verification_status === 'rejected' && (
+                              {method.verification_status === 'verified_refund_pending' && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Badge variant="outline" className="gap-1 text-green-600 border-green-600">
+                                        <Check className="h-3 w-3" />
+                                        Для автоплатежей
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-xs">
+                                      <p>Карта подтверждена. Возврат 1 BYN в обработке.</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                              {(method.verification_status === 'rejected' || method.verification_status === 'rejected_3ds_required') && (
                                 <TooltipProvider>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
@@ -760,7 +825,7 @@ export default function PaymentMethodsSettings() {
                         
                         <div className="flex items-center gap-2">
                           {/* PATCH D: Re-verify button for rejected/failed cards */}
-                          {(method.verification_status === 'rejected' || method.verification_status === 'failed') && (
+                          {(method.verification_status === 'rejected' || method.verification_status === 'rejected_3ds_required' || method.verification_status === 'failed') && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -826,7 +891,7 @@ export default function PaymentMethodsSettings() {
                       </div>
                       
                       {/* PATCH-D: Warning only for rejected cards - NO CTA button here */}
-                      {method.verification_status === 'rejected' && (
+                      {(method.verification_status === 'rejected' || method.verification_status === 'rejected_3ds_required') && (
                         <div className="mt-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
                           <p className="text-sm text-amber-800 dark:text-amber-200">
                             ⚠️ Эта карта требует 3D-Secure — не подходит для автосписаний. 

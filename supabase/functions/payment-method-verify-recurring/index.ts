@@ -427,14 +427,65 @@ Deno.serve(async (req) => {
       const testCurrency = 'BYN';
       const trackingId = `verify_${pm.id}_${Date.now()}`;
 
+      // ========== LEDGER: Create payments_v2 record BEFORE charge ==========
+      // Get profile_id for the user
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('user_id', pm.user_id)
+        .single();
+
+      const { data: ledgerPayment, error: ledgerError } = await supabase
+        .from('payments_v2')
+        .insert({
+          amount: 1.00, // 1 BYN
+          currency: testCurrency,
+          status: 'processing',
+          provider: 'bepaid',
+          origin: 'card_verification',
+          payment_classification: 'card_verification',
+          transaction_type: 'tokenization',
+          user_id: pm.user_id,
+          profile_id: profileData?.id || null,
+          meta: {
+            payment_method_id: pm.id,
+            verify_tracking_id: trackingId,
+            is_verification: true,
+            card_last4: pm.last4,
+            card_brand: pm.brand,
+          },
+        })
+        .select('id')
+        .single();
+
+      if (ledgerError) {
+        console.error(`[job ${job.id}] Failed to create ledger payment:`, ledgerError);
+      } else {
+        console.log(`[job ${job.id}] Created ledger payment ${ledgerPayment?.id} for verification`);
+      }
+
+      // ========== SYSTEM ACTOR audit: verification started ==========
+      await supabase.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'payment-method-verify-recurring',
+        action: 'card.verification.started',
+        meta: {
+          payment_method_id: pm.id,
+          job_id: job.id,
+          tracking_id: trackingId,
+          ledger_payment_id: ledgerPayment?.id,
+        },
+      });
+
       const chargePayload = {
         request: {
           amount: testAmount,
           currency: testCurrency,
           description: 'Проверка карты для автоплатежей (будет возвращено)',
           tracking_id: trackingId,
-          test: testMode, // FIX #1: From config, NOT hardcoded
-          skip_three_d_secure_verification: true, // Try to skip 3DS
+          test: testMode,
+          // REMOVED: skip_three_d_secure_verification - let 3DS work properly to detect cards that require it
           credit_card: { token: pm.provider_token },
           additional_data: {
             contract: ['recurring', 'unscheduled'],
@@ -478,6 +529,15 @@ Deno.serve(async (req) => {
       if (txStatus === 'successful') {
         console.log(`[job ${job.id}] Test charge successful, initiating refund`);
 
+        // ========== LEDGER: Update charge payment to succeeded ==========
+        if (ledgerPayment?.id) {
+          await supabase.from('payments_v2').update({
+            status: 'succeeded',
+            provider_payment_id: txUid,
+            paid_at: new Date().toISOString(),
+          }).eq('id', ledgerPayment.id);
+        }
+
         // Attempt refund
         const refundPayload = {
           request: {
@@ -516,13 +576,44 @@ Deno.serve(async (req) => {
           tx_uid: refundUid,
         };
 
-        // Update payment_method as verified (even if refund failed - charge worked!)
+        // ========== LEDGER: Create refund record in payments_v2 ==========
+        const refundStatus = refundOk ? 'refunded' : 'processing';
+        await supabase.from('payments_v2').insert({
+          amount: 1.00,
+          currency: testCurrency,
+          status: refundStatus,
+          provider: 'bepaid',
+          origin: 'card_verification',
+          payment_classification: 'card_verification',
+          transaction_type: 'refund',
+          user_id: pm.user_id,
+          profile_id: profileData?.id || null,
+          provider_payment_id: refundUid,
+          reference_payment_id: ledgerPayment?.id || null,
+          meta: {
+            payment_method_id: pm.id,
+            is_verification_refund: true,
+            parent_charge_uid: txUid,
+            needs_review: !refundOk,
+          },
+        });
+
+        // Determine final verification status
+        const finalStatus = refundOk ? 'verified' : 'verified_refund_pending';
+
+        // Update payment_method
         await supabase.from('payment_methods').update({
           recurring_verified: true,
-          verification_status: 'verified',
+          verification_status: finalStatus,
           verification_checked_at: new Date().toISOString(),
           verification_tx_uid: txUid,
           verification_error: refundOk ? null : `Refund pending: ${refundMessage || 'unknown'}`,
+          meta: {
+            verify_charge_uid: txUid,
+            verify_refund_uid: refundUid,
+            verify_tracking_id: trackingId,
+            verify_payment_id: ledgerPayment?.id,
+          },
         }).eq('id', pm.id);
 
         // Mark job done
@@ -533,20 +624,22 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         }).eq('id', job.id);
 
-        // SYSTEM ACTOR audit with raw response (FIX #5)
+        // SYSTEM ACTOR audit with raw response
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
           actor_label: 'payment-method-verify-recurring',
-          action: 'card.verification.verified',
+          action: 'card.verification.completed',
           meta: {
             payment_method_id: pm.id,
             user_id: pm.user_id,
             last4: pm.last4,
             brand: pm.brand,
+            status: finalStatus,
             charge_tx_uid: txUid,
             refund_tx_uid: refundUid,
             refund_status: refundResult.transaction?.status,
+            ledger_payment_id: ledgerPayment?.id,
             raw: {
               charge: rawChargeResponse,
               refund: rawRefundResponse,
@@ -554,18 +647,18 @@ Deno.serve(async (req) => {
           },
         });
 
-        // If refund failed, log separately for manual follow-up
+        // If refund failed, log for manual follow-up
         if (!refundOk) {
           await supabase.from('audit_logs').insert({
             actor_type: 'system',
             actor_user_id: null,
             actor_label: 'payment-method-verify-recurring',
-            action: 'card.refund.failed',
+            action: 'card.refund.pending',
             meta: {
               payment_method_id: pm.id,
               charge_tx_uid: txUid,
               refund_error: refundMessage,
-              requires_manual_refund: true,
+              needs_review: true,
               raw: rawRefundResponse,
             },
           });
@@ -618,11 +711,24 @@ Deno.serve(async (req) => {
       else if (txStatus === 'incomplete' && REQUIRES_3DS_CODES.includes(txCode)) {
         console.log(`[job ${job.id}] Card requires 3DS: ${txCode}`);
 
+        // ========== LEDGER: Update charge payment to failed ==========
+        if (ledgerPayment?.id) {
+          await supabase.from('payments_v2').update({
+            status: 'failed',
+            error_message: 'Карта требует 3D-Secure на каждую операцию',
+          }).eq('id', ledgerPayment.id);
+        }
+
         await supabase.from('payment_methods').update({
           recurring_verified: false,
-          verification_status: 'rejected',
+          verification_status: 'rejected_3ds_required',
           verification_checked_at: new Date().toISOString(),
           verification_error: 'Карта требует 3D-Secure на каждую операцию',
+          meta: {
+            verify_tracking_id: trackingId,
+            verify_payment_id: ledgerPayment?.id,
+            rejection_code: txCode,
+          },
         }).eq('id', pm.id);
 
         await supabase.from('payment_method_verification_jobs').update({
@@ -631,24 +737,26 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         }).eq('id', job.id);
 
-        // SYSTEM ACTOR audit with raw response (FIX #5)
+        // SYSTEM ACTOR audit
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
           actor_label: 'payment-method-verify-recurring',
-          action: 'card.verification.rejected',
+          action: 'card.verification.completed',
           meta: {
             payment_method_id: pm.id,
             user_id: pm.user_id,
             last4: pm.last4,
             brand: pm.brand,
+            status: 'rejected_3ds_required',
             code: txCode,
             reason: '3ds_required',
+            ledger_payment_id: ledgerPayment?.id,
             raw: rawChargeResponse,
           },
         });
 
-        // FIX C1: Send notification for REJECTED (3DS required) - use card_not_suitable_for_autopay
+        // Send notification for REJECTED (3DS required)
         try {
           await sendNotification(
             supabaseUrl, 

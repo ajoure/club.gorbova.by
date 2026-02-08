@@ -369,6 +369,19 @@ export default function PaymentsTable({
         );
         
       case 'type': {
+        // PATCH-F: Check for card_verification FIRST
+        if (payment.payment_classification === 'card_verification') {
+          const isRefundType = (payment.transaction_type || '').toLowerCase().includes('refund');
+          return (
+            <Badge 
+              variant="outline" 
+              className="text-xs border-purple-500 text-purple-600 dark:border-purple-400 dark:text-purple-400"
+            >
+              {isRefundType ? 'Возврат (проверка)' : 'Проверка карты'}
+            </Badge>
+          );
+        }
+
         // SMART TYPE DETECTION: учитываем amount, status_normalized И transaction_type
         const txType = (payment.transaction_type || '').toLowerCase().trim();
         const statusNorm = (payment.status_normalized || '').toLowerCase();
