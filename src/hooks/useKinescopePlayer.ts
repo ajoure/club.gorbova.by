@@ -64,11 +64,18 @@ function loadKinescopeScript(): Promise<void> {
           console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Script loaded successfully`);
           resolve();
         } else {
+          // PATCH-V2: Сбросить промис при неудаче, чтобы следующая попытка могла retry
+          scriptLoadPromise = null;
           reject(new Error("Kinescope IframePlayer not available after script load"));
         }
       }, 100);
     };
-    script.onerror = () => reject(new Error("Failed to load Kinescope player script"));
+    script.onerror = () => {
+      // PATCH-V2: Сбросить промис при ошибке загрузки — разрешает retry в новой сессии/компоненте
+      console.error(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Script load failed, resetting for retry`);
+      scriptLoadPromise = null;
+      reject(new Error("Failed to load Kinescope player script"));
+    };
     document.head.appendChild(script);
   });
 
@@ -281,11 +288,39 @@ export function useKinescopePlayer({
         // Kinescope.IframePlayer.create will clear and populate the container itself
         // Manual DOM manipulation conflicts with React's virtual DOM reconciliation
 
-        // Create player
-        player = await factory.create(containerId, {
-          url: `https://kinescope.io/${videoId}`,
-          size: { width: "100%", height: "100%" },
-        });
+        // PATCH-V2: Попытка создать плеер с двумя форматами URL
+        const urlFormats = [
+          `https://kinescope.io/${videoId}`,
+          `https://kinescope.io/embed/${videoId}`,
+        ];
+        
+        let lastError: Error | null = null;
+        
+        for (const playerUrl of urlFormats) {
+          if (!isMounted) return;
+          
+          try {
+            console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Trying URL format:`, playerUrl);
+            player = await factory.create(containerId, {
+              url: playerUrl,
+              size: { width: "100%", height: "100%" },
+            });
+            
+            // Успех — выходим из цикла
+            console.info(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Player created successfully with:`, playerUrl);
+            lastError = null;
+            break;
+          } catch (createError) {
+            console.warn(`[Kinescope ${KINESCOPE_HOOK_VERSION}] Failed with URL:`, playerUrl, createError);
+            lastError = createError as Error;
+            // Продолжаем к следующему формату URL
+          }
+        }
+        
+        // Если все попытки провалились — вызываем onError
+        if (lastError || !player) {
+          throw lastError || new Error("All URL formats failed");
+        }
 
         if (!isMounted) {
           player.destroy();

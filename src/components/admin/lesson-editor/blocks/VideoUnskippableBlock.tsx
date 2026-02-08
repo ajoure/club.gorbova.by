@@ -61,6 +61,9 @@ export function VideoUnskippableBlock({
   const [apiWorking, setApiWorking] = useState(false);
   const [apiDetectionDone, setApiDetectionDone] = useState(false);
   const apiDetectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // PATCH-V1: Флаг включения Kinescope IframePlayer API (отключается при ошибке → fallback на iframe)
+  const [kinescopeApiEnabled, setKinescopeApiEnabled] = useState(true);
 
   // Generate stable container ID for Kinescope player
   const kinescopeContainerId = useId().replace(/:/g, '-');
@@ -70,7 +73,8 @@ export function VideoUnskippableBlock({
   const kinescopeVideoId = isKinescope ? extractKinescopeVideoId(content.url || "") : null;
 
   // Use Kinescope Player API hook for Kinescope videos (player mode only)
-  const shouldUseKinescopeHook = isKinescope && kinescopeVideoId && !isEditing && !isCompleted;
+  // PATCH-V1: Added kinescopeApiEnabled - if API fails, we fall back to iframe embed
+  const shouldUseKinescopeHook = isKinescope && kinescopeVideoId && !isEditing && !isCompleted && kinescopeApiEnabled;
   
   const kinescopePlayer = useKinescopePlayer({
     videoId: shouldUseKinescopeHook ? kinescopeVideoId : "",
@@ -119,7 +123,10 @@ export function VideoUnskippableBlock({
     },
     onError: (error) => {
       if (shouldUseKinescopeHook) {
-        console.error('[VideoUnskippableBlock] Kinescope error:', error);
+        console.error('[VideoUnskippableBlock] Kinescope IframePlayer API error:', error);
+        // PATCH-V1: При ошибке API — переключаемся на iframe embed с fallback таймером
+        console.warn('[VideoUnskippableBlock] Falling back to iframe embed mode');
+        setKinescopeApiEnabled(false);
         setApiDetectionDone(true);
       }
     }
@@ -171,12 +178,17 @@ export function VideoUnskippableBlock({
     }
     
     if (url.includes('kinescope.io')) {
-      // Kinescope embed URL with API support
+      // PATCH-V1: Используем extractKinescopeVideoId для надёжного парсинга URL (учитывает ?t= и др.)
+      const videoId = extractKinescopeVideoId(url);
+      if (videoId) {
+        return `https://kinescope.io/embed/${videoId}?autoplay=0`;
+      }
+      // Fallback: если extractKinescopeVideoId не распарсил, используем старую логику
       if (url.includes('/embed/')) {
         return url.includes('?') ? url : `${url}?autoplay=0`;
       }
-      const videoId = url.split('/').pop();
-      return `https://kinescope.io/embed/${videoId}?autoplay=0`;
+      const fallbackId = url.split('/').pop()?.split('?')[0];
+      return fallbackId ? `https://kinescope.io/embed/${fallbackId}?autoplay=0` : null;
     }
     
     return url;
@@ -509,8 +521,14 @@ export function VideoUnskippableBlock({
             />
           )}
           
-          {/* PATCH-E: Overlay for starting fallback timer ONLY if API is not working AND detection done */}
-          {!videoStarted && content.duration_seconds && !apiWorking && apiDetectionDone && !shouldUseKinescopeHook && (
+          {/* PATCH-V1: Overlay for starting fallback timer - shown when:
+              - Video not started yet
+              - duration_seconds is configured
+              - API is not working (no timeupdate events received)
+              - API detection is done (3s timeout passed)
+              - NOT using Kinescope IframePlayer hook (it handles progress internally)
+              OR when kinescopeApiEnabled was disabled (fallback to iframe) */}
+          {!videoStarted && content.duration_seconds && !apiWorking && apiDetectionDone && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/50">
               <Button
                 variant="secondary"
