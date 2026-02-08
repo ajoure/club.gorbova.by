@@ -6,8 +6,20 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret, x-internal-key, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-// Build stamp for deployment verification
+
+// Build stamp for deployment verification - MUST appear in ALL responses and audit_logs
 const BUILD_STAMP = 'pm-verify-p0-security-2026-02-08';
+
+// PATCH P0: Helper that ALWAYS includes build_stamp in JSON responses
+function jsonResponse(payload: Record<string, unknown>, status = 200): Response {
+  return new Response(JSON.stringify({
+    ...payload,
+    build_stamp: BUILD_STAMP,
+  }), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
 
 // 3DS-related error codes from bePaid that indicate card requires 3DS for each transaction
 const REQUIRES_3DS_CODES = ['P.4011', 'P.4012', 'P.4013', 'P.4014', 'P.4015'];
@@ -189,10 +201,7 @@ Deno.serve(async (req) => {
         timestamp: new Date().toISOString() 
       },
     });
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return jsonResponse({ error: 'Unauthorized' }, 401);
   }
   // === End Security Gate ===
 
@@ -221,19 +230,16 @@ Deno.serve(async (req) => {
 
     if (fetchRejectedError) {
       console.error('[notify_only] Error fetching rejected cards:', fetchRejectedError);
-      return new Response(JSON.stringify({ error: fetchRejectedError.message }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return jsonResponse({ error: fetchRejectedError.message }, 500);
     }
 
     if (!rejectedCards || rejectedCards.length === 0) {
-      return new Response(JSON.stringify({
+      return jsonResponse({
         mode: dryRun ? 'dry_run' : 'execute',
         notify_only: true,
         message: 'No rejected cards found for notification',
         count: 0,
-      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      });
     }
 
     // Filter out cards that already have a notification sent after verification_checked_at
@@ -281,7 +287,7 @@ Deno.serve(async (req) => {
 
     // DRY RUN for notify_only
     if (dryRun) {
-      return new Response(JSON.stringify({
+      return jsonResponse({
         mode: 'dry_run',
         notify_only: true,
         would_notify: cardsToNotify.length,
@@ -294,7 +300,7 @@ Deno.serve(async (req) => {
           last4: c.last4,
           checked_at: c.verification_checked_at,
         })),
-      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      });
     }
 
     // EXECUTE notify_only
@@ -351,7 +357,7 @@ Deno.serve(async (req) => {
       },
     });
 
-    return new Response(JSON.stringify({
+    return jsonResponse({
       mode: 'execute',
       notify_only: true,
       notified: notifiedCount,
@@ -359,7 +365,7 @@ Deno.serve(async (req) => {
       skipped: skippedCount,
       remaining,
       errors,
-    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    });
   }
 
   // ===========================================================================
@@ -377,23 +383,20 @@ Deno.serve(async (req) => {
 
   if (fetchError) {
     console.error('[payment-method-verify-recurring] Error fetching jobs:', fetchError);
-    return new Response(JSON.stringify({ error: fetchError.message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return jsonResponse({ error: fetchError.message }, 500);
   }
 
   if (!jobs || jobs.length === 0) {
-    return new Response(JSON.stringify({
+    return jsonResponse({
       mode: dryRun ? 'dry_run' : 'execute',
       message: 'No pending jobs found',
       processed: 0,
-    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    });
   }
 
   // DRY RUN mode - just return what would be processed
   if (dryRun) {
-    return new Response(JSON.stringify({
+    return jsonResponse({
       mode: 'dry_run',
       would_process: jobs.length,
       jobs: jobs.map(j => ({
@@ -403,7 +406,7 @@ Deno.serve(async (req) => {
         attempt: j.attempt_count,
         status: j.status,
       })),
-    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    });
   }
 
   // PATCH-D: Get bePaid credentials STRICTLY from integration_instances (NO env fallback)
@@ -411,13 +414,10 @@ Deno.serve(async (req) => {
   
   if (isBepaidCredsError(credsResult)) {
     console.error('[payment-method-verify-recurring] bePaid credentials error:', credsResult.error);
-    return new Response(JSON.stringify({ 
+    return jsonResponse({ 
       error: credsResult.error,
       code: credsResult.code 
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    }, 500);
   }
 
   const bepaidCreds = credsResult;
@@ -534,6 +534,7 @@ Deno.serve(async (req) => {
         actor_label: 'payment-method-verify-recurring',
         action: 'card.verification.started',
         meta: {
+          build_stamp: BUILD_STAMP, // P0: Always include build_stamp
           payment_method_id: pm.id,
           job_id: job.id,
           tracking_id: trackingId,
@@ -650,6 +651,7 @@ Deno.serve(async (req) => {
           actor_label: 'payment-method-verify-recurring',
           action: 'card.verification.rejected',
           meta: {
+            build_stamp: BUILD_STAMP, // P0: Always include build_stamp
             payment_method_id: pm.id,
             user_id: pm.user_id,
             last4: pm.last4,
@@ -724,6 +726,7 @@ Deno.serve(async (req) => {
             actor_label: 'payment-method-verify-recurring',
             action: 'card.verification.failed',
             meta: {
+              build_stamp: BUILD_STAMP, // P0: Always include build_stamp
               payment_method_id: pm.id,
               user_id: pm.user_id,
               reason: 'gateway_error_max_attempts',
@@ -757,6 +760,7 @@ Deno.serve(async (req) => {
             actor_label: 'payment-method-verify-recurring',
             action: 'card.verification.retry_scheduled',
             meta: {
+              build_stamp: BUILD_STAMP, // P0: Always include build_stamp
               payment_method_id: pm.id,
               job_id: job.id,
               reason: 'gateway_error',
@@ -876,6 +880,7 @@ Deno.serve(async (req) => {
           actor_label: 'payment-method-verify-recurring',
           action: 'card.verification.completed',
           meta: {
+            build_stamp: BUILD_STAMP, // P0: Always include build_stamp
             payment_method_id: pm.id,
             user_id: pm.user_id,
             last4: pm.last4,
@@ -898,6 +903,7 @@ Deno.serve(async (req) => {
             actor_label: 'payment-method-verify-recurring',
             action: 'card.refund.pending',
             meta: {
+              build_stamp: BUILD_STAMP, // P0: Always include build_stamp
               payment_method_id: pm.id,
               charge_tx_uid: txUid,
               refund_uid: refundUid,
@@ -994,6 +1000,7 @@ Deno.serve(async (req) => {
           actor_label: 'payment-method-verify-recurring',
           action: 'card.verification.completed',
           meta: {
+            build_stamp: BUILD_STAMP, // P0: Always include build_stamp
             payment_method_id: pm.id,
             user_id: pm.user_id,
             last4: pm.last4,
@@ -1044,6 +1051,7 @@ Deno.serve(async (req) => {
           actor_label: 'payment-method-verify-recurring',
           action: 'card.verification.rate_limited',
           meta: { 
+            build_stamp: BUILD_STAMP, // P0: Always include build_stamp
             job_id: job.id, 
             next_retry_at: nextRetry, 
             http_status: httpStatus,
@@ -1090,6 +1098,7 @@ Deno.serve(async (req) => {
             actor_label: 'payment-method-verify-recurring',
             action: 'card.verification.failed',
             meta: {
+              build_stamp: BUILD_STAMP, // P0: Always include build_stamp
               payment_method_id: pm.id,
               user_id: pm.user_id,
               attempts: newAttempt,
@@ -1158,6 +1167,7 @@ Deno.serve(async (req) => {
     actor_label: 'payment-method-verify-recurring',
     action: 'cron.run',
     meta: {
+      build_stamp: BUILD_STAMP, // P0: Always include build_stamp
       run_id: crypto.randomUUID(),
       source: body.source || 'unknown',
       mode: dryRun ? 'dry_run' : 'execute',
@@ -1174,14 +1184,13 @@ Deno.serve(async (req) => {
     },
   });
 
-  return new Response(JSON.stringify({
+  return jsonResponse({
     mode: 'execute',
-    build_stamp: BUILD_STAMP,
     processed: jobs.length,
     results,
     rate_limit_hit: rateLimitHit,
     test_mode: testMode,
-  }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  });
 });
 
 // Helper: Finalize job with status
