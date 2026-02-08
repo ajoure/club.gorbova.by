@@ -31,6 +31,7 @@ import SyncWithStatementDialog from "@/components/admin/payments/SyncWithStateme
 import { TimezoneSelector, usePersistedTimezone } from "./TimezoneSelector";
 import { useAuth } from "@/contexts/AuthContext";
 import { matchSearchIndex } from "@/lib/multiTermSearch";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 export type PaymentFilters = {
   search: string;
@@ -166,6 +167,9 @@ export function PaymentsTabContent() {
     return txType === 'void';
   };
 
+  // P0-guard: Debounce search input (150ms) to prevent lag during typing
+  const debouncedSearch = useDebouncedValue(filters.search, 150);
+
   // Apply filters to payments (including stats filter)
   const filteredPayments = useMemo(() => {
     return payments.filter(p => {
@@ -192,9 +196,9 @@ export function PaymentsTabContent() {
         }
       }
 
-      // Search filter - P0-guard: use pre-built search_index
-      if (filters.search) {
-        if (!matchSearchIndex(filters.search, p.search_index)) return false;
+      // Search filter - P0-guard: use pre-built search_index with debounced value
+      if (debouncedSearch) {
+        if (!matchSearchIndex(debouncedSearch, p.search_index)) return false;
       }
 
       // Status filter (only if stats filter is not active)
@@ -261,7 +265,7 @@ export function PaymentsTabContent() {
 
       return true;
     });
-  }, [payments, filters, statsFilter]);
+  }, [payments, debouncedSearch, statsFilter]);
 
   // Open sync dialog
   const handleBepaidSync = () => {

@@ -13,7 +13,16 @@
  */
 export function normalizeSearchValue(value: unknown): string {
   if (value === null || value === undefined) return '';
-  if (typeof value === 'number') return value.toString();
+  
+  // P0-FIX: Numbers get multiple representations for flexible search
+  // e.g., 55.00 → "55 55.00 55,00" to match "55", "55.00", "55,00"
+  if (typeof value === 'number') {
+    const intPart = String(Math.trunc(value));
+    const fixed2 = value.toFixed(2);
+    const fixed2comma = fixed2.replace('.', ',');
+    return `${intPart} ${fixed2} ${fixed2comma}`;
+  }
+  
   return String(value)
     .toLowerCase()
     .replace(/,/g, '.')
@@ -50,12 +59,17 @@ export function matchSearchIndex(
 ): boolean {
   if (!searchInput.trim()) return true;
 
-  const terms = searchInput
+  // P0-limits: max 64 chars, max 6 terms
+  const sanitized = searchInput
     .toLowerCase()
     .replace(/,/g, '.')
     .trim()
+    .slice(0, 64); // maxLen=64
+
+  const terms = sanitized
     .split(/\s+/)
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, 6); // maxTerms=6
 
   if (terms.length === 0) return true;
 

@@ -80,6 +80,7 @@ import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings"
 import { formatTelegramDisplay, getTelegramLink } from "@/utils/telegramUtils";
 import { formatContactName } from "@/lib/nameUtils";
 import { buildSearchIndex, matchSearchIndex } from "@/lib/multiTermSearch";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 // DnD imports
 import {
@@ -752,18 +753,21 @@ export default function AdminContacts() {
     }));
   }, [contacts]);
 
+  // P0-guard: Debounce search input (150ms)
+  const debouncedSearch = useDebouncedValue(search, 150);
+
   const filteredContacts = useMemo(() => {
     let result = contactsWithIndex;
     
-    // P0-guard: Use pre-built search_index for multi-term search
-    if (search) {
+    // P0-guard: Use pre-built search_index with debounced value
+    if (debouncedSearch) {
       result = result.filter(contact => 
-        matchSearchIndex(search, contact.search_index)
+        matchSearchIndex(debouncedSearch, contact.search_index)
       );
     }
     
     return applyFilters(result, activeFilters, getContactFieldValue);
-  }, [contactsWithIndex, search, activeFilters, getContactFieldValue]);
+  }, [contactsWithIndex, debouncedSearch, activeFilters, getContactFieldValue]);
 
   // Sorting
   const { sortedData: sortedContacts, sortKey, sortDirection, handleSort } = useTableSort({
