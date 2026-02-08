@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getOrderUserId } from '../_shared/user-resolver.ts';
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -63,41 +64,23 @@ Deno.serve(async (req) => {
     const body: ManualChargeRequest = await req.json();
     const { action } = body;
 
-    // Get bePaid credentials from integration_instances (primary) or fallback
-    const { data: bepaidInstance } = await supabase
-      .from('integration_instances')
-      .select('config')
-      .eq('provider', 'bepaid')
-      .in('status', ['active', 'connected'])
-      .maybeSingle();
-
-    const bepaidSecretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
-    const bepaidShopIdFromInstance = bepaidInstance?.config?.shop_id || null;
+    // PATCH-D: Get bePaid credentials STRICTLY from integration_instances (NO env fallback)
+    const credsResult = await getBepaidCredsStrict(supabase);
     
-    if (!bepaidSecretKey) {
-      console.error('bePaid secret key not configured');
-      return new Response(JSON.stringify({ success: false, error: 'Платёжная система не настроена' }), {
+    if (isBepaidCredsError(credsResult)) {
+      console.error('[manual-charge] bePaid credentials error:', credsResult.error);
+      return new Response(JSON.stringify({ success: false, error: credsResult.error }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
     
-    console.log('Using bePaid credentials from:', bepaidInstance?.config?.secret_key ? 'integration_instances' : 'env');
+    const bepaidCreds = credsResult;
+    console.log('[manual-charge] Using bePaid credentials from:', bepaidCreds.creds_source);
 
-    // Get additional settings from payment_settings
-    const { data: settings } = await supabase
-      .from('payment_settings')
-      .select('key, value')
-      .in('key', ['bepaid_shop_id', 'bepaid_test_mode']);
-
-    const settingsMap: Record<string, string> = settings?.reduce(
-      (acc: Record<string, string>, s: { key: string; value: string }) => ({ ...acc, [s.key]: s.value }),
-      {}
-    ) || {};
-
-    // Priority: integration_instances > payment_settings > default
-    const shopId = bepaidShopIdFromInstance || settingsMap['bepaid_shop_id'] || '33524';
-    const testMode = settingsMap['bepaid_test_mode'] === 'true';
+    // Use credentials from strict helper
+    const shopId = bepaidCreds.shop_id;
+    const testMode = bepaidCreds.test_mode;
     const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
 
     type ChargeCardResult = {

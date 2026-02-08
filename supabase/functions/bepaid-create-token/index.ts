@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveUserIds, getOrderUserId } from '../_shared/user-resolver.ts';
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -54,28 +55,19 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Get bePaid credentials from integration_instances (primary) or fallback to env
-    const { data: bepaidInstance } = await supabase
-      .from('integration_instances')
-      .select('config')
-      .eq('provider', 'bepaid')
-      .in('status', ['active', 'connected'])
-      .maybeSingle();
-
-    const bepaidSecretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
-    const bepaidShopId = bepaidInstance?.config?.shop_id || null;
-    const bepaidSuccessUrl = bepaidInstance?.config?.success_url || null;
-    const bepaidFailUrl = bepaidInstance?.config?.fail_url || null;
+    // PATCH-D: Get bePaid credentials STRICTLY from integration_instances (NO env fallback)
+    const credsResult = await getBepaidCredsStrict(supabase);
     
-    if (!bepaidSecretKey) {
-      console.error('bePaid secret key not configured in integration or env');
+    if (isBepaidCredsError(credsResult)) {
+      console.error('[create-token] bePaid credentials error:', credsResult.error);
       return new Response(
-        JSON.stringify({ success: false, error: 'Платёжная система не настроена' }),
+        JSON.stringify({ success: false, error: credsResult.error }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
     
-    console.log('Using bePaid credentials from:', bepaidInstance ? 'integration_instances' : 'env');
+    const bepaidCreds = credsResult;
+    console.log('[create-token] Using bePaid credentials from:', bepaidCreds.creds_source);
 
     // Get user from auth header (if logged in)
     const authHeader = req.headers.get('Authorization');

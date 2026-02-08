@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from "../_shared/bepaid-credentials.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -17,26 +18,19 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get bePaid credentials from integration_instances (primary) or fallback to env
-    const { data: bepaidInstance } = await supabase
-      .from('integration_instances')
-      .select('config')
-      .eq('provider', 'bepaid')
-      .in('status', ['active', 'connected'])
-      .maybeSingle();
-
-    const bepaidSecretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
-    const bepaidShopIdFromInstance = bepaidInstance?.config?.shop_id || null;
+    // PATCH-D: Get bePaid credentials STRICTLY from integration_instances (NO env fallback)
+    const credsResult = await getBepaidCredsStrict(supabase);
     
-    if (!bepaidSecretKey) {
-      console.error('bePaid secret key not configured');
-      return new Response(JSON.stringify({ error: 'Платёжная система не настроена' }), {
+    if (isBepaidCredsError(credsResult)) {
+      console.error('[tokenize] bePaid credentials error:', credsResult.error);
+      return new Response(JSON.stringify({ error: credsResult.error }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
     
-    console.log('Using bePaid credentials from:', bepaidInstance?.config?.secret_key ? 'integration_instances' : 'env');
+    const bepaidCreds = credsResult;
+    console.log('[tokenize] Using bePaid credentials from:', bepaidCreds.creds_source);
 
     // Get user from auth header
     const authHeader = req.headers.get('Authorization');
@@ -63,15 +57,12 @@ serve(async (req) => {
     switch (action) {
       case 'create-session': {
         // Get additional settings from payment_settings
+        // PATCH-A: Use STRICT credentials from integration_instances only
+        // Currency from payment_settings (non-sensitive)
         const { data: settings } = await supabase
           .from('payment_settings')
           .select('key, value')
-          .in('key', [
-            'bepaid_shop_id',
-            'bepaid_test_mode',
-            'bepaid_currency',
-            'bepaid_tokenization_amount',
-          ]);
+          .in('key', ['bepaid_currency']);
 
         const settingsMap: Record<string, string> = settings?.reduce(
           (acc: Record<string, string>, s: { key: string; value: string }) => ({
@@ -81,15 +72,11 @@ serve(async (req) => {
           {}
         ) || {};
 
-        // Priority: integration_instances > payment_settings > default
-        const shopId = bepaidShopIdFromInstance || settingsMap['bepaid_shop_id'] || '33524';
-        const testMode = settingsMap['bepaid_test_mode'] === 'true';
         const currency = settingsMap['bepaid_currency'] || 'BYN';
 
-        // Amount is in minimal currency units (e.g. 100 = 1.00 BYN). For tokenization this can be 0.
-        const tokenizationAmountRaw = settingsMap['bepaid_tokenization_amount'] ?? '0';
-        const tokenizationAmount = Number.parseInt(tokenizationAmountRaw, 10);
-        const tokenizationAmountSafe = Number.isFinite(tokenizationAmount) && tokenizationAmount >= 0 ? tokenizationAmount : 0;
+        // PATCH-A CRITICAL: Tokenization amount FIXED at 0 (or 100 = 1 BYN if 0 not allowed)
+        // User CANNOT modify amount - readonly mode enforced
+        const tokenizationAmount = 0; // 0 BYN for pure tokenization
 
         // Create bePaid tokenization checkout
         const returnUrl = `${req.headers.get('origin') || 'https://gorbova.club'}/settings/payment-methods?tokenize=success`;
@@ -102,20 +89,35 @@ serve(async (req) => {
           .eq('user_id', user.id)
           .single();
 
+        // PATCH-A: Tokenization checkout payload
+        // - ONLY card payment methods allowed (ERIP/банки исключены)
+        // - amount = 0 (read-only, пользователь не может изменить)
+        // - readonly: true для суммы
         const checkoutData = {
           checkout: {
-            test: testMode,
+            test: bepaidCreds.test_mode,
             transaction_type: 'tokenization',
+            // PATCH-A: Restrict to card-only methods (NO ERIP)
+            payment_method: {
+              types: ['credit_card'],
+              // Explicitly exclude ERIP and bank transfers
+              excluded_types: ['erip', 'belarusbank', 'mtbank', 'bank_transfer'],
+            },
             order: {
-              amount: tokenizationAmountSafe,
+              amount: tokenizationAmount,
               currency,
-              description: 'Card tokenization for recurring payments',
+              description: 'Привязка карты для автоплатежей. Сумма списания — проверка карты.',
+              // PATCH-A: read-only amount (user cannot edit)
+              readonly: true,
             },
             settings: {
               return_url: returnUrl,
               cancel_url: cancelUrl,
               notification_url: `${supabaseUrl}/functions/v1/payment-methods-webhook`,
               language: 'ru',
+              // PATCH-A: Additional settings to prevent amount modification
+              button_text: 'Привязать карту',
+              button_next_text: 'Далее',
             },
             customer: {
               email: user.email,
@@ -130,25 +132,25 @@ serve(async (req) => {
           },
         };
 
-        console.log('Creating tokenization checkout:', JSON.stringify(checkoutData));
+        console.log('[tokenize] Creating tokenization checkout (card-only, amount=0, readonly):', JSON.stringify(checkoutData));
 
-        // bePaid auth: shop_id:secret_key
-        const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+        // PATCH-D: Use strict credentials helper
+        const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
         
         const response = await fetch('https://checkout.bepaid.by/ctp/api/checkouts', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Basic ${bepaidAuth}`,
+            'Authorization': bepaidAuth,
           },
           body: JSON.stringify(checkoutData),
         });
 
         const result = await response.json();
-        console.log('bePaid tokenization response:', JSON.stringify(result));
+        console.log('[tokenize] bePaid response:', JSON.stringify(result));
 
         if (!response.ok || result.errors || result.response?.status === 'error') {
-          console.error('bePaid error:', result);
+          console.error('[tokenize] bePaid error:', result);
           return new Response(JSON.stringify({ 
             error: 'Failed to create tokenization session',
             details: result.response?.message || result.errors || 'Unknown error'
@@ -158,9 +160,25 @@ serve(async (req) => {
           });
         }
 
+        // Audit log for tokenization session creation
+        await supabase.from('audit_logs').insert({
+          actor_type: 'user',
+          actor_user_id: user.id,
+          action: 'payment_method.tokenization_checkout_created',
+          meta: {
+            checkout_token: result.checkout?.token,
+            amount: tokenizationAmount,
+            currency,
+            payment_methods_allowed: ['credit_card'],
+            payment_methods_excluded: ['erip', 'belarusbank', 'mtbank', 'bank_transfer'],
+            creds_source: bepaidCreds.creds_source,
+          },
+        });
+
         return new Response(JSON.stringify({ 
           redirect_url: result.checkout?.redirect_url,
           token: result.checkout?.token,
+          creds_source: bepaidCreds.creds_source, // PATCH-D: expose for verification
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
