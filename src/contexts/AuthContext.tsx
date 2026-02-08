@@ -79,21 +79,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
 
     // 2. ПОТОМ проверяем текущую сессию
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => {
+        if (!isMounted) return;
+        
+        if (session) {
+          setSession(session);
+          setUser(session.user);
+          fetchUserRole(session.user.id).then((r) => {
+            if (isMounted) setRole(r);
+          });
+        }
+      })
+      .catch((error) => {
+        console.error("[AuthContext] getSession error:", error);
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    // Safety timeout — prevent infinite loading if auth init hangs
+    const safetyTimeout = setTimeout(() => {
       if (!isMounted) return;
-      
-      if (session) {
-        setSession(session);
-        setUser(session.user);
-        fetchUserRole(session.user.id).then((r) => {
-          if (isMounted) setRole(r);
-        });
-      }
+      console.warn("[AuthContext] Safety timeout — forcing loading=false after 5s");
       setLoading(false);
-    });
+    }, 5000);
 
     return () => {
       isMounted = false;
+      clearTimeout(safetyTimeout);
       subscription.unsubscribe();
     };
   }, []);
