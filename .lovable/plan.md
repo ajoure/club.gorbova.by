@@ -1,93 +1,124 @@
-# MICRO-PATCH P0.8.1 — Net sum (убрать Math.abs) для Σ в Payments
 
-## Контекст
-В /admin/payments добавлены:
-- “Показано: matched из scope”
-- “Σ matched из Σ scope”
-- “Σ выбранных” в batch actions
+## Что вижу по расследованию (почему “снова не работает видео”)
 
-`payments` уже является scope, т.к. приходит из `useUnifiedPayments(effectiveDateFilter)` (фильтр по периоду применяется внутри хука). `filteredPayments` = matched (после табов/поиска/advanced filters). Это ОК.
+По скриншоту это **kvest-урок** `/library/buhgalteriya-kak-biznes/test-v-kakoj-roli-vy-nahodites-sejchas`, шаг “Видео”, блок типа **`video_unskippable`**.
 
-## P0 BUG
-Суммы сейчас считаются через `Math.abs(amount)`, из-за чего возвраты/рефанды (-amount) становятся положительными и Σ завышается (оборот вместо нетто).
+Я проверил данные блока в базе:
+- `lesson_id`: `96c970e6-d530-473c-84ab-06b176d1c98a`
+- `block_type`: `video_unskippable`
+- `url`: `https://kinescope.io/56dt29aFG1S6pFKicF8j9f`
+- `provider`: `kinescope`
+- `threshold_percent`: `95`
+- `duration_seconds`: `600`
 
-## Требование
-Считать Σ как **нетто** (учитывать знак), и в хедере, и в выбранных платежах.
+### Главная причина (P0)
+В `VideoUnskippableBlock.tsx` для Kinescope в режиме ученика включается **IframePlayer API режим** (`useKinescopePlayer`) и рисуется **пустой div-контейнер** под плеер:
+
+```tsx
+{shouldUseKinescopeHook ? (
+  <div id="kinescope-unskippable-..." />
+) : (
+  <iframe ... />
+)}
+```
+
+Но если IframePlayer API **не смог инициализироваться** (скрипт не загрузился, create() упал, блокировщик/сеть/временный сбой), то:
+- контейнер остаётся пустым → пользователь видит **чёрный прямоугольник**
+- и важное: **fallback-логика (кнопка “Начать просмотр” + таймер на 600с)** сейчас показывается *только* для `iframe`-режима, а для `shouldUseKinescopeHook=true` она не включается  
+→ в итоге пользователь застревает и не может пройти шаг.
+
+Это объясняет симптом “видео чёрное / не работает”, при этом прогресс 0% и подтверждение недоступно.
+
+### Второй риск (усиливает “снова”)
+В `useKinescopePlayer.ts` загрузка SDK кэшируется глобальной `scriptLoadPromise`.
+Если загрузка однажды завершилась ошибкой, промис может остаться “сломленным” и повторные попытки в рамках SPA-сессии не перезапустят загрузку корректно (нет безопасного retry).
 
 ---
 
-## Изменения (минимальный diff, 2 строки)
+## Цель патча
+Сделать видео “неубиваемым”:
+1) Если Kinescope IframePlayer API не поднялся — **автоматически откатиться на iframe embed** (и включить существующий fallback-таймер на 600 сек).
+2) Добавить **retry/устойчивость** в `useKinescopePlayer` для временных ошибок и/или альтернативного URL формата.
 
-### 1) PaymentsTabContent.tsx — sumByCurrency(): убрать Math.abs
+---
 
-Файл:
-`src/components/admin/payments/PaymentsTabContent.tsx`
+## План исправления (точечные правки, без рефакторинга лишнего)
 
-Найти:
-```ts
-const amt = Math.abs(Number(p.amount || 0));
+### A) PATCH-V1 (P0): VideoUnskippableBlock — добавить fallback с IframePlayer → iframe
+**Файл:** `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx`
 
-Заменить на:
+1) Добавить локальный флаг режима:
+- `const [kinescopeApiEnabled, setKinescopeApiEnabled] = useState(true);`
 
-const amt = Number(p.amount || 0);
+2) Уточнить условие `shouldUseKinescopeHook`:
+- было: `... && !isEditing && !isCompleted`
+- станет: `... && !isEditing && !isCompleted && kinescopeApiEnabled`
 
-P0-guard:
-	•	Number() должен получать значение как число/строку; если NaN → трактуем как 0:
+3) В `onError` у `useKinescopePlayer`:
+- при ошибке: `setKinescopeApiEnabled(false)`
+- (опционально) лог + мягкий toast “Переключили плеер на резервный режим”
 
-const raw = Number(p.amount ?? 0);
-const amt = Number.isFinite(raw) ? raw : 0;
+4) Рендер:
+- если `kinescopeApiEnabled=false` → показывать `iframe` (embedUrl) вместо пустого div
+- тем самым включается существующая логика:
+  - postMessage listener (для событий)
+  - автодетекция API (3 сек)
+  - кнопка “Начать просмотр”
+  - fallback-таймер на `duration_seconds` (600)
 
-(допустимо как улучшение, но не обязательно, если в данных всегда валидные числа)
+5) Улучшить построение embedUrl для Kinescope:
+- вместо `url.split('/').pop()` использовать `extractKinescopeVideoId(url)` (чтобы не ломаться на `?t=...` и др.)
+- embedUrl формировать так: `https://kinescope.io/embed/${videoId}?autoplay=0`
 
-⸻
+**Guardrails соблюдаем:**
+- не трогаем Input/onBlur, Slider/onValueCommit, addRow/deleteRow, init effect rows→setLocalRows — это про другие блоки
+- меняем только поведение Kinescope-плеера в `video_unskippable` (минимальный diff)
 
-2) PaymentsBatchActions.tsx — selectedSum: убрать Math.abs
+---
 
-Файл:
-src/components/admin/payments/PaymentsBatchActions.tsx
+### B) PATCH-V2 (P1): useKinescopePlayer — устойчивость загрузки SDK + retry URL
+**Файл:** `src/hooks/useKinescopePlayer.ts`
 
-Найти:
+1) Если загрузка SDK (script.onerror) завершилась ошибкой:
+- сбросить `scriptLoadPromise = null`, чтобы следующее открытие урока могло повторить попытку
 
-const amt = Math.abs(Number(p.amount || 0));
+2) При ошибке `IframePlayer.create`:
+- попробовать второй формат URL:
+  - попытка 1: `https://kinescope.io/${videoId}`
+  - попытка 2 (fallback): `https://kinescope.io/embed/${videoId}`
+- если обе неудачны — вызвать `onError` (чтобы `VideoUnskippableBlock` переключился на iframe)
 
-Заменить на:
+Это add-only/guarded поведение: не меняем внешние API хука, только добавляем устойчивость.
 
-const amt = Number(p.amount || 0);
+---
 
-P0-guard (аналогично, по желанию):
+## Проверка и доказательства (DoD)
 
-const raw = Number(p.amount ?? 0);
-const amt = Number.isFinite(raw) ? raw : 0;
+### 1) UI-пруфы (обязательно, на проде, под админом Сергея 7500084@gmail.com)
+На уроке: **“Тест: В какой роли вы находитесь сейчас”** → шаг “Видео”:
 
+A. Нормальный сценарий:
+- Плеер виден (не чёрный экран), есть интерфейс/видео
+- Прогресс просмотра начинает расти
+- Скрин №1: видео отображается + видно “Просмотрено: X% из 95%”
 
-⸻
+B. Резервный сценарий (если API сломан/блокируется):
+- Появляется кнопка “Начать просмотр”
+- Запускается таймер (из 600 секунд)
+- Скрин №2: виден fallback UI (кнопка/таймер) и прогресс
 
-STOP-guards
-	•	Не трогать RLS/SQL/миграции.
-	•	Не менять логику фильтров/табов/поиска — только агрегация Σ.
-	•	Если после патча Σ перестанет совпадать с ожидаемым “оборотом” — НЕ возвращать abs, а сделать отдельный будущий PATCH “Нетто/Оборот toggle”.
+### 2) Функционально
+- После достижения порога/таймера кнопка “Я просмотрел(а) видео” становится активной
+- Переход к следующему шагу работает
 
-⸻
+### 3) Технические пруфы
+- В консоли (если API падает): лог о переключении в iframe fallback (без красных бесконечных ошибок)
+- Diff-summary: изменены только 2 файла:
+  - `VideoUnskippableBlock.tsx` (fallback режим)
+  - `useKinescopePlayer.ts` (retry)
 
-DoD (обязательные факты/скрины)
-	1.	Net sum в хедере:
+---
 
-	•	В периоде, где есть +100 BYN и refund -50 BYN → “Σ …” показывает 50.00 BYN, а не 150.00.
-
-	2.	Net sum в выбранных:
-
-	•	Выделить чекбоксами +100 и -50 → в batch bar “Σ 50.00 BYN”.
-
-	3.	Табы/фильтры не сломаны:
-
-	•	Поиск “55.00” + таб “Успешные” → только успешные.
-	•	Поиск “55.00” + таб “Ошибки” → только ошибки.
-
-	4.	Scope/Matched не регресснули:
-
-	•	Меняем период “Этот месяц” → “Все периоды”: из X и Σ всего меняются соответствующе.
-
-Deliverables:
-	•	2 коммита/правки в 2 файлах
-	•	2 UI-скрина: (а) header Σ с refund, (б) batch bar Σ с refund
+## Важное про публикацию
+Я также вижу, что последний деплой падал с ошибкой **Cloudflare R2 429** (лимит на загрузку объектов). Это инфраструктурная/временная проблема: даже после фикса кода нужно будет убедиться, что публикация действительно прошла (и при необходимости повторить publish позже, когда лимит отпустит), иначе прод останется на старой версии.
 
