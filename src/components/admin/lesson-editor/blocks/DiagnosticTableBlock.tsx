@@ -343,9 +343,13 @@ export function DiagnosticTableBlock({
                       <Select
                         value={String(row[col.id] || '')}
                         onValueChange={(v) => {
-                          updateLocalRow(rowIndex, col.id, v);
-                          // Commit select changes immediately
-                          setTimeout(commitRows, 0);
+                          // FIX P0.9: Commit immediately with fresh data (avoid stale closure)
+                          setLocalRows((prev) => {
+                            const newRows = [...prev];
+                            newRows[rowIndex] = { ...newRows[rowIndex], [col.id]: v };
+                            onRowsChange?.(newRows); // immediate commit with fresh data
+                            return newRows;
+                          });
                         }}
                         disabled={isCompleted}
                       >
