@@ -81,6 +81,16 @@ interface TelegramChannel {
   is_active: boolean;
 }
 
+// P0.9.1: ScrapeConfig interface for UI
+interface ScrapeConfig {
+  type?: string;
+  rss_url?: string;
+  fallback_url?: string;
+  proxy_mode?: "auto" | "enhanced";
+  country?: "BY" | "RU" | "AUTO";
+  requires_auth?: boolean;
+}
+
 interface NewsSource {
   id: string;
   name: string;
@@ -93,8 +103,47 @@ interface NewsSource {
   last_error: string | null;
   last_error_code: string | null;
   last_error_details: Record<string, unknown> | null;
+  scrape_config: ScrapeConfig | null;
   created_at: string;
 }
+
+// P0.9.3: Human-readable error labels
+const getErrorLabel = (code: string | null): { label: string; emoji: string } => {
+  if (!code) return { label: "", emoji: "" };
+  switch (code) {
+    case "404":
+    case "410":
+      return { label: "URL не найден", emoji: "📭" };
+    case "400":
+      return { label: "Неверный запрос", emoji: "⚠️" };
+    case "401":
+    case "403":
+      return { label: "Блок/гео/доступ", emoji: "🚫" };
+    case "429":
+      return { label: "Лимит запросов", emoji: "🔄" };
+    case "timeout":
+      return { label: "Таймаут/рендер", emoji: "⏱" };
+    case "500":
+    case "502":
+    case "503":
+    case "504":
+      return { label: "Ошибка сервера", emoji: "💥" };
+    case "no_api_key":
+      return { label: "Нет API ключа", emoji: "🔑" };
+    case "auth_required":
+      return { label: "Нужна авторизация", emoji: "🔐" };
+    default:
+      return { label: `Ошибка: ${code}`, emoji: "❌" };
+  }
+};
+
+// P1.9.5: Get scrape method badge
+const getScrapeMethodBadge = (config: ScrapeConfig | null): { label: string; variant: "default" | "secondary" | "outline" } => {
+  if (!config) return { label: "Auto", variant: "outline" };
+  if (config.rss_url) return { label: "📡 RSS", variant: "default" };
+  if (config.proxy_mode === "enhanced") return { label: "🔒 Enhanced", variant: "secondary" };
+  return { label: "🌐 Auto", variant: "outline" };
+};
 
 interface ScrapeLog {
   id: string;
@@ -1405,6 +1454,7 @@ const AdminEditorial = () => {
                         <TableHead className="w-12">Вкл</TableHead>
                         <TableHead className="w-12">Статус</TableHead>
                         <TableHead>Источник</TableHead>
+                        <TableHead className="w-24">Метод</TableHead>
                         <TableHead>Категория</TableHead>
                         <TableHead className="w-20">Приор.</TableHead>
                         <TableHead>Последний скан</TableHead>
@@ -1459,6 +1509,17 @@ const AdminEditorial = () => {
                                 </div>
                               </div>
                             </TableCell>
+                            {/* P1.9.5: Method column */}
+                            <TableCell>
+                              {(() => {
+                                const methodInfo = getScrapeMethodBadge(source.scrape_config);
+                                return (
+                                  <Badge variant={methodInfo.variant} className="text-xs whitespace-nowrap">
+                                    {methodInfo.label}
+                                  </Badge>
+                                );
+                              })()}
+                            </TableCell>
                             <TableCell>
                               <Badge variant="outline">{getCategoryLabel(source.category)}</Badge>
                             </TableCell>
@@ -1479,21 +1540,24 @@ const AdminEditorial = () => {
                                 <span className="text-muted-foreground text-sm">Никогда</span>
                               )}
                             </TableCell>
+                            {/* P1.9.5: Human-readable error labels */}
                             <TableCell>
                               {source.last_error_code ? (
                                 <TooltipProvider>
                                   <Tooltip>
                                     <TooltipTrigger>
-                                      <Badge variant="destructive" className="text-xs">
-                                        {source.last_error_code === "403" && "🚫 Доступ"}
-                                        {source.last_error_code === "500" && "⚠️ Сервер"}
-                                        {source.last_error_code === "timeout" && "⏱ Таймаут"}
-                                        {!["403", "500", "timeout"].includes(source.last_error_code) && `❌ ${source.last_error_code}`}
-                                      </Badge>
+                                      {(() => {
+                                        const errInfo = getErrorLabel(source.last_error_code);
+                                        return (
+                                          <Badge variant="destructive" className="text-xs">
+                                            {errInfo.emoji} {errInfo.label}
+                                          </Badge>
+                                        );
+                                      })()}
                                     </TooltipTrigger>
                                     <TooltipContent className="max-w-xs">
-                                      <p className="font-medium">Код ошибки: {source.last_error_code}</p>
-                                      {source.last_error && <p className="text-xs">{source.last_error}</p>}
+                                      <p className="font-medium">Код: {source.last_error_code}</p>
+                                      {source.last_error && <p className="text-xs mt-1">{source.last_error}</p>}
                                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>

@@ -1,5 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 // Declare EdgeRuntime for background tasks
 declare const EdgeRuntime: {
@@ -8,7 +7,24 @@ declare const EdgeRuntime: {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+// ============ P0.9.1: ScrapeConfig interface ============
+interface ScrapeConfig {
+  type?: string;
+  rss_url?: string;
+  fallback_url?: string;
+  proxy_mode?: "auto" | "enhanced";
+  country?: "BY" | "RU" | "AUTO";
+  requires_auth?: boolean;
+}
+
+// Default config values
+const DEFAULT_SCRAPE_CONFIG: ScrapeConfig = {
+  proxy_mode: "auto",
+  country: "AUTO",
 };
 
 interface NewsSource {
@@ -18,7 +34,7 @@ interface NewsSource {
   country: string;
   category: string;
   priority: number;
-  scrape_config: Record<string, unknown>;
+  scrape_config: ScrapeConfig | null;
 }
 
 interface ScrapedItem {
@@ -47,7 +63,38 @@ interface ScrapeStats {
   errors: Array<{ source: string; error: string; code?: string }>;
 }
 
-// Extended keywords for filtering relevant business news (softened filter)
+// ============ P0.9.3: Error classification ============
+type ErrorClass = 
+  | "URL_INVALID"       // 404, 410
+  | "BAD_REQUEST"       // 400
+  | "BLOCKED_OR_AUTH"   // 401, 403
+  | "RATE_LIMIT"        // 429
+  | "TIMEOUT_RENDER"    // timeout, network error
+  | "SERVER_ERROR"      // 5xx
+  | "PARSER_ERROR"      // parse/json/xml errors
+  | "NO_API_KEY"        // missing Firecrawl key
+  | "UNKNOWN";
+
+function classifyError(statusCode: string | number | undefined, message?: string): ErrorClass {
+  const code = String(statusCode);
+  
+  if (code === "404" || code === "410") return "URL_INVALID";
+  if (code === "400") return "BAD_REQUEST";
+  if (code === "401" || code === "403") return "BLOCKED_OR_AUTH";
+  if (code === "429") return "RATE_LIMIT";
+  if (code === "500" || code === "502" || code === "503" || code === "504") return "SERVER_ERROR";
+  if (code === "timeout" || message?.toLowerCase().includes("timeout") || message?.toLowerCase().includes("network")) {
+    return "TIMEOUT_RENDER";
+  }
+  if (message?.toLowerCase().includes("parse") || message?.toLowerCase().includes("json") || message?.toLowerCase().includes("xml")) {
+    return "PARSER_ERROR";
+  }
+  if (code === "no_api_key") return "NO_API_KEY";
+  
+  return "UNKNOWN";
+}
+
+// Extended keywords for filtering relevant business news
 const RELEVANCE_KEYWORDS = [
   // Taxes
   "налог", "ндс", "подоходн", "прибыль", "налогообложен",
@@ -69,7 +116,7 @@ const RELEVANCE_KEYWORDS = [
   "кодекс", "закон", "постановлен", "указ", "декрет", "нпа",
   // Other
   "ип", "предпринимат", "юрлиц", "организаци",
-  // Additional business terms (expanded)
+  // Additional business terms
   "бизнес", "компани", "фирм", "предприят", "малый", "средний",
   "регистрац", "ликвидац", "реорганизац",
   "договор", "контракт", "сделк",
@@ -84,18 +131,6 @@ const RELEVANCE_KEYWORDS = [
   "госзакупк", "тендер", "конкурс",
   "минфин", "минэконом", "минтруд",
 ];
-
-// Specific deep URLs for certain sources
-const DEEP_URLS: Record<string, string[]> = {
-  "pravo.by": [
-    "/pravovaya-informatsiya/novosti-zakonodatelstva/",
-    "/news/",
-  ],
-  "nalog.gov.by": [
-    "/info/novosti/",
-    "/news/",
-  ],
-};
 
 // Helper to get iLex session cookie for authenticated scraping
 async function getIlexSession(): Promise<string | null> {
@@ -123,14 +158,12 @@ async function getIlexSession(): Promise<string | null> {
       return null;
     }
     
-    // Extract session cookie from response headers
     const setCookie = response.headers.get('set-cookie');
     if (setCookie) {
       console.log('[monitor-news] iLex session obtained');
       return setCookie;
     }
     
-    // Some APIs return token in body
     const body = await response.json().catch(() => null);
     if (body?.token) {
       return `Authorization: Bearer ${body.token}`;
@@ -143,7 +176,7 @@ async function getIlexSession(): Promise<string | null> {
   }
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -159,7 +192,6 @@ serve(async (req) => {
 
   // If async mode requested, start background task and return immediately
   if (runAsync) {
-    // Create scrape log entry
     const { data: logEntry, error: logError } = await supabase
       .from("scrape_logs")
       .insert({
@@ -175,12 +207,10 @@ serve(async (req) => {
 
     const scrapeLogId = logEntry?.id;
 
-    // Start background processing
     EdgeRuntime.waitUntil(
       runScraping(supabase, firecrawlKey, lovableKey, sourceId, limit, scrapeLogId)
     );
 
-    // Return immediately with 202 Accepted
     return new Response(
       JSON.stringify({
         success: true,
@@ -213,9 +243,8 @@ serve(async (req) => {
 });
 
 // Main scraping function
-// deno-lint-ignore no-explicit-any
 async function runScraping(
-  supabase: any,
+  supabase: SupabaseClient,
   firecrawlKey: string | undefined,
   lovableKey: string | undefined,
   sourceId: string | undefined,
@@ -233,7 +262,7 @@ async function runScraping(
   };
 
   try {
-    // Fetch audience interests from last 48 hours for resonance matching
+    // Fetch audience interests from last 48 hours
     const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString().split('T')[0];
     const { data: recentTopics } = await supabase
       .from('audience_interests')
@@ -282,14 +311,20 @@ async function runScraping(
 
     for (const source of sources || []) {
       const sourceResult = { source: source.name, items: 0, errors: [] as string[] };
-      let sourceSuccess = true;
       let lastErrorCode: string | null = null;
       let lastErrorDetails: Record<string, unknown> | null = null;
+      const sourceStartTime = Date.now();
 
       try {
-        // Scrape source using Firecrawl with improved depth
-        const { items: scrapedItems, errorCode, errorDetails } = await scrapeSourceWithDepth(source, firecrawlKey, ilexSession);
-        console.log(`[monitor-news] ${source.name}: scraped ${scrapedItems.length} items`);
+        // P0.9.4: New fallback chain scraping
+        const { items: scrapedItems, errorCode, errorDetails, stage } = await scrapeSourceWithFallback(
+          source, 
+          firecrawlKey, 
+          ilexSession,
+          supabase
+        );
+        
+        console.log(`[monitor-news] ${source.name}: scraped ${scrapedItems.length} items via ${stage || 'unknown'}`);
 
         if (errorCode) {
           lastErrorCode = errorCode;
@@ -313,7 +348,7 @@ async function runScraping(
               continue;
             }
 
-            // Quick relevance check (softened - any match passes)
+            // Quick relevance check
             const contentLower = (item.title + " " + item.content).toLowerCase();
             const isQuickRelevant = RELEVANCE_KEYWORDS.some((kw) =>
               contentLower.includes(kw)
@@ -324,7 +359,7 @@ async function runScraping(
               continue;
             }
 
-            // AI analysis with style profile for adaptive prompting
+            // AI analysis with style profile
             const analysis = await analyzeWithAI(item, lovableKey, styleProfile, audienceTopics);
 
             if (!analysis.is_relevant) {
@@ -394,21 +429,18 @@ async function runScraping(
         if (sourceResult.errors.length === 0 && scrapedItems.length > 0) {
           stats.sources_success++;
         } else if (scrapedItems.length === 0 && lastErrorCode) {
-          sourceSuccess = false;
           stats.sources_failed++;
         } else {
           stats.sources_success++;
         }
       } catch (sourceError) {
-        sourceSuccess = false;
         stats.sources_failed++;
         const errMsg = sourceError instanceof Error ? sourceError.message : String(sourceError);
         sourceResult.errors.push(`Source error: ${errMsg}`);
         
-        // Parse error code from message if possible
         const errorCodeMatch = errMsg.match(/(\d{3})/);
         lastErrorCode = errorCodeMatch ? errorCodeMatch[1] : "unknown";
-        lastErrorDetails = { message: errMsg, timestamp: new Date().toISOString() };
+        lastErrorDetails = { message: errMsg.slice(0, 200), timestamp: new Date().toISOString() };
         
         stats.errors.push({
           source: source.name,
@@ -416,10 +448,13 @@ async function runScraping(
           code: lastErrorCode,
         });
         
+        // P0.9.3: Log scrape attempt with error classification
+        await logScrapeAttempt(supabase, source, "exception", source.url, "auto", lastErrorCode, errMsg, Date.now() - sourceStartTime, 0);
+        
         await supabase
           .from("news_sources")
           .update({ 
-            last_error: errMsg,
+            last_error: errMsg.slice(0, 500),
             last_error_code: lastErrorCode,
             last_error_details: lastErrorDetails,
           })
@@ -463,7 +498,6 @@ async function runScraping(
   } catch (error) {
     console.error("[monitor-news] Fatal error:", error);
     
-    // Update scrape log with failure
     if (scrapeLogId) {
       await supabase
         .from("scrape_logs")
@@ -481,177 +515,330 @@ async function runScraping(
   }
 }
 
-// Scrape with depth - use Map to discover URLs, then scrape individual pages
-async function scrapeSourceWithDepth(
+// ============ P0.9.3: Audit log helper ============
+async function logScrapeAttempt(
+  supabase: SupabaseClient,
+  source: NewsSource,
+  stage: string,
+  urlUsed: string,
+  proxyMode: string,
+  statusCode: string | null,
+  errorMessage: string | null,
+  elapsedMs: number,
+  itemsFound: number
+) {
+  try {
+    await supabase.from("audit_logs").insert({
+      action: "news_scrape_attempt",
+      actor_type: "system",
+      actor_user_id: null,
+      meta: {
+        source_id: source.id,
+        source_name: source.name,
+        stage,
+        url_used: urlUsed,
+        proxy_mode: proxyMode,
+        status_code: statusCode,
+        error_class: statusCode ? classifyError(statusCode, errorMessage || undefined) : null,
+        elapsed_ms: elapsedMs,
+        items_found: itemsFound,
+      },
+    });
+  } catch (err) {
+    console.error("[monitor-news] Failed to log audit:", err);
+  }
+}
+
+// ============ P0.9.2: RSS Parser ============
+async function parseRssFeed(url: string): Promise<{ items: ScrapedItem[]; error?: string }> {
+  const RSS_TIMEOUT = 15000;
+  const RSS_MAX_ITEMS = 30;
+  const CONTENT_MAX_LENGTH = 5000;
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), RSS_TIMEOUT);
+    
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*",
+      },
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return { items: [], error: `RSS_HTTP_${response.status}` };
+    }
+
+    const xml = await response.text();
+    const items: ScrapedItem[] = [];
+
+    // Parse RSS XML without heavy dependencies
+    const itemMatches = xml.matchAll(/<item>([\s\S]*?)<\/item>/gi);
+    
+    let count = 0;
+    for (const match of itemMatches) {
+      if (count >= RSS_MAX_ITEMS) break;
+      
+      const itemXml = match[1];
+      
+      // Extract fields with CDATA support
+      const title = extractXmlField(itemXml, "title");
+      const link = extractXmlField(itemXml, "link");
+      const description = extractXmlField(itemXml, "description");
+      const content = extractXmlField(itemXml, "content:encoded") || extractXmlField(itemXml, "content");
+      const pubDate = extractXmlField(itemXml, "pubDate") || extractXmlField(itemXml, "dc:date");
+
+      if (title && link) {
+        items.push({
+          title: decodeHtmlEntities(title).slice(0, 300),
+          url: link,
+          content: decodeHtmlEntities(content || description || "").slice(0, CONTENT_MAX_LENGTH),
+          date: pubDate ? normalizeDate(pubDate) : undefined,
+        });
+        count++;
+      }
+    }
+
+    console.log(`[monitor-news] RSS parsed: ${items.length} items from ${url}`);
+    return { items };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    if (errMsg.includes("abort")) {
+      return { items: [], error: "RSS_TIMEOUT" };
+    }
+    return { items: [], error: `RSS_ERROR: ${errMsg.slice(0, 100)}` };
+  }
+}
+
+function extractXmlField(xml: string, fieldName: string): string | null {
+  // Handle both regular and CDATA content
+  const regex = new RegExp(`<${fieldName}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${fieldName}>`, 'i');
+  const match = xml.match(regex);
+  return match ? match[1].trim() : null;
+}
+
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)))
+    .replace(/<[^>]+>/g, "") // Remove HTML tags
+    .trim();
+}
+
+function normalizeDate(dateStr: string): string | undefined {
+  try {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return undefined;
+    return date.toISOString();
+  } catch {
+    return undefined;
+  }
+}
+
+// ============ P0.9.4: Unified fallback chain ============
+async function scrapeSourceWithFallback(
   source: NewsSource,
   firecrawlKey: string | undefined,
-  ilexSession?: string | null
-): Promise<{ items: ScrapedItem[]; errorCode?: string; errorDetails?: Record<string, unknown> }> {
-  if (!firecrawlKey) {
-    console.log(`[monitor-news] No Firecrawl key, skipping ${source.name}`);
-    return { items: [] };
-  }
+  ilexSession: string | null,
+  supabase: SupabaseClient
+): Promise<{ items: ScrapedItem[]; errorCode?: string; errorDetails?: Record<string, unknown>; stage?: string }> {
+  const config: ScrapeConfig = { ...DEFAULT_SCRAPE_CONFIG, ...(source.scrape_config || {}) };
+  const startTime = Date.now();
+  let lastError: { code?: string; details?: Record<string, unknown> } = {};
+  
+  // STOP-guards
+  const MAX_RUNTIME_MS = 90000; // 90 seconds per source
+  const MAX_ITEMS = 30;
+  
+  const checkTimeout = () => Date.now() - startTime > MAX_RUNTIME_MS;
 
   // Check if this is iLex source that requires authentication
   const isIlexSource = source.url.includes('ilex-private.ilex.by');
-  const scrapeConfig = source.scrape_config as { requires_auth?: boolean } || {};
-  
-  if (isIlexSource || scrapeConfig.requires_auth) {
+  if (isIlexSource || config.requires_auth) {
     if (!ilexSession) {
       console.log(`[monitor-news] ${source.name} requires auth but no session available`);
+      await logScrapeAttempt(supabase, source, "auth_check", source.url, "none", "auth_required", "No iLex session", Date.now() - startTime, 0);
       return { 
         items: [], 
         errorCode: 'auth_required',
-        errorDetails: { message: 'Source requires authentication but no session available' }
+        errorDetails: { message: 'Source requires authentication but no session available' },
+        stage: 'auth_check',
       };
     }
     console.log(`[monitor-news] Using authenticated session for ${source.name}`);
   }
 
-  try {
-    const hostname = new URL(source.url).hostname;
-    const allItems: ScrapedItem[] = [];
-    let errorCode: string | undefined;
-    let errorDetails: Record<string, unknown> | undefined;
-
-    // Step 1: Try to map the website to find article URLs
-    let articleUrls: string[] = [];
+  // ===== STAGE 1: RSS (if configured) =====
+  if (config.rss_url) {
+    console.log(`[monitor-news] ${source.name}: STAGE 1 - trying RSS...`);
+    const rssResult = await parseRssFeed(config.rss_url);
     
-    try {
-      const mapResponse = await fetch("https://api.firecrawl.dev/v1/map", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${firecrawlKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: source.url,
-          limit: 30,
-          includeSubdomains: false,
-        }),
-      });
-
-      if (mapResponse.ok) {
-        const mapData = await mapResponse.json();
-        articleUrls = (mapData.links || []).filter((url: string) => {
-          // Filter out image URLs and non-article links
-          const lowerUrl = url.toLowerCase();
-          return !lowerUrl.match(/\.(jpg|jpeg|png|gif|webp|svg|pdf|doc|docx|xls|xlsx)(\?|$)/i) &&
-                 !lowerUrl.includes("/tag/") &&
-                 !lowerUrl.includes("/category/") &&
-                 !lowerUrl.includes("/author/") &&
-                 url.length > 30; // Likely to be article URLs
-        }).slice(0, 15);
-        console.log(`[monitor-news] ${source.name}: mapped ${articleUrls.length} article URLs`);
-      } else {
-        errorCode = String(mapResponse.status);
-        errorDetails = { 
-          type: "map_failed", 
-          status: mapResponse.status,
-          statusText: mapResponse.statusText,
-        };
-      }
-    } catch (mapError) {
-      console.log(`[monitor-news] Map failed for ${source.name}, falling back to scrape`);
-      errorCode = "map_error";
-      errorDetails = { type: "map_exception", message: mapError instanceof Error ? mapError.message : String(mapError) };
+    await logScrapeAttempt(
+      supabase, source, "rss", config.rss_url, "rss",
+      rssResult.error || null, rssResult.error || null,
+      Date.now() - startTime, rssResult.items.length
+    );
+    
+    if (rssResult.items.length > 0) {
+      console.log(`[monitor-news] ${source.name}: RSS SUCCESS, ${rssResult.items.length} items`);
+      return { items: rssResult.items.slice(0, MAX_ITEMS), stage: "rss" };
     }
-
-    // Step 2: If no URLs from map, scrape the main page
-    if (articleUrls.length === 0) {
-      const { content: scrapeResult, errorCode: scrapeErr, errorDetails: scrapeDetails } = await scrapeUrl(source.url, firecrawlKey, source.country);
-      if (scrapeErr) {
-        errorCode = scrapeErr;
-        errorDetails = scrapeDetails;
-      }
-      if (scrapeResult) {
-        const items = parseNewsFromMarkdown(scrapeResult, source.url);
-        allItems.push(...items);
-      }
-    } else {
-      // Step 3: Scrape individual article URLs (limit to 5 to save API calls)
-      for (const articleUrl of articleUrls.slice(0, 5)) {
-        try {
-          const { content: scrapeResult } = await scrapeUrl(articleUrl, firecrawlKey, source.country);
-          if (scrapeResult && scrapeResult.length > 100) {
-            // Extract article from scraped content
-            const title = extractTitle(scrapeResult);
-            if (title && title.length > 10) {
-              allItems.push({
-                title: title.slice(0, 300),
-                url: articleUrl,
-                content: scrapeResult.slice(0, 5000),
-              });
-            }
-          }
-        } catch (articleError) {
-          console.log(`[monitor-news] Failed to scrape article: ${articleUrl}`);
-        }
-      }
+    
+    if (rssResult.error) {
+      lastError = { code: rssResult.error, details: { stage: "rss", url: config.rss_url } };
     }
+  }
 
-    return { items: allItems.slice(0, 10), errorCode, errorDetails };
-  } catch (error) {
-    console.error(`[monitor-news] Scrape error for ${source.name}:`, error);
+  if (checkTimeout()) {
+    return { items: [], errorCode: "timeout", errorDetails: { stage: "rss", elapsed_ms: Date.now() - startTime }, stage: "timeout" };
+  }
+
+  // ===== STAGE 2: HTML scrape (proxy: auto) =====
+  if (!firecrawlKey) {
+    console.log(`[monitor-news] ${source.name}: No Firecrawl key, stopping`);
+    await logScrapeAttempt(supabase, source, "no_api_key", source.url, "none", "no_api_key", "Firecrawl API key not configured", Date.now() - startTime, 0);
     return { 
       items: [], 
-      errorCode: "exception",
-      errorDetails: { message: error instanceof Error ? error.message : String(error) }
+      errorCode: "no_api_key", 
+      errorDetails: { message: "Firecrawl API key not configured" },
+      stage: "no_api_key",
     };
   }
+
+  const effectiveCountry = config.country === "AUTO" ? (source.country || "RU") : config.country;
+  const initialProxyMode = config.proxy_mode || "auto";
+  
+  console.log(`[monitor-news] ${source.name}: STAGE 2 - HTML scrape (proxy: ${initialProxyMode})...`);
+  const htmlResult1 = await scrapeUrlWithProxy(source.url, firecrawlKey, effectiveCountry, initialProxyMode);
+  
+  await logScrapeAttempt(
+    supabase, source, `html_${initialProxyMode}`, source.url, initialProxyMode,
+    htmlResult1.errorCode || null, htmlResult1.errorCode || null,
+    Date.now() - startTime, 0
+  );
+
+  if (htmlResult1.content) {
+    const items = parseNewsFromMarkdown(htmlResult1.content, source.url);
+    if (items.length > 0) {
+      console.log(`[monitor-news] ${source.name}: HTML ${initialProxyMode} SUCCESS, ${items.length} items`);
+      return { items: items.slice(0, MAX_ITEMS), stage: `html_${initialProxyMode}` };
+    }
+  }
+
+  if (htmlResult1.errorCode) {
+    lastError = { code: htmlResult1.errorCode, details: htmlResult1.errorDetails };
+  }
+
+  if (checkTimeout()) {
+    return { items: [], errorCode: "timeout", errorDetails: { stage: `html_${initialProxyMode}`, elapsed_ms: Date.now() - startTime }, stage: "timeout" };
+  }
+
+  // ===== STAGE 3: HTML enhanced (if auto failed with retryable error) =====
+  if (initialProxyMode !== "enhanced" && shouldRetryWithEnhanced(htmlResult1.errorCode)) {
+    console.log(`[monitor-news] ${source.name}: STAGE 3 - retrying with enhanced proxy...`);
+    const htmlResult2 = await scrapeUrlWithProxy(source.url, firecrawlKey, effectiveCountry, "enhanced");
+    
+    await logScrapeAttempt(
+      supabase, source, "html_enhanced", source.url, "enhanced",
+      htmlResult2.errorCode || null, htmlResult2.errorCode || null,
+      Date.now() - startTime, 0
+    );
+
+    if (htmlResult2.content) {
+      const items = parseNewsFromMarkdown(htmlResult2.content, source.url);
+      if (items.length > 0) {
+        console.log(`[monitor-news] ${source.name}: HTML enhanced SUCCESS, ${items.length} items`);
+        return { items: items.slice(0, MAX_ITEMS), stage: "html_enhanced" };
+      }
+    }
+
+    if (htmlResult2.errorCode) {
+      lastError = { code: htmlResult2.errorCode, details: htmlResult2.errorDetails };
+    }
+  }
+
+  if (checkTimeout()) {
+    return { items: [], errorCode: "timeout", errorDetails: { stage: "html_enhanced", elapsed_ms: Date.now() - startTime }, stage: "timeout" };
+  }
+
+  // ===== STAGE 4: Fallback URL (if configured) =====
+  if (config.fallback_url) {
+    console.log(`[monitor-news] ${source.name}: STAGE 4 - trying fallback URL...`);
+    
+    // Try fallback with enhanced proxy directly
+    const fallbackResult = await scrapeUrlWithProxy(config.fallback_url, firecrawlKey, effectiveCountry, "enhanced");
+    
+    await logScrapeAttempt(
+      supabase, source, "fallback", config.fallback_url, "enhanced",
+      fallbackResult.errorCode || null, fallbackResult.errorCode || null,
+      Date.now() - startTime, 0
+    );
+
+    if (fallbackResult.content) {
+      const items = parseNewsFromMarkdown(fallbackResult.content, source.url);
+      if (items.length > 0) {
+        console.log(`[monitor-news] ${source.name}: Fallback URL SUCCESS, ${items.length} items`);
+        return { items: items.slice(0, MAX_ITEMS), stage: "fallback" };
+      }
+    }
+
+    if (fallbackResult.errorCode) {
+      lastError = { code: fallbackResult.errorCode, details: fallbackResult.errorDetails };
+    }
+  }
+
+  console.log(`[monitor-news] ${source.name}: all stages failed, last error: ${lastError.code}`);
+  return { items: [], errorCode: lastError.code, errorDetails: lastError.details, stage: "failed" };
 }
 
-// Check if URL is a government site that needs premium proxy
-function isGovSite(url: string): boolean {
-  const govDomains = [
-    // Belarus
-    ".gov.by", "pravo.by", "nalog.gov.by", "minfin.gov.by", "president.gov.by",
-    "government.by", "nbrb.by", "customs.gov.by", "mintrud.gov.by",
-    "economy.gov.by", "minzdrav.gov.by", "belstat.gov.by",
-    // Russia
-    ".gov.ru", "economy.gov.ru", "minfin.ru", "nalog.ru",
-    "government.ru", "cbr.ru", "consultant.ru",
-  ];
-  return govDomains.some(domain => url.includes(domain));
+function shouldRetryWithEnhanced(errorCode: string | undefined): boolean {
+  if (!errorCode) return false;
+  return ["400", "403", "429", "timeout", "BLOCKED_OR_AUTH", "RATE_LIMIT"].includes(errorCode);
 }
 
-// Helper to scrape a single URL
-async function scrapeUrl(
-  url: string, 
-  firecrawlKey: string, 
-  country: string
+// Helper to scrape a single URL with Firecrawl
+async function scrapeUrlWithProxy(
+  url: string,
+  firecrawlKey: string,
+  country: string,
+  proxyMode: "auto" | "enhanced"
 ): Promise<{ content: string | null; errorCode?: string; errorDetails?: Record<string, unknown> }> {
   try {
-    const isGov = isGovSite(url);
-    
-    // Build request body with premium proxy for gov sites
     const requestBody: Record<string, unknown> = {
-      url: url,
+      url,
       formats: ["markdown"],
       onlyMainContent: true,
-      waitFor: isGov ? 5000 : 3000, // Longer wait for heavy gov sites
+      waitFor: proxyMode === "enhanced" ? 5000 : 3000,
+      timeout: 30000,
       location: {
-        country: country === "by" ? "BY" : "RU",
+        country: country.toUpperCase() === "BY" ? "BY" : "RU",
         languages: ["ru"],
       },
     };
-    
-    // Add premium proxy for government sites
-    if (isGov) {
-      console.log(`[monitor-news] Using premium proxy for gov site: ${url}`);
-      // Firecrawl premium mode with residential proxies
-      (requestBody as Record<string, unknown>).premium = true;
-      (requestBody as Record<string, unknown>).mobile = false; // Force desktop mode
-      (requestBody as Record<string, unknown>).timeout = 30000; // 30 second timeout
-      // Add realistic browser headers
-      (requestBody as Record<string, unknown>).headers = {
+
+    // P0.9.4: Use 'stealth' for enhanced mode (NOT premium which causes 400)
+    // Firecrawl v1 API supports: stealth, residential modes
+    if (proxyMode === "enhanced") {
+      // Don't use premium:true - causes 400 errors
+      // Instead use mobile=false and add stealth headers
+      requestBody.mobile = false;
+      requestBody.headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         "Cache-Control": "no-cache",
       };
     }
-    
+
     const response = await fetch("https://api.firecrawl.dev/v1/scrape", {
       method: "POST",
       headers: {
@@ -662,47 +849,33 @@ async function scrapeUrl(
     });
 
     if (!response.ok) {
-      return { 
-        content: null, 
+      const errorBody = await response.text().catch(() => "");
+      return {
+        content: null,
         errorCode: String(response.status),
-        errorDetails: { 
-          type: "scrape_failed",
+        errorDetails: {
           status: response.status,
           statusText: response.statusText,
+          body: errorBody.slice(0, 200), // STOP-guard: truncate error body
           url,
-          usedPremium: isGov,
-        }
+          proxyMode,
+        },
       };
     }
 
     const data = await response.json();
     return { content: data.data?.markdown || "" };
   } catch (error) {
-    return { 
+    return {
       content: null,
       errorCode: "timeout",
-      errorDetails: { 
-        type: "scrape_exception",
-        message: error instanceof Error ? error.message : String(error),
+      errorDetails: {
+        message: (error instanceof Error ? error.message : String(error)).slice(0, 200),
         url,
-      }
+        proxyMode,
+      },
     };
   }
-}
-
-// Extract title from markdown
-function extractTitle(markdown: string): string {
-  // Try to find H1 or first header
-  const h1Match = markdown.match(/^#\s+(.+)$/m);
-  if (h1Match) return h1Match[1].trim();
-
-  // Try first bold text
-  const boldMatch = markdown.match(/\*\*(.+?)\*\*/);
-  if (boldMatch) return boldMatch[1].trim();
-
-  // First line
-  const firstLine = markdown.split("\n").find(line => line.trim().length > 20);
-  return firstLine?.replace(/^[#*\d.]+\s*/, "").trim() || "";
 }
 
 function parseNewsFromMarkdown(markdown: string, baseUrl: string): ScrapedItem[] {
@@ -714,7 +887,6 @@ function parseNewsFromMarkdown(markdown: string, baseUrl: string): ScrapedItem[]
   for (const section of sections) {
     if (section.trim().length < 50) continue;
 
-    // Extract title from first line
     const lines = section.trim().split("\n");
     const titleLine = lines[0].replace(/^[#*\d.]+\s*/, "").trim();
 
@@ -725,14 +897,12 @@ function parseNewsFromMarkdown(markdown: string, baseUrl: string): ScrapedItem[]
     const urlMatches = section.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g);
     for (const match of urlMatches) {
       const extractedUrl = match[2];
-      // Skip image URLs
       if (!extractedUrl.match(/\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i)) {
         url = extractedUrl;
         break;
       }
     }
 
-    // Clean content
     const content = lines.slice(1).join("\n").trim();
 
     if (titleLine && content.length > 20) {
@@ -771,7 +941,7 @@ async function analyzeWithAI(
 - Тон: ${styleProfile.tone || 'деловой'}
 - Длина: ${styleProfile.avg_length || 'средний'}
 - Характерные фразы: ${(styleProfile.characteristic_phrases as string[] || []).slice(0, 5).join(', ')}
-- Форматирование: ${(styleProfile.formatting as any)?.html_tags_used?.join(', ') || '<b>, <i>'}`;
+- Форматирование: ${(styleProfile.formatting as Record<string, unknown>)?.html_tags_used || '<b>, <i>'}`;
   }
 
   // Build audience context
@@ -782,7 +952,6 @@ ${audienceTopics.slice(0, 10).join(', ')}`;
   }
 
   try {
-    // Softened AI prompt - more inclusive for business news with adaptive style
     const systemPrompt = `Ты — редактор бизнес-издания для бухгалтеров и предпринимателей Беларуси и России.
 
 Проанализируй новость и верни JSON:
