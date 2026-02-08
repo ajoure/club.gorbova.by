@@ -7,7 +7,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 // Build stamp for deployment verification
-const BUILD_STAMP = 'pm-verify-ledger-v2-2026-02-08';
+const BUILD_STAMP = 'pm-verify-p0-security-2026-02-08';
 
 // 3DS-related error codes from bePaid that indicate card requires 3DS for each transaction
 const REQUIRES_3DS_CODES = ['P.4011', 'P.4012', 'P.4013', 'P.4014', 'P.4015'];
@@ -61,6 +61,16 @@ function extractGatewayMessage(httpStatus: number, json: any, rawText?: string):
   if (rawText && rawText.length < 200) return rawText;
   
   return `HTTP ${httpStatus}`;
+}
+
+// PATCH-2: Helper to get existing meta and merge (prevent data loss)
+async function getExistingMeta(supabase: any, pmId: string): Promise<Record<string, unknown>> {
+  const { data } = await supabase
+    .from('payment_methods')
+    .select('meta')
+    .eq('id', pmId)
+    .single();
+  return (data?.meta as Record<string, unknown>) || {};
 }
 
 function calculateBackoff(attempt: number): number {
@@ -504,6 +514,8 @@ Deno.serve(async (req) => {
             is_verification: true,
             card_last4: pm.last4,
             card_brand: pm.brand,
+            attempt: job.attempt_count + 1, // PATCH-3: Track attempt number
+            job_id: job.id, // PATCH-3: Track job for audit trail
           },
         })
         .select('id')
@@ -588,14 +600,7 @@ Deno.serve(async (req) => {
 
       console.log(`[job ${job.id}] Charge result: http=${httpStatus}, status=${txStatus}, code=${txCode}, uid=${txUid}, msg=${txMessage?.slice(0, 100)}`);
 
-      // Build raw response for audit logs
-      const rawChargeResponse = {
-        http_status: httpStatus,
-        tx_status: txStatus,
-        tx_code: txCode,
-        tx_message: txMessage,
-        tx_uid: txUid,
-      };
+      // PATCH-4: Removed rawChargeResponse object - no longer needed for audit
 
       // ============================================================
       // PATCH-2: BANK DECLINE CHECK (not retryable) — Do not honor, etc.
@@ -613,6 +618,9 @@ Deno.serve(async (req) => {
           }).eq('id', ledgerPayment.id);
         }
         
+        // PATCH-2: Merge existing meta to prevent data loss
+        const existingMeta = await getExistingMeta(supabase, pm.id);
+        
         // Update payment method to rejected (NOT retryable)
         await supabase.from('payment_methods').update({
           verification_status: 'rejected',
@@ -620,10 +628,11 @@ Deno.serve(async (req) => {
           verification_checked_at: new Date().toISOString(),
           recurring_verified: false,
           meta: {
+            ...existingMeta, // Preserve existing meta fields
             verify_tracking_id: trackingId,
             verify_payment_id: ledgerPayment?.id,
             rejection_reason: 'bank_decline',
-            bank_message: txMessage,
+            bank_message: txMessage?.slice(0, 200),
           },
         }).eq('id', pm.id);
         
@@ -634,7 +643,7 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         }).eq('id', job.id);
         
-        // SYSTEM ACTOR audit: card.verification.rejected
+        // SYSTEM ACTOR audit: card.verification.rejected (PATCH-1: no raw)
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
@@ -646,9 +655,11 @@ Deno.serve(async (req) => {
             last4: pm.last4,
             brand: pm.brand,
             reason: 'bank_decline',
-            message: txMessage,
+            message_short: txMessage?.slice(0, 120),
             ledger_payment_id: ledgerPayment?.id,
-            raw: rawChargeResponse,
+            http_status: httpStatus,
+            tx_uid: txUid,
+            tx_code: txCode,
           },
         });
         
@@ -684,10 +695,19 @@ Deno.serve(async (req) => {
         
         if (newAttempt >= maxAttempts) {
           // Max attempts exhausted → finalize as failed
+          // PATCH-2: Merge existing meta
+          const existingMeta = await getExistingMeta(supabase, pm.id);
+          
           await supabase.from('payment_methods').update({
             verification_status: 'failed',
             verification_error: `Ошибка шлюза после ${newAttempt} попыток: ${txMessage?.slice(0, 100) || 'нет ответа'}`,
             verification_checked_at: new Date().toISOString(),
+            meta: {
+              ...existingMeta,
+              rejection_reason: 'gateway_error_max_attempts',
+              verify_payment_id: ledgerPayment?.id,
+              last_error: txMessage?.slice(0, 200),
+            },
           }).eq('id', pm.id);
           
           await supabase.from('payment_method_verification_jobs').update({
@@ -697,7 +717,7 @@ Deno.serve(async (req) => {
             updated_at: new Date().toISOString(),
           }).eq('id', job.id);
           
-          // SYSTEM ACTOR audit
+          // SYSTEM ACTOR audit (PATCH-1: no raw)
           await supabase.from('audit_logs').insert({
             actor_type: 'system',
             actor_user_id: null,
@@ -709,9 +729,10 @@ Deno.serve(async (req) => {
               reason: 'gateway_error_max_attempts',
               attempts: newAttempt,
               http_status: httpStatus,
-              message: txMessage,
+              message_short: txMessage?.slice(0, 120),
               ledger_payment_id: ledgerPayment?.id,
-              raw: rawChargeResponse,
+              tx_uid: txUid,
+              tx_code: txCode,
             },
           });
           
@@ -729,7 +750,7 @@ Deno.serve(async (req) => {
             updated_at: new Date().toISOString(),
           }).eq('id', job.id);
           
-          // SYSTEM ACTOR audit: retry scheduled
+          // SYSTEM ACTOR audit: retry scheduled (PATCH-1: no raw)
           await supabase.from('audit_logs').insert({
             actor_type: 'system',
             actor_user_id: null,
@@ -742,7 +763,7 @@ Deno.serve(async (req) => {
               attempt: newAttempt,
               next_retry_at: nextRetry,
               http_status: httpStatus,
-              raw: rawChargeResponse,
+              message_short: txMessage?.slice(0, 120),
             },
           });
           
@@ -794,14 +815,7 @@ Deno.serve(async (req) => {
 
         console.log(`[job ${job.id}] Refund result: ok=${refundOk}, uid=${refundUid}`);
 
-        // FIX #5: Raw refund response
-        const rawRefundResponse = {
-          http_status: refundHttpStatus,
-          tx_status: refundResult.transaction?.status,
-          tx_code: refundCode,
-          tx_message: refundMessage,
-          tx_uid: refundUid,
-        };
+        // PATCH-4: Removed rawRefundResponse object - no longer needed for audit
 
         // ========== LEDGER: Create refund record in payments_v2 ==========
         const refundStatus = refundOk ? 'refunded' : 'processing';
@@ -828,6 +842,9 @@ Deno.serve(async (req) => {
         // Determine final verification status
         const finalStatus = refundOk ? 'verified' : 'verified_refund_pending';
 
+        // PATCH-2: Merge existing meta
+        const existingMetaVerified = await getExistingMeta(supabase, pm.id);
+        
         // Update payment_method
         await supabase.from('payment_methods').update({
           recurring_verified: true,
@@ -836,6 +853,7 @@ Deno.serve(async (req) => {
           verification_tx_uid: txUid,
           verification_error: refundOk ? null : `Refund pending: ${refundMessage || 'unknown'}`,
           meta: {
+            ...existingMetaVerified,
             verify_charge_uid: txUid,
             verify_refund_uid: refundUid,
             verify_tracking_id: trackingId,
@@ -851,7 +869,7 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         }).eq('id', job.id);
 
-        // SYSTEM ACTOR audit with raw response
+        // SYSTEM ACTOR audit (PATCH-1: no raw)
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
@@ -866,15 +884,13 @@ Deno.serve(async (req) => {
             charge_tx_uid: txUid,
             refund_tx_uid: refundUid,
             refund_status: refundResult.transaction?.status,
+            refund_http_status: refundHttpStatus,
+            refund_code: refundCode,
             ledger_payment_id: ledgerPayment?.id,
-            raw: {
-              charge: rawChargeResponse,
-              refund: rawRefundResponse,
-            },
           },
         });
 
-        // If refund failed, log for manual follow-up
+        // If refund failed, log for manual follow-up (PATCH-1: no raw)
         if (!refundOk) {
           await supabase.from('audit_logs').insert({
             actor_type: 'system',
@@ -884,9 +900,11 @@ Deno.serve(async (req) => {
             meta: {
               payment_method_id: pm.id,
               charge_tx_uid: txUid,
-              refund_error: refundMessage,
+              refund_uid: refundUid,
+              refund_http_status: refundHttpStatus,
+              refund_code: refundCode,
+              refund_error: refundMessage?.slice(0, 120),
               needs_review: true,
-              raw: rawRefundResponse,
             },
           });
         }
@@ -946,15 +964,20 @@ Deno.serve(async (req) => {
           }).eq('id', ledgerPayment.id);
         }
 
+        // PATCH-2: Merge existing meta for 3DS rejection
+        const existingMeta3ds = await getExistingMeta(supabase, pm.id);
+        
         await supabase.from('payment_methods').update({
           recurring_verified: false,
           verification_status: 'rejected_3ds_required',
           verification_checked_at: new Date().toISOString(),
           verification_error: 'Карта требует 3D-Secure на каждую операцию',
           meta: {
+            ...existingMeta3ds,
             verify_tracking_id: trackingId,
             verify_payment_id: ledgerPayment?.id,
             rejection_code: txCode,
+            rejection_reason: '3ds_required',
           },
         }).eq('id', pm.id);
 
@@ -964,7 +987,7 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         }).eq('id', job.id);
 
-        // SYSTEM ACTOR audit
+        // SYSTEM ACTOR audit (PATCH-1: no raw)
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
@@ -976,10 +999,10 @@ Deno.serve(async (req) => {
             last4: pm.last4,
             brand: pm.brand,
             status: 'rejected_3ds_required',
-            code: txCode,
+            tx_code: txCode,
             reason: '3ds_required',
             ledger_payment_id: ledgerPayment?.id,
-            raw: rawChargeResponse,
+            http_status: httpStatus,
           },
         });
 
@@ -1014,12 +1037,18 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         }).eq('id', job.id);
 
+        // PATCH-1: no raw in rate_limited audit
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
           actor_label: 'payment-method-verify-recurring',
           action: 'card.verification.rate_limited',
-          meta: { job_id: job.id, next_retry_at: nextRetry, raw: rawChargeResponse },
+          meta: { 
+            job_id: job.id, 
+            next_retry_at: nextRetry, 
+            http_status: httpStatus,
+            tx_code: txCode,
+          },
         });
       }
 
@@ -1031,11 +1060,20 @@ Deno.serve(async (req) => {
         console.log(`[job ${job.id}] Charge failed: ${txStatus}/${txCode}/${txMessage}, attempt ${newAttempt}/${maxAttempts}`);
 
         if (newAttempt >= maxAttempts) {
+          // PATCH-2: Merge existing meta for failed
+          const existingMetaFailed = await getExistingMeta(supabase, pm.id);
+          
           // Final failure
           await supabase.from('payment_methods').update({
             verification_status: 'failed',
-            verification_error: txMessage || 'Max attempts exceeded',
+            verification_error: txMessage?.slice(0, 200) || 'Max attempts exceeded',
             verification_checked_at: new Date().toISOString(),
+            meta: {
+              ...existingMetaFailed,
+              rejection_reason: 'max_attempts_exceeded',
+              verify_payment_id: ledgerPayment?.id,
+              last_error: txMessage?.slice(0, 200),
+            },
           }).eq('id', pm.id);
 
           await supabase.from('payment_method_verification_jobs').update({
@@ -1045,7 +1083,7 @@ Deno.serve(async (req) => {
             updated_at: new Date().toISOString(),
           }).eq('id', job.id);
 
-          // Audit with raw response (FIX #5)
+          // PATCH-1: Audit without raw
           await supabase.from('audit_logs').insert({
             actor_type: 'system',
             actor_user_id: null,
@@ -1055,9 +1093,10 @@ Deno.serve(async (req) => {
               payment_method_id: pm.id,
               user_id: pm.user_id,
               attempts: newAttempt,
-              last_error: txMessage,
-              code: txCode,
-              raw: rawChargeResponse,
+              message_short: txMessage?.slice(0, 120),
+              tx_code: txCode,
+              http_status: httpStatus,
+              ledger_payment_id: ledgerPayment?.id,
             },
           });
 
