@@ -1,54 +1,49 @@
 ================================================================================
-PATCH P0.9.1 — ВЫПОЛНЕН ✅ (2026-02-08)
+PATCH P0.9.2 — ВЫПОЛНЕН ✅ (2026-02-08)
 ================================================================================
-
-Файл изменён: supabase/functions/monitor-news/index.ts
-
-## Выполненные изменения:
-
-### P0.9.1-1 — RSS hardening ✅
-- Regex `<item>`: `/<item\b[^>]*>([\s\S]*?)<\/item>/gi`
-- extractXmlField: переписан с CDATA + non-CDATA группами
-- decodeHtmlEntities: добавлены &#39;, &apos;, &#x..., нормализация пробелов
-
-### P0.9.1-2 — iLex cookie passthrough ✅
-- scrapeUrlWithProxy получает `sessionCookie?: string | null`
-- Cookie добавляется в headers для всех режимов (auto/enhanced)
-- extractCookieValue helper извлекает NAME=VALUE
-- ilexSession прокинут во все 3 вызова scrapeUrlWithProxy
-
-### P0.9.1-3 — classifyError fixes ✅
-- RSS_HTTP_XXX → рекурсивный вызов с HTTP кодом
-- RSS_*TIMEOUT/ERROR → TIMEOUT_RENDER
-- auth_required/no_session → BLOCKED_OR_AUTH
-- 408 → TIMEOUT_RENDER
-- 5xx regex: /^5\d{2}$/
-
-### P0.9.1-4 — shouldRetryWithEnhanced ✅
-- Только HTTP коды: ["400","401","403","408","429","timeout","500","502","503","504"]
-
-### P0.9.1-5 — SQL updates ✅
-- Pravo.by - Нац. реестр: is_active = false
-- ФНС России: rss_url = https://www.nalog.gov.ru/rss/rn77/news/
-
-### P0.9.1-6 — Source rotation ✅
-- ORDER BY last_scraped_at ASC NULLS FIRST
-- Лимит: min(limit, 25), hard cap 50
 
 ## SQL-пруфы:
 
+### DoD-1: Pravo.by выключен
 ```
-Pravo.by - Нац. реестр: is_active = false ✅
-ФНС России: rss_url = https://www.nalog.gov.ru/rss/rn77/news/ ✅
-null_count: 18 → 13 (ротация работает) ✅
+name: Pravo.by - Нац. реестр
+is_active: false ✅
+url: https://pravo.by
 ```
 
-## audit_logs пруфы:
-
+### DoD-2: proxy_mode = enhanced у 6 источников
 ```
-ЦБ России: stage=rss, items_found=11 ✅
-КГК РБ: status_code=408, error_class=TIMEOUT_RENDER ✅
-КГК РБ: stage sequence html_auto → html_enhanced ✅
+КГК РБ:                     proxy_mode=enhanced, last_error_code=NULL ✅
+Минтруд России:             proxy_mode=enhanced, last_error_code=NULL ✅
+Минцифры России:            proxy_mode=enhanced, last_error_code=NULL ✅
+Минэкономразвития России:   proxy_mode=enhanced, last_error_code=NULL ✅
+ФАС России:                 proxy_mode=enhanced, last_error_code=NULL ✅
+ФТС России:                 proxy_mode=enhanced, last_error_code=NULL ✅
+```
+
+## Что сделано:
+
+1. **P0.9.2-1**: Pravo.by - Нац. реестр → is_active = false
+2. **P0.9.2-2**: 6 источников с 408 → proxy_mode = "enhanced" (jsonb_set)
+3. **P0.9.2-3**: Очистка ошибок только для 408/timeout (с условием)
+4. **P0.9.2-4**: Очистка ошибок для отключённого Pravo.by
+
+## Следующий шаг:
+
+После запуска monitor-news проверить audit_logs:
+
+```sql
+SELECT
+  meta->>'source_name' AS source_name,
+  meta->>'status_code' AS status_code,
+  meta->>'error_class' AS error_class
+FROM audit_logs
+WHERE action = 'news_scrape_attempt'
+  AND meta->>'source_name' IN (
+    'КГК РБ','Минтруд России','Минцифры России',
+    'Минэкономразвития России','ФАС России','ФТС России'
+  )
+ORDER BY created_at DESC LIMIT 30;
 ```
 
 ================================================================================
