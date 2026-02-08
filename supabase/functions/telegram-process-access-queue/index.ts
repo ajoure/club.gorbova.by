@@ -63,6 +63,35 @@ serve(async (req) => {
 
       try {
         if (item.action === "grant") {
+          // FIX-2: Fetch subscription details for tariff/product logging
+          let tariffName: string | null = null;
+          let productName: string | null = null;
+          
+          if (item.subscription_id) {
+            const { data: sub } = await supabase
+              .from("subscriptions_v2")
+              .select(`
+                tariff_id,
+                tariffs(name, code),
+                product_id,
+                products_v2(name)
+              `)
+              .eq("id", item.subscription_id)
+              .maybeSingle();
+            
+            if (sub) {
+              // @ts-ignore - nested join types
+              tariffName = sub.tariffs?.name || sub.tariffs?.code || "UNKNOWN";
+              // @ts-ignore - nested join types
+              productName = sub.products_v2?.name || "UNKNOWN";
+              console.log(`[telegram-process-access-queue] Subscription ${item.subscription_id}: tariff=${tariffName}, product=${productName}`);
+            }
+          }
+          
+          // Fallback to UNKNOWN if no subscription data
+          tariffName = tariffName || "UNKNOWN";
+          productName = productName || "UNKNOWN";
+          
           // Call telegram-grant-access with Service Role token for authentication
           const { data: grantResult, error: grantError } = await supabase.functions.invoke(
             "telegram-grant-access",
@@ -73,6 +102,8 @@ serve(async (req) => {
                 is_manual: false,
                 source: "auto_subscription",
                 source_id: item.subscription_id,
+                tariff_name: tariffName,
+                product_name: productName,
               },
               headers: {
                 Authorization: `Bearer ${supabaseKey}`,

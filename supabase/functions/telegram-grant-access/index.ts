@@ -475,18 +475,39 @@ Deno.serve(async (req) => {
         last_sync_at: new Date().toISOString(),
       }, { onConflict: 'user_id,club_id' });
 
-      // Create access grant record
-      await supabase.from('telegram_access_grants').insert({
-        user_id,
-        club_id: club.id,
-        source: source || (is_manual ? 'manual' : 'system'),
-        source_id: source_id || null,
-        granted_by: admin_id || null,
-        start_at: new Date().toISOString(),
-        end_at: activeUntil,
-        status: 'active',
-        meta: { comment, chat_invite_sent: !!chatInviteLink, channel_invite_sent: !!channelInviteLink },
-      });
+      // Create access grant record (FIX-1: Idempotency check to prevent duplicates)
+      const grantSource = source || (is_manual ? 'manual' : 'system');
+      let skipGrant = false;
+      
+      if (source_id) {
+        // Check if grant already exists for this source_id (prevents duplicates on retries)
+        const { data: existingGrant } = await supabase
+          .from('telegram_access_grants')
+          .select('id')
+          .eq('user_id', user_id)
+          .eq('club_id', club.id)
+          .eq('source_id', source_id)
+          .maybeSingle();
+        
+        if (existingGrant) {
+          console.log(`[grant-access] Skip duplicate grant for source_id=${source_id}, existing grant=${existingGrant.id}`);
+          skipGrant = true;
+        }
+      }
+      
+      if (!skipGrant) {
+        await supabase.from('telegram_access_grants').insert({
+          user_id,
+          club_id: club.id,
+          source: grantSource,
+          source_id: source_id || null,
+          granted_by: admin_id || null,
+          start_at: new Date().toISOString(),
+          end_at: activeUntil,
+          status: 'active',
+          meta: { comment, chat_invite_sent: !!chatInviteLink, channel_invite_sent: !!channelInviteLink },
+        });
+      }
 
       // Create manual access record if needed
       if (is_manual && admin_id) {
