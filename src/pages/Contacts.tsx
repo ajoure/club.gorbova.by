@@ -13,6 +13,7 @@ import { MapPin, Phone, Mail, Clock, Building2, Send } from "lucide-react";
 
 export default function Contacts() {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formLoadTime] = useState(() => Date.now()); // Track when form was displayed
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -20,6 +21,7 @@ export default function Contacts() {
     subject: "",
     message: "",
     consent: false,
+    website: "", // Honeypot field - bots will fill this
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -53,6 +55,27 @@ export default function Contacts() {
       return;
     }
 
+    // Honeypot check - bots fill hidden fields
+    if (formData.website) {
+      // Silently succeed without storing - don't reveal bot detection
+      toast({
+        title: "Спасибо!",
+        description: "Мы получили ваше сообщение и свяжемся с вами в ближайшее время.",
+      });
+      return;
+    }
+
+    // Time-based validation - reject if submitted too quickly (<3 seconds)
+    const timeTaken = Date.now() - formLoadTime;
+    if (timeTaken < 3000) {
+      // Silently succeed without storing - human can't fill form in <3s
+      toast({
+        title: "Спасибо!",
+        description: "Мы получили ваше сообщение и свяжемся с вами в ближайшее время.",
+      });
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -78,6 +101,7 @@ export default function Contacts() {
         subject: "",
         message: "",
         consent: false,
+        website: "",
       });
     } catch (error) {
       console.error("Error submitting contact form:", error);
@@ -261,9 +285,21 @@ export default function Contacts() {
                     onChange={(e) => setFormData({ ...formData, message: e.target.value })}
                     rows={5}
                     maxLength={2000}
-                    required
-                  />
+                  required
+                />
                 </div>
+
+                {/* Honeypot field - hidden from humans, bots will fill it */}
+                <input
+                  type="text"
+                  name="website"
+                  value={formData.website}
+                  onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+                  style={{ position: 'absolute', left: '-9999px', opacity: 0 }}
+                  tabIndex={-1}
+                  autoComplete="off"
+                  aria-hidden="true"
+                />
 
                 <div className="flex items-start gap-3">
                   <Checkbox
