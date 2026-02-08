@@ -315,8 +315,11 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         const meta = (p.meta || {}) as any;
         const commission_total = meta?.commission_total ? Number(meta.commission_total) : null;
         
-        // Extract bepaid_description from provider_response
-        const bepaid_description = providerResponse?.transaction?.additional_data?.description || null;
+        // Extract bepaid_description from provider_response (FIX-1: correct JSON path)
+        const bepaid_description = 
+          providerResponse?.transaction?.description ??
+          providerResponse?.transaction?.additional_data?.description ??
+          null;
         
         // P0-guard: Build search index ONCE during transformation
         const search_index = buildSearchIndex([

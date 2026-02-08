@@ -59,6 +59,7 @@ import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
 import { GlassFilterPanel } from "@/components/admin/GlassFilterPanel";
 import { buildSearchIndex, matchSearchIndex } from "@/lib/multiTermSearch";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -255,6 +256,9 @@ export default function AdminDeals() {
       });
   }, [deals, profilesMap, VALID_DEAL_STATUSES]);
 
+  // P0-guard: Debounce search input (150ms)
+  const debouncedSearch = useDebouncedValue(search, 150);
+
   // Filter deals
   const filteredDeals = useMemo(() => {
     let result = dealsWithIndex;
@@ -264,16 +268,16 @@ export default function AdminDeals() {
       result = result.filter(d => d.product_id === selectedProductId);
     }
     
-    // P0-guard: Use pre-built search_index for multi-term search
-    if (search) {
+    // P0-guard: Use pre-built search_index with debounced value
+    if (debouncedSearch) {
       result = result.filter(deal => 
-        matchSearchIndex(search, deal.search_index)
+        matchSearchIndex(debouncedSearch, deal.search_index)
       );
     }
     
     // Then apply other filters
     return applyFilters(result, activeFilters, getDealFieldValue);
-  }, [dealsWithIndex, search, activeFilters, getDealFieldValue, selectedProductId]);
+  }, [dealsWithIndex, debouncedSearch, activeFilters, getDealFieldValue, selectedProductId]);
 
   // Product filter counts
   const productCounts = useMemo(() => {
