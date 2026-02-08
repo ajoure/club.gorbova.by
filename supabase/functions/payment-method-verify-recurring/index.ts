@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getBepaidCredsStrict, isBepaidCredsError, createBepaidAuthHeader } from "../_shared/bepaid-credentials.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -344,30 +345,25 @@ Deno.serve(async (req) => {
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 
-  // Get bePaid credentials
-  const { data: bepaidConfig } = await supabase
-    .from('integration_instances')
-    .select('config')
-    .eq('provider', 'bepaid')
-    .in('status', ['active', 'connected'])
-    .maybeSingle();
-
-  const secretKey = bepaidConfig?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
-  const shopId = bepaidConfig?.config?.shop_id || Deno.env.get('BEPAID_SHOP_ID') || '33524';
+  // PATCH-D: Get bePaid credentials STRICTLY from integration_instances (NO env fallback)
+  const credsResult = await getBepaidCredsStrict(supabase);
   
-  // FIX #1: Get test_mode from config or ENV (NOT hardcoded!)
-  const testMode = bepaidConfig?.config?.test_mode ?? (Deno.env.get('BEPAID_TEST_MODE') === 'true');
-  console.log(`[payment-method-verify-recurring] bePaid config: shop=${shopId}, testMode=${testMode}`);
-  
-  if (!secretKey) {
-    console.error('[payment-method-verify-recurring] No bePaid secret key configured');
-    return new Response(JSON.stringify({ error: 'bePaid not configured' }), {
+  if (isBepaidCredsError(credsResult)) {
+    console.error('[payment-method-verify-recurring] bePaid credentials error:', credsResult.error);
+    return new Response(JSON.stringify({ 
+      error: credsResult.error,
+      code: credsResult.code 
+    }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
-  const bepaidAuth = btoa(`${shopId}:${secretKey}`);
+  const bepaidCreds = credsResult;
+  const testMode = bepaidCreds.test_mode;
+  console.log(`[payment-method-verify-recurring] bePaid config: testMode=${testMode}, creds_source=${bepaidCreds.creds_source}`);
+
+  const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
 
   // EXECUTE mode - process jobs
   const results: ProcessingResult = {

@@ -429,14 +429,16 @@ Deno.serve(async (req) => {
 
     console.log(`Payment method saved for user ${userId}: ${cardBrand} **** ${cardLast4} (product: ${cardProduct})`);
 
-    // ========== QUEUE VERIFICATION JOB ==========
-    // Create job for recurring verification worker (test charge 1 BYN + refund)
-    // Webhook does NOT perform the test charge - worker handles it asynchronously
+    // ========== INLINE SYNCHRONOUS VERIFICATION (INSTANT RESULT) ==========
+    // Perform test charge 1 BYN + refund IMMEDIATELY for instant card verification
+    // No more async job queue - result is available in 2-3 seconds
+    let verificationResult = { status: 'pending', error: null as string | null };
+    
     try {
-      // Get the newly created payment method ID
+      // Get the newly created payment method
       const { data: newPmForVerify } = await supabase
         .from('payment_methods')
-        .select('id')
+        .select('id, provider_token')
         .eq('user_id', userId)
         .eq('last4', cardLast4)
         .eq('status', 'active')
@@ -444,17 +446,10 @@ Deno.serve(async (req) => {
         .limit(1)
         .single();
 
-      if (newPmForVerify?.id) {
-        // Set initial verification status to pending
-        await supabase
-          .from('payment_methods')
-          .update({ verification_status: 'pending' })
-          .eq('id', newPmForVerify.id);
-
+      if (newPmForVerify?.id && newPmForVerify?.provider_token) {
         // ========== AUTO-LINK ORPHAN SUBSCRIPTIONS ==========
-        // Find subscriptions with auto_renew=true but no payment_method_id
         try {
-          const { data: orphanSubs, error: orphanError } = await supabase
+          const { data: orphanSubs } = await supabase
             .from('subscriptions_v2')
             .select('id')
             .eq('user_id', userId)
@@ -469,7 +464,6 @@ Deno.serve(async (req) => {
               .update({ payment_method_id: newPmForVerify.id })
               .in('id', subIds);
 
-            // Audit log for auto-linking
             await supabase.from('audit_logs').insert({
               actor_type: 'system',
               actor_user_id: null,
@@ -482,50 +476,165 @@ Deno.serve(async (req) => {
                 count: subIds.length,
               },
             });
-            console.log(`[payment-methods-webhook] Auto-linked ${subIds.length} orphan subscriptions to card ${cardLast4}`);
+            console.log(`[payment-methods-webhook] Auto-linked ${subIds.length} orphan subscriptions`);
           }
         } catch (autoLinkError) {
-          console.error('[payment-methods-webhook] Orphan subscription auto-link error:', autoLinkError);
+          console.error('[payment-methods-webhook] Orphan auto-link error:', autoLinkError);
         }
 
-        // Create verification job with idempotency key (hourly bucket)
-        const bucket = Math.floor(Date.now() / 3600000);
-        const idempotencyKey = `pm_verify:${newPmForVerify.id}:${bucket}`;
+        // ========== SYNCHRONOUS CARD VERIFICATION (1 BYN + REFUND) ==========
+        // Get bePaid credentials STRICTLY from integration_instances
+        const { data: bepaidConfig } = await supabase
+          .from('integration_instances')
+          .select('config')
+          .eq('provider', 'bepaid')
+          .in('status', ['active', 'connected'])
+          .maybeSingle();
 
-        const { error: jobError } = await supabase
-          .from('payment_method_verification_jobs')
-          .insert({
-            payment_method_id: newPmForVerify.id,
-            user_id: userId,
-            status: 'pending',
-            idempotency_key: idempotencyKey,
-          });
-
-        // Ignore duplicate key errors (idempotency)
-        if (jobError && jobError.code !== '23505') {
-          console.error('[payment-methods-webhook] Job creation error:', jobError);
+        if (!bepaidConfig?.config?.secret_key || !bepaidConfig?.config?.shop_id) {
+          console.error('[payment-methods-webhook] bePaid not configured, setting pending');
+          await supabase.from('payment_methods')
+            .update({ verification_status: 'pending' })
+            .eq('id', newPmForVerify.id);
+          verificationResult = { status: 'pending', error: 'bePaid not configured' };
         } else {
-          console.log(`[payment-methods-webhook] Created verification job for card ${cardLast4}, idempotency_key=${idempotencyKey}`);
+          const bepaidAuth = btoa(`${bepaidConfig.config.shop_id}:${bepaidConfig.config.secret_key}`);
+          const bepaidTestMode = bepaidConfig.config.test_mode === true;
+          const testAmount = 100; // 1 BYN in kopecks
+          const verifyTrackingId = `verify_${newPmForVerify.id}_${Date.now()}`;
+
+          console.log(`[payment-methods-webhook] Starting SYNC verification for ${cardLast4}`);
+
+          const chargePayload = {
+            request: {
+              amount: testAmount,
+              currency: 'BYN',
+              description: 'Проверка карты для автоплатежей (будет возвращено)',
+              tracking_id: verifyTrackingId,
+              test: bepaidTestMode,
+              skip_three_d_secure_verification: true,
+              credit_card: { token: newPmForVerify.provider_token },
+              additional_data: {
+                contract: ['recurring', 'unscheduled'],
+                card_on_file: { initiator: 'merchant', type: 'delayed_charge' },
+              },
+            },
+          };
+
+          try {
+            const chargeResp = await fetch('https://gateway.bepaid.by/transactions/payments', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Basic ${bepaidAuth}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-API-Version': '2',
+              },
+              body: JSON.stringify(chargePayload),
+            });
+
+            const chargeResult = await chargeResp.json();
+            const txStatus = chargeResult.transaction?.status;
+            const txCode = chargeResult.transaction?.code;
+            const txUid = chargeResult.transaction?.uid;
+            const txMessage = chargeResult.transaction?.message;
+
+            console.log(`[payment-methods-webhook] Verify charge: status=${txStatus}, code=${txCode}`);
+
+            if (txStatus === 'successful') {
+              // Immediate refund
+              const refundPayload = {
+                request: { parent_uid: txUid, amount: testAmount, reason: 'Проверка карты: возврат' },
+              };
+
+              await fetch('https://gateway.bepaid.by/transactions/refunds', {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Basic ${bepaidAuth}`,
+                  'Content-Type': 'application/json',
+                  'X-API-Version': '2',
+                },
+                body: JSON.stringify(refundPayload),
+              });
+
+              // Mark card as VERIFIED
+              await supabase.from('payment_methods').update({
+                recurring_verified: true,
+                verification_status: 'verified',
+                verification_checked_at: new Date().toISOString(),
+                verification_tx_uid: txUid,
+              }).eq('id', newPmForVerify.id);
+
+              verificationResult = { status: 'verified', error: null };
+              console.log(`[payment-methods-webhook] Card ${cardLast4} VERIFIED (sync)`);
+
+            } else if (txCode && ['P.4011', 'P.4012', 'P.4013', 'P.4014', 'P.4015'].includes(txCode)) {
+              // 3DS required - card rejected for MIT
+              await supabase.from('payment_methods').update({
+                recurring_verified: false,
+                verification_status: 'rejected',
+                verification_checked_at: new Date().toISOString(),
+                verification_error: 'Карта требует 3D-Secure на каждую операцию',
+              }).eq('id', newPmForVerify.id);
+
+              verificationResult = { status: 'rejected', error: 'Карта требует 3DS' };
+              console.log(`[payment-methods-webhook] Card ${cardLast4} REJECTED: 3DS required`);
+
+            } else {
+              // Other error - still set result but may need retry
+              await supabase.from('payment_methods').update({
+                verification_status: 'pending',
+                verification_error: txMessage || 'Unknown error',
+              }).eq('id', newPmForVerify.id);
+
+              // Create async job for retry only if sync failed
+              const bucket = Math.floor(Date.now() / 3600000);
+              await supabase.from('payment_method_verification_jobs').insert({
+                payment_method_id: newPmForVerify.id,
+                user_id: userId,
+                status: 'pending',
+                idempotency_key: `pm_verify:${newPmForVerify.id}:${bucket}`,
+              }).onConflict('idempotency_key').ignore();
+
+              verificationResult = { status: 'pending', error: txMessage || 'retry queued' };
+            }
+          } catch (chargeError) {
+            console.error('[payment-methods-webhook] Sync verification charge error:', chargeError);
+            // Fallback to async
+            await supabase.from('payment_methods')
+              .update({ verification_status: 'pending' })
+              .eq('id', newPmForVerify.id);
+            
+            const bucket = Math.floor(Date.now() / 3600000);
+            await supabase.from('payment_method_verification_jobs').insert({
+              payment_method_id: newPmForVerify.id,
+              user_id: userId,
+              status: 'pending',
+              idempotency_key: `pm_verify:${newPmForVerify.id}:${bucket}`,
+            }).onConflict('idempotency_key').ignore();
+            
+            verificationResult = { status: 'pending', error: 'network error, retry queued' };
+          }
         }
 
-        // SYSTEM ACTOR audit
+        // SYSTEM ACTOR audit log
         await supabase.from('audit_logs').insert({
           actor_type: 'system',
           actor_user_id: null,
           actor_label: 'payment-methods-webhook',
-          action: 'card.verification.queued',
+          action: 'card.verification.completed',
           meta: {
             payment_method_id: newPmForVerify.id,
             user_id: userId,
             card_last4: cardLast4,
             card_brand: cardBrand,
-            idempotency_key: idempotencyKey,
+            verification_status: verificationResult.status,
+            sync: true,
           },
         });
       }
-    } catch (jobQueueError) {
-      // Non-blocking error
-      console.error('[payment-methods-webhook] Verification job queue error (non-blocking):', jobQueueError);
+    } catch (verifyError) {
+      console.error('[payment-methods-webhook] Verification error (non-blocking):', verifyError);
     }
     
     // ========== AUTO-LINK historical payments ==========
@@ -600,6 +709,7 @@ Deno.serve(async (req) => {
     
     return new Response(JSON.stringify({ 
       status: 'created',
+      verification: verificationResult, // SYNC verification result
       autolink: autolinkResult?.stats ? {
         updated_payments: autolinkResult.stats.updated_payments_profile || 0,
         updated_queue: autolinkResult.stats.updated_queue_profile || 0,

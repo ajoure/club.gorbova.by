@@ -92,13 +92,13 @@ export async function getBepaidCredsStrict(
   const webhook_secret = (config.webhook_secret as string) || null;
   const test_mode = config.test_mode === true || config.test_mode === 'true';
 
+  // PATCH-1: Don't log shop_id for privacy
   console.log('[bepaid-creds] Loaded credentials from integration_instances', {
-    shop_id,
+    has_shop_id: !!shop_id,
     has_secret_key: !!secret_key,
     has_public_key: !!public_key,
     test_mode,
   });
-
   return {
     shop_id,
     secret_key,
