@@ -58,6 +58,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
 import { GlassFilterPanel } from "@/components/admin/GlassFilterPanel";
+import { buildSearchIndex, matchSearchIndex } from "@/lib/multiTermSearch";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -231,39 +232,48 @@ export default function AdminDeals() {
     }
   }, [profilesMap]);
 
-  // Filter deals - only valid deal statuses (not pending/failed)
-  const filteredDeals = useMemo(() => {
+  // P0-guard: Build search index ONCE per deal
+  const dealsWithIndex = useMemo(() => {
     if (!deals) return [];
-    
-    // First filter out non-deal statuses (pending, failed, draft = payment attempts, not deals)
-    let result = deals.filter(d => 
-      VALID_DEAL_STATUSES.includes(d.status as any)
-    );
+    return deals
+      .filter(d => VALID_DEAL_STATUSES.includes(d.status as any))
+      .map(d => {
+        const profile = profilesMap?.get(d.user_id);
+        return {
+          ...d,
+          search_index: buildSearchIndex([
+            d.order_number,
+            d.customer_email,
+            d.customer_phone,
+            profile?.email,
+            profile?.full_name,
+            (d.products_v2 as any)?.name,
+            (d.tariffs as any)?.name,
+            d.final_price,
+          ]),
+        };
+      });
+  }, [deals, profilesMap, VALID_DEAL_STATUSES]);
+
+  // Filter deals
+  const filteredDeals = useMemo(() => {
+    let result = dealsWithIndex;
     
     // Apply product filter
     if (selectedProductId) {
       result = result.filter(d => d.product_id === selectedProductId);
     }
     
-    // Apply search
+    // P0-guard: Use pre-built search_index for multi-term search
     if (search) {
-      const searchLower = search.toLowerCase();
-      result = result.filter(deal => {
-        const profile = profilesMap?.get(deal.user_id);
-        return (
-          deal.order_number?.toLowerCase().includes(searchLower) ||
-          deal.customer_email?.toLowerCase().includes(searchLower) ||
-          deal.customer_phone?.includes(search) ||
-          profile?.email?.toLowerCase().includes(searchLower) ||
-          profile?.full_name?.toLowerCase().includes(searchLower) ||
-          (deal.products_v2 as any)?.name?.toLowerCase().includes(searchLower)
-        );
-      });
+      result = result.filter(deal => 
+        matchSearchIndex(search, deal.search_index)
+      );
     }
     
     // Then apply other filters
     return applyFilters(result, activeFilters, getDealFieldValue);
-  }, [deals, search, activeFilters, profilesMap, getDealFieldValue, selectedProductId, VALID_DEAL_STATUSES]);
+  }, [dealsWithIndex, search, activeFilters, getDealFieldValue, selectedProductId]);
 
   // Product filter counts
   const productCounts = useMemo(() => {

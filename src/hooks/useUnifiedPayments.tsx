@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { classifyPayment } from "@/lib/paymentClassification";
-
+import { buildSearchIndex } from "@/lib/multiTermSearch";
 export interface DateFilter {
   from: string;
   to?: string;
@@ -78,6 +78,12 @@ export interface UnifiedPayment {
   
   // Real commission from bePaid statement
   commission_total: number | null;
+  
+  // bePaid description for display and search
+  bepaid_description: string | null;
+  
+  // P0-guard: Pre-built search index (computed once during transformation)
+  search_index: string;
 }
 
 export interface PaymentsStats {
@@ -309,6 +315,25 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         const meta = (p.meta || {}) as any;
         const commission_total = meta?.commission_total ? Number(meta.commission_total) : null;
         
+        // Extract bepaid_description from provider_response
+        const bepaid_description = providerResponse?.transaction?.additional_data?.description || null;
+        
+        // P0-guard: Build search index ONCE during transformation
+        const search_index = buildSearchIndex([
+          pUid,
+          profile?.email,
+          profile?.phone,
+          card_holder,
+          p.card_last4,
+          order?.order_number,
+          profile?.full_name,
+          p.amount,
+          product_name,
+          tariff_name,
+          purchaseSnapshot?.product_name,
+          bepaid_description,
+        ]);
+        
         return {
           id: p.id,
           uid: pUid || p.id,
@@ -351,6 +376,8 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
           tracking_id: null,
           provider_response: providerResponse,
           commission_total,
+          bepaid_description,
+          search_index,
         };
       });
       
@@ -454,6 +481,22 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
             commission_total: null, // Queue items don't have commission data
             payment_classification: null, // Queue items don't have classification
             origin: q.source || null, // Use queue source as origin
+            bepaid_description: q.description || null,
+            // P0-guard: Build search index ONCE during transformation
+            search_index: buildSearchIndex([
+              q.bepaid_uid,
+              q.customer_email,
+              q.customer_phone,
+              q.card_holder,
+              q.card_last4,
+              order?.order_number,
+              profile?.full_name,
+              profile?.email,
+              profile?.phone,
+              q.amount,
+              q.product_name,
+              q.description,
+            ]),
           };
         });
       

@@ -30,6 +30,7 @@ import SyncRunDialog from "@/components/admin/payments/SyncRunDialog";
 import SyncWithStatementDialog from "@/components/admin/payments/SyncWithStatementDialog";
 import { TimezoneSelector, usePersistedTimezone } from "./TimezoneSelector";
 import { useAuth } from "@/contexts/AuthContext";
+import { matchSearchIndex } from "@/lib/multiTermSearch";
 
 export type PaymentFilters = {
   search: string;
@@ -191,20 +192,9 @@ export function PaymentsTabContent() {
         }
       }
 
-      // Search filter
+      // Search filter - P0-guard: use pre-built search_index
       if (filters.search) {
-        const search = filters.search.toLowerCase();
-        const matchSearch = 
-          p.uid?.toLowerCase().includes(search) ||
-          p.customer_email?.toLowerCase().includes(search) ||
-          p.customer_phone?.toLowerCase().includes(search) ||
-          p.card_holder?.toLowerCase().includes(search) ||
-          p.card_last4?.includes(search) ||
-          p.order_number?.toLowerCase().includes(search) ||
-          p.profile_name?.toLowerCase().includes(search) ||
-          p.profile_email?.toLowerCase().includes(search) ||
-          p.profile_phone?.toLowerCase().includes(search);
-        if (!matchSearch) return false;
+        if (!matchSearchIndex(filters.search, p.search_index)) return false;
       }
 
       // Status filter (only if stats filter is not active)
