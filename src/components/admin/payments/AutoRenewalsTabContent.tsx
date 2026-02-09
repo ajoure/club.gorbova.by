@@ -530,7 +530,24 @@ export function AutoRenewalsTabContent() {
           billing_type: (sub as any).billing_type || 'mit',
         };
       // PATCH-2: Filter out non-subscription (one-time) products
-      }).filter(sub => sub.is_subscription);
+      }).filter(sub => sub.is_subscription)
+      // PATCH P0.9.6: Dedup by user_id+product_name — keep only the "best" (latest access_end_at, NULL=∞)
+      .reduce((acc: AutoRenewal[], sub) => {
+        const key = `${sub.user_id}::${sub.product_name || sub.tariff_name || 'unknown'}`;
+        const existing = acc.find(s => `${s.user_id}::${s.product_name || s.tariff_name || 'unknown'}` === key);
+        if (!existing) {
+          acc.push(sub);
+        } else {
+          // Compare: NULL access_end_at = infinity (best)
+          const existingEnd = existing.access_end_at ? new Date(existing.access_end_at).getTime() : Infinity;
+          const newEnd = sub.access_end_at ? new Date(sub.access_end_at).getTime() : Infinity;
+          if (newEnd > existingEnd) {
+            const idx = acc.indexOf(existing);
+            acc[idx] = sub;
+          }
+        }
+        return acc;
+      }, []);
     },
     refetchInterval: 60000,
   });
