@@ -250,7 +250,15 @@ export const INVARIANT_INFO: Record<string, {
     title: "Технические сироты",
     explain: "Технические платежи без привязки (мониторинг)",
     action: "Проверить рост количества",
+    urlTemplate: "/admin/payments?classification=orphan_technical",
     category: "payments",
+  },
+  "INV-2B-WARN": {
+    title: "Порог технических сирот",
+    explain: "Количество превысило порог (200)",
+    action: "Исследовать причину роста",
+    urlTemplate: "/admin/payments?classification=orphan_technical",
+    category: "system",
   },
   "INV-3": {
     title: "Несовпадение сумм",

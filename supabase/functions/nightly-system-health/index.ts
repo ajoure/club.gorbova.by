@@ -281,7 +281,31 @@ serve(async (req) => {
       summary: { total_checks: 0, passed: 0, failed: 0 }
     };
 
-    const failedChecks = invariantsResult.invariants?.filter((i) => !i.passed) || [];
+    // === PATCH P0.9.3: Load ignored checks and filter notifications ===
+    const { data: ignoredChecksData, error: ignoredErr } = await supabase
+      .from('system_health_ignored_checks')
+      .select('check_key')
+      .or('expires_at.is.null,expires_at.gt.now()');
+
+    if (ignoredErr) {
+      console.warn(`[NIGHTLY] ignored_checks load failed: ${ignoredErr.message}`);
+    }
+
+    const ignoredKeys = new Set(
+      (ignoredChecksData || []).map((ic: { check_key: string }) => ic.check_key)
+    );
+
+    const allFailed = invariantsResult.invariants?.filter((i: any) => !i.passed) || [];
+
+    const failedChecks = allFailed.filter((i: any) => {
+      const invCode = String(i?.name || '').split(':')[0].trim();
+      return invCode && !ignoredKeys.has(invCode);
+    });
+
+    const ignoredFailedCount = allFailed.length - failedChecks.length;
+
+    console.log(`[NIGHTLY] ${failedChecks.length} failed (${ignoredFailedCount} ignored by user)`);
+    // === END PATCH P0.9.3 ===
 
     // Save checks to system_health_checks
     for (const inv of invariantsResult.invariants || []) {
