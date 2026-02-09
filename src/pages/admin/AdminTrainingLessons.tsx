@@ -543,7 +543,7 @@ export default function AdminTrainingLessons() {
         </div>
 
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-bold">{module.title}</h1>
             <p className="text-muted-foreground">Управление уроками модуля</p>
@@ -551,11 +551,11 @@ export default function AdminTrainingLessons() {
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => navigate("/admin/training-modules")}>
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Назад
+              <span className="hidden sm:inline">Назад</span>
             </Button>
             <Button onClick={openCreateDialog}>
               <Plus className="mr-2 h-4 w-4" />
-              Добавить урок
+              <span className="hidden sm:inline">Добавить урок</span>
             </Button>
           </div>
         </div>
@@ -589,48 +589,50 @@ export default function AdminTrainingLessons() {
 
               return (
                 <Card key={lesson.id}>
-                  <CardContent className="flex items-center gap-4 p-4">
-                    {/* Order number */}
-                    <div className="shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center text-sm font-medium">
-                      {index + 1}
-                    </div>
-
-                    {/* Type icon */}
-                    <TypeIcon className="h-5 w-5 text-muted-foreground shrink-0" />
-
-                    {/* Lesson info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="font-medium truncate">{lesson.title}</h3>
-                        <Badge variant={lesson.is_active ? "default" : "secondary"} className="shrink-0">
-                          {lesson.is_active ? <Eye className="h-3 w-3 mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
-                          {lesson.is_active ? "Активен" : "Скрыт"}
-                        </Badge>
+                  <CardContent className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-4">
+                    <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+                      {/* Order number */}
+                      <div className="shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center text-sm font-medium">
+                        {index + 1}
                       </div>
-                      <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                        <code className="bg-muted px-1.5 py-0.5 rounded text-xs">
-                          {lesson.slug}
-                        </code>
-                        {lesson.duration_minutes && (
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            {lesson.duration_minutes} мин
-                          </span>
-                        )}
-                        <span>{typeOpt?.label}</span>
+
+                      {/* Type icon */}
+                      <TypeIcon className="h-5 w-5 text-muted-foreground shrink-0 hidden sm:block" />
+
+                      {/* Lesson info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-medium truncate">{lesson.title}</h3>
+                          <Badge variant={lesson.is_active ? "default" : "secondary"} className="shrink-0">
+                            {lesson.is_active ? <Eye className="h-3 w-3 mr-1" /> : <EyeOff className="h-3 w-3 mr-1" />}
+                            <span className="hidden sm:inline">{lesson.is_active ? "Активен" : "Скрыт"}</span>
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-sm text-muted-foreground">
+                          <code className="bg-muted px-1.5 py-0.5 rounded text-xs truncate max-w-[120px] sm:max-w-none">
+                            {lesson.slug}
+                          </code>
+                          {lesson.duration_minutes && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {lesson.duration_minutes} мин
+                            </span>
+                          )}
+                          <span className="hidden sm:inline">{typeOpt?.label}</span>
+                        </div>
                       </div>
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-1 sm:gap-2 shrink-0 ml-11 sm:ml-0">
                       {lesson.completion_mode === 'kvest' && (
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => navigate(`/admin/training-lessons/${moduleId}/progress/${lesson.id}`)}
                         >
-                          <Users className="h-4 w-4 mr-1" />
-                          Прогресс
+                          <Users className="h-4 w-4 sm:mr-1" />
+                          <span className="hidden sm:inline">Прогресс</span>
                         </Button>
                       )}
                       <Button
@@ -638,8 +640,8 @@ export default function AdminTrainingLessons() {
                         size="sm"
                         onClick={() => navigate(`/admin/training-lessons/${moduleId}/edit/${lesson.id}`)}
                       >
-                        <Blocks className="h-4 w-4 mr-1" />
-                        Контент
+                        <Blocks className="h-4 w-4 sm:mr-1" />
+                        <span className="hidden sm:inline">Контент</span>
                       </Button>
                       <Button
                         variant="ghost"
