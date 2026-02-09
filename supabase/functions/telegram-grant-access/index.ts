@@ -590,9 +590,16 @@ Deno.serve(async (req) => {
       await supabase.from('telegram_club_members').update(inviteTrackingUpdate)
         .eq('telegram_user_id', telegramUserId).eq('club_id', club.id);
 
+      // PATCH P0.9.8c-fix: DM text variables (hoisted for log access)
+      const dmClubName = club.club_name || 'клуб';
+      const dmProductTitle = product_name || dmClubName;
+      const dmTariffTitle = tariff_name || null;
+      const dmTariffPart = dmTariffTitle ? ` (тариф: ${dmTariffTitle})` : '';
+
       // Send invite links via bot
       let dmSent = false;
       let dmError: string | undefined;
+      let dmText = '';
 
       if (chatInviteLink || channelInviteLink) {
         const keyboard: { inline_keyboard: Array<Array<{ text: string; url: string }>> } = { inline_keyboard: [] };
@@ -607,16 +614,15 @@ Deno.serve(async (req) => {
           ? '\n\n⏳ <i>После перехода по ссылке твоя заявка будет автоматически одобрена.</i>'
           : '\n\n⚠️ <i>Ссылки одноразовые — переходи сейчас!</i>';
 
-        // PATCH P0.9.8c: DM with product/tariff/club info
-        const dmClubName = club.club_name || 'клуб';
-        const dmProductTitle = product_name || dmClubName;
-        const dmTariffTitle = tariff_name || null;
-        const dmTariffPart = dmTariffTitle ? ` (тариф: ${dmTariffTitle})` : '';
+        // Plain text for logs (no HTML tags)
+        dmText = `✅ Доступ открыт!\n\nТвой доступ к ${dmProductTitle}${dmTariffPart} активирован.\nКлуб: ${dmClubName}\n\nВот ссылки для входа:${validUntilText.replace(/<[^>]*>/g, '')}${joinRequestNote.replace(/<[^>]*>/g, '')}`;
+        // HTML for Telegram
+        const dmHtml = `✅ <b>Доступ открыт!</b>\n\nТвой доступ к <b>${dmProductTitle}</b>${dmTariffPart} активирован.\nКлуб: <b>${dmClubName}</b>\n\nВот ссылки для входа:${validUntilText}${joinRequestNote}`;
 
         const result = await sendMessage(
           botToken,
           telegramUserId,
-          `✅ <b>Доступ открыт!</b>\n\nТвой доступ к <b>${dmProductTitle}</b>${dmTariffPart} активирован.\nКлуб: <b>${dmClubName}</b>\n\nВот ссылки для входа:${validUntilText}${joinRequestNote}`,
+          dmHtml,
           keyboard
         );
 
@@ -782,8 +788,11 @@ Deno.serve(async (req) => {
           access_end_date: accessEndDate,
           source,
           source_id,
+          dm_sent: dmSent,
+          dm_error: dmError || null,
         },
-        message_text: logMessage,
+        // PATCH P0.9.8c-fix: Store actual DM text (plain), only if sent successfully
+        message_text: dmSent ? dmText : `[DM не отправлен] ${dmError || 'unknown error'}\n---\n${logMessage}`,
       });
 
       results.push({

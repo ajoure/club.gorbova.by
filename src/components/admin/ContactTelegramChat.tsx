@@ -325,8 +325,6 @@ export function ContactTelegramChat({
           "subscription.gc_sync_renewal_failed",
           "payment.success",
           "payment.failed",
-          "telegram.access_granted",
-          "telegram.access_revoked",
           "telegram.backfill_grant",
         ])
         .order("created_at", { ascending: true })
