@@ -385,6 +385,9 @@ export function DiagnosticTableBlock({
     );
   }
 
+  // P0.9.11: Determine effective layout — force vertical on mobile
+  const effectiveLayout = content.layout || 'horizontal';
+
   // Player mode
   return (
     <div className="space-y-4">
@@ -396,8 +399,9 @@ export function DiagnosticTableBlock({
         <p className="text-muted-foreground">{content.instruction}</p>
       )}
 
-      {(content.layout === 'vertical') ? (
-        /* Vertical card layout */
+      {/* P0.9.11: On mobile always render vertical cards; on sm+ respect effectiveLayout */}
+      {/* Vertical card layout — always on mobile, optional on desktop */}
+      <div className={effectiveLayout === 'vertical' ? 'block' : 'block sm:hidden'}>
         <div className="space-y-3">
           {localRows.map((row, rowIndex) => (
             <Card key={row._id as string || rowIndex}>
@@ -411,12 +415,12 @@ export function DiagnosticTableBlock({
                   )}
                 </div>
                 {columns.map(col => (
-                  <div key={col.id} className="flex items-center justify-between gap-4">
-                    <Label className="text-xs whitespace-nowrap shrink-0">
+                  <div key={col.id} className="space-y-1">
+                    <Label className="text-xs">
                       {col.name}
                       {col.required && <span className="text-destructive ml-1">*</span>}
                     </Label>
-                    <div className="w-full max-w-[200px]">
+                    <div className="w-full">
                       {col.type === 'computed' ? (
                         <Badge variant="secondary" className="font-mono">
                           {calculateComputed(row, col)}
@@ -427,7 +431,7 @@ export function DiagnosticTableBlock({
                           onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
                           disabled={isCompleted}
                         >
-                          <SelectTrigger className="h-8 text-xs">
+                          <SelectTrigger className="h-9 text-sm w-full">
                             <SelectValue placeholder="—" />
                           </SelectTrigger>
                           <SelectContent>
@@ -437,7 +441,7 @@ export function DiagnosticTableBlock({
                           </SelectContent>
                         </Select>
                       ) : col.type === 'slider' ? (
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-3">
                           <Slider
                             value={[Number(row[col.id]) || 5]}
                             onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
@@ -445,9 +449,9 @@ export function DiagnosticTableBlock({
                             max={col.max || 10}
                             step={1}
                             disabled={isCompleted}
-                            className="w-full"
+                            className="flex-1"
                           />
-                          <Badge variant="outline" className="w-6 text-center text-xs shrink-0">
+                          <Badge variant="outline" className="w-8 text-center text-xs shrink-0">
                             {String(row[col.id] || 5)}
                           </Badge>
                         </div>
@@ -456,7 +460,7 @@ export function DiagnosticTableBlock({
                           type={col.type === 'number' ? 'number' : 'text'}
                           value={String(row[col.id] || '')}
                           onChange={(e) => updateLocalRow(rowIndex, col.id, col.type === 'number' ? Number(e.target.value) : e.target.value)}
-                          className="h-8 text-xs"
+                          className="h-9 text-sm w-full"
                           disabled={isCompleted}
                         />
                       )}
@@ -467,9 +471,12 @@ export function DiagnosticTableBlock({
             </Card>
           ))}
         </div>
-      ) : (
-        /* Horizontal table layout with sticky header */
-        <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh] border rounded-lg">
+      </div>
+
+      {/* Horizontal table layout — hidden on mobile, shown on sm+ when layout is horizontal */}
+      {effectiveLayout !== 'vertical' && (
+        <div className="hidden sm:block">
+          <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh] border rounded-lg">
           <Table>
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
@@ -545,6 +552,7 @@ export function DiagnosticTableBlock({
               ))}
             </TableBody>
           </Table>
+          </div>
         </div>
       )}
 
