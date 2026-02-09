@@ -359,6 +359,17 @@ export function VideoUnskippableBlock({
     };
   }, []);
 
+  // PATCH P0.9.10: Auto-start fallback timer when API detection fails
+  useEffect(() => {
+    if (!apiDetectionDone || apiWorking || videoStarted || isEditing || isCompleted) return;
+    if (!content.duration_seconds || content.duration_seconds <= 0) return;
+    // Fallback timer not yet running — auto-start
+    if (!fallbackIntervalRef.current) {
+      console.info('[VideoUnskippableBlock] API not detected after 3s, auto-starting fallback timer');
+      startFallbackTimer();
+    }
+  }, [apiDetectionDone, apiWorking, videoStarted, isEditing, isCompleted, content.duration_seconds, startFallbackTimer]);
+
   // Handle confirmation button click
   const handleConfirmWatched = () => {
     onComplete?.();
@@ -528,19 +539,7 @@ export function VideoUnskippableBlock({
               - API detection is done (3s timeout passed)
               - NOT using Kinescope IframePlayer hook (it handles progress internally)
               OR when kinescopeApiEnabled was disabled (fallback to iframe) */}
-          {!videoStarted && content.duration_seconds && !apiWorking && apiDetectionDone && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-              <Button
-                variant="secondary"
-                size="lg"
-                onClick={startFallbackTimer}
-                className="gap-2"
-              >
-                <Play className="h-5 w-5" />
-                Начать просмотр
-              </Button>
-            </div>
-          )}
+          {/* PATCH P0.9.10: Fallback timer auto-starts when API detection fails */}
         </div>
       ) : (
         <Card className="py-12 text-center space-y-4">

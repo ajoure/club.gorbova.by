@@ -424,14 +424,7 @@ export function DiagnosticTableBlock({
                       ) : col.type === 'select' && col.options ? (
                         <Select
                           value={String(row[col.id] || '')}
-                          onValueChange={(v) => {
-                            setLocalRows((prev) => {
-                              const newRows = [...prev];
-                              newRows[rowIndex] = { ...newRows[rowIndex], [col.id]: v };
-                              onRowsChange?.(newRows);
-                              return newRows;
-                            });
-                          }}
+                          onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
                           disabled={isCompleted}
                         >
                           <SelectTrigger className="h-8 text-xs">
@@ -503,14 +496,7 @@ export function DiagnosticTableBlock({
                       ) : col.type === 'select' && col.options ? (
                         <Select
                           value={String(row[col.id] || '')}
-                          onValueChange={(v) => {
-                            setLocalRows((prev) => {
-                              const newRows = [...prev];
-                              newRows[rowIndex] = { ...newRows[rowIndex], [col.id]: v };
-                              onRowsChange?.(newRows);
-                              return newRows;
-                            });
-                          }}
+                          onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
                           disabled={isCompleted}
                         >
                           <SelectTrigger className="h-8 text-xs">
