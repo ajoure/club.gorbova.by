@@ -531,7 +531,7 @@ async function chargeSubscription(
   subscription: any,
   bepaidConfig: any
 ): Promise<ChargeResult> {
-  const { id, user_id, payment_token, payment_method_id, tariffs, next_charge_at, is_trial, order_id, tariff_id, meta: subMeta, billing_type } = subscription;
+  const { id, user_id, payment_token, payment_method_id, tariffs, next_charge_at, is_trial, order_id, tariff_id, meta: subMeta, billing_type, product_id } = subscription;
   const now = new Date();
 
   // ========== PROVIDER-MANAGED CHECK (PATCH-6) ==========
@@ -546,6 +546,55 @@ async function chargeSubscription(
     };
   }
   // ========== END PROVIDER-MANAGED CHECK ==========
+
+  // ========== PATCH P0.9.6: SUPERSEDED CHECK ==========
+  // Check if a newer active subscription exists for same user+product
+  if (product_id) {
+    const { data: newerSub } = await supabase
+      .from('subscriptions_v2')
+      .select('id, access_end_at')
+      .eq('user_id', user_id)
+      .eq('product_id', product_id)
+      .in('status', ['active', 'trial'])
+      .neq('id', id)
+      .limit(10);
+
+    const currentEnd = subscription.access_end_at ? new Date(subscription.access_end_at).getTime() : 0;
+    const hasNewer = (newerSub || []).some(s => {
+      if (!s.access_end_at) return true; // NULL = infinity > any finite
+      return new Date(s.access_end_at).getTime() > currentEnd;
+    });
+
+    if (hasNewer) {
+      console.log(`Subscription ${id}: superseded by newer subscription, marking superseded`);
+      await supabase.from('subscriptions_v2').update({
+        status: 'superseded',
+        auto_renew: false,
+        updated_at: now.toISOString(),
+      }).eq('id', id);
+
+      await supabase.from('audit_logs').insert({
+        action: 'subscription.superseded',
+        actor_type: 'system',
+        actor_label: 'subscription-charge',
+        target_user_id: user_id,
+        meta: {
+          old_subscription_id: id,
+          newer_subscription_ids: (newerSub || []).map(s => s.id),
+          product_id,
+          reason: 'superseded_by_newer',
+        },
+      });
+
+      return {
+        subscription_id: id,
+        success: false,
+        skipped: true,
+        skip_reason: 'superseded_by_newer',
+      };
+    }
+  }
+  // ========== END SUPERSEDED CHECK ==========
 
   // ========== GRACE PERIOD CHECKS (MUST BE FIRST) ==========
   

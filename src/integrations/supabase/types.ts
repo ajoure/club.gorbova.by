@@ -9272,6 +9272,10 @@ export type Database = {
         }
         Returns: Json
       }
+      cascade_order_cancellation: {
+        Args: { p_order_id: string; p_reason?: string }
+        Returns: Json
+      }
       check_payment_status_for_deal: {
         Args: { p_payment_id: string; p_payment_source: string }
         Returns: {
@@ -9372,6 +9376,10 @@ export type Database = {
         Args: { p_category?: string; p_description: string; p_subject: string }
         Returns: Json
       }
+      expire_stale_entitlements: {
+        Args: { p_batch_limit?: number }
+        Returns: Json
+      }
       find_bought_not_joined_users: {
         Args: never
         Returns: {
@@ -9424,14 +9432,12 @@ export type Database = {
         Returns: {
           access_end_at: string
           access_source: string
-          access_status: string
           club_id: string
+          club_name: string
           email: string
           full_name: string
-          in_chat: boolean
+          member_status: string
           profile_id: string
-          status: string
-          telegram_user_id: number
           user_id: string
         }[]
       }
@@ -9761,6 +9767,8 @@ export type Database = {
         | "past_due"
         | "canceled"
         | "expired"
+        | "superseded"
+        | "expired_reentry"
       subscription_tier: "free" | "pro" | "premium" | "webinar"
     }
     CompositeTypes: {
@@ -9945,6 +9953,8 @@ export const Constants = {
         "past_due",
         "canceled",
         "expired",
+        "superseded",
+        "expired_reentry",
       ],
       subscription_tier: ["free", "pro", "premium", "webinar"],
     },
