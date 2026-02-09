@@ -205,36 +205,42 @@ export function FullSystemCheck() {
             )}
           </div>
 
-          {/* Summary Stats */}
+          {/* Summary Stats - PATCH P0.9.4: Show deployed/healthy/timeout/missing */}
           {displayData && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">
               <div className="bg-muted/50 rounded-lg p-3 text-center">
                 <div className="text-2xl font-bold text-primary">
                   {displayData.edge_functions?.deployed || 0}
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  / {displayData.edge_functions?.total || 0} функций
+                  / {displayData.edge_functions?.total || 0} deployed
                 </div>
+              </div>
+              <div className="bg-muted/50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-green-600">
+                  {displayData.edge_functions?.healthy || displayData.edge_functions?.deployed || 0}
+                </div>
+                <div className="text-xs text-muted-foreground">healthy</div>
+              </div>
+              <div className="bg-muted/50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-yellow-600">
+                  {displayData.edge_functions?.timeout?.length || 0}
+                </div>
+                <div className="text-xs text-muted-foreground">timeout</div>
               </div>
               <div className="bg-muted/50 rounded-lg p-3 text-center">
                 <div className="text-2xl font-bold text-destructive">
                   {displayData.edge_functions?.missing?.length || 0}
                 </div>
-                <div className="text-xs text-muted-foreground">не задеплоено</div>
+                <div className="text-xs text-muted-foreground">missing</div>
               </div>
               <div className="bg-muted/50 rounded-lg p-3 text-center">
                 <div className="text-2xl font-bold text-green-600">
                   {displayData.invariants?.passed || 0}
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  / {displayData.invariants?.total || 0} инвариантов
+                  / {displayData.invariants?.total || 0} invariants
                 </div>
-              </div>
-              <div className="bg-muted/50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-yellow-600">
-                  {remediatePlan?.plan.length || displayData.auto_fixes?.length || 0}
-                </div>
-                <div className="text-xs text-muted-foreground">план автолечения</div>
               </div>
             </div>
           )}

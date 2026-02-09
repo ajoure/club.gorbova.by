@@ -56,6 +56,8 @@ interface FullCheckReport {
   edge_functions: {
     total: number;
     deployed: number;
+    healthy: number;    // PATCH P0.9.4: Functions that responded (OK/ERROR/CORS_ERROR)
+    timeout: string[];  // PATCH P0.9.4: Functions that timed out (exist but slow)
     missing: string[];
     results: FunctionCheckResult[];
   };
@@ -87,8 +89,12 @@ async function checkFunctionAvailability(
   
   try {
     const controller = new AbortController();
-    // Reduce timeout for OPTIONS (preflight) to 5s for faster checks
-    const timeout = entry.healthcheck_method === "OPTIONS" ? 5000 : Math.min(entry.timeout_ms, 6000);
+    // PATCH P0.9.4: Respect registry timeout_ms, with reasonable caps
+    // OPTIONS: max 8s (preflight should be fast)
+    // POST: max 15s (allows cold start)
+    const timeout = entry.healthcheck_method === "OPTIONS" 
+      ? Math.min(entry.timeout_ms, 8000)   
+      : Math.min(entry.timeout_ms, 15000);
     const timeoutId = setTimeout(() => controller.abort(), timeout);
     
     const method = entry.healthcheck_method === "POST" ? "POST" : "OPTIONS";
@@ -165,15 +171,16 @@ async function checkFunctionAvailability(
     };
   } catch (error) {
     if (error.name === "AbortError") {
+      // PATCH P0.9.4: TIMEOUT means function EXISTS but was slow to respond
       return {
         name: entry.name,
-        exists: false,
+        exists: true, // Function exists, just slow
         http_status: null,
         status: "TIMEOUT",
         tier: entry.tier,
         category: entry.category,
         auto_fix_policy: entry.auto_fix_policy,
-        error: `Request timeout (${entry.timeout_ms}ms)`,
+        error: `Request timeout (${timeout}ms)`,
       };
     }
     
@@ -499,8 +506,8 @@ Deno.serve(async (req) => {
     console.log(`[FULL-CHECK] Checking ${registry.length} functions from registry...`);
     
     // STEP 2: Check availability (parallel, batched)
-    // Increased batch size from 20 to 30 for faster completion
-    const batchSize = 30;
+    // PATCH P0.9.4: Reduced from 30 to 10 to prevent self-DDoS on cold starts
+    const batchSize = 10;
     const functionResults: FunctionCheckResult[] = [];
     let previewDetected = false;
     
@@ -543,12 +550,25 @@ Deno.serve(async (req) => {
       }
     }
     
-    const deployedCount = functionResults.filter(r => r.exists).length;
-    const missingFunctions = functionResults
-      .filter(r => r.status === "NOT_DEPLOYED")
-      .map(r => r.name);
+    // PATCH P0.9.4: Proper counting logic
+    // - NOT_DEPLOYED = 404 only (truly missing)
+    // - TIMEOUT = slow but exists
+    // - deployed = everything that is NOT missing
+    const isMissing = (r: FunctionCheckResult) => r.status === "NOT_DEPLOYED";
+    const isTimeout = (r: FunctionCheckResult) => r.status === "TIMEOUT";
+    const isHealthy = (r: FunctionCheckResult) => 
+      r.status === "OK" || r.status === "ERROR" || r.status === "CORS_ERROR";
     
-    console.log(`[FULL-CHECK] Functions: ${deployedCount}/${registry.length} deployed`);
+    const missingFunctions = functionResults.filter(isMissing);
+    const timeoutFunctions = functionResults.filter(isTimeout);
+    const healthyFunctions = functionResults.filter(isHealthy);
+    
+    const deployedCount = functionResults.filter(r => !isMissing(r)).length;
+    const healthyCount = healthyFunctions.length;
+    const timeoutCount = timeoutFunctions.length;
+    const missingCount = missingFunctions.length;
+    
+    console.log(`[FULL-CHECK] total=${registry.length} deployed=${deployedCount} healthy=${healthyCount} timeout=${timeoutCount} missing=${missingCount}`);
     
     // STEP 3: Check business invariants
     const invariantResults = await checkBusinessInvariants(supabase);
@@ -598,7 +618,9 @@ Deno.serve(async (req) => {
       edge_functions: {
         total: registry.length,
         deployed: deployedCount,
-        missing: missingFunctions,
+        healthy: healthyCount,
+        timeout: timeoutFunctions.map(r => r.name),
+        missing: missingFunctions.map(r => r.name),
         results: functionResults,
       },
       breakdown: {
@@ -625,7 +647,7 @@ Deno.serve(async (req) => {
         status: finalStatus,
         edge_functions_total: registry.length,
         edge_functions_deployed: deployedCount,
-        edge_functions_missing: missingFunctions,
+        edge_functions_missing: missingFunctions.map(r => r.name),
         invariants_total: invariantResults.length,
         invariants_passed: passedInvariants,
         invariants_failed: invariantResults.length - passedInvariants,
@@ -667,8 +689,10 @@ Deno.serve(async (req) => {
         duration_ms: Date.now() - startTime,
         edge_functions: { 
           total: registry.length, 
-          deployed: deployedCount, 
-          missing: missingFunctions.length,
+          deployed_count: deployedCount, 
+          healthy_count: healthyCount,
+          timeout_count: timeoutCount,
+          missing_count: missingCount,
         },
         breakdown: {
           p0_missing: missingP0,

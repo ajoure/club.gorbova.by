@@ -35,6 +35,8 @@ export interface FullCheckResponse {
   edge_functions: {
     total: number;
     deployed: number;
+    healthy: number;    // PATCH P0.9.4: Functions that responded (OK/ERROR/CORS_ERROR)
+    timeout: string[];  // PATCH P0.9.4: Functions that timed out (exist but slow)
     missing: string[];
     results: Array<{
       name: string;
