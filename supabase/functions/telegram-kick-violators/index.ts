@@ -1,9 +1,28 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+/**
+ * PATCH P0.9.5: Telegram Kick Violators Cron
+ * 
+ * CRITICAL FIX: Now checks subscriptions_v2 BEFORE kicking
+ * Uses hasValidAccessBatch for bulk checks (no N+1)
+ * 
+ * STOP-guards:
+ * - batch size: max 50 per run
+ * - hard cap: 200 total
+ * - rate-limit detection: stop and log retry_after
+ * - runtime cap: 80 seconds
+ */
+
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import { hasValidAccessBatch, type AccessCheckResult } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// STOP-guards configuration (PATCH P0.9.5)
+const BATCH_SIZE = 50;
+const HARD_CAP = 200;
+const RUNTIME_LIMIT_MS = 80000; // 80 seconds
 
 // Telegram API request helper
 async function telegramRequest(botToken: string, method: string, params: Record<string, unknown>) {
@@ -21,12 +40,18 @@ async function checkMembership(botToken: string, chatId: number, userId: number)
   isMember: boolean;
   status: string;
   error?: string;
+  retryAfter?: number;
 }> {
   try {
     const result = await telegramRequest(botToken, 'getChatMember', {
       chat_id: chatId,
       user_id: userId,
     });
+
+    // Rate limit detection
+    if (result.error_code === 429 && result.parameters?.retry_after) {
+      return { isMember: false, status: 'rate_limited', retryAfter: result.parameters.retry_after };
+    }
 
     if (!result.ok) {
       if (result.description?.includes('user not found') || 
@@ -47,7 +72,11 @@ async function checkMembership(botToken: string, chatId: number, userId: number)
 }
 
 // CRITICAL: Ban user permanently (no automatic unban) to prevent rejoin via old links
-async function kickUser(botToken: string, chatId: number, userId: number): Promise<{ success: boolean; error?: string }> {
+async function kickUser(botToken: string, chatId: number, userId: number): Promise<{ 
+  success: boolean; 
+  error?: string;
+  retryAfter?: number;
+}> {
   try {
     console.log(`Banning user ${userId} from chat ${chatId} (permanent, no unban)`);
     
@@ -58,6 +87,11 @@ async function kickUser(botToken: string, chatId: number, userId: number): Promi
       // Ban for 366 days to prevent rejoin via old invite links
       until_date: Math.floor(Date.now() / 1000) + 366 * 24 * 60 * 60,
     });
+    
+    // Rate limit detection
+    if (banResult.error_code === 429 && banResult.parameters?.retry_after) {
+      return { success: false, retryAfter: banResult.parameters.retry_after };
+    }
     
     if (!banResult.ok) {
       // Still try preventive ban even if not a member
@@ -111,7 +145,8 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  console.log('=== Telegram Kick Violators Cron Started ===');
+  const startTime = Date.now();
+  console.log('=== Telegram Kick Violators Cron Started (PATCH P0.9.5) ===');
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -140,10 +175,33 @@ Deno.serve(async (req) => {
       club_name: string;
       checked: number;
       kicked: number;
+      skipped_with_access: number;
       errors: number;
     }[] = [];
 
+    let totalProcessed = 0;
+    let rateLimitHit = false;
+    let rateLimitRetryAfter: number | undefined;
+
     for (const club of clubs || []) {
+      // STOP-guard: runtime limit
+      if (Date.now() - startTime > RUNTIME_LIMIT_MS) {
+        console.log(`STOP-guard: Runtime limit reached (${RUNTIME_LIMIT_MS}ms), stopping`);
+        break;
+      }
+
+      // STOP-guard: hard cap
+      if (totalProcessed >= HARD_CAP) {
+        console.log(`STOP-guard: Hard cap reached (${HARD_CAP}), stopping`);
+        break;
+      }
+
+      // STOP-guard: rate limit
+      if (rateLimitHit) {
+        console.log(`STOP-guard: Rate limit hit, stopping. Retry after: ${rateLimitRetryAfter}s`);
+        break;
+      }
+
       const botToken = club.telegram_bots?.bot_token_encrypted;
       if (!botToken) {
         console.log(`Club ${club.club_name}: No bot token, skipping`);
@@ -153,12 +211,14 @@ Deno.serve(async (req) => {
       console.log(`Processing club: ${club.club_name}`);
 
       // Find violators: access_status !== 'ok' AND (in_chat = true OR in_channel = true)
+      // PATCH P0.9.5: Limit to BATCH_SIZE
       const { data: violators, error: violatorsError } = await supabase
         .from('telegram_club_members')
         .select('*')
         .eq('club_id', club.id)
         .neq('access_status', 'ok')
-        .or('in_chat.eq.true,in_channel.eq.true');
+        .or('in_chat.eq.true,in_channel.eq.true')
+        .limit(BATCH_SIZE);
 
       if (violatorsError) {
         console.error(`Failed to fetch violators for club ${club.club_name}:`, violatorsError);
@@ -167,12 +227,88 @@ Deno.serve(async (req) => {
 
       console.log(`Found ${violators?.length || 0} potential violators in ${club.club_name}`);
 
+      // PATCH P0.9.5: Bulk load profile_id -> user_id mapping (no N+1!)
+      const profileIds = (violators || [])
+        .filter(v => v.profile_id)
+        .map(v => v.profile_id);
+      
+      const profileToUserIdMap = new Map<string, string>();
+      if (profileIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, user_id')
+          .in('id', profileIds);
+        
+        for (const p of profiles || []) {
+          if (p.user_id) {
+            profileToUserIdMap.set(p.id, p.user_id);
+          }
+        }
+      }
+      console.log(`PATCH P0.9.5: Loaded ${profileToUserIdMap.size} profile->user_id mappings`);
+
+      // PATCH P0.9.5: Bulk check access for all user_ids using hasValidAccessBatch
+      const userIdsToCheck = [...new Set(Array.from(profileToUserIdMap.values()))];
+      let accessResults = new Map<string, AccessCheckResult>();
+      
+      if (userIdsToCheck.length > 0) {
+        accessResults = await hasValidAccessBatch(supabase, userIdsToCheck, club.id);
+        console.log(`PATCH P0.9.5: Checked access for ${userIdsToCheck.length} users`);
+      }
+
       let kickedCount = 0;
       let errorCount = 0;
       let checkedCount = 0;
+      let skippedWithAccess = 0;
 
       for (const member of violators || []) {
+        // STOP-guards
+        if (Date.now() - startTime > RUNTIME_LIMIT_MS) break;
+        if (totalProcessed >= HARD_CAP) break;
+        if (rateLimitHit) break;
+
         checkedCount++;
+        totalProcessed++;
+
+        // PATCH P0.9.5: Check if user has valid access via subscriptions/entitlements
+        const userId = member.profile_id ? profileToUserIdMap.get(member.profile_id) : undefined;
+        const accessCheck = userId ? accessResults.get(userId) : undefined;
+
+        if (accessCheck?.valid) {
+          // SKIP KICK: User has valid access!
+          console.log(`SKIP kick: user ${member.telegram_user_id} has valid access via ${accessCheck.source} until ${accessCheck.endAt}`);
+          skippedWithAccess++;
+
+          // Update access_status to 'ok'
+          await supabase
+            .from('telegram_club_members')
+            .update({
+              access_status: 'ok',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', member.id);
+
+          // Log audit event
+          await logAudit(supabase, {
+            club_id: club.id,
+            event_type: 'AUTO_GUARD_SKIP',
+            actor_type: 'cron',
+            telegram_user_id: member.telegram_user_id,
+            user_id: userId,
+            reason: 'active_subscription_guard',
+            meta: {
+              access_source: accessCheck.source,
+              access_end_at: accessCheck.endAt,
+              subscription_id: accessCheck.subscriptionId,
+              entitlement_id: accessCheck.entitlementId,
+              previous_access_status: member.access_status,
+            },
+          });
+
+          continue; // Skip to next member
+        }
+
+        // User does NOT have valid access - proceed with kick
         let kickedFromChat = false;
         let kickedFromChannel = false;
 
@@ -181,9 +317,23 @@ Deno.serve(async (req) => {
           // Double-check membership before kicking
           const chatCheck = await checkMembership(botToken, club.chat_id, member.telegram_user_id);
           
+          if (chatCheck.retryAfter) {
+            rateLimitHit = true;
+            rateLimitRetryAfter = chatCheck.retryAfter;
+            console.log(`Rate limit hit on chat check: retry after ${chatCheck.retryAfter}s`);
+            break;
+          }
+          
           if (chatCheck.isMember) {
             console.log(`Kicking violator ${member.telegram_user_id} from chat ${club.chat_id}`);
             const kickResult = await kickUser(botToken, club.chat_id, member.telegram_user_id);
+            
+            if (kickResult.retryAfter) {
+              rateLimitHit = true;
+              rateLimitRetryAfter = kickResult.retryAfter;
+              console.log(`Rate limit hit on kick: retry after ${kickResult.retryAfter}s`);
+              break;
+            }
             
             if (kickResult.success) {
               kickedFromChat = true;
@@ -201,12 +351,24 @@ Deno.serve(async (req) => {
         }
 
         // Verify and kick from channel if present
-        if (club.channel_id && member.in_channel) {
+        if (club.channel_id && member.in_channel && !rateLimitHit) {
           const channelCheck = await checkMembership(botToken, club.channel_id, member.telegram_user_id);
+          
+          if (channelCheck.retryAfter) {
+            rateLimitHit = true;
+            rateLimitRetryAfter = channelCheck.retryAfter;
+            break;
+          }
           
           if (channelCheck.isMember) {
             console.log(`Kicking violator ${member.telegram_user_id} from channel ${club.channel_id}`);
             const kickResult = await kickUser(botToken, club.channel_id, member.telegram_user_id);
+            
+            if (kickResult.retryAfter) {
+              rateLimitHit = true;
+              rateLimitRetryAfter = kickResult.retryAfter;
+              break;
+            }
             
             if (kickResult.success) {
               kickedFromChannel = true;
@@ -251,6 +413,20 @@ Deno.serve(async (req) => {
               previous_access_status: member.access_status,
             },
           });
+
+          // PATCH P0.9.5: Also log to telegram_logs for unified history
+          await supabase.from('telegram_logs').insert({
+            action: 'cron_autokick',
+            club_id: club.id,
+            user_id: member.profile_id,
+            telegram_user_id: member.telegram_user_id,
+            status: 'success',
+            meta: {
+              kicked_from_chat: kickedFromChat,
+              kicked_from_channel: kickedFromChannel,
+              access_status_was: member.access_status,
+            },
+          });
         }
 
         // Small delay to avoid rate limiting
@@ -266,7 +442,9 @@ Deno.serve(async (req) => {
           meta: {
             checked: checkedCount,
             kicked: kickedCount,
+            skipped_with_access: skippedWithAccess,
             errors: errorCount,
+            rate_limit_hit: rateLimitHit,
           },
         });
       }
@@ -276,21 +454,28 @@ Deno.serve(async (req) => {
         club_name: club.club_name,
         checked: checkedCount,
         kicked: kickedCount,
+        skipped_with_access: skippedWithAccess,
         errors: errorCount,
       });
 
-      console.log(`Club ${club.club_name}: checked=${checkedCount}, kicked=${kickedCount}, errors=${errorCount}`);
+      console.log(`Club ${club.club_name}: checked=${checkedCount}, kicked=${kickedCount}, skipped_with_access=${skippedWithAccess}, errors=${errorCount}`);
     }
 
     const totalKicked = results.reduce((sum, r) => sum + r.kicked, 0);
     const totalChecked = results.reduce((sum, r) => sum + r.checked, 0);
+    const totalSkipped = results.reduce((sum, r) => sum + r.skipped_with_access, 0);
+    const runtimeMs = Date.now() - startTime;
 
-    console.log(`=== Cron completed: ${totalChecked} checked, ${totalKicked} kicked ===`);
+    console.log(`=== Cron completed: ${totalChecked} checked, ${totalKicked} kicked, ${totalSkipped} skipped (valid access), runtime=${runtimeMs}ms ===`);
 
     return new Response(JSON.stringify({
       success: true,
       total_checked: totalChecked,
       total_kicked: totalKicked,
+      total_skipped_with_access: totalSkipped,
+      runtime_ms: runtimeMs,
+      rate_limit_hit: rateLimitHit,
+      rate_limit_retry_after: rateLimitRetryAfter,
       clubs: results,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

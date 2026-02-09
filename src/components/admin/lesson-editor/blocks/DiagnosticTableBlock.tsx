@@ -98,6 +98,9 @@ export function DiagnosticTableBlock({
   // PATCH-1: Local state for rows to prevent focus loss
   const [localRows, setLocalRows] = useState<Record<string, unknown>[]>([]);
   
+  // PATCH P0.9.5: Debounce timeout ref for immediate update + debounced commit
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
   // PATCH-C: Refs for stable dependencies (avoid infinite loops)
   const columnsRef = useRef(columns);
   columnsRef.current = columns;
@@ -108,8 +111,25 @@ export function DiagnosticTableBlock({
   // PATCH-C: Flag to ensure one-time initialization
   const initDoneRef = useRef(false);
   
+  // Local rows ref for flush (P0.9.5)
+  const localRowsRef = useRef(localRows);
+  localRowsRef.current = localRows;
+  
   // Generate unique ID (stable function outside render)
   const genId = useCallback(() => Math.random().toString(36).substring(2, 9), []);
+  
+  // PATCH P0.9.5: Cleanup debounce timer on unmount + flush pending changes
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        // Flush pending changes on unmount
+        if (localRowsRef.current.length > 0) {
+          onRowsChangeRef.current?.(localRowsRef.current);
+        }
+      }
+    };
+  }, []);
   
   // PATCH-C: Initialize local rows from props OR create first empty row
   useEffect(() => {
@@ -135,12 +155,29 @@ export function DiagnosticTableBlock({
     }
   }, [rows, isCompleted, genId]);
 
-  // Commit local rows to parent
-  const commitRows = useCallback(() => {
-    if (localRows.length > 0) {
-      onRowsChange?.(localRows);
+  // PATCH P0.9.5: Debounced commit - schedule save after 300ms
+  const debouncedCommit = useCallback((newRows: Record<string, unknown>[]) => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
     }
-  }, [localRows, onRowsChange]);
+    saveTimeoutRef.current = setTimeout(() => {
+      onRowsChange?.(newRows);
+    }, 300);
+  }, [onRowsChange]);
+
+  // PATCH P0.9.5: Immediate commit (flush debounce)
+  const flushAndCommit = useCallback(() => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (localRowsRef.current.length > 0) {
+      onRowsChange?.(localRowsRef.current);
+    }
+  }, [onRowsChange]);
+
+  // Legacy commitRows for backwards compat (now flushes)
+  const commitRows = flushAndCommit;
 
   // PATCH-V3: Calculate computed columns SAFELY (no eval!)
   // Hardcoded support for known computed fields only
@@ -189,14 +226,16 @@ export function DiagnosticTableBlock({
     });
     const newRows = [...localRows, newRow];
     setLocalRows(newRows);
-    onRowsChange?.(newRows);
+    onRowsChange?.(newRows); // Immediate commit for add
   };
 
-  // Update local row only (no parent call on every keystroke)
+  // PATCH P0.9.5: Update local row with debounced commit
   const updateLocalRow = (index: number, colId: string, value: unknown) => {
     setLocalRows(prev => {
       const newRows = [...prev];
       newRows[index] = { ...newRows[index], [colId]: value };
+      // Schedule debounced commit
+      debouncedCommit(newRows);
       return newRows;
     });
   };
@@ -366,8 +405,11 @@ export function DiagnosticTableBlock({
                       <div className="flex items-center gap-2 min-w-[100px]">
                         <Slider
                           value={[Number(row[col.id]) || 5]}
-                          onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
-                          onValueCommit={() => commitRows()}
+                          onValueChange={([v]) => {
+                            // PATCH P0.9.5: Immediate update + debounced commit (same pattern as Input)
+                            updateLocalRow(rowIndex, col.id, v);
+                          }}
+                          // REMOVED: onValueCommit={() => commitRows()} - handled by debounce
                           min={col.min || 1}
                           max={col.max || 10}
                           step={1}
@@ -382,10 +424,13 @@ export function DiagnosticTableBlock({
                       <Input
                         type={col.type === 'number' ? 'number' : 'text'}
                         value={String(row[col.id] || '')}
-                        onChange={(e) => updateLocalRow(rowIndex, col.id, 
-                          col.type === 'number' ? Number(e.target.value) : e.target.value
-                        )}
-                        onBlur={commitRows}
+                        onChange={(e) => {
+                          // PATCH P0.9.5: Immediate update + debounced commit
+                          updateLocalRow(rowIndex, col.id, 
+                            col.type === 'number' ? Number(e.target.value) : e.target.value
+                          );
+                        }}
+                        // REMOVED: onBlur={commitRows} - now handled by debounce in updateLocalRow
                         className="h-8 text-xs"
                         disabled={isCompleted}
                       />
@@ -447,7 +492,8 @@ export function DiagnosticTableBlock({
       {!isCompleted ? (
         <Button
           onClick={() => {
-            commitRows();
+            // PATCH P0.9.5: Flush any pending debounced saves before completing
+            flushAndCommit();
             onComplete?.();
           }}
           disabled={!canComplete}

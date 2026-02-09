@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { hasValidAccessBatch } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -139,22 +140,44 @@ async function kickMember(botToken: string, chatId: number, userId: number): Pro
   }
 }
 
-// Calculate access status
+/**
+ * PATCH P0.9.5: Calculate access status with subscription priority
+ * 
+ * Приоритет проверки:
+ * 1. subscriptions_v2 (HIGHEST) - если есть активная подписка, сразу 'ok'
+ * 2. telegram_access.active_until
+ * 3. telegram_manual_access.valid_until
+ * 4. telegram_access_grants.end_at
+ */
 function calculateAccessStatus(
   userId: string | undefined,
   accessRecords: Map<string, any>,
   manualAccessMap: Map<string, any>,
   grantsMap: Map<string, any>,
+  subscriptionsMap: Map<string, any>, // PATCH P0.9.5: Added subscriptions check
 ): 'ok' | 'expired' | 'no_access' | 'removed' {
   if (!userId) return 'no_access';
 
   let hasExpiredAccess = false;
   const now = new Date();
 
+  // PATCH P0.9.5: Check subscription FIRST (HIGHEST PRIORITY)
+  const subscription = subscriptionsMap.get(userId);
+  if (subscription && ['active', 'trial', 'past_due'].includes(subscription.status)) {
+    const accessEndAt = subscription.access_end_at ? new Date(subscription.access_end_at) : null;
+    if (!accessEndAt || accessEndAt > now) {
+      return 'ok'; // Active subscription = always OK
+    }
+    hasExpiredAccess = true;
+  }
+
   const access = accessRecords.get(userId);
   if (access) {
     if (access.state_chat === 'revoked' || access.state_channel === 'revoked') {
-      return 'removed';
+      // Only return 'removed' if no active subscription
+      if (!subscription || !['active', 'trial', 'past_due'].includes(subscription.status)) {
+        return 'removed';
+      }
     }
     const activeUntil = access.active_until ? new Date(access.active_until) : null;
     if (!activeUntil || activeUntil > now) return 'ok';
@@ -412,6 +435,29 @@ Deno.serve(async (req) => {
         .eq('club_id', club_id);
       const grantsMap = new Map(accessGrants?.map(a => [a.user_id, a]) || []);
 
+      // PATCH P0.9.5: Load active subscriptions with best access_end_at per user
+      const { data: subscriptionsData } = await supabase
+        .from('subscriptions_v2')
+        .select('user_id, status, access_end_at')
+        .in('status', ['active', 'trial', 'past_due']);
+      
+      // Build subscriptionsMap with best subscription per user (max access_end_at, NULL = infinity)
+      const subscriptionsMap = new Map<string, any>();
+      for (const sub of subscriptionsData || []) {
+        const existing = subscriptionsMap.get(sub.user_id);
+        if (!existing) {
+          subscriptionsMap.set(sub.user_id, sub);
+        } else {
+          // NULL means infinity, always prefer it
+          if (sub.access_end_at === null) {
+            subscriptionsMap.set(sub.user_id, sub);
+          } else if (existing.access_end_at !== null && new Date(sub.access_end_at) > new Date(existing.access_end_at)) {
+            subscriptionsMap.set(sub.user_id, sub);
+          }
+        }
+      }
+      console.log(`PATCH P0.9.5: Loaded ${subscriptionsMap.size} users with active subscriptions`);
+
       // Existing members
       const { data: existingMembers } = await supabase
         .from('telegram_club_members')
@@ -426,7 +472,8 @@ Deno.serve(async (req) => {
         if (!profile.telegram_user_id) continue;
 
         const nameParts = (profile.full_name || '').split(' ');
-        const calculatedStatus = calculateAccessStatus(profile.user_id, accessMap, manualAccessMap, grantsMap);
+        // PATCH P0.9.5: Pass subscriptionsMap to calculateAccessStatus
+        const calculatedStatus = calculateAccessStatus(profile.user_id, accessMap, manualAccessMap, grantsMap, subscriptionsMap);
         const existing = existingMembersMap.get(profile.telegram_user_id);
 
         // Preserve removals unless access is restored
