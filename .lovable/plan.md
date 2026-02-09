@@ -1,97 +1,90 @@
+Жёсткие правила исполнения для Lovable.dev (обязательный блок):
+1) Ничего не ломать и не трогать лишнее. Только изменения по этому PATCH.
+2) Add-only где возможно. Если нужна замена — точечная, минимальный diff.
+3) Dry-run → execute везде, где есть массовые действия.
+4) STOP-предохранители обязательны: таймауты, лимиты батчей, rate-limit Telegram, early-stop >80s.
+5) Только доказуемые изменения: без хардкод-UUID, без “на глаз”. 
+6) Финальный отчёт: список изменённых файлов + diff-summary + пруфы (логи/SQL/UI).
 
-PATCH-лист P0.9.3 (System Health: игноры Telegram + UI)
-	1.	nightly-system-health: загрузить system_health_ignored_checks (с учётом expires_at) и исключить такие проверки из Telegram-уведомлений.
-	2.	nightly-system-health: считать invCode из i.name безопасно (split по :) и фильтровать fail’ы по ignoredKeys.
-	3.	nightly-system-health: добавить лог failed/ignored (без PII, без cookie).
-	4.	UI словарь (useSystemHealthRuns.ts): для INV-2B добавить urlTemplate, чтобы появилась кнопка “Открыть”.
-	5.	UI словарь: добавить missing key INV-2B-WARN (с urlTemplate на ту же страницу).
-	6.	DoD: на следующем прогоне nightly Telegram не содержит checks из ignore-листа; в логах nightly есть строка про ignored.
-	7.	Guard: не трогаем registry, деплой функций, backfill и прочую “мне кажется, что пропало”.
+PATCH P0.9.5 — Telegram AUTOKICK bug + DiagnosticTable save fix
 
-⸻
+A) Telegram: людей кикает при активной подписке (BLOCKER)
+Цель: НИКОГДА не кикать пользователя, если у него есть валидный доступ по subscriptions_v2 (или entitlements/manual_access).
 
+A1. Общая функция guard (использовать в двух edge functions)
+- Реализовать hasValidAccess({ subscription, access, manual_access, grants }, now) -> boolean
+- Приоритет:
+  1) subscriptions_v2: status IN ('active','trial','past_due') AND (access_end_at IS NULL OR access_end_at > now) => TRUE
+  2) telegram_access.active_until > now => TRUE
+  3) telegram_manual_access.valid_until > now => TRUE
+  4) telegram_access_grants.end_at > now => TRUE
+  Иначе FALSE
+- Важно: если subscription есть, но access_end_at <= now -> считать expired (но НЕ “ok”).
 
-[LOVABLE PATCH P0.9.3] System Health: respect ignored checks in Telegram + fix UI links for INV-2B
+A2. telegram-club-members/index.ts (action='sync')
+Файл: supabase/functions/telegram-club-members/index.ts
+- Добавить загрузку подписок без ошибок “последняя строка победила”:
+  - Вытащить subscriptions_v2 для статусов active/trial/past_due
+  - Для каждого user_id выбрать “лучшую” (max(access_end_at) + NULL как бесконечность).
+  - Сформировать subscriptionsMap(user_id -> bestSubscription)
+- Изменить calculateAccessStatus(...) чтобы принимал bestSubscription (или subscriptionsMap) и первым делом проверял subscription по hasValidAccess.
+- Если hasValidAccess=true -> access_status='ok' независимо от старых grants с expired end_at.
 
-Жёсткие правила исполнения для Lovable.dev:
-- Ничего не ломать и не трогать лишнее. Только точечные правки по списку.
-- Add-only где возможно; если замена строки, то строго минимальный diff.
-- Dry-run → execute где применимо.
-- STOP-guards обязательны (таймауты/лимиты), no-PII в логах.
-- DoD только по фактам: UI-скрин + лог/аудит-запись. Без “кажется работает”.
+A3. telegram-kick-violators/index.ts (cron) — убрать N+1 и добавить guard до кика
+Файл: supabase/functions/telegram-kick-violators/index.ts
+- Запрещено: внутри цикла делать supabase.from('profiles').single() для каждого member (N+1).
+- Сделать один запрос/пайплайн получения данных:
+  1) Список кандидатов на kick (как сейчас)
+  2) Одним запросом получить маппинг member.profile_id -> profiles.user_id (bulk IN)
+  3) Одним запросом получить best subscriptions_v2 по этим user_id (bulk IN; max(access_end_at), NULL=бесконечность)
+- Перед kick для каждого кандидата:
+  - вычислить hasValidAccess(...)
+  - если TRUE: 
+    - SKIP kick
+    - UPDATE telegram_club_members SET access_status='ok', updated_at=now()
+    - INSERT telegram_access_audit: action='AUTO_GUARD_SKIP', reason='active_subscription_guard'
+    - continue
+  - если FALSE: продолжить текущую логику kick
 
-1) FIX: nightly-system-health игнорирует ignored_checks при отправке в Telegram
-Файл: supabase/functions/nightly-system-health/index.ts
-Проблема: failedChecks формируется без учёта system_health_ignored_checks → Telegram шлёт игнорируемые проверки.
+A4. STOP-guards для Telegram cron
+- batch size: max 50 за запуск
+- hard cap: 200
+- если Telegram rate-limit -> stop и логировать retry_after
+- если runtime > 80 секунд -> stop и лог
 
-Заменить логику формирования failedChecks.
-БЫЛО (примерно строка ~284):
-  const failedChecks = invariantsResult.invariants?.filter((i) => !i.passed) || [];
+B) DiagnosticTableBlock — данные пропадают (BLOCKER)
+Файл: src/components/admin/lesson-editor/blocks/DiagnosticTableBlock.tsx
 
-СТАНЕТ (вставить после получения invariantsResult, ДО отправки Telegram):
-  // === PATCH P0.9.3: Load ignored checks and filter notifications ===
-  const { data: ignoredChecksData, error: ignoredErr } = await supabase
-    .from('system_health_ignored_checks')
-    .select('check_key')
-    .or('expires_at.is.null,expires_at.gt.now()');
+B1. Input: заменить onBlur commit на immediate update + debounce 300ms
+- хранить saveTimeoutRef (useRef)
+- onChange: обновлять localRows; debounce вызывать onRowsChange(localRows)
+- cleanup таймера в useEffect return
 
-  if (ignoredErr) {
-    console.warn(`[NIGHTLY] ignored_checks load failed: ${ignoredErr.message}`);
-  }
+B2. Slider: такой же паттерн (onValueChange -> update + debounce)
+- убрать onValueCommit commitRows
 
-  const ignoredKeys = new Set(
-    (ignoredChecksData || []).map((ic: { check_key: string }) => ic.check_key)
-  );
+B3. Кнопка “Завершить”
+- перед complete: flush pending debounce (clearTimeout) + onRowsChange(localRows) + onComplete()
 
-  const allFailed = invariantsResult.invariants?.filter((i: any) => !i.passed) || [];
+C) Recovery: восстановить пострадавших
+- Вызвать admin-regrant-wrongly-revoked:
+  1) dry_run (лог + список)
+  2) execute батчами по 50 (max 200 за раз)
+- Логировать результаты в audit_logs + telegram_access_audit
 
-  const failedChecks = allFailed.filter((i: any) => {
-    const invCode = String(i?.name || '').split(':')[0].trim(); // e.g. "INV-2B"
-    return invCode && !ignoredKeys.has(invCode);
-  });
+Файлы:
+- supabase/functions/telegram-club-members/index.ts
+- supabase/functions/telegram-kick-violators/index.ts
+- src/components/admin/lesson-editor/blocks/DiagnosticTableBlock.tsx
 
-  const ignoredFailedCount = allFailed.length - failedChecks.length;
+DoD (только факты):
+Telegram:
+1) Нет новых AUTOKICK для пользователей с active/trial/past_due и access_end_at > now (или NULL).
+2) В логах cron есть строки вида: “SKIP kick: active subscription guard”.
+3) Для минимум 3 тестовых кейсов (активная подписка + expired grant) статус становится ok без кика.
+4) Пострадавшие восстановлены через admin-regrant-wrongly-revoked (dry_run→execute), есть записи audit_logs/telegram_access_audit.
 
-  console.log(`[NIGHTLY] ${failedChecks.length} failed (${ignoredFailedCount} ignored by user)`);  
-  // === END PATCH P0.9.3 ===
-
-Важно:
-- Не логировать сами check_key списком.
-- Не менять формат invariantsResult, только фильтр нотификаций.
-
-2) UI: INV-2B добавить кнопку “Открыть”
-Файл: src/hooks/useSystemHealthRuns.ts
-Проблема: INV-2B в словаре без urlTemplate → в UI нет кнопки “Открыть”.
-
-В объекте словаря добавить/исправить:
-  "INV-2B": {
-    title: "Технические сироты",
-    explain: "Технические платежи без привязки (мониторинг)",
-    action: "Проверить рост количества",
-    urlTemplate: "/admin/payments?classification=orphan_technical",
-    category: "payments",
-  },
-
-3) UI: добавить отсутствующий ключ INV-2B-WARN
-Файл: src/hooks/useSystemHealthRuns.ts
-Добавить рядом с INV-2B:
-  "INV-2B-WARN": {
-    title: "Порог технических сирот",
-    explain: "Количество превысило порог (200)",
-    action: "Исследовать причину роста",
-    urlTemplate: "/admin/payments?classification=orphan_technical",
-    category: "system",
-  },
-
-DoD (обязательно):
-A) Nightly прогон: в логах Edge Function есть строка вида:
-   [NIGHTLY] <N> failed (<M> ignored by user)
-B) Telegram уведомление: НЕ содержит checks, которые есть в system_health_ignored_checks и не истекли.
-C) UI System Health: у INV-2B есть кнопка “Открыть”, ведёт на /admin/payments?classification=orphan_technical
-D) UI System Health: INV-2B-WARN отображается без ошибок в консоли.
-E) Скриншоты/видео DoD допускаются из основной админ-учётки 7500084@gmail.com.
-
-Не делать:
-- НЕ деплоить “недостающие функции”, НЕ менять registry.txt (152/172 это нормально).
-- НЕ трогать unrelated RPC/backfill/прочее.
-
+DiagnosticTable:
+1) Быстрый клик “Завершить” без blur сохраняет данные.
+2) После reload данные есть в lesson_progress_state.state_json.pointA_rows.
+3) Нет ошибок в консоли, сохранение не спамит (debounce работает).
