@@ -319,6 +319,9 @@ export function VideoUnskippableBlock({
     };
   }, [isEditing, isCompleted, apiWorking, embedUrl, content.duration_seconds, shouldUseKinescopeHook]);
 
+  // PATCH P0.9.10b: Ref to track visibility inside interval (avoids stale closure)
+  const isVideoVisibleRef = useRef(false);
+
   // Fallback timer when Kinescope API doesn't work
   const startFallbackTimer = useCallback(() => {
     const duration = content.duration_seconds;
@@ -333,6 +336,9 @@ export function VideoUnskippableBlock({
     }
     
     fallbackIntervalRef.current = setInterval(() => {
+      // PATCH P0.9.10b: Only tick when video is visible in viewport
+      if (!isVideoVisibleRef.current) return;
+      
       setFallbackElapsed(prev => {
         const next = prev + 1;
         const percent = Math.round((next / duration) * 100);
@@ -359,16 +365,36 @@ export function VideoUnskippableBlock({
     };
   }, []);
 
-  // PATCH P0.9.10: Auto-start fallback timer when API detection fails
+  // PATCH P0.9.10b: Track video visibility with IntersectionObserver
+  const videoContainerRef = useRef<HTMLDivElement>(null);
+  const [isVideoVisible, setIsVideoVisible] = useState(false);
+
+  useEffect(() => {
+    const el = videoContainerRef.current;
+    if (!el || isEditing || isCompleted) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsVideoVisible(entry.isIntersecting);
+        isVideoVisibleRef.current = entry.isIntersecting;
+      },
+      { threshold: 0.5 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isEditing, isCompleted]);
+
+  // PATCH P0.9.10: Auto-start fallback timer when API detection fails AND video is visible
   useEffect(() => {
     if (!apiDetectionDone || apiWorking || videoStarted || isEditing || isCompleted) return;
     if (!content.duration_seconds || content.duration_seconds <= 0) return;
+    if (!isVideoVisible) return; // Only start when video is in viewport
     // Fallback timer not yet running — auto-start
     if (!fallbackIntervalRef.current) {
-      console.info('[VideoUnskippableBlock] API not detected after 3s, auto-starting fallback timer');
+      console.info('[VideoUnskippableBlock] API not detected after 3s + video visible, auto-starting fallback timer');
       startFallbackTimer();
     }
-  }, [apiDetectionDone, apiWorking, videoStarted, isEditing, isCompleted, content.duration_seconds, startFallbackTimer]);
+  }, [apiDetectionDone, apiWorking, videoStarted, isEditing, isCompleted, content.duration_seconds, startFallbackTimer, isVideoVisible]);
 
   // Handle confirmation button click
   const handleConfirmWatched = () => {
@@ -513,7 +539,7 @@ export function VideoUnskippableBlock({
       )}
 
       {(embedUrl || shouldUseKinescopeHook) ? (
-        <div className="aspect-video bg-black rounded-lg overflow-hidden relative">
+        <div ref={videoContainerRef} className="aspect-video bg-black rounded-lg overflow-hidden relative">
           {/* For Kinescope: use div container for IframePlayer API */}
           {shouldUseKinescopeHook ? (
             <div 
