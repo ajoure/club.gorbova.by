@@ -254,6 +254,7 @@ export interface DiagnosticTableContentData {
   minRows: number;
   showAggregates: boolean;
   submitButtonText: string;
+  layout?: 'horizontal' | 'vertical';
 }
 
 export interface SequentialFormContentData {

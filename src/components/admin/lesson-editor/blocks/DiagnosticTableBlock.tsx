@@ -43,6 +43,7 @@ export interface DiagnosticTableContent {
   minRows: number;
   showAggregates: boolean;
   submitButtonText: string;
+  layout?: 'horizontal' | 'vertical';
 }
 
 interface DiagnosticTableBlockProps {
@@ -301,6 +302,22 @@ export function DiagnosticTableBlock({
           <Label htmlFor="show-aggregates">Показывать итоги</Label>
         </div>
 
+        <div className="space-y-2">
+          <Label>Ориентация таблицы</Label>
+          <Select
+            value={content.layout || 'horizontal'}
+            onValueChange={(v: 'horizontal' | 'vertical') => onChange({ ...content, layout: v })}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="horizontal">Горизонтальная (колонки сверху)</SelectItem>
+              <SelectItem value="vertical">Вертикальная (карточки)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
         <Button
           variant="outline"
           size="sm"
@@ -323,21 +340,46 @@ export function DiagnosticTableBlock({
 
         {/* Preview */}
         <div className="mt-4 border rounded-lg p-4 bg-muted/30">
-          <p className="text-sm text-muted-foreground mb-2">Предпросмотр таблицы</p>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {columns.slice(0, 5).map(col => (
-                    <TableHead key={col.id} className="text-xs whitespace-nowrap">
-                      {col.name}
-                    </TableHead>
-                  ))}
-                  <TableHead className="text-xs">...</TableHead>
-                </TableRow>
-              </TableHeader>
-            </Table>
-          </div>
+          <p className="text-sm text-muted-foreground mb-2">Предпросмотр таблицы ({content.layout === 'vertical' ? 'вертикальная' : 'горизонтальная'})</p>
+          {(content.layout === 'vertical') ? (
+            <Card>
+              <CardContent className="py-3 space-y-2">
+                {columns.map(col => (
+                  <div key={col.id} className="flex items-center justify-between gap-4 py-1 border-b last:border-b-0">
+                    <span className="text-xs font-medium text-muted-foreground">{col.name}</span>
+                    <span className="text-xs">
+                      {col.type === 'computed' ? '(авто)' : col.type === 'select' ? (col.options?.[0] || '—') : col.type === 'slider' ? '5' : col.type === 'number' ? '0' : 'Пример'}
+                    </span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs whitespace-nowrap w-8">#</TableHead>
+                    {columns.map(col => (
+                      <TableHead key={col.id} className="text-xs whitespace-nowrap">
+                        {col.name}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow>
+                    <TableCell className="text-xs text-muted-foreground">1</TableCell>
+                    {columns.map(col => (
+                      <TableCell key={col.id} className="text-xs text-muted-foreground">
+                        {col.type === 'computed' ? '(авто)' : col.type === 'select' ? (col.options?.[0] || '—') : col.type === 'slider' ? '5' : col.type === 'number' ? '0' : 'Пример'}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -354,106 +396,171 @@ export function DiagnosticTableBlock({
         <p className="text-muted-foreground">{content.instruction}</p>
       )}
 
-      <div className="overflow-x-auto border rounded-lg">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-8">#</TableHead>
-              {columns.map(col => (
-                <TableHead key={col.id} className="text-xs whitespace-nowrap">
-                  {col.name}
-                  {col.required && <span className="text-destructive ml-1">*</span>}
-                </TableHead>
-              ))}
-              <TableHead className="w-12"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {localRows.map((row, rowIndex) => (
-              <TableRow key={row._id as string || rowIndex}>
-                <TableCell className="text-muted-foreground">{rowIndex + 1}</TableCell>
-                {columns.map(col => (
-                  <TableCell key={col.id} className="p-1">
-                    {col.type === 'computed' ? (
-                      <Badge variant="secondary" className="font-mono">
-                        {calculateComputed(row, col)}
-                      </Badge>
-                    ) : col.type === 'select' && col.options ? (
-                      <Select
-                        value={String(row[col.id] || '')}
-                        onValueChange={(v) => {
-                          // FIX P0.9: Commit immediately with fresh data (avoid stale closure)
-                          setLocalRows((prev) => {
-                            const newRows = [...prev];
-                            newRows[rowIndex] = { ...newRows[rowIndex], [col.id]: v };
-                            onRowsChange?.(newRows); // immediate commit with fresh data
-                            return newRows;
-                          });
-                        }}
-                        disabled={isCompleted}
-                      >
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue placeholder="—" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {col.options.map(opt => (
-                            <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : col.type === 'slider' ? (
-                      <div className="flex items-center gap-2 min-w-[100px]">
-                        <Slider
-                          value={[Number(row[col.id]) || 5]}
-                          onValueChange={([v]) => {
-                            // PATCH P0.9.5: Immediate update + debounced commit (same pattern as Input)
-                            updateLocalRow(rowIndex, col.id, v);
-                          }}
-                          // REMOVED: onValueCommit={() => commitRows()} - handled by debounce
-                          min={col.min || 1}
-                          max={col.max || 10}
-                          step={1}
-                          disabled={isCompleted}
-                          className="w-16"
-                        />
-                        <Badge variant="outline" className="w-6 text-center text-xs">
-                          {String(row[col.id] || 5)}
-                        </Badge>
-                      </div>
-                    ) : (
-                      <Input
-                        type={col.type === 'number' ? 'number' : 'text'}
-                        value={String(row[col.id] || '')}
-                        onChange={(e) => {
-                          // PATCH P0.9.5: Immediate update + debounced commit
-                          updateLocalRow(rowIndex, col.id, 
-                            col.type === 'number' ? Number(e.target.value) : e.target.value
-                          );
-                        }}
-                        // REMOVED: onBlur={commitRows} - now handled by debounce in updateLocalRow
-                        className="h-8 text-xs"
-                        disabled={isCompleted}
-                      />
-                    )}
-                  </TableCell>
-                ))}
-                <TableCell>
+      {(content.layout === 'vertical') ? (
+        /* Vertical card layout */
+        <div className="space-y-3">
+          {localRows.map((row, rowIndex) => (
+            <Card key={row._id as string || rowIndex}>
+              <CardContent className="py-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-muted-foreground">Строка {rowIndex + 1}</span>
                   {!isCompleted && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => deleteRow(rowIndex)}
-                    >
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => deleteRow(rowIndex)}>
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
                   )}
-                </TableCell>
+                </div>
+                {columns.map(col => (
+                  <div key={col.id} className="flex items-center justify-between gap-4">
+                    <Label className="text-xs whitespace-nowrap shrink-0">
+                      {col.name}
+                      {col.required && <span className="text-destructive ml-1">*</span>}
+                    </Label>
+                    <div className="w-full max-w-[200px]">
+                      {col.type === 'computed' ? (
+                        <Badge variant="secondary" className="font-mono">
+                          {calculateComputed(row, col)}
+                        </Badge>
+                      ) : col.type === 'select' && col.options ? (
+                        <Select
+                          value={String(row[col.id] || '')}
+                          onValueChange={(v) => {
+                            setLocalRows((prev) => {
+                              const newRows = [...prev];
+                              newRows[rowIndex] = { ...newRows[rowIndex], [col.id]: v };
+                              onRowsChange?.(newRows);
+                              return newRows;
+                            });
+                          }}
+                          disabled={isCompleted}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="—" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {col.options.map(opt => (
+                              <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : col.type === 'slider' ? (
+                        <div className="flex items-center gap-2">
+                          <Slider
+                            value={[Number(row[col.id]) || 5]}
+                            onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
+                            min={col.min || 1}
+                            max={col.max || 10}
+                            step={1}
+                            disabled={isCompleted}
+                            className="w-full"
+                          />
+                          <Badge variant="outline" className="w-6 text-center text-xs shrink-0">
+                            {String(row[col.id] || 5)}
+                          </Badge>
+                        </div>
+                      ) : (
+                        <Input
+                          type={col.type === 'number' ? 'number' : 'text'}
+                          value={String(row[col.id] || '')}
+                          onChange={(e) => updateLocalRow(rowIndex, col.id, col.type === 'number' ? Number(e.target.value) : e.target.value)}
+                          className="h-8 text-xs"
+                          disabled={isCompleted}
+                        />
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        /* Horizontal table layout with sticky header */
+        <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh] border rounded-lg">
+          <Table>
+            <TableHeader className="sticky top-0 bg-background z-10">
+              <TableRow>
+                <TableHead className="w-8">#</TableHead>
+                {columns.map(col => (
+                  <TableHead key={col.id} className="text-xs whitespace-nowrap">
+                    {col.name}
+                    {col.required && <span className="text-destructive ml-1">*</span>}
+                  </TableHead>
+                ))}
+                <TableHead className="w-12"></TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+            </TableHeader>
+            <TableBody>
+              {localRows.map((row, rowIndex) => (
+                <TableRow key={row._id as string || rowIndex}>
+                  <TableCell className="text-muted-foreground">{rowIndex + 1}</TableCell>
+                  {columns.map(col => (
+                    <TableCell key={col.id} className="p-1">
+                      {col.type === 'computed' ? (
+                        <Badge variant="secondary" className="font-mono">
+                          {calculateComputed(row, col)}
+                        </Badge>
+                      ) : col.type === 'select' && col.options ? (
+                        <Select
+                          value={String(row[col.id] || '')}
+                          onValueChange={(v) => {
+                            setLocalRows((prev) => {
+                              const newRows = [...prev];
+                              newRows[rowIndex] = { ...newRows[rowIndex], [col.id]: v };
+                              onRowsChange?.(newRows);
+                              return newRows;
+                            });
+                          }}
+                          disabled={isCompleted}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="—" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {col.options.map(opt => (
+                              <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : col.type === 'slider' ? (
+                        <div className="flex items-center gap-2 min-w-[100px]">
+                          <Slider
+                            value={[Number(row[col.id]) || 5]}
+                            onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
+                            min={col.min || 1}
+                            max={col.max || 10}
+                            step={1}
+                            disabled={isCompleted}
+                            className="w-16"
+                          />
+                          <Badge variant="outline" className="w-6 text-center text-xs">
+                            {String(row[col.id] || 5)}
+                          </Badge>
+                        </div>
+                      ) : (
+                        <Input
+                          type={col.type === 'number' ? 'number' : 'text'}
+                          value={String(row[col.id] || '')}
+                          onChange={(e) => updateLocalRow(rowIndex, col.id, col.type === 'number' ? Number(e.target.value) : e.target.value)}
+                          className="h-8 text-xs"
+                          disabled={isCompleted}
+                        />
+                      )}
+                    </TableCell>
+                  ))}
+                  <TableCell>
+                    {!isCompleted && (
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => deleteRow(rowIndex)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
       {!isCompleted && (
         <Button variant="outline" onClick={addRow} className="w-full">
