@@ -6631,6 +6631,8 @@ export type Database = {
           resolved_at: string | null
           status: string
           subject: string
+          telegram_bridge_enabled: boolean | null
+          telegram_user_id: number | null
           ticket_number: string
           updated_at: string | null
           user_id: string | null
@@ -6651,6 +6653,8 @@ export type Database = {
           resolved_at?: string | null
           status?: string
           subject: string
+          telegram_bridge_enabled?: boolean | null
+          telegram_user_id?: number | null
           ticket_number?: string
           updated_at?: string | null
           user_id?: string | null
@@ -6671,6 +6675,8 @@ export type Database = {
           resolved_at?: string | null
           status?: string
           subject?: string
+          telegram_bridge_enabled?: boolean | null
+          telegram_user_id?: number | null
           ticket_number?: string
           updated_at?: string | null
           user_id?: string | null
@@ -8466,6 +8472,38 @@ export type Database = {
           },
         ]
       }
+      ticket_message_reactions: {
+        Row: {
+          created_at: string
+          emoji: string
+          id: string
+          message_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          emoji: string
+          id?: string
+          message_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          emoji?: string
+          id?: string
+          message_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ticket_message_reactions_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "ticket_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ticket_messages: {
         Row: {
           attachments: Json | null
@@ -8509,6 +8547,48 @@ export type Database = {
             columns: ["ticket_id"]
             isOneToOne: false
             referencedRelation: "support_tickets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ticket_telegram_sync: {
+        Row: {
+          created_at: string
+          direction: string
+          id: string
+          telegram_message_id: number | null
+          ticket_id: string
+          ticket_message_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          direction: string
+          id?: string
+          telegram_message_id?: number | null
+          ticket_id: string
+          ticket_message_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          direction?: string
+          id?: string
+          telegram_message_id?: number | null
+          ticket_id?: string
+          ticket_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ticket_telegram_sync_ticket_id_fkey"
+            columns: ["ticket_id"]
+            isOneToOne: false
+            referencedRelation: "support_tickets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ticket_telegram_sync_ticket_message_id_fkey"
+            columns: ["ticket_message_id"]
+            isOneToOne: false
+            referencedRelation: "ticket_messages"
             referencedColumns: ["id"]
           },
         ]

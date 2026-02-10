@@ -13,7 +13,7 @@ interface FileData {
 }
 
 interface ChatAction {
-  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls";
+  action: "send_message" | "get_messages" | "fetch_profile_photo" | "get_user_info" | "edit_message" | "delete_message" | "process_media_jobs" | "get_media_urls" | "bridge_ticket_message";
   user_id?: string;
   message?: string;
   file?: FileData;
@@ -22,6 +22,8 @@ interface ChatAction {
   message_id?: number;
   db_message_id?: string;
   message_ids?: string[]; // For get_media_urls action
+  ticket_id?: string; // For bridge_ticket_message
+  ticket_message_id?: string; // For bridge_ticket_message
 }
 
 async function fetchAndSaveTelegramPhoto(
@@ -1241,6 +1243,185 @@ Deno.serve(async (req) => {
         }
 
         return new Response(JSON.stringify({ urls: results }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // ==========================================
+      // BRIDGE TICKET MESSAGE TO TELEGRAM
+      // ==========================================
+      case "bridge_ticket_message": {
+        const { ticket_id, ticket_message_id } = payload;
+
+        if (!ticket_id || !ticket_message_id) {
+          return new Response(JSON.stringify({ error: "ticket_id and ticket_message_id required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get ticket with bridge settings
+        const { data: ticket, error: ticketError } = await supabase
+          .from("support_tickets")
+          .select("id, telegram_bridge_enabled, telegram_user_id, profile_id")
+          .eq("id", ticket_id)
+          .single();
+
+        if (ticketError || !ticket) {
+          return new Response(JSON.stringify({ error: "Ticket not found" }), {
+            status: 404,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Resolve telegram_user_id: from ticket or from profile
+        let tgUserId = ticket.telegram_user_id;
+        if (!tgUserId && ticket.profile_id) {
+          const { data: prof } = await supabase
+            .from("profiles")
+            .select("telegram_user_id")
+            .eq("id", ticket.profile_id)
+            .single();
+          tgUserId = prof?.telegram_user_id ?? null;
+
+          // Auto-set on ticket for future calls
+          if (tgUserId) {
+            await supabase
+              .from("support_tickets")
+              .update({ telegram_user_id: tgUserId, telegram_bridge_enabled: true })
+              .eq("id", ticket_id);
+          }
+        }
+
+        if (!tgUserId) {
+          return new Response(JSON.stringify({ error: "User has no linked Telegram", success: false }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get the ticket message
+        const { data: ticketMsg, error: msgError } = await supabase
+          .from("ticket_messages")
+          .select("id, message, is_internal, author_type")
+          .eq("id", ticket_message_id)
+          .single();
+
+        if (msgError || !ticketMsg) {
+          return new Response(JSON.stringify({ error: "Message not found" }), {
+            status: 404,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // CRITICAL: NEVER send internal notes to Telegram
+        if (ticketMsg.is_internal) {
+          return new Response(JSON.stringify({ error: "Cannot bridge internal notes", success: false }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Idempotency: check if already synced
+        const { data: existingSync } = await supabase
+          .from("ticket_telegram_sync")
+          .select("id")
+          .eq("ticket_message_id", ticket_message_id)
+          .eq("direction", "to_telegram")
+          .maybeSingle();
+
+        if (existingSync) {
+          return new Response(JSON.stringify({ success: true, already_sent: true }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Get bot token
+        let botToken: string | null = null;
+        let usedBotId: string | null = null;
+
+        // Try profile's linked bot first
+        if (ticket.profile_id) {
+          const { data: prof } = await supabase
+            .from("profiles")
+            .select("telegram_link_bot_id")
+            .eq("id", ticket.profile_id)
+            .single();
+
+          if (prof?.telegram_link_bot_id) {
+            const { data: bot } = await supabase
+              .from("telegram_bots")
+              .select("id, bot_token_encrypted")
+              .eq("id", prof.telegram_link_bot_id)
+              .single();
+            if (bot?.bot_token_encrypted) {
+              botToken = bot.bot_token_encrypted;
+              usedBotId = bot.id;
+            }
+          }
+        }
+
+        // Fallback to any active bot
+        if (!botToken) {
+          const { data: anyBot } = await supabase
+            .from("telegram_bots")
+            .select("id, bot_token_encrypted")
+            .eq("status", "active")
+            .limit(1)
+            .single();
+          if (anyBot?.bot_token_encrypted) {
+            botToken = anyBot.bot_token_encrypted;
+            usedBotId = anyBot.id;
+          }
+        }
+
+        if (!botToken) {
+          return new Response(JSON.stringify({ error: "No bot available", success: false }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Format the message for Telegram
+        const prefix = ticketMsg.author_type === "support" ? "💬 <b>Поддержка:</b>\n" : "";
+        const tgText = `${prefix}${ticketMsg.message}`;
+
+        const sendResult = await telegramRequest(botToken, "sendMessage", {
+          chat_id: tgUserId,
+          text: tgText,
+          parse_mode: "HTML",
+        });
+
+        if (!sendResult.ok) {
+          return new Response(JSON.stringify({ error: sendResult.description, success: false }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Record sync
+        await supabase.from("ticket_telegram_sync").insert({
+          ticket_id,
+          ticket_message_id,
+          telegram_message_id: sendResult.result?.message_id,
+          direction: "to_telegram",
+        });
+
+        // Audit log
+        await supabase.from("audit_logs").insert({
+          actor_type: "system",
+          actor_user_id: null,
+          actor_label: "telegram-admin-chat",
+          action: "ticket_bridge_to_telegram",
+          meta: {
+            ticket_id,
+            ticket_message_id,
+            telegram_user_id: tgUserId,
+            telegram_message_id: sendResult.result?.message_id,
+          },
+        });
+
+        return new Response(JSON.stringify({ success: true, telegram_message_id: sendResult.result?.message_id }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }

@@ -16,7 +16,6 @@ interface TicketCardProps {
 export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketCardProps) {
   const hasUnread = ticket.has_unread_user || ticket.has_unread_admin;
   
-  // Generate initials from profile name or email
   const initials = ticket.profiles?.full_name
     ?.split(' ')
     .map(n => n[0])
@@ -28,7 +27,7 @@ export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketC
     <div
       onClick={onClick}
       className={cn(
-        "group relative flex items-start gap-3 p-2 pr-3 rounded-xl cursor-pointer transition-all",
+        "group relative flex items-start gap-3 p-2 rounded-xl cursor-pointer transition-all",
         "hover:bg-accent/50",
         isSelected && "bg-primary/10 ring-1 ring-inset ring-primary/30",
         hasUnread && !isSelected && "bg-primary/10"
@@ -52,8 +51,9 @@ export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketC
         )}
       </div>
 
-      {/* Content — truncates to give space to badge */}
+      {/* Content — 3-row layout: name+time, ticket#, subject+badge */}
       <div className="flex-1 min-w-0">
+        {/* Row 1: Name / Subject + time */}
         <div className="flex items-center justify-between gap-2">
           <span className={cn(
             "text-sm truncate",
@@ -68,6 +68,7 @@ export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketC
           </span>
         </div>
         
+        {/* Row 2: Ticket number + star */}
         <div className="flex items-center gap-2 mt-0.5">
           <span className="text-xs text-muted-foreground font-mono">
             {ticket.ticket_number}
@@ -77,14 +78,15 @@ export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketC
           )}
         </div>
 
-        <p className="text-xs text-muted-foreground truncate mt-0.5">
-          {ticket.subject}
-        </p>
-      </div>
-
-      {/* Status Badge — always visible, never clipped */}
-      <div className="shrink-0 self-center min-w-fit">
-        <TicketStatusBadge status={ticket.status} />
+        {/* Row 3: Subject + status badge on same row, badge never clips */}
+        <div className="flex items-center gap-1.5 mt-0.5">
+          <p className="text-xs text-muted-foreground truncate flex-1 min-w-0">
+            {ticket.subject}
+          </p>
+          <div className="shrink-0">
+            <TicketStatusBadge status={ticket.status} compact />
+          </div>
+        </div>
       </div>
     </div>
   );
