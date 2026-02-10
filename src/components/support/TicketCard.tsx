@@ -31,7 +31,7 @@ export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketC
         "group relative flex items-start gap-3 p-2 rounded-xl cursor-pointer transition-all",
         "hover:bg-accent/50",
         isSelected && "bg-primary/10 ring-1 ring-inset ring-primary/30",
-        hasUnread && "bg-primary/5"
+        hasUnread && !isSelected && "bg-primary/10"
       )}
     >
       {/* Avatar */}
@@ -51,8 +51,8 @@ export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketC
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
           <span className={cn(
-            "text-sm truncate",
-            hasUnread ? "font-semibold" : "font-medium"
+            "text-sm",
+            hasUnread ? "font-bold" : "font-medium"
           )}>
             {showProfile 
               ? (ticket.profiles?.full_name || ticket.profiles?.email || "Неизвестный") 
@@ -82,9 +82,9 @@ export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketC
         <TicketStatusBadge status={ticket.status} />
       </div>
       
-      {/* Unread indicator dot */}
+      {/* Unread indicator dot — bright & prominent */}
       {hasUnread && (
-        <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-primary" />
+        <div className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-primary ring-2 ring-primary/30" />
       )}
     </div>
   );
