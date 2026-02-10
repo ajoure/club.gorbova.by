@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Loader2,
   Search,
@@ -10,6 +11,7 @@ import {
   MessageSquare,
   ArrowLeft,
   Info,
+  Send as SendIcon,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -38,6 +40,9 @@ import { TicketCard } from "@/components/support/TicketCard";
 import { TicketChat } from "@/components/support/TicketChat";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { useAdminTickets, useTicket, useUpdateTicket } from "@/hooks/useTickets";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -82,12 +87,49 @@ export function SupportTabContent() {
   const [contactSheetContactId, setContactSheetContactId] = useState<string | null>(null);
   const [savedPanelSize] = useState<number>(getSavedPanelSize);
   const isMobile = useIsMobile();
+  const { toast } = useToast();
 
   const { data: tickets, isLoading: ticketsLoading } = useAdminTickets({
     status: statusFilter,
   });
   const { data: selectedTicket } = useTicket(selectedTicketId || undefined);
   const updateTicket = useUpdateTicket();
+
+  // Resolve telegram_user_id from profile for bridge
+  const [ticketTelegramUserId, setTicketTelegramUserId] = useState<number | null>(null);
+  
+  useEffect(() => {
+    if (!selectedTicket?.profile_id) {
+      setTicketTelegramUserId(null);
+      return;
+    }
+    supabase
+      .from("profiles")
+      .select("telegram_user_id")
+      .eq("id", selectedTicket.profile_id)
+      .single()
+      .then(({ data }) => {
+        setTicketTelegramUserId(data?.telegram_user_id ?? null);
+      });
+  }, [selectedTicket?.profile_id]);
+
+  // Bridge message to Telegram
+  const handleBridgeMessage = useCallback(async (ticketMessageId: string) => {
+    if (!selectedTicket || !ticketTelegramUserId) return;
+    try {
+      const { error } = await supabase.functions.invoke("telegram-admin-chat", {
+        body: {
+          action: "bridge_ticket_message",
+          ticket_id: selectedTicket.id,
+          ticket_message_id: ticketMessageId,
+        },
+      });
+      if (error) throw error;
+    } catch (err) {
+      console.error("[TG Bridge] Error:", err);
+      toast({ title: "Ошибка отправки в Telegram", variant: "destructive" });
+    }
+  }, [selectedTicket, ticketTelegramUserId, toast]);
 
   // Update URL when ticket is selected (keep existing tab parameter)
   useEffect(() => {
@@ -423,6 +465,9 @@ export function SupportTabContent() {
               ticketId={selectedTicket.id}
               isAdmin
               isClosed={selectedTicket.status === "closed"}
+              telegramUserId={ticketTelegramUserId}
+              telegramBridgeEnabled={(selectedTicket as any).telegram_bridge_enabled}
+              onBridgeMessage={handleBridgeMessage}
             />
           </div>
         </>

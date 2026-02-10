@@ -920,6 +920,65 @@ Deno.serve(async (req) => {
             }
           }
           
+          // ========== SUPPORT TICKET BRIDGE (TG → Ticket) ==========
+          // If user has an active bridged ticket, create a ticket_message
+          try {
+            const { data: bridgedTicket } = await supabase
+              .from('support_tickets')
+              .select('id')
+              .eq('telegram_bridge_enabled', true)
+              .eq('telegram_user_id', telegramUserId)
+              .not('status', 'in', '("closed","resolved")')
+              .order('updated_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (bridgedTicket) {
+              const msgText = msg.text || msg.caption || '[медиа]';
+              
+              // Get profile full_name for author_name
+              const { data: authorProfile } = await supabase
+                .from('profiles')
+                .select('full_name')
+                .eq('user_id', profile.user_id)
+                .single();
+
+              const { data: insertedTicketMsg } = await supabase
+                .from('ticket_messages')
+                .insert({
+                  ticket_id: bridgedTicket.id,
+                  author_id: profile.user_id,
+                  author_type: 'user',
+                  author_name: authorProfile?.full_name || null,
+                  message: msgText,
+                  is_internal: false,
+                  attachments: [],
+                })
+                .select('id')
+                .single();
+
+              if (insertedTicketMsg) {
+                // Record sync
+                await supabase.from('ticket_telegram_sync').insert({
+                  ticket_id: bridgedTicket.id,
+                  ticket_message_id: insertedTicketMsg.id,
+                  telegram_message_id: msg.message_id,
+                  direction: 'from_telegram',
+                });
+
+                // Mark ticket as having unread for admin
+                await supabase
+                  .from('support_tickets')
+                  .update({ has_unread_admin: true, updated_at: new Date().toISOString() })
+                  .eq('id', bridgedTicket.id);
+              }
+
+              console.log(`[BRIDGE] TG message ${msg.message_id} → ticket ${bridgedTicket.id}`);
+            }
+          } catch (bridgeErr) {
+            console.error('[BRIDGE] Error:', bridgeErr);
+          }
+
           // ========== AI SUPPORT INTEGRATION ==========
           // Invoke AI support for text messages (non-blocking)
           if (msg.text && !fileId) {

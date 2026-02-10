@@ -1,18 +1,31 @@
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { User, Headset, Bot, Lock } from "lucide-react";
+import { User, Headset, Bot, Lock, SmilePlus } from "lucide-react";
+import { useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { TicketMessage as TicketMessageType } from "@/hooks/useTickets";
+import type { ReactionGroup } from "@/hooks/useTicketReactions";
+
+const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "👎"];
 
 interface TicketMessageProps {
   message: TicketMessageType;
   isCurrentUser?: boolean;
+  reactions?: ReactionGroup[];
+  onToggleReaction?: (emoji: string) => void;
 }
 
-export function TicketMessage({ message, isCurrentUser }: TicketMessageProps) {
+export function TicketMessage({ message, isCurrentUser, reactions, onToggleReaction }: TicketMessageProps) {
   const isSystem = message.author_type === "system";
   const isSupport = message.author_type === "support";
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   if (isSystem) {
     return (
@@ -32,7 +45,7 @@ export function TicketMessage({ message, isCurrentUser }: TicketMessageProps) {
   return (
     <div
       className={cn(
-        "flex gap-3 mb-4",
+        "flex gap-3 mb-4 group/msg",
         isCurrentUser && "flex-row-reverse"
       )}
     >
@@ -66,18 +79,74 @@ export function TicketMessage({ message, isCurrentUser }: TicketMessageProps) {
           </span>
         </div>
 
-        <div
-          className={cn(
-            "rounded-lg px-4 py-2.5",
-            isCurrentUser
-              ? "bg-primary text-primary-foreground"
-              : message.is_internal
-              ? "bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-900"
-              : "bg-muted"
+        <div className="relative">
+          <div
+            className={cn(
+              "rounded-lg px-4 py-2.5",
+              isCurrentUser
+                ? "bg-primary text-primary-foreground"
+                : message.is_internal
+                ? "bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-900"
+                : "bg-muted"
+            )}
+          >
+            <p className="text-sm whitespace-pre-wrap">{message.message}</p>
+          </div>
+
+          {/* Emoji picker trigger — appears on hover */}
+          {onToggleReaction && (
+            <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  className={cn(
+                    "absolute -bottom-2 opacity-0 group-hover/msg:opacity-100 transition-opacity",
+                    "h-6 w-6 rounded-full bg-card border border-border shadow-sm flex items-center justify-center hover:bg-accent",
+                    isCurrentUser ? "left-0" : "right-0"
+                  )}
+                >
+                  <SmilePlus className="h-3.5 w-3.5 text-muted-foreground" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-1.5" side="top" align="center">
+                <div className="flex gap-1">
+                  {QUICK_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      onClick={() => {
+                        onToggleReaction(emoji);
+                        setPickerOpen(false);
+                      }}
+                      className="h-8 w-8 flex items-center justify-center rounded-md hover:bg-accent text-base transition-colors"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
           )}
-        >
-          <p className="text-sm whitespace-pre-wrap">{message.message}</p>
         </div>
+
+        {/* Reactions display */}
+        {reactions && reactions.length > 0 && (
+          <div className={cn("flex flex-wrap gap-1 mt-1", isCurrentUser && "justify-end")}>
+            {reactions.map((r) => (
+              <button
+                key={r.emoji}
+                onClick={() => onToggleReaction?.(r.emoji)}
+                className={cn(
+                  "inline-flex items-center gap-1 h-6 px-1.5 rounded-full text-xs border transition-colors",
+                  r.userReacted
+                    ? "bg-primary/10 border-primary/30 text-primary"
+                    : "bg-muted border-border hover:bg-accent"
+                )}
+              >
+                <span>{r.emoji}</span>
+                <span className="font-medium">{r.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {message.attachments && message.attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-2">

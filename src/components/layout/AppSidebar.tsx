@@ -22,6 +22,7 @@ import {
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
 import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive } from "lucide-react";
+import { useUnreadTicketsCount } from "@/hooks/useTickets";
 
 // Static menu structure - modules are shown inside page tabs, not in sidebar dropdown
 
@@ -96,7 +97,7 @@ const leaderToolsItems = [{
 // Profile menu items (moved from sidebar)
 const profileMenuItems = [
   { title: "FAQ", url: "/docs", icon: BookOpen },
-  { title: "Техподдержка", url: "/support", icon: LifeBuoy },
+  { title: "Техподдержка", url: "/support", icon: LifeBuoy, showUnread: true },
   { title: "Профиль", url: "/settings/profile", icon: User },
   { title: "Оплата и карты", url: "/settings/payment-methods", icon: ShoppingBag },
   { title: "Согласия", url: "/settings/consents", icon: Shield },
@@ -119,6 +120,7 @@ export function AppSidebar() {
     isAdmin,
   } = usePermissions();
   const collapsed = state === "collapsed";
+  const { data: unreadTicketsCount = 0 } = useUnreadTicketsCount();
 
   // Note: Modules are now displayed inside page tabs, not in sidebar dropdown
   // Fetch profile data including avatar_url from Telegram
@@ -351,7 +353,12 @@ export function AppSidebar() {
                 className="cursor-pointer gap-2"
               >
                 <item.icon className="h-4 w-4" />
-                {item.title}
+                <span className="flex-1">{item.title}</span>
+                {(item as any).showUnread && unreadTicketsCount > 0 && (
+                  <span className="ml-auto inline-flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold">
+                    {unreadTicketsCount > 9 ? "9+" : unreadTicketsCount}
+                  </span>
+                )}
               </DropdownMenuItem>
             ))}
             

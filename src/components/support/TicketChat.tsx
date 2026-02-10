@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Send, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,25 +7,39 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TicketMessage } from "./TicketMessage";
 import { useTicketMessages, useSendMessage, useMarkTicketRead } from "@/hooks/useTickets";
+import { useTicketReactions, useToggleReaction } from "@/hooks/useTicketReactions";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface TicketChatProps {
   ticketId: string;
   isAdmin?: boolean;
   isClosed?: boolean;
+  telegramUserId?: number | null;
+  telegramBridgeEnabled?: boolean;
+  onBridgeMessage?: (ticketMessageId: string) => void;
 }
 
-export function TicketChat({ ticketId, isAdmin, isClosed }: TicketChatProps) {
+export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegramBridgeEnabled, onBridgeMessage }: TicketChatProps) {
   const { user } = useAuth();
   const [message, setMessage] = useState("");
   const [isInternal, setIsInternal] = useState(false);
+  const [sendToTelegram, setSendToTelegram] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const { data: messages, isLoading } = useTicketMessages(ticketId, isAdmin);
 
   // Defense-in-depth: redundant render-level filter for non-admin views
   const visibleMessages = isAdmin ? messages : messages?.filter(m => !m.is_internal);
-  const sendMessage = useSendMessage();
+  
+  // Reactions
+  const messageIds = useMemo(
+    () => visibleMessages?.map((m) => m.id) || [],
+    [visibleMessages]
+  );
+  const { data: reactionsMap } = useTicketReactions(messageIds);
+  const toggleReaction = useToggleReaction();
+
+  const sendMessageMutation = useSendMessage();
   const markRead = useMarkTicketRead();
 
   // Mark ticket as read when opened
@@ -35,7 +49,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed }: TicketChatProps) {
     }
   }, [ticketId, isAdmin]);
 
-  // Scroll to bottom on new messages (wrapped in rAF to prevent forced reflow)
+  // Scroll to bottom on new messages
   useEffect(() => {
     if (scrollRef.current) {
       const el = scrollRef.current;
@@ -45,18 +59,27 @@ export function TicketChat({ ticketId, isAdmin, isClosed }: TicketChatProps) {
     }
   }, [messages]);
 
+  // Show TG checkbox only for admin when user has telegram and bridge is on
+  const canBridgeToTelegram = isAdmin && telegramBridgeEnabled && telegramUserId;
+
   const handleSend = async () => {
     if (!message.trim()) return;
 
-    await sendMessage.mutateAsync({
+    const result = await sendMessageMutation.mutateAsync({
       ticket_id: ticketId,
       message: message.trim(),
       author_type: isAdmin ? "support" : "user",
       is_internal: isAdmin ? isInternal : false,
     });
 
+    // Bridge to Telegram if checkbox checked & not internal
+    if (canBridgeToTelegram && sendToTelegram && !isInternal && result?.id && onBridgeMessage) {
+      onBridgeMessage(result.id);
+    }
+
     setMessage("");
     setIsInternal(false);
+    setSendToTelegram(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -82,6 +105,10 @@ export function TicketChat({ ticketId, isAdmin, isClosed }: TicketChatProps) {
             key={msg.id}
             message={msg}
             isCurrentUser={msg.author_id === user?.id && !isAdmin}
+            reactions={reactionsMap?.[msg.id]}
+            onToggleReaction={(emoji) =>
+              toggleReaction.mutate({ messageId: msg.id, emoji })
+            }
           />
         ))}
         {visibleMessages?.length === 0 && (
@@ -94,15 +121,32 @@ export function TicketChat({ ticketId, isAdmin, isClosed }: TicketChatProps) {
       {!isClosed && (
         <div className="border-t p-4">
           {isAdmin && (
-            <div className="flex items-center gap-2 mb-2">
-              <Checkbox
-                id="internal"
-                checked={isInternal}
-                onCheckedChange={(checked) => setIsInternal(checked as boolean)}
-              />
-              <Label htmlFor="internal" className="text-sm text-muted-foreground">
-                Внутренняя заметка (не видна клиенту)
-              </Label>
+            <div className="flex items-center gap-4 mb-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="internal"
+                  checked={isInternal}
+                  onCheckedChange={(checked) => {
+                    setIsInternal(checked as boolean);
+                    if (checked) setSendToTelegram(false);
+                  }}
+                />
+                <Label htmlFor="internal" className="text-sm text-muted-foreground">
+                  Внутренняя заметка
+                </Label>
+              </div>
+              {canBridgeToTelegram && !isInternal && (
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="send-telegram"
+                    checked={sendToTelegram}
+                    onCheckedChange={(checked) => setSendToTelegram(checked as boolean)}
+                  />
+                  <Label htmlFor="send-telegram" className="text-sm text-muted-foreground">
+                    Отправить в Telegram
+                  </Label>
+                </div>
+              )}
             </div>
           )}
           <div className="flex gap-2">
@@ -115,11 +159,11 @@ export function TicketChat({ ticketId, isAdmin, isClosed }: TicketChatProps) {
             />
             <Button
               onClick={handleSend}
-              disabled={!message.trim() || sendMessage.isPending}
+              disabled={!message.trim() || sendMessageMutation.isPending}
               size="icon"
               className="h-[80px] w-12"
             >
-              {sendMessage.isPending ? (
+              {sendMessageMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Send className="h-4 w-4" />

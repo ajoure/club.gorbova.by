@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -184,11 +185,12 @@ export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean
   });
 }
 
-// Hook for unread tickets count
+// Hook for unread tickets count (client side, with realtime)
 export function useUnreadTicketsCount() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
 
-  return useQuery({
+  const result = useQuery({
     queryKey: ["unread-tickets-count", user?.id],
     queryFn: async () => {
       const { count, error } = await supabase
@@ -201,8 +203,30 @@ export function useUnreadTicketsCount() {
       return count || 0;
     },
     enabled: !!user?.id,
-    refetchInterval: 30000, // Refetch every 30 seconds
+    refetchInterval: 30000,
   });
+
+  // Realtime subscription for live unread updates
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const channel = supabase
+      .channel("client-unread-tickets")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "support_tickets", filter: `user_id=eq.${user.id}` },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["unread-tickets-count", user.id] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, queryClient]);
+
+  return result;
 }
 
 // Hook to create ticket
