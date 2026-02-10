@@ -262,9 +262,12 @@ export default function AdminIlex() {
   const handleSaveFromBrowser = async () => {
     if (!browserHtml || !browserTitle) return;
     
-    // Extract clean text from HTML
+    // Extract clean text from HTML (sanitize first to prevent XSS during parsing)
     const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = browserHtml;
+    tempDiv.innerHTML = DOMPurify.sanitize(browserHtml, {
+      FORBID_TAGS: ['script', 'iframe', 'form'],
+      FORBID_ATTR: ['onclick', 'onload', 'onerror'],
+    });
     const cleanText = tempDiv.textContent || tempDiv.innerText || '';
     
     const success = await saveDocument({
