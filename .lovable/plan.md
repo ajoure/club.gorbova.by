@@ -1,109 +1,231 @@
+# PATCH P1.0 — Support Ticket System: Telegram-level UX + Bridge (FINAL PLAN)
 
+## Жёсткие правила исполнения для Lovable.dev (обязательно в начале)
+1) Ничего не ломать и не трогать лишнее. Только по плану. Add-only, минимальный diff.
+2) Любые массовые изменения: dry-run → execute (где применимо).
+3) STOP-guards обязательны (лимиты, проверки связей, idempotency).
+4) No-PII в логах (не логировать тексты сообщений, email, телефоны).
+5) RBAC/RLS строго: user видит только своё, admin только по роли.
+6) DoD только по фактам: UI-скрин/видео + SQL/логи + realtime-пруфы, без “теории”.
 
-# PATCH P0.9.12b — Fix double-click "next step" bug + video/mobile cleanup
+---
 
-## Problem
+## Разбивка на 5 подпачей (последовательных)
+P1.0.1 UI/UX → P1.0.2 Attachments+Emoji → P1.0.3 Reactions (tickets) → P1.0.4 Telegram Bridge → P1.0.5 Reactions (Telegram)
 
-### 1. Double-click bug on "Next step" button
-**Root cause**: In `KvestLessonView.tsx`, every completion handler (video, diagnostic table, role description) calls `markBlockCompleted(blockId)` followed immediately by `goToStep(currentStepIndex + 1)`. But `goToStep` checks `isCurrentBlockGateOpen` (line 155), which is a pre-computed value from the previous render. Since React hasn't re-rendered yet after `markBlockCompleted`, the gate check fails, showing the toast error "Сначала завершите текущий шаг". On the second click, React has re-rendered with the new state, so the gate opens.
+---
 
-### 2. Video block still calls `onProgress(100)` (unnecessary after P0.9.12)
-### 3. Video gate still checks `videoProgress >= threshold` instead of relying on `isBlockCompleted`
+# P1.0.1 — UI техподдержки “как Telegram” (Layout + UX)
+Цель: визуально и UX приблизить SupportTabContent к InboxTabContent, без изменения БД и бизнес-логики.
 
-## Changes
+## Изменения
 
-### File 1: `src/components/lesson/KvestLessonView.tsx`
+### A) ResizablePanelGroup вместо фиксированных ширин
+Файл: src/components/admin/communication/SupportTabContent.tsx
+- Заменить w-80/w-96 на ResizablePanelGroup + ResizableHandle (с grip).
+- Left panel: defaultSize=35, minSize=15, maxSize=40
+- Right panel: defaultSize=65, minSize=50
+- Сохранять размеры в localStorage key="support-panel-sizes" в формате { left, right }.
+- Важно: Mobile guard:
+  - Если ширина экрана < md: НЕ использовать resizable layout. Оставить текущий mobile UX (список/чат по переключению).
 
-**1a. Add `force` parameter to `goToStep`** (line 142)
+### B) Клик на контакт → ContactDetailSheet
+Файл: src/components/admin/communication/SupportTabContent.tsx
+- Сделать аватар+имя в хедере чата кликабельными.
+- Открывать ContactDetailSheet по корректному идентификатору:
+  - Если ContactDetailSheet ожидает contactId (profiles.id / contacts.id) — передавать именно его.
+  - Не использовать “user_id из тикета” вслепую: тикет может быть на profile/contact, не на auth.user.
+- Добавить state:
+  - contactSheetOpen:boolean
+  - contactSheetContactId:string | null
+- По клику: setContactSheetContactId(selectedTicket.profile_id || selectedTicket.contact_id), open=true.
 
-```
-const goToStep = useCallback((index: number, force = false) => {
-  ...
-  // Check if current block gate is open before moving forward
-  if (index > currentStepIndex && !force && !isCurrentBlockGateOpen) {
-    toast.error("Сначала завершите текущий шаг");
-    return;
-  }
-  ...
-```
+### C) Полное имя без truncate
+Файл: SupportTabContent.tsx + TicketCard.tsx
+- Убрать truncate у имени клиента (break-words / line-clamp-2).
+- Subject + ticket number второй строкой (subject можно truncate).
 
-When a completion handler has JUST marked a block as completed, it passes `force: true` to skip the stale gate check.
+### D) Сортировка: непрочитанные сверху
+Файл: SupportTabContent.tsx
+- Клиентская сортировка:
+  1) has_unread_admin=true сверху
+  2) внутри updated_at DESC
 
-**1b. Update all completion handlers to pass `force: true`:**
+### E) Яркий индикатор непрочитанных
+Файл: src/components/support/TicketCard.tsx
+- Непрочитанные: bg-primary/10, name font-bold.
+- Badge:
+  - если есть unread_count: круг + число
+  - иначе: заметная точка (h-2.5 w-2.5 + ring)
 
-- `handleVideoComplete` (line 233): `goToStep(currentStepIndex + 1, true)`
-- `handleRoleDescriptionComplete` (line 214): `goToStep(currentStepIndex + 1, true)`
-- `handleDiagnosticTableComplete` (line 246): `goToStep(currentStepIndex + 1, true)`
+### F) MarkRead семантика: НЕ ломаем в P1.0.1
+- НЕ менять поведение has_unread_admin в БД.
+- НЕ удалять markRead useEffect из TicketChat в этом подпаче.
+(Если убрать — тикеты “вечные непрочитанные”, саппорт умирает.)
+- Отдельный будущий микропатч P1.0.1.1 (не сейчас): add-only поле last_admin_seen_at, если понадобится логика “прочитан после ответа”.
 
-**1c. Simplify `video_unskippable` gate** (lines 100-112):
+## DoD P1.0.1
+1) Панели ресайзятся (desktop), размеры сохраняются.
+2) На mobile UI не сломан (fallback без resizable).
+3) Клик по имени/аватару открывает ContactDetailSheet корректного контакта.
+4) Непрочитанные сверху, визуально заметны.
+5) markRead работает как раньше (нет регрессий).
 
-Remove `videoProgress` check entirely. The block is already gated by `isBlockCompleted(block.id)` at line 87. Replace the body with:
+---
 
-```
-case 'video_unskippable': {
-  const videoUrl = ((block.content as any)?.url || '').trim();
-  if (!videoUrl) {
-    return allowBypassEmptyVideo === true;
-  }
-  // P0.9.12: completion is via manual button, checked by isBlockCompleted above
-  return false;
-}
-```
+# P1.0.2 — Файлы, эмодзи, мультимедиа в тикетах
+Цель: добавить attachments + emoji picker + корректный безопасный доступ к файлам.
 
-**1d. Remove `onProgress` call from video handler** (line 360):
+## ВАЖНО (SECURITY)
+Запрещено делать SELECT policy на storage.objects вида USING(bucket_id='ticket-attachments') — это даёт чтение всем.
+Чтение вложений только через signed URL (edge function).
 
-Remove the `onProgress` prop entirely from video_unskippable rendering since percent tracking is gone. Only keep `onComplete`.
+## DB миграция
+1) Bucket (private):
+- storage.buckets: id='ticket-attachments', public=false
 
-### File 2: `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx`
+2) Storage policies (минимум):
+- INSERT: authenticated, bucket_id='ticket-attachments'
+- SELECT: НЕ давать широкой политики. (Либо только admin роли, если это реально нужно.)
+Рекомендуемый вариант: SELECT policy отсутствует, выдача через signed URL только edge function.
 
-**2a. Remove `onProgress(100)` from `handleConfirmWatched`** (line 106):
+## Edge Function (новая): ticket-attachments-sign
+- Input: { ticketId, objectPath }
+- Auth: required
+- Проверка доступа:
+  - user = владелец тикета ИЛИ admin
+- Generate signed URL (short TTL, напр. 10-30 минут)
+- STOP-guards: ограничить objectPath префиксом ticketId
 
-```
-const handleConfirmWatched = () => {
-  onComplete?.();
-};
-```
+## UI
+Файл: src/components/support/TicketChat.tsx
+- Кнопка “скрепка” рядом с textarea
+- Upload path: ticket-attachments/{ticketId}/{messageLocalId}/{filename}
+- После upload: запросить signed URL через ticket-attachments-sign
+- Attachments preview queue до отправки
+- Emoji picker (Popover) + вставка эмодзи в текст
 
-**2b. Change button text** (line 255):
+Файл: src/components/support/TicketMessage.tsx
+- Рендер вложений:
+  - image/* inline preview
+  - video/* preview
+  - pdf link
+  - docs link + icon
 
-From: `Я просмотрел(а) видео`
-To: `Я просмотрел(а) урок`
+## DoD P1.0.2
+1) Upload работает, файлы в bucket private.
+2) Signed URL выдаётся только участнику тикета/админу.
+3) Не-участник не может получить URL (401/403).
+4) Вложения отображаются в чате, есть preview.
 
-**2c. Show confirmation button always** (not gated by `content.required !== false`):
+---
 
-The button should always appear since the block is always mandatory by design. Remove the `content.required !== false` condition at line 247.
+# P1.0.3 — Реакции на сообщения тикетов
+Цель: emoji reactions как в мессенджерах.
 
-## What we do NOT touch
+## DB миграция
+ticket_message_reactions как в ТЗ + добавить индекс:
+- index on (message_id)
 
-- DiagnosticTableBlock.tsx: mobile layout is already correct (verified: `block sm:hidden` / `hidden sm:block` classes are properly applied)
-- useLessonProgressState.tsx: debounce logic is correct
-- No SQL/DB changes
-- No other block types
+RLS:
+- INSERT/DELETE только своего user_id
+- SELECT допустим (или ограничить на участников тикета, если есть join)
 
-## Technical Details
+Realtime:
+- ADD TABLE ticket_message_reactions to publication
 
-```text
-goToStep call flow (BEFORE fix):
+## UI/хуки
+- src/hooks/useTicketReactions.ts (new)
+- TicketMessage.tsx:
+  - hover reaction button + picker
+  - grouped reactions under message
+  - toggle on click
 
-  handleVideoComplete()
-    -> markBlockCompleted(blockId)     // updates state (async React batch)
-    -> goToStep(next)                  // checks isCurrentBlockGateOpen (STALE!)
-       -> gate says "closed" -> toast error
+## DoD P1.0.3
+1) Реакции добавляются/удаляются, RLS работает.
+2) UI обновляется realtime без перезагрузки.
 
-goToStep call flow (AFTER fix):
+---
 
-  handleVideoComplete()
-    -> markBlockCompleted(blockId)
-    -> goToStep(next, force=true)      // skips stale gate check
-       -> advances to next step immediately
-```
+# P1.0.4 — Telegram Bridge (дублирование сообщений)
+Цель: отправка ответа в TG по чекбоксу, входящие TG сообщения попадают в тикет.
 
-## DoD
+## DB миграция
+support_tickets:
+- telegram_bridge_enabled boolean default false
+- telegram_user_id bigint null
 
-1. Single click on "Я просмотрел(а) урок" immediately advances to next step (no error toast)
-2. Single click on "Диагностика завершена" immediately advances to next step
-3. After reload, completed blocks remain completed
-4. On mobile (375px), diagnostic table renders as vertical cards
-5. No `onProgress` calls remain in video block code
-6. No `videoProgress` threshold checks in gate logic
+ticket_telegram_sync:
+- FK тип telegram_message_id должен совпадать с telegram_messages.id (проверить заранее!)
+- direction enum: to_telegram/from_telegram
+- RLS: только admin
 
+## Edge изменения
+1) supabase/functions/telegram-admin-chat/index.ts
+- new action: bridge_ticket_message
+- input: { ticketId, ticketMessageId }
+- STOP-guards:
+  - ticket exists
+  - bridge_enabled=true
+  - telegram_user_id not null
+  - idempotency: если sync запись уже есть для ticketMessageId+direction=to_telegram → no-op
+- send Telegram message (использовать существующий отправляющий код/функцию)
+- insert ticket_telegram_sync
+
+2) supabase/functions/telegram-webhook/index.ts
+- add-only: если incoming from user with open ticket where telegram_bridge_enabled=true:
+  - создать ticket_message(author_type='user')
+  - insert ticket_telegram_sync(direction='from_telegram')
+- Если найдено несколько тикетов: выбрать самый свежий open/active (ordered by updated_at desc).
+
+## UI
+src/components/support/TicketChat.tsx
+- checkbox “Отправить в Telegram” показывать только если selectedTicket.telegram_user_id != null
+- при отправке с галочкой: вызвать bridge_ticket_message
+
+src/components/admin/communication/SupportTabContent.tsx
+- кнопка “Перейти в Telegram” в хедере:
+  - открывает тот же диалог в InboxTabContent (deep link / state routing)
+
+## DoD P1.0.4
+1) Отправка из тикета с галочкой → сообщение уходит в TG.
+2) Ответ в TG → появляется в тикете.
+3) ticket_telegram_sync заполняется обеими направлениями.
+4) Нет дублей (idempotency подтверждён).
+
+---
+
+# P1.0.5 — Реакции в Telegram чате
+Цель: реакции на сообщения в ContactTelegramChat.
+
+## DB миграция
+telegram_message_reactions + индекс message_id
+RLS: admin-only (insert/delete/select), не “ALL”.
+
+## UI
+src/components/admin/ContactTelegramChat.tsx
+- hover reaction button + picker
+- grouped reactions under bubble
+- realtime обновление (если подключено)
+
+## DoD P1.0.5
+1) Реакции сохраняются и отображаются.
+2) Realtime обновляет без refresh.
+
+---
+
+## Итоговый порядок выполнения
+1) P1.0.1 UI/UX (без логики markRead)
+2) P1.0.2 Attachments+Signed URLs (secure)
+3) P1.0.3 Reactions (tickets)
+4) P1.0.4 Telegram Bridge
+5) P1.0.5 Telegram reactions
+
+---
+
+## Общий DoD (сквозной)
+- UI: ресайз + сохранение + sheet + сортировка.
+- Security: attachments не доступны посторонним.
+- Realtime: реакции live.
+- Bridge: двунаправленная синхронизация, без дублей.
+- Audit (если затрагиваются системные действия): audit_logs actor_type='system' и actor_label заполнен.
