@@ -160,16 +160,23 @@ export function useTicket(ticketId: string | undefined) {
 }
 
 // Hook for ticket messages
-export function useTicketMessages(ticketId: string | undefined) {
+export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean = false) {
   return useQuery({
-    queryKey: ["ticket-messages", ticketId],
+    queryKey: ["ticket-messages", ticketId, isAdmin],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("ticket_messages")
         .select("*")
         .eq("ticket_id", ticketId!)
         .order("created_at", { ascending: true });
 
+      // Defense-in-depth: filter internal notes for non-admin views
+      // (RLS also enforces this, but we add app-level protection)
+      if (!isAdmin) {
+        query = query.eq("is_internal", false);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       return data as TicketMessage[];
     },

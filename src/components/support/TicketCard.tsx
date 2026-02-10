@@ -28,37 +28,42 @@ export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketC
     <div
       onClick={onClick}
       className={cn(
-        "group relative flex items-start gap-3 p-2 rounded-xl cursor-pointer transition-all",
+        "group relative flex items-start gap-3 p-2 pr-3 rounded-xl cursor-pointer transition-all",
         "hover:bg-accent/50",
         isSelected && "bg-primary/10 ring-1 ring-inset ring-primary/30",
         hasUnread && !isSelected && "bg-primary/10"
       )}
     >
-      {/* Avatar */}
-      <Avatar className="h-10 w-10 shrink-0">
-        {ticket.profiles?.avatar_url && (
-          <AvatarImage src={ticket.profiles.avatar_url} />
+      {/* Avatar with inline unread dot */}
+      <div className="relative shrink-0">
+        <Avatar className="h-10 w-10">
+          {ticket.profiles?.avatar_url && (
+            <AvatarImage src={ticket.profiles.avatar_url} />
+          )}
+          <AvatarFallback className={cn(
+            "text-xs font-medium",
+            hasUnread ? "bg-primary/20 text-primary" : "bg-muted"
+          )}>
+            {initials}
+          </AvatarFallback>
+        </Avatar>
+        {hasUnread && (
+          <div className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-primary ring-2 ring-background" />
         )}
-        <AvatarFallback className={cn(
-          "text-xs font-medium",
-          hasUnread ? "bg-primary/20 text-primary" : "bg-muted"
-        )}>
-          {initials}
-        </AvatarFallback>
-      </Avatar>
+      </div>
 
-      {/* Content */}
+      {/* Content — truncates to give space to badge */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
           <span className={cn(
-            "text-sm",
+            "text-sm truncate",
             hasUnread ? "font-bold" : "font-medium"
           )}>
             {showProfile 
               ? (ticket.profiles?.full_name || ticket.profiles?.email || "Неизвестный") 
               : ticket.subject}
           </span>
-          <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+          <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">
             {formatDistanceToNow(new Date(ticket.updated_at), { locale: ru, addSuffix: false })}
           </span>
         </div>
@@ -68,7 +73,7 @@ export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketC
             {ticket.ticket_number}
           </span>
           {ticket.is_starred && (
-            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
           )}
         </div>
 
@@ -77,15 +82,10 @@ export function TicketCard({ ticket, onClick, isSelected, showProfile }: TicketC
         </p>
       </div>
 
-      {/* Status Badge */}
-      <div className="shrink-0 self-center">
+      {/* Status Badge — always visible, never clipped */}
+      <div className="shrink-0 self-center min-w-fit">
         <TicketStatusBadge status={ticket.status} />
       </div>
-      
-      {/* Unread indicator dot — bright & prominent */}
-      {hasUnread && (
-        <div className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-primary ring-2 ring-primary/30" />
-      )}
     </div>
   );
 }

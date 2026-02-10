@@ -61,7 +61,12 @@ const SUPPORT_PANEL_KEY = "support-panel-sizes";
 function getSavedPanelSize(): number {
   try {
     const saved = localStorage.getItem(SUPPORT_PANEL_KEY);
-    if (saved) return JSON.parse(saved).left || 35;
+    if (saved) {
+      const val = JSON.parse(saved).left;
+      if (typeof val === "number" && Number.isFinite(val) && val >= 15 && val <= 40) {
+        return val;
+      }
+    }
   } catch {}
   return 35;
 }

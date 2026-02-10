@@ -21,7 +21,10 @@ export function TicketChat({ ticketId, isAdmin, isClosed }: TicketChatProps) {
   const [isInternal, setIsInternal] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const { data: messages, isLoading } = useTicketMessages(ticketId);
+  const { data: messages, isLoading } = useTicketMessages(ticketId, isAdmin);
+
+  // Defense-in-depth: redundant render-level filter for non-admin views
+  const visibleMessages = isAdmin ? messages : messages?.filter(m => !m.is_internal);
   const sendMessage = useSendMessage();
   const markRead = useMarkTicketRead();
 
@@ -74,14 +77,14 @@ export function TicketChat({ ticketId, isAdmin, isClosed }: TicketChatProps) {
   return (
     <div className="flex flex-col h-full">
       <ScrollArea ref={scrollRef} className="flex-1 p-4">
-        {messages?.map((msg) => (
+        {visibleMessages?.map((msg) => (
           <TicketMessage
             key={msg.id}
             message={msg}
             isCurrentUser={msg.author_id === user?.id && !isAdmin}
           />
         ))}
-        {messages?.length === 0 && (
+        {visibleMessages?.length === 0 && (
           <p className="text-center text-muted-foreground text-sm py-8">
             Пока нет сообщений
           </p>
