@@ -36,8 +36,8 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     () => visibleMessages?.map((m) => m.id) || [],
     [visibleMessages]
   );
-  const { data: reactionsMap } = useTicketReactions(messageIds);
-  const toggleReaction = useToggleReaction();
+  const { data: reactionsMap } = useTicketReactions(ticketId, messageIds);
+  const toggleReaction = useToggleReaction(ticketId);
 
   const sendMessageMutation = useSendMessage();
   const markRead = useMarkTicketRead();

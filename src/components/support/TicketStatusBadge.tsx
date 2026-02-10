@@ -13,7 +13,7 @@ const statusConfig: Record<
 > = {
   open: {
     label: "Открыт",
-    compactLabel: "Откр.",
+    compactLabel: "Открыт",
     variant: "destructive",
     className: "",
   },
@@ -37,7 +37,7 @@ const statusConfig: Record<
   },
   closed: {
     label: "Закрыт",
-    compactLabel: "Закр.",
+    compactLabel: "Закрыт",
     variant: "secondary",
     className: "",
   },

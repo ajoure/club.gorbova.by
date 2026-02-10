@@ -13,12 +13,12 @@ export interface MessageReactions {
   [messageId: string]: ReactionGroup[];
 }
 
-export function useTicketReactions(messageIds: string[]) {
+export function useTicketReactions(ticketId: string, messageIds: string[]) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
   const query = useQuery({
-    queryKey: ["ticket-reactions", messageIds],
+    queryKey: ["ticket-reactions", ticketId, messageIds],
     queryFn: async () => {
       if (!messageIds.length) return {} as MessageReactions;
 
@@ -50,17 +50,17 @@ export function useTicketReactions(messageIds: string[]) {
     enabled: messageIds.length > 0,
   });
 
-  // Realtime subscription
+  // Realtime subscription scoped to ticketId
   useEffect(() => {
-    if (!messageIds.length) return;
+    if (!ticketId) return;
 
     const channel = supabase
-      .channel("ticket-reactions-rt")
+      .channel(`ticket-reactions-rt-${ticketId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "ticket_message_reactions" },
         () => {
-          queryClient.invalidateQueries({ queryKey: ["ticket-reactions"] });
+          queryClient.invalidateQueries({ queryKey: ["ticket-reactions", ticketId] });
         }
       )
       .subscribe();
@@ -68,12 +68,12 @@ export function useTicketReactions(messageIds: string[]) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [messageIds.length, queryClient]);
+  }, [ticketId, queryClient]);
 
   return query;
 }
 
-export function useToggleReaction() {
+export function useToggleReaction(ticketId: string) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -106,7 +106,7 @@ export function useToggleReaction() {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["ticket-reactions"] });
+      queryClient.invalidateQueries({ queryKey: ["ticket-reactions", ticketId] });
     },
   });
 }
