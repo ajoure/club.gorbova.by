@@ -64,28 +64,57 @@ export interface CreateMessageData {
 // Hook for user's tickets
 export function useUserTickets(status?: string) {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
 
-  return useQuery({
+  const query = useQuery({
     queryKey: ["user-tickets", user?.id, status],
     queryFn: async () => {
-      let query = supabase
+      let q = supabase
         .from("support_tickets")
         .select("*")
         .eq("user_id", user!.id)
         .order("updated_at", { ascending: false });
 
       if (status === "open") {
-        query = query.in("status", ["open", "in_progress", "waiting_user"]);
+        q = q.in("status", ["open", "in_progress", "waiting_user"]);
       } else if (status === "closed") {
-        query = query.in("status", ["resolved", "closed"]);
+        q = q.in("status", ["resolved", "closed"]);
       }
 
-      const { data, error } = await query;
+      const { data, error } = await q;
       if (error) throw error;
       return data as SupportTicket[];
     },
     enabled: !!user?.id,
   });
+
+  // Realtime subscription for ticket list updates
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const channel = supabase
+      .channel("user-tickets-rt")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "support_tickets",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["user-tickets", user.id] });
+          queryClient.invalidateQueries({ queryKey: ["unread-tickets-count", user.id] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, queryClient]);
+
+  return query;
 }
 
 // Hook for admin tickets
@@ -162,10 +191,12 @@ export function useTicket(ticketId: string | undefined) {
 
 // Hook for ticket messages
 export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean = false) {
-  return useQuery({
+  const queryClient = useQueryClient();
+
+  const query = useQuery({
     queryKey: ["ticket-messages", ticketId, isAdmin],
     queryFn: async () => {
-      let query = supabase
+      let q = supabase
         .from("ticket_messages")
         .select("*")
         .eq("ticket_id", ticketId!)
@@ -174,15 +205,42 @@ export function useTicketMessages(ticketId: string | undefined, isAdmin: boolean
       // Defense-in-depth: filter internal notes for non-admin views
       // (RLS also enforces this, but we add app-level protection)
       if (!isAdmin) {
-        query = query.eq("is_internal", false);
+        q = q.eq("is_internal", false);
       }
 
-      const { data, error } = await query;
+      const { data, error } = await q;
       if (error) throw error;
       return data as TicketMessage[];
     },
     enabled: !!ticketId,
   });
+
+  // Realtime subscription for live message updates
+  useEffect(() => {
+    if (!ticketId) return;
+
+    const channel = supabase
+      .channel(`ticket-messages-rt-${ticketId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "ticket_messages",
+          filter: `ticket_id=eq.${ticketId}`,
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["ticket-messages", ticketId, isAdmin] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [ticketId, isAdmin, queryClient]);
+
+  return query;
 }
 
 // Hook for unread tickets count (client side, with realtime)
@@ -349,11 +407,16 @@ export function useSendMessage() {
       queryClient.invalidateQueries({ queryKey: ["user-tickets"] });
       queryClient.invalidateQueries({ queryKey: ["admin-tickets"] });
     },
-    onError: (error) => {
-      console.error("Error sending message:", error);
+    onError: (error: any, variables) => {
+      console.error("[useSendMessage] Error:", {
+        ticketId: variables.ticket_id,
+        authorType: variables.author_type,
+        isInternal: variables.is_internal,
+        error: error?.message || error,
+      });
       toast({
         title: "Ошибка",
-        description: "Не удалось отправить сообщение",
+        description: error?.message || "Не удалось отправить сообщение",
         variant: "destructive",
       });
     },

@@ -291,14 +291,19 @@ export function AppSidebar() {
               style={{ background: "hsl(var(--sidebar-accent))" }}
             >
               <div className="flex items-center gap-3">
-                <Avatar className="h-10 w-10 shrink-0">
-                  {profile?.avatar_url && (
-                    <AvatarImage src={profile.avatar_url} alt="Аватар" className="object-cover" />
+                <div className="relative shrink-0">
+                  <Avatar className="h-10 w-10">
+                    {profile?.avatar_url && (
+                      <AvatarImage src={profile.avatar_url} alt="Аватар" className="object-cover" />
+                    )}
+                    <AvatarFallback className="bg-gradient-to-br from-primary to-accent text-primary-foreground text-sm font-medium">
+                      {getUserInitials()}
+                    </AvatarFallback>
+                  </Avatar>
+                  {unreadTicketsCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full bg-destructive ring-2 ring-background" />
                   )}
-                  <AvatarFallback className="bg-gradient-to-br from-primary to-accent text-primary-foreground text-sm font-medium">
-                    {getUserInitials()}
-                  </AvatarFallback>
-                </Avatar>
+                </div>
                 {!collapsed && (
                   <div className="flex-1 min-w-0 text-left">
                     <div className="leading-tight">

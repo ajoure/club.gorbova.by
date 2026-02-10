@@ -109,7 +109,18 @@ export function SupportTabContent() {
       .eq("id", selectedTicket.profile_id)
       .single()
       .then(({ data }) => {
-        setTicketTelegramUserId(data?.telegram_user_id ?? null);
+        const tgId = data?.telegram_user_id ?? null;
+        setTicketTelegramUserId(tgId);
+        // Auto-prefill telegram_user_id and enable bridge if profile has TG
+        if (tgId && !(selectedTicket as any).telegram_user_id) {
+          updateTicket.mutate({
+            ticketId: selectedTicket.id,
+            updates: {
+              telegram_user_id: tgId,
+              telegram_bridge_enabled: true,
+            } as any,
+          });
+        }
       });
   }, [selectedTicket?.profile_id]);
 
@@ -387,6 +398,27 @@ export function SupportTabContent() {
                 </div>
               </PopoverContent>
             </Popover>
+
+            {/* TG Bridge toggle */}
+            {ticketTelegramUserId && (
+              <Button
+                variant={(selectedTicket as any).telegram_bridge_enabled ? "default" : "outline"}
+                size="sm"
+                className="h-8 text-xs gap-1 hidden sm:flex"
+                onClick={() => {
+                  updateTicket.mutate({
+                    ticketId: selectedTicket.id,
+                    updates: {
+                      telegram_bridge_enabled: !(selectedTicket as any).telegram_bridge_enabled,
+                    } as any,
+                  });
+                }}
+                title={(selectedTicket as any).telegram_bridge_enabled ? "Telegram Bridge включён" : "Telegram Bridge выключен"}
+              >
+                <SendIcon className="h-3.5 w-3.5" />
+                TG
+              </Button>
+            )}
             
             {/* Status & Priority controls */}
             <div className="hidden sm:flex items-center gap-2">
