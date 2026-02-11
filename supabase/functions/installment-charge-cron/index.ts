@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -142,12 +143,7 @@ Deno.serve(async (req) => {
     const bepaidCreds = credsResult;
     const shopId = bepaidCreds.shop_id;
     const testMode = bepaidCreds.test_mode;
-    const bepaidAuth = createBepaidAuthHeader(bepaidCreds).replace('Basic ', ''); // legacy code might expect b64 or header? 
-    // Original code: const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
-    // But later usage: headers: { 'Authorization': `Basic ${bepaidAuth}` }
-    // So bepaidAuth should be JUST the base64 part.
-    // createBepaidAuthHeader returns "Basic <base64>"
-    // So we strip "Basic " prefix.
+    const bepaidAuth = createBepaidAuthHeader(bepaidCreds); // "Basic <base64>"
 
     // Find pending installments that are due with exponential backoff
     // Explicitly exclude closed statuses (cancelled, forgiven) for safety
@@ -288,10 +284,24 @@ Deno.serve(async (req) => {
 
         console.log(`Charging installment ${installment.id}: ${installment.amount} ${currency}`);
 
+        // PATCH-P0.9.1: audit marker before bePaid request
+        await supabase.from('audit_logs').insert({
+          action: 'bepaid.request.attempt',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'installment-charge-cron',
+          meta: {
+            fn: 'installment-charge-cron',
+            endpoint: '/transactions/payments',
+            shop_id_last4: String(shopId).slice(-4),
+            test_mode: !!testMode,
+          }
+        });
+
         const chargeResponse = await fetch('https://gateway.bepaid.by/transactions/payments', {
           method: 'POST',
           headers: {
-            'Authorization': `Basic ${bepaidAuth}`,
+            'Authorization': bepaidAuth,
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'X-API-Version': '2',

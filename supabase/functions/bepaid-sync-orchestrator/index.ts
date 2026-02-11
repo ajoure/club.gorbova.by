@@ -655,29 +655,34 @@ serve(async (req) => {
 
     console.log(`[Sync] Starting API→DB sync for ${from_date} to ${to_date}, dry_run=${dry_run}, limit=${limit}`);
 
-    // === GET BEPAID CREDENTIALS ===
-    const { data: integrations } = await supabase
-      .from("integration_instances")
-      .select("config")
-      .eq("provider", "bepaid")
-      .in("status", ["active", "connected"])
-      .limit(1);
-
-    const config = integrations?.[0]?.config as Record<string, any> | null;
-    const shopId = config?.shop_id || Deno.env.get("BEPAID_SHOP_ID");
-    const secretKey = config?.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
-
-    console.log(`[Sync] Credentials: shopId=${shopId ? 'found' : 'missing'}, secretKey=${secretKey ? 'found' : 'missing'}, source=${config ? 'db' : 'env'}`);
-
-    if (!shopId || !secretKey) {
-      return new Response(JSON.stringify({ error: "bePaid credentials not configured" }), {
-        status: 400,
+    // === GET BEPAID CREDENTIALS (STRICT — no env fallback) ===
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
+      return new Response(JSON.stringify({ error: credsResult.error, code: 'BEPAID_CREDS_MISSING' }), {
+        status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const auth = btoa(`${shopId}:${secretKey}`);
+    const shopId = credsResult.shop_id;
+    const auth = btoa(`${shopId}:${credsResult.secret_key}`);
+    const testMode = !!credsResult.test_mode;
     const authMode = `basic ${String(shopId).slice(0, 4)}***:***`;
+
+    console.log(`[Sync] Credentials: shopId=found, secretKey=found, source=integration_instances`);
+
+    // PATCH-P0.9.1: audit marker before bePaid sync requests
+    await supabase.from('audit_logs').insert({
+      action: 'bepaid.request.attempt',
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'bepaid-sync-orchestrator',
+      meta: {
+        fn: 'bepaid-sync-orchestrator',
+        endpoint: '/beyag/transactions (sync)',
+        shop_id_last4: String(shopId).slice(-4),
+        test_mode: testMode,
+      }
+    });
 
     // === CREATE RUN RECORD ===
     const startTime = Date.now();
