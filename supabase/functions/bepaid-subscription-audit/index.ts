@@ -1,4 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -65,7 +67,7 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY');
+    // PATCH-P0.9.1: removed Deno.env.get('BEPAID_SECRET_KEY')
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -127,12 +129,15 @@ Deno.serve(async (req) => {
     // ========== PART 1: EXTERNAL AUDIT (bePaid Side) ==========
     console.log('=== PART 1: External bePaid Subscription Audit ===');
 
-    if (!bepaidSecretKey) {
+    // PATCH-P0.9.1: Strict creds
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
       report.external_audit.status = 'error';
-      report.external_audit.api_error = 'BEPAID_SECRET_KEY not configured';
+      report.external_audit.api_error = 'BEPAID_CREDS_MISSING: ' + credsResult.error;
     } else {
       try {
-        const bepaidAuth = btoa(`${bepaidSecretKey}:`);
+        const bepaidCreds = credsResult;
+        const bepaidAuth = createBepaidAuthHeader(bepaidCreds).replace('Basic ', '');
         
         // Try multiple possible endpoints for subscriptions
         const subscriptionEndpoints = [

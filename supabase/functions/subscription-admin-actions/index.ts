@@ -1,4 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -315,22 +317,15 @@ Deno.serve(async (req) => {
 
       // Process refund through bePaid if we have a payment UID
       if (successfulPayment?.provider_payment_id) {
-        // Get bePaid credentials from integration_instances (primary) or fallback to env
-        const { data: bepaidInstance } = await supabase
-          .from('integration_instances')
-          .select('config')
-          .eq('provider', 'bepaid')
-          .in('status', ['active', 'connected'])
-          .maybeSingle();
-
-        const bepaidSecretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
-        const shopId = bepaidInstance?.config?.shop_id || '33524';
+        // PATCH-P0.9.1: Strict creds
+        const credsResult = await getBepaidCredsStrict(supabase);
         
-        console.log('Using bePaid credentials from:', bepaidInstance?.config?.secret_key ? 'integration_instances' : 'env');
-
-        if (bepaidSecretKey) {
+        if (isBepaidCredsError(credsResult)) {
+          console.log('BEPAID_CREDS_MISSING, skipping refund: ' + credsResult.error);
+        } else {
+          const bepaidCreds = credsResult;
           try {
-            const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+            const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
             const refundPayload = {
               request: {
                 parent_uid: successfulPayment.provider_payment_id,
@@ -344,7 +339,7 @@ Deno.serve(async (req) => {
             const bepaidResponse = await fetch('https://gateway.bepaid.by/transactions/refunds', {
               method: 'POST',
               headers: {
-                'Authorization': `Basic ${bepaidAuth}`,
+                'Authorization': bepaidAuth,
                 'Content-Type': 'application/json',
                 'Accept': 'application/json',
               },
@@ -367,8 +362,6 @@ Deno.serve(async (req) => {
             bepaidRefundError = err instanceof Error ? err.message : String(err);
             console.error('bePaid API error:', bepaidRefundError);
           }
-        } else {
-          console.log('BEPAID_SECRET_KEY not configured, skipping payment gateway refund');
         }
       } else {
         console.log('No successful payment found with provider_payment_id, skipping bePaid refund');

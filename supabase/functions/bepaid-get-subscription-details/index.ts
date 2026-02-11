@@ -1,4 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -19,28 +21,7 @@ function normalizeStatus(status: string | undefined): string {
   return status;
 }
 
-async function getBepaidCredentials(supabase: any): Promise<CredentialsResult | null> {
-  const { data: instance } = await supabase
-    .from('integration_instances')
-    .select('config, status')
-    .eq('provider', 'bepaid')
-    .in('status', ['active', 'connected'])
-    .maybeSingle();
-
-  const shopIdFromInstance = instance?.config?.shop_id;
-  const secretFromInstance = instance?.config?.secret_key;
-  if (shopIdFromInstance && secretFromInstance) {
-    return { shopId: String(shopIdFromInstance), secretKey: String(secretFromInstance) };
-  }
-
-  const shopId = Deno.env.get('BEPAID_SHOP_ID');
-  const secretKey = Deno.env.get('BEPAID_SECRET_KEY');
-  if (shopId && secretKey) {
-    return { shopId, secretKey };
-  }
-
-  return null;
-}
+// PATCH-P0.9.1: Removed custom getBepaidCredentials in favor of getBepaidCredsStrict
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -92,15 +73,16 @@ Deno.serve(async (req) => {
       });
     }
 
-    const credentials = await getBepaidCredentials(supabase);
-    if (!credentials) {
-      return new Response(JSON.stringify({ error: 'bePaid credentials not configured' }), {
+    // PATCH-P0.9.1: Strict creds
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
+      return new Response(JSON.stringify({ error: 'bePaid credentials not configured: ' + credsResult.error, code: 'BEPAID_CREDS_MISSING' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-
-    const authString = btoa(`${credentials.shopId}:${credentials.secretKey}`);
+    const bepaidCreds = credsResult;
+    const authString = createBepaidAuthHeader(bepaidCreds).replace('Basic ', '');
 
     // Fetch subscription details from bePaid
     const response = await fetch(`https://api.bepaid.by/subscriptions/${subscription_id}`, {

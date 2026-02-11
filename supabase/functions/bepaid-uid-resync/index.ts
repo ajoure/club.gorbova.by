@@ -1,4 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -59,8 +61,8 @@ interface ResyncResult {
   stop_reason?: string;
 }
 
-async function fetchTransaction(uid: string, shopId: string, secretKey: string): Promise<{ success: boolean; data?: any; error?: string }> {
-  const auth = btoa(`${shopId}:${secretKey}`);
+async function fetchTransaction(uid: string, auth: string): Promise<{ success: boolean; data?: any; error?: string }> {
+  // auth is already base64 string
   
   // Try multiple endpoints
   const endpoints = [
@@ -120,24 +122,17 @@ Deno.serve(async (req) => {
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-  // bePaid credentials - get from integration_instances (primary) or env (fallback)
-  const { data: bepaidInstance } = await supabaseAdmin
-    .from('integration_instances')
-    .select('config')
-    .eq('provider', 'bepaid')
-    .in('status', ['active', 'connected'])
-    .maybeSingle();
-
-  const instanceConfig = bepaidInstance?.config as Record<string, unknown> | null;
-  const shopId = (instanceConfig?.shop_id as string) || Deno.env.get("BEPAID_SHOP_ID") || "33524";
-  const secretKey = (instanceConfig?.secret_key as string) || Deno.env.get("BEPAID_SECRET_KEY");
-
-  if (!secretKey) {
+  // PATCH-P0.9.1: Strict creds
+  const credsResult = await getBepaidCredsStrict(supabaseAdmin);
+  if (isBepaidCredsError(credsResult)) {
     return new Response(
-      JSON.stringify({ success: false, message: "bePaid credentials not configured" }),
+      JSON.stringify({ success: false, message: "bePaid credentials not configured: " + credsResult.error }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
+  const bepaidCreds = credsResult;
+  const shopId = bepaidCreds.shop_id;
+  const auth = createBepaidAuthHeader(bepaidCreds).replace('Basic ', '');
 
   console.log(`[bepaid-uid-resync] Using shopId: ${shopId}`);
 
@@ -381,7 +376,7 @@ Deno.serve(async (req) => {
       }
 
       // Fetch from bePaid API
-      const fetchResult = await fetchTransaction(uid, shopId, secretKey);
+      const fetchResult = await fetchTransaction(uid, auth);
       result.stats.processed++;
 
       if (!fetchResult.success || !fetchResult.data) {

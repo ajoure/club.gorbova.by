@@ -1,4 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -154,28 +156,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get bePaid credentials
-    const { data: bepaidInstance } = await supabase
-      .from('integration_instances')
-      .select('config')
-      .eq('provider', 'bepaid')
-      .in('status', ['active', 'connected'])
-      .maybeSingle();
-
-    const shopId = bepaidInstance?.config?.shop_id || Deno.env.get('BEPAID_SHOP_ID');
-    const secretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
-
-    if (!shopId || !secretKey) {
+    // PATCH-P0.9.1: Strict creds
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
       return new Response(
         JSON.stringify({ 
           status: 'failed', 
-          error: 'bePaid credentials not configured',
+          error: 'bePaid credentials not configured: ' + credsResult.error,
         }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-
-    const authString = btoa(`${shopId}:${secretKey}`);
+    const bepaidCreds = credsResult;
+    const authString = createBepaidAuthHeader(bepaidCreds).replace('Basic ', '');
 
     // Process each candidate
     for (const order of candidates) {

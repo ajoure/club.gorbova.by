@@ -30,30 +30,8 @@ interface CancelRequest {
   source?: string;                       // 'user_self_cancel' | 'admin_cancel'
 }
 
-async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; secretKey: string } | null> {
-  const { data: instance } = await supabase
-    .from('integration_instances')
-    .select('config, status')
-    .eq('provider', 'bepaid')
-    .in('status', ['active', 'connected'])
-    .maybeSingle();
-
-  const shopIdFromInstance = instance?.config?.shop_id;
-  const secretFromInstance = instance?.config?.secret_key;
-  if (shopIdFromInstance && secretFromInstance) {
-    console.log(`[bepaid-cancel-subs] Using creds from integration_instances: shop_id=${shopIdFromInstance}`);
-    return { shopId: String(shopIdFromInstance), secretKey: String(secretFromInstance) };
-  }
-
-  const shopId = Deno.env.get('BEPAID_SHOP_ID');
-  const secretKey = Deno.env.get('BEPAID_SECRET_KEY');
-  if (shopId && secretKey) {
-    console.log(`[bepaid-cancel-subs] Using creds from env vars: shop_id=${shopId}`);
-    return { shopId, secretKey };
-  }
-
-  return null;
-}
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 // PATCH-G: Determine reason_code from error response
 function determineReasonCode(httpStatus: number, errorText: string, localState?: string): CancelReasonCode {
@@ -171,18 +149,22 @@ Deno.serve(async (req) => {
       }
     }
 
-    const credentials = await getBepaidCredentials(supabase);
-    if (!credentials) {
-      console.error('[bepaid-cancel-subs] No credentials found');
+    // PATCH-P0.9.1: Strict creds
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
+      console.error('[bepaid-cancel-subs] No credentials found:', credsResult.error);
       return new Response(JSON.stringify({ 
-        error: 'bePaid credentials not configured',
+        error: credsResult.error,
+        code: 'BEPAID_CREDS_MISSING'
       }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-
-    const authString = btoa(`${credentials.shopId}:${credentials.secretKey}`);
+    const bepaidCreds = credsResult;
+    const authString = createBepaidAuthHeader(bepaidCreds).replace('Basic ', '');
+    // Or simpler: use Authorization header directly
+    const authHeaderValue = createBepaidAuthHeader(bepaidCreds);
 
     const result: CancelResult = {
       canceled: [],
@@ -203,7 +185,7 @@ Deno.serve(async (req) => {
         const response = await fetch(`https://api.bepaid.by/subscriptions/${subId}/cancel`, {
           method: 'POST',
           headers: {
-            Authorization: `Basic ${authString}`,
+            Authorization: authHeaderValue,
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },

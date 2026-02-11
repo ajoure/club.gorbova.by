@@ -130,42 +130,24 @@ Deno.serve(async (req) => {
 
     console.log('Starting installment charge cron job...');
 
-    // Get bePaid credentials from integration_instances (primary) or fallback
-    const { data: bepaidInstance } = await supabase
-      .from('integration_instances')
-      .select('config')
-      .eq('provider', 'bepaid')
-      .in('status', ['active', 'connected'])
-      .maybeSingle();
-
-    const bepaidSecretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
-    const bepaidShopIdFromInstance = bepaidInstance?.config?.shop_id || null;
-    
-    if (!bepaidSecretKey) {
-      console.error('bePaid secret key not configured');
-      return new Response(JSON.stringify({ error: 'Платёжная система не настроена' }), {
+    // PATCH-P0.9.1: Strict creds
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
+      console.error('bePaid credentials missing:', credsResult.error);
+      return new Response(JSON.stringify({ error: 'BEPAID_CREDS_MISSING: ' + credsResult.error }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    
-    console.log('Using bePaid credentials from:', bepaidInstance?.config?.secret_key ? 'integration_instances' : 'env');
-
-    // Get additional settings from payment_settings
-    const { data: settings } = await supabase
-      .from('payment_settings')
-      .select('key, value')
-      .in('key', ['bepaid_shop_id', 'bepaid_test_mode']);
-
-    const settingsMap: Record<string, string> = settings?.reduce(
-      (acc: Record<string, string>, s: { key: string; value: string }) => ({ ...acc, [s.key]: s.value }),
-      {}
-    ) || {};
-
-    // Priority: integration_instances > payment_settings > default
-    const shopId = bepaidShopIdFromInstance || settingsMap['bepaid_shop_id'] || '33524';
-    const testMode = settingsMap['bepaid_test_mode'] === 'true';
-    const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+    const bepaidCreds = credsResult;
+    const shopId = bepaidCreds.shop_id;
+    const testMode = bepaidCreds.test_mode;
+    const bepaidAuth = createBepaidAuthHeader(bepaidCreds).replace('Basic ', ''); // legacy code might expect b64 or header? 
+    // Original code: const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+    // But later usage: headers: { 'Authorization': `Basic ${bepaidAuth}` }
+    // So bepaidAuth should be JUST the base64 part.
+    // createBepaidAuthHeader returns "Basic <base64>"
+    // So we strip "Basic " prefix.
 
     // Find pending installments that are due with exponential backoff
     // Explicitly exclude closed statuses (cancelled, forgiven) for safety

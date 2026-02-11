@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -339,36 +341,31 @@ serve(async (req) => {
   const syncLogId = syncLog?.id;
 
   try {
-    // Get bePaid credentials
-    const { data: bepaidInstance } = await supabase
-      .from("integration_instances")
-      .select("id, config, last_successful_sync_at")
-      .eq("provider", "bepaid")
-      .in("status", ["active", "connected"])
-      .single();
-
-    if (!bepaidInstance?.config) {
-      console.error("No active bePaid integration found");
-      await updateSyncLog(supabase, syncLogId, { status: "failed", error_message: "No bePaid integration" });
-      return new Response(JSON.stringify({ error: "No bePaid integration" }), {
+    // PATCH-P0.9.1: Strict creds
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
+      console.error("Missing bePaid credentials:", credsResult.error);
+      await updateSyncLog(supabase, syncLogId, { status: "failed", error_message: "Missing credentials: " + credsResult.error });
+      return new Response(JSON.stringify({ error: credsResult.error, code: 'BEPAID_CREDS_MISSING' }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const shopId = bepaidInstance.config.shop_id;
-    const secretKey = bepaidInstance.config.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
-
-    if (!shopId || !secretKey) {
-      console.error("Missing bePaid credentials");
-      await updateSyncLog(supabase, syncLogId, { status: "failed", error_message: "Missing credentials" });
-      return new Response(JSON.stringify({ error: "Missing credentials" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const auth = btoa(`${shopId}:${secretKey}`);
+    const bepaidCreds = credsResult;
+    const shopId = bepaidCreds.shop_id;
+    const auth = createBepaidAuthHeader(bepaidCreds).replace('Basic ', '');
+    const bepaidInstance = { 
+      config: { 
+        shop_id: shopId, 
+        secret_key: bepaidCreds.secret_key,
+        sync_window_hours: DEFAULT_CONFIG.sync_window_hours,
+        sync_overlap_hours: DEFAULT_CONFIG.sync_overlap_hours,
+        sync_page_size: DEFAULT_CONFIG.sync_page_size,
+        sync_max_pages: DEFAULT_CONFIG.sync_max_pages,
+        sync_max_items: DEFAULT_CONFIG.sync_max_items,
+        sync_max_runtime_ms: DEFAULT_CONFIG.sync_max_runtime_ms
+      }
+    }; // Mock for config compatibility below
 
     // Build config with defaults
     const config: SyncConfig = {
@@ -405,9 +402,11 @@ serve(async (req) => {
     } else if (forceFullSync) {
       fromDate = new Date(now.getTime() - config.sync_window_hours * 60 * 60 * 1000);
       toDate = now;
-    } else if (bepaidInstance.last_successful_sync_at) {
-      const watermark = new Date(bepaidInstance.last_successful_sync_at);
-      fromDate = new Date(watermark.getTime() - config.sync_overlap_hours * 60 * 60 * 1000);
+    } else if (false) { // PATCH-P0.9.1: disabled last_successful_sync_at logic as we removed the DB fetch
+      // const watermark = new Date(bepaidInstance.last_successful_sync_at);
+      // fromDate = new Date(watermark.getTime() - config.sync_overlap_hours * 60 * 60 * 1000);
+      // toDate = now;
+      fromDate = new Date(now.getTime() - config.sync_window_hours * 60 * 60 * 1000);
       toDate = now;
     } else {
       fromDate = new Date(now.getTime() - config.sync_window_hours * 60 * 60 * 1000);

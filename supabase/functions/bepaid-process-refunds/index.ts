@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -48,17 +50,20 @@ serve(async (req) => {
 
   console.log(`[process-refunds] Starting. Mode: ${mode}, maxItems: ${maxItems}`);
 
-  // Get bePaid credentials for API calls
-  const { data: bepaidInstance } = await supabase
-    .from("integration_instances")
-    .select("config")
-    .eq("provider", "bepaid")
-    .in("status", ["active", "connected"])
-    .single();
-
-  const shopId = bepaidInstance?.config?.shop_id;
-  const secretKey = bepaidInstance?.config?.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
-  const auth = shopId && secretKey ? btoa(`${shopId}:${secretKey}`) : null;
+  // PATCH-P0.9.1: Strict creds
+  const credsResult = await getBepaidCredsStrict(supabase);
+  const auth = isBepaidCredsError(credsResult) ? null : createBepaidAuthHeader(credsResult).replace('Basic ', '');
+  
+  if (isBepaidCredsError(credsResult)) {
+    console.error('[process-refunds] Missing bePaid credentials:', credsResult.error);
+    // Don't fail immediately if not fetching from API, but log error
+    if (fetchParentFromApi) {
+        return new Response(
+            JSON.stringify({ error: credsResult.error, code: 'BEPAID_CREDS_MISSING' }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+  }
 
   const results = {
     mode,

@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -36,35 +38,21 @@ serve(async (req) => {
   console.info("Starting payments reconciliation...");
 
   try {
-    // Get bePaid credentials from integration_instances
-    const { data: bepaidInstance } = await supabase
-      .from("integration_instances")
-      .select("config")
-      .eq("provider", "bepaid")
-      .in("status", ["active", "connected"])
-      .single();
-
-    if (!bepaidInstance?.config) {
-      console.error("No active bePaid integration found");
-      return new Response(JSON.stringify({ error: "No bePaid integration" }), {
+    // PATCH-P0.9.1: Strict creds
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
+      console.error("Missing bePaid credentials:", credsResult.error);
+      return new Response(JSON.stringify({ error: credsResult.error, code: 'BEPAID_CREDS_MISSING' }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const shopId = bepaidInstance.config.shop_id;
-    // Get secret from integration config (primary) or fallback to env
-    const secretKey = bepaidInstance.config.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
-
-    if (!shopId || !secretKey) {
-      console.error("Missing bePaid credentials - shop_id:", !!shopId, "secret_key:", !!secretKey);
-      return new Response(JSON.stringify({ error: "Missing credentials" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    const bepaidCreds = credsResult;
+    const shopId = bepaidCreds.shop_id;
+    const auth = createBepaidAuthHeader(bepaidCreds).replace('Basic ', ''); // For direct use or compatibility
+    const secretKey = bepaidCreds.secret_key; // For checkBepaidTransaction function compatibility
     
-    console.log("Using bePaid secret from:", bepaidInstance.config.secret_key ? "integration_instances" : "env");
+    console.log("Using bePaid secret from strict integration_instances");
 
     const results = {
       checked: 0,
@@ -436,7 +424,8 @@ async function checkBepaidTransaction(
   transactionUid: string
 ): Promise<BepaidTransaction | null> {
   try {
-    const auth = btoa(`${shopId}:${secretKey}`);
+    // PATCH-P0.9.1: Use createBepaidAuthHeader logic locally for now as this helper is simple
+    const auth = `Basic ${btoa(`${shopId}:${secretKey}`)}`;
     const response = await fetch(
       `https://gateway.bepaid.by/transactions/${transactionUid}`,
       {

@@ -19,35 +19,8 @@ interface CreateSubscriptionCheckoutRequest {
   explicit_user_choice?: boolean;
 }
 
-interface BepaidConfig {
-  shop_id: string;
-  secret_key: string;
-}
-
-async function getBepaidCredentials(supabase: any): Promise<BepaidConfig | null> {
-  const { data: instance } = await supabase
-    .from('integration_instances')
-    .select('config, status')
-    .eq('provider', 'bepaid')
-    .in('status', ['active', 'connected'])
-    .maybeSingle();
-
-  const shopIdFromInstance = instance?.config?.shop_id;
-  const secretFromInstance = instance?.config?.secret_key;
-  if (shopIdFromInstance && secretFromInstance) {
-    console.log(`[bepaid-sub-checkout] Using creds from integration_instances`);
-    return { shop_id: String(shopIdFromInstance), secret_key: String(secretFromInstance) };
-  }
-
-  const shopId = Deno.env.get('BEPAID_SHOP_ID');
-  const secretKey = Deno.env.get('BEPAID_SECRET_KEY');
-  if (shopId && secretKey) {
-    console.log(`[bepaid-sub-checkout] Using creds from env vars`);
-    return { shop_id: shopId, secret_key: secretKey };
-  }
-
-  return null;
-}
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 function generateOrderNumber(): string {
   const now = Date.now();
@@ -113,18 +86,20 @@ Deno.serve(async (req) => {
       });
     }
 
-    const credentials = await getBepaidCredentials(supabase);
-    if (!credentials) {
-      console.error('[bepaid-sub-checkout] No bePaid credentials found');
-      return new Response(JSON.stringify({ error: 'bePaid not configured' }), {
+    // PATCH-P0.9.1: Strict creds
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
+      console.error('[bepaid-sub-checkout] No bePaid credentials found:', credsResult.error);
+      return new Response(JSON.stringify({ error: credsResult.error, code: 'BEPAID_CREDS_MISSING' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    const bepaidCreds = credsResult;
 
     // Validate shop ID
-    if (credentials.shop_id !== '33524') {
-      console.error('[bepaid-sub-checkout] Invalid shop_id:', credentials.shop_id);
+    if (bepaidCreds.shop_id !== '33524') {
+      console.error('[bepaid-sub-checkout] Invalid shop_id:', bepaidCreds.shop_id);
       return new Response(JSON.stringify({ error: 'Invalid bePaid configuration' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -407,7 +382,7 @@ Deno.serve(async (req) => {
         ip: '127.0.0.1',  // Required by bePaid - will be replaced by actual checkout
       },
       plan: {
-        shop_id: Number(credentials.shop_id),
+        shop_id: Number(bepaidCreds.shop_id),
         currency,
         title: planTitle,  // PATCH-M: Descriptive title
         description: planDescription,  // PATCH-M: Clear description
@@ -430,11 +405,26 @@ Deno.serve(async (req) => {
       interval_days: intervalDays,
     });
 
-    const authString = btoa(`${credentials.shop_id}:${credentials.secret_key}`);
+    // PATCH-P0.9.1: Strict auth + attempt marker
+    await supabase.from('audit_logs').insert({
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'bepaid-create-subscription-checkout',
+      action: 'bepaid.request.attempt',
+      meta: {
+        fn: 'bepaid-create-subscription-checkout',
+        endpoint: '/subscriptions',
+        shop_id_last4: bepaidCreds.shop_id.slice(-4),
+        test_mode: bepaidCreds.test_mode,
+        provider: 'bepaid'
+      }
+    });
+
+    const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
     const bepaidResponse = await fetch('https://api.bepaid.by/subscriptions', {
       method: 'POST',
       headers: {
-        'Authorization': `Basic ${authString}`,
+        'Authorization': bepaidAuth,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },

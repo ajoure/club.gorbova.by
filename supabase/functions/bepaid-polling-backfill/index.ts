@@ -1,4 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 // PATCH-A1: Polling/Backfill Edge Function for bePaid transactions
 // BUILD_ID for deployment verification
@@ -32,12 +34,10 @@ interface PollingResult {
 
 // Fetch transactions from bePaid API with pagination
 async function fetchBepaidTransactions(
-  shopId: string,
-  secretKey: string,
+  auth: string,
   fromDate: Date,
   toDate: Date
 ): Promise<{ transactions: any[]; error?: string }> {
-  const bepaidAuth = btoa(`${shopId}:${secretKey}`);
   const allTransactions: any[] = [];
   let page = 1;
   const perPage = 100;
@@ -59,7 +59,7 @@ async function fetchBepaidTransactions(
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: {
-          'Authorization': `Basic ${bepaidAuth}`,
+          'Authorization': auth,
           'Accept': 'application/json',
           'X-Api-Version': '3',
         },
@@ -132,48 +132,18 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY');
-    
-    if (!bepaidSecretKey) {
+    // PATCH-P0.9.1: Strict creds
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
       return new Response(
-        JSON.stringify({ error: 'BEPAID_SECRET_KEY not configured' }),
+        JSON.stringify({ error: 'BEPAID_CREDS_MISSING: ' + credsResult.error }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-    
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-    
-    // Parse request body
-    const body = await req.json().catch(() => ({}));
-    const dryRun = body.dry_run !== false; // Default to dry run
-    const sinceHours = body.since_hours || 48;
-    const customFromDate = body.from_date ? new Date(body.from_date) : null;
-    const customToDate = body.to_date ? new Date(body.to_date) : null;
-    
-    console.log(`[${BUILD_ID}] START: dry_run=${dryRun}, since_hours=${sinceHours}`);
-    
-    // Determine date range
-    const now = new Date();
-    const toDate = customToDate || now;
-    const fromDate = customFromDate || new Date(now.getTime() - sinceHours * 60 * 60 * 1000);
-    
-    // Get shop_id from integration settings
-    const { data: bepaidInstance } = await supabase
-      .from('integration_instances')
-      .select('config')
-      .eq('provider', 'bepaid')
-      .in('status', ['active', 'connected'])
-      .limit(1)
-      .maybeSingle();
-    
-    const shopId = (bepaidInstance?.config as any)?.shop_id || Deno.env.get('BEPAID_SHOP_ID');
-    
-    if (!shopId) {
-      return new Response(
-        JSON.stringify({ error: 'BEPAID_SHOP_ID not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const bepaidCreds = credsResult;
+    const shopId = bepaidCreds.shop_id;
+    // Use auth header directly
+    const auth = createBepaidAuthHeader(bepaidCreds);
     
     // PATCH-0.1: Hard guard - verify shop_id matches expected
     if (String(shopId) !== EXPECTED_SHOP_ID) {
@@ -186,8 +156,7 @@ Deno.serve(async (req) => {
     
     // Fetch transactions from bePaid API
     const { transactions, error: fetchError } = await fetchBepaidTransactions(
-      shopId,
-      bepaidSecretKey,
+      auth,
       fromDate,
       toDate
     );

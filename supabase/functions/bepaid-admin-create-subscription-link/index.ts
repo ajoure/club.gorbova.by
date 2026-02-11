@@ -9,33 +9,8 @@ interface CreateLinkRequest {
   subscription_v2_id: string;
 }
 
-interface BepaidConfig {
-  shop_id: string;
-  secret_key: string;
-}
-
-async function getBepaidCredentials(supabase: any): Promise<BepaidConfig | null> {
-  const { data: instance } = await supabase
-    .from('integration_instances')
-    .select('config, status')
-    .eq('provider', 'bepaid')
-    .in('status', ['active', 'connected'])
-    .maybeSingle();
-
-  const shopIdFromInstance = instance?.config?.shop_id;
-  const secretFromInstance = instance?.config?.secret_key;
-  if (shopIdFromInstance && secretFromInstance) {
-    return { shop_id: String(shopIdFromInstance), secret_key: String(secretFromInstance) };
-  }
-
-  const shopId = Deno.env.get('BEPAID_SHOP_ID');
-  const secretKey = Deno.env.get('BEPAID_SECRET_KEY');
-  if (shopId && secretKey) {
-    return { shop_id: shopId, secret_key: secretKey };
-  }
-
-  return null;
-}
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 // Safe name parsing - handles 0/1/2/3+ tokens correctly
 function safeParseFullName(fullName: string | null | undefined): { firstName: string | undefined; lastName: string | undefined } {
@@ -152,14 +127,16 @@ Deno.serve(async (req) => {
       });
     }
 
-    const credentials = await getBepaidCredentials(supabase);
-    if (!credentials) {
-      console.error('[bepaid-admin-link] No bePaid credentials found');
-      return new Response(JSON.stringify({ error: 'bePaid not configured' }), {
+    // PATCH-P0.9.1: Strict creds
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
+      console.error('[bepaid-admin-link] No bePaid credentials found:', credsResult.error);
+      return new Response(JSON.stringify({ error: credsResult.error, code: 'BEPAID_CREDS_MISSING' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    const bepaidCreds = credsResult;
 
     // Get recurring settings from tariff_offers or subscription meta
     const subMeta = (subscription.meta || {}) as Record<string, any>;
@@ -289,11 +266,26 @@ Deno.serve(async (req) => {
       product_id: product?.id,
     });
 
-    const authString = btoa(`${credentials.shop_id}:${credentials.secret_key}`);
+    // PATCH-P0.9.1: Strict auth + marker
+    await supabase.from('audit_logs').insert({
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'bepaid-admin-link',
+      action: 'bepaid.request.attempt',
+      meta: {
+        fn: 'bepaid-admin-create-subscription-link',
+        endpoint: '/subscriptions',
+        shop_id_last4: bepaidCreds.shop_id.slice(-4),
+        test_mode: bepaidCreds.test_mode,
+        provider: 'bepaid'
+      }
+    });
+
+    const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
     const bepaidResponse = await fetch('https://api.bepaid.by/subscriptions', {
       method: 'POST',
       headers: {
-        'Authorization': `Basic ${authString}`,
+        'Authorization': bepaidAuth,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },

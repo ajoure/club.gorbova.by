@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// PATCH-P0.9.1: Strict isolation
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -179,45 +181,25 @@ serve(async (req) => {
 
     console.info(`Fetching bePaid transactions from ${fromDate} to ${toDate}, apiOnly=${apiOnly}`);
 
-    // Get bePaid credentials
-    const { data: bepaidInstance } = await supabase
-      .from("integration_instances")
-      .select("config")
-      .eq("provider", "bepaid")
-      .in("status", ["active", "connected"])
-      .single();
-
-    if (!bepaidInstance?.config) {
-      console.error("No active bePaid integration found");
+    // PATCH-P0.9.1: Strict creds
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
+      console.error("Missing bePaid credentials:", credsResult.error);
       return new Response(JSON.stringify({ 
         success: false, 
-        error: "No bePaid integration",
+        error: credsResult.error,
+        code: 'BEPAID_CREDS_MISSING',
         debug,
         transactions: [],
         subscriptions: [],
       }), {
-        status: 200,
+        status: 200, // Keep 200 for frontend compatibility, but error in body
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const shopId = bepaidInstance.config.shop_id;
-    const secretKey = bepaidInstance.config.secret_key || Deno.env.get("BEPAID_SECRET_KEY");
-
-    if (!shopId || !secretKey) {
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: "Missing credentials",
-        debug,
-        transactions: [],
-        subscriptions: [],
-      }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const auth = btoa(`${shopId}:${secretKey}`);
+    const bepaidCreds = credsResult;
+    const shopId = bepaidCreds.shop_id;
+    const auth = createBepaidAuthHeader(bepaidCreds).replace('Basic ', '');
     const allTransactions: any[] = [];
     const allSubscriptions: any[] = [];
 
