@@ -71,13 +71,14 @@ export function AvatarZoomDialog({
       </Avatar>
 
       <Dialog open={isOpen} onOpenChange={setIsOpen}>
-        <DialogContent className="max-w-md p-0 gap-0 overflow-hidden bg-background/95 backdrop-blur-lg">
-          <div className="relative">
+          <DialogContent className="max-w-md p-0 gap-0 overflow-hidden bg-background/95 backdrop-blur-lg" style={{ paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 }}>
+          <div className="relative" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
             {/* Close button */}
             <Button
               variant="ghost"
               size="icon"
-              className="absolute top-2 right-2 z-10 bg-background/80 hover:bg-background"
+              className="absolute z-10 bg-background/80 hover:bg-background"
+              style={{ top: 'calc(0.5rem + env(safe-area-inset-top, 0px))', right: 'calc(0.5rem + env(safe-area-inset-right, 0px))' }}
               onClick={() => setIsOpen(false)}
             >
               <X className="h-4 w-4" />

@@ -1109,7 +1109,7 @@ export function ContactTelegramChat({
         )}
 
         {/* Input - shrink-0 sticky bottom to always stay visible */}
-        <div className="pt-3 border-t shrink-0 sticky bottom-0 bg-background z-10">
+        <div className="pt-3 border-t shrink-0 sticky bottom-0 bg-background z-10" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
         <div className="flex gap-2">
           <div className="flex flex-col gap-1">
             <Popover>
