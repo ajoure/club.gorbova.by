@@ -352,11 +352,11 @@ Deno.serve(async (req) => {
       .select('key, value');
 
     const settingsMap: Record<string, string> = settings?.reduce((acc: Record<string, string>, s: { key: string; value: string }) => ({ ...acc, [s.key]: s.value }), {}) || {};
-    // Priority: integration_instances > payment_settings > default
-    const shopId = bepaidShopId || settingsMap['bepaid_shop_id'] || '33524';
+    // PATCH-P0.9: shopId ONLY from strict creds (NO undeclared vars, NO env fallback)
+    const shopId = bepaidCreds.shop_id;
     // Always redirect to /purchases after payment so user sees their order in "Мои покупки"
-    const successUrl = bepaidSuccessUrl || settingsMap['bepaid_success_url'] || '/purchases?payment=processing';
-    const failUrl = bepaidFailUrl || settingsMap['bepaid_fail_url'] || '/purchases?payment=failed';
+    const successUrl = settingsMap['bepaid_success_url'] || '/purchases?payment=processing';
+    const failUrl = settingsMap['bepaid_fail_url'] || '/purchases?payment=failed';
     
     // Get origin from request for URLs
     const origin = req.headers.get('origin') || 'https://lovable.app';
@@ -657,7 +657,7 @@ Deno.serve(async (req) => {
       },
     };
 
-    const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+    const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
 
     // For one-time payments (e.g., consultations), use checkout API instead of subscriptions
     if (isOneTime) {

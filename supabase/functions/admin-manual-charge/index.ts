@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
     // Use credentials from strict helper
     const shopId = bepaidCreds.shop_id;
     const testMode = bepaidCreds.test_mode;
-    const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+    const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
 
     type ChargeCardResult = {
       success: boolean;

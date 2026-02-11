@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
-const BUILD_ID = "reconcile-processing:2026-02-02T14:30:00Z";
+const BUILD_ID = "reconcile-processing:2026-02-11T12:00:00Z";
 const MAX_BATCH_SIZE = 50;
 const DEFAULT_LIMIT = 20;
 
@@ -28,11 +29,12 @@ serve(async (req) => {
 
     console.log(`[${BUILD_ID}] START: dry_run=${dryRun}, limit=${limit}`);
 
-    const bepaidShopId = '33524';
-    const bepaidSecretKey = Deno.env.get('BEPAID_SECRET_KEY');
-    if (!bepaidSecretKey) throw new Error('BEPAID_SECRET_KEY not configured');
-
-    const bepaidAuth = btoa(`${bepaidShopId}:${bepaidSecretKey}`);
+    // PATCH-P0.9: Get bePaid credentials STRICTLY from integration_instances (NO env fallback)
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
+      throw new Error(credsResult.error);
+    }
+    const bepaidAuth = createBepaidAuthHeader(credsResult);
 
     const { data: payments } = await supabase
       .from('payments_v2')

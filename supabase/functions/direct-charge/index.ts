@@ -459,8 +459,8 @@ Deno.serve(async (req) => {
       {}
     ) || {};
 
-    // Priority: integration_instances > payment_settings > default
-    const shopId = bepaidShopIdFromInstance || settingsMap['bepaid_shop_id'] || '33524';
+    // PATCH-P0.9: shopId ONLY from strict creds (NO undeclared vars, NO env fallback)
+    const shopId = bepaidCreds.shop_id;
     const testMode = settingsMap['bepaid_test_mode'] === 'true';
 
     // Generate order number
@@ -715,7 +715,7 @@ Deno.serve(async (req) => {
 
     // Call bePaid Gateway API to charge the token
     // Important: For token charges, use gateway.bepaid.by/transactions/payments with additional_data.contract
-    const bepaidAuth = btoa(`${shopId}:${bepaidSecretKey}`);
+    const bepaidAuth = createBepaidAuthHeader(bepaidCreds);
 
     // Build URLs from the request origin to support preview domains (and avoid hanging redirects).
     const reqOrigin = req.headers.get('origin');

@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError, type BepaidCreds } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,44 +18,19 @@ interface FetchReceiptResult {
   payment_id?: string;
 }
 
-async function getBepaidCredentials(supabase: any): Promise<{ shopId: string; secretKey: string } | null> {
-  // Try integration_instances first
-  const { data: instance } = await supabase
-    .from('integration_instances')
-    .select('config')
-    .eq('provider', 'bepaid')
-    .eq('status', 'active')
-    .single();
-
-  if (instance?.config?.shop_id && instance?.config?.secret_key) {
-    return {
-      shopId: instance.config.shop_id,
-      secretKey: instance.config.secret_key,
-    };
-  }
-
-  // Fallback to env vars
-  const shopId = Deno.env.get('BEPAID_SHOP_ID');
-  const secretKey = Deno.env.get('BEPAID_SECRET_KEY');
-
-  if (shopId && secretKey) {
-    return { shopId, secretKey };
-  }
-
-  return null;
-}
+// PATCH-P0.9: Removed custom getBepaidCredentials() with env fallback
 
 async function fetchReceiptFromBepaid(
   transactionUid: string,
-  credentials: { shopId: string; secretKey: string }
+  creds: BepaidCreds
 ): Promise<{ receipt_url?: string; fee?: number; error?: string }> {
-  const authString = btoa(`${credentials.shopId}:${credentials.secretKey}`);
+  const authHeader = createBepaidAuthHeader(creds);
 
   try {
     const response = await fetch(`https://api.bepaid.by/beyag/transactions/${transactionUid}`, {
       method: 'GET',
       headers: {
-        'Authorization': `Basic ${authString}`,
+        'Authorization': authHeader,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
@@ -117,17 +93,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get bePaid credentials
-    const credentials = await getBepaidCredentials(supabase);
-    if (!credentials) {
+    // PATCH-P0.9: Get bePaid credentials STRICTLY from integration_instances
+    const credsResult = await getBepaidCredsStrict(supabase);
+    if (isBepaidCredsError(credsResult)) {
       return new Response(JSON.stringify({ 
         success: false, 
-        error: 'bePaid credentials not configured' 
+        error: credsResult.error 
       }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    const credentials = credsResult;
 
     let paymentData: any = null;
     let transactionUid = provider_payment_id;

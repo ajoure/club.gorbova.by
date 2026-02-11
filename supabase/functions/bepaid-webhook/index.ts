@@ -538,8 +538,9 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     // For webhook signature: use webhook_secret if set, otherwise fall back to secret_key
-    const bepaidWebhookSecret = bepaidInstance?.config?.webhook_secret || bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
-    const bepaidSecretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
+    // PATCH-P0.9: NO env fallback — strict isolation
+    const bepaidWebhookSecret = bepaidInstance?.config?.webhook_secret || bepaidInstance?.config?.secret_key;
+    const bepaidSecretKey = bepaidInstance?.config?.secret_key;
     console.log('Using bePaid webhook secret from:', bepaidInstance?.config?.webhook_secret ? 'webhook_secret' : (bepaidInstance?.config?.secret_key ? 'secret_key' : 'env'));
 
     // Read body as text for signature verification
@@ -594,8 +595,9 @@ Deno.serve(async (req) => {
     // PATCH-1.4/1.5: Check for misconfig FIRST
     const rawPublicKey = bepaidInstance?.config?.public_key;
     const normalizedPublicKey = normalizePemPublicKey(rawPublicKey);
-    const secretKey = bepaidInstance?.config?.secret_key || Deno.env.get('BEPAID_SECRET_KEY');
-    const shopId = bepaidInstance?.config?.shop_id || Deno.env.get('BEPAID_SHOP_ID');
+    // PATCH-P0.9: NO env fallback — strict isolation
+    const secretKey = bepaidInstance?.config?.secret_key;
+    const shopId = bepaidInstance?.config?.shop_id;
     
     // If no auth method available at all → 500 misconfig
     if (!normalizedPublicKey && !secretKey) {
