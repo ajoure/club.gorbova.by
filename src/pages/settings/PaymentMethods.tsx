@@ -253,7 +253,7 @@ export default function PaymentMethodsSettings() {
           )
         `)
         .eq("user_id", user.id)
-        .in("state", ["active", "trial", "pending"])
+        .in("state", ["active", "trial"])
         .order("created_at", { ascending: false });
       
       if (error) throw error;

@@ -1110,7 +1110,7 @@ export function ContactTelegramChat({
 
         {/* Input - shrink-0 sticky bottom to always stay visible */}
         <div className="pt-3 border-t shrink-0 sticky bottom-0 bg-background z-10" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
-        <div className="flex gap-2">
+          <div className="flex gap-2">
           <div className="flex flex-col gap-1">
             <Popover>
               <PopoverTrigger asChild>
@@ -1258,11 +1258,11 @@ export function ContactTelegramChat({
           >
             <Send className="w-4 h-4" />
           </Button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            Enter для отправки, Shift+Enter для новой строки
+          </p>
         </div>
-        <p className="text-xs text-muted-foreground mt-1">
-          Enter для отправки, Shift+Enter для новой строки
-        </p>
-      </div>
 
       {/* Video Note Recorder */}
       <VideoNoteRecorder
