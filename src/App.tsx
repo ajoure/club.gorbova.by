@@ -1,70 +1,3 @@
-// iOS Safari preview detection (safe - no document.write)
-function isIOSSafariInPreview(): boolean {
-  if (typeof window === 'undefined') return false;
-  
-  const ua = navigator.userAgent || '';
-  const isIOS = /iP(hone|ad|od)/.test(ua);
-  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
-  if (!isIOS || !isSafari) return false;
-  
-  let inIframe = false;
-  try { inIframe = window.self !== window.top; } catch { inIframe = true; }
-  
-  const qs = window.location.search || '';
-  const hasFlag = qs.includes('forceHideBadge') || qs.includes('lovable') || qs.includes('preview');
-  const ref = document.referrer || '';
-  const hasRef = ref.includes('lovable.dev');
-  
-  return inIframe || hasFlag || hasRef;
-}
-
-// Simple iOS preview message component
-function IOSPreviewMessage() {
-  return (
-    <div style={{
-      fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: '100vh',
-      background: '#f8fafc',
-      margin: 0,
-      padding: '20px',
-      textAlign: 'center'
-    }}>
-      <div style={{ maxWidth: '320px' }}>
-        <div style={{ fontSize: '48px', marginBottom: '16px' }}>📱</div>
-        <h2 style={{ color: '#1e293b', margin: '0 0 8px', fontSize: '20px' }}>Мобильный режим</h2>
-        <p style={{ color: '#64748b', margin: '0 0 20px', lineHeight: 1.5, fontSize: '14px' }}>
-          Предпросмотр в редакторе lovable.dev на iOS перегружает Safari.<br />
-          Откройте сайт в отдельной вкладке.
-        </p>
-        <a
-          href="https://gorbova.lovable.app"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            display: 'inline-block',
-            padding: '14px 24px',
-            background: '#3b82f6',
-            color: '#fff',
-            textDecoration: 'none',
-            borderRadius: '12px',
-            fontWeight: 600,
-            fontSize: '15px',
-            boxShadow: '0 4px 14px rgba(59,130,246,0.4)'
-          }}
-        >
-          Открыть сайт →
-        </a>
-        <p style={{ color: '#94a3b8', margin: '16px 0 0', fontSize: '12px' }}>
-          Desktop preview работает как обычно.
-        </p>
-      </div>
-    </div>
-  );
-}
-
 import { lazy, Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -201,11 +134,6 @@ const queryClient = new QueryClient({
 initExternalLinkKillSwitch();
 
 const App = () => {
-  // iOS Safari in lovable.dev preview - show simple message instead of heavy app
-  if (isIOSSafariInPreview()) {
-    return <IOSPreviewMessage />;
-  }
-
   return (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
