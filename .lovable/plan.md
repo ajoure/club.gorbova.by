@@ -1,75 +1,55 @@
 
 
-# FIX: ContactDetailSheet показывает "Заблокирован" и "Telegram не привязан" для активных пользователей
+# FIX: Завершение замены contact.* на resolved* переменные в ContactDetailSheet
 
-## Корневая причина
+## Проблема
 
-`ContactDetailSheet` полностью доверяет пропу `contact` для отображения `user_id`, `status`, `telegram_user_id`. Но разные вызывающие компоненты передают **неполные данные**:
+Предыдущий фикс добавил resolved-переменные (`resolvedUserId`, `resolvedStatus`, `resolvedTelegramUserId`, `resolvedTelegramUsername`), которые берут данные из БД напрямую. Но замена `contact.*` на `resolved*` была сделана **только в нескольких местах** (badge статуса, telegram tab). Остались десятки мест, где UI и запросы используют `contact.user_id`, `contact.telegram_user_id`, `contact.telegram_username` напрямую из пропа -- а проп из сделок приходит без этих полей.
 
-| Вызывающий компонент | Что передаёт | Что отсутствует |
-|---|---|---|
-| `AdminContacts.tsx` | Полный профиль (select *) | -- (всё ок) |
-| `InboxTabContent.tsx` | Частичный профиль из диалога | `status`; может потерять `user_id` при ре-рендере |
-| `SupportTabContent.tsx` | `selectedTicket?.profiles` | Зависит от join; может не содержать `telegram_user_id` |
-| `AdminDeals.tsx`, `AdminLessonProgress.tsx` | Зависит от контекста | Потенциально неполный |
+## Что именно пропущено (ключевые точки)
 
-При потере `user_id`:
-- Строка 1342: показывается бейдж "Ghost"
-- Строка 1352: показывается "Заблокирован" вместо реального статуса
-- Строка 1956: Telegram-таб показывает "Telegram не привязан"
+| Строка | Что используется | Что должно быть | Эффект бага |
+|--------|-----------------|-----------------|-------------|
+| 351-361 | `contact?.user_id`, `contact?.telegram_user_id` в queryKey и enabled | `resolvedUserId`, `resolvedTelegramUserId` | Telegram info не загружается |
+| 1334 | `contact.telegram_user_id` | `resolvedTelegramUserId` | Кнопка "Фото из Telegram" скрыта |
+| 1479-1484 | `contact.telegram_username`, `contact.telegram_user_id` | resolved варианты | В карточке контакта показано "Не привязан" |
+| 1487-1493 | `contact.telegram_username` | `resolvedTelegramUsername` | Ссылка на t.me скрыта |
+| 1560-1571 | `contact.telegram_user_id` | `resolvedTelegramUserId` | Целая Telegram Info Card скрыта |
+| 1576 | `contact.telegram_username` | `resolvedTelegramUsername` | Username не показан |
 
-Данные в БД корректны: обе пользовательницы `status: active`, Telegram привязан.
-
-## Решение (минимальный diff, 1 файл)
+## Решение (1 файл, точечные замены)
 
 ### `src/components/admin/ContactDetailSheet.tsx`
 
-**Шаг 1**: Расширить существующий запрос `profileData` (строка 334), добавив поля `user_id`, `status`, `telegram_user_id`, `telegram_username`:
+**Замена 1** -- Telegram user info query (строки 349-363):
+- queryKey: `contact?.user_id` -> `resolvedUserId`
+- Условие внутри: `!contact?.user_id || !contact?.telegram_user_id` -> `!resolvedUserId || !resolvedTelegramUserId`
+- body: `user_id: contact.user_id` -> `user_id: resolvedUserId`
+- enabled: аналогично
 
-```typescript
-// Было:
-.select("telegram_linked_at, telegram_link_status, loyalty_score, loyalty_updated_at, loyalty_auto_update")
+**Замена 2** -- Avatar fetch from Telegram (строка 1334):
+- `contact.telegram_user_id ? fetchPhotoFromTelegram : undefined` -> `resolvedTelegramUserId ? fetchPhotoFromTelegram : undefined`
 
-// Стало:
-.select("user_id, status, telegram_user_id, telegram_username, telegram_linked_at, telegram_link_status, loyalty_score, loyalty_updated_at, loyalty_auto_update")
-```
+**Замена 3** -- Contact info card Telegram section (строки 1479-1493):
+- `contact.telegram_username` -> `resolvedTelegramUsername`
+- `contact.telegram_user_id` -> `resolvedTelegramUserId`
 
-**Шаг 2**: Добавить вычисляемые переменные сразу после запроса profileData (~строка 342):
-
-```typescript
-// Reliable contact fields: prefer DB data (profileData) over potentially stale props
-const resolvedUserId = profileData?.user_id ?? contact?.user_id ?? null;
-const resolvedStatus = profileData?.status ?? contact?.status ?? "active";
-const resolvedTelegramUserId = profileData?.telegram_user_id ?? contact?.telegram_user_id ?? null;
-const resolvedTelegramUsername = profileData?.telegram_username ?? contact?.telegram_username ?? null;
-```
-
-**Шаг 3**: Заменить все обращения к `contact.user_id`, `contact.status`, `contact.telegram_user_id`, `contact.telegram_username` на `resolved*` переменные в ключевых местах:
-
-1. **Ghost badge** (строка 1342): `!contact.user_id` -> `!resolvedUserId`
-2. **Status badge** (строка 1349-1360): `!contact.user_id` -> `!resolvedUserId`, `contact.status` -> `resolvedStatus`
-3. **Telegram tab condition** (строка 1956): `contact.telegram_user_id` -> `resolvedTelegramUserId`
-4. **Telegram "не привязан" fallback** (строка 2060): аналогично
-5. **Telegram profile info** (строки 1963, 1969, 1976-1985): `contact.telegram_user_id` -> `resolvedTelegramUserId`, `contact.telegram_username` -> `resolvedTelegramUsername`
-6. **ContactTelegramChat props** (строка 2072-2074): аналогично
+**Замена 4** -- Telegram Info Card на вкладке "О контакте" (строки 1560-1576+):
+- `contact.telegram_user_id` -> `resolvedTelegramUserId`
+- `contact.telegram_username` -> `resolvedTelegramUsername`
 
 ## Что НЕ меняем
-- Никаких SQL/миграций/RLS
-- Никаких других файлов
-- Запрос profileData уже существует — только расширяем select
-- Логика Ghost/Заблокирован остаётся такой же, но теперь использует реальные данные из БД
 
-## Технические детали
+- Все остальные `contact.user_id` в запросах к orders, subscriptions, payments, audit_logs -- они используют user_id для фильтрации данных, и если user_id нет в пропе, эти запросы корректно вернут пустой результат (не критично для отображения статуса/telegram)
+- SQL/миграции/RLS -- не нужны
+- Другие файлы -- не нужны
 
-Приоритет данных: `profileData` (свежие из БД) > `contact` prop (потенциально неполный) > дефолт.
+## Почему предыдущий фикс не сработал
 
-Это безопасно, потому что:
-- `profileData` fetchится по `contact.id` (profile.id), который всегда передаётся корректно
-- Если `profileData` ещё загружается (undefined), fallback на `contact` prop работает как раньше
-- На десктопе из AdminContacts (где данные полные) поведение не меняется
+Resolved-переменные были созданы правильно (строки 344-347), но применены только к badge статуса (строка 1348-1367) и telegram tab (строки 1962+). Вкладка "О контакте" и запрос telegram info остались на старых `contact.*` полях. Когда ContactDetailSheet открывается из сделок, проп `contact` содержит только `id, user_id, email, full_name, phone, avatar_url` -- без telegram-полей и status.
 
 ## DoD
-1. Открыть ContactDetailSheet из Inbox для пользователя с привязанным Telegram — статус "Активен", Telegram показывает данные
-2. Открыть из AdminContacts — поведение не изменилось
-3. SQL-пруф: select count of profiles where user_id IS NOT NULL and status = 'active' — подтверждение корректности данных
 
+1. Открыть контакт из карточки сделки -- статус "Активен", Telegram данные видны
+2. Открыть тот же контакт из списка контактов -- поведение не изменилось
+3. Telegram Info Card на вкладке "О контакте" показывает ID и username
