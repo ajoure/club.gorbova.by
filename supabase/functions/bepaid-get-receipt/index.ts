@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -140,32 +141,37 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get bePaid credentials
-    const { data: bepaidInstance } = await supabaseAdmin
-      .from("integration_instances")
-      .select("config")
-      .eq("provider", "bepaid")
-      .in("status", ["active", "connected"])
-      .single();
-
-    if (!bepaidInstance?.config) {
+    // PATCH-P0.9.1: Strict bePaid credentials (no env fallback)
+    const credsResult = await getBepaidCredsStrict(supabaseAdmin);
+    if (isBepaidCredsError(credsResult)) {
       return new Response(
-        JSON.stringify({ status: 'error', error_code: 'API_ERROR', message: "No bePaid integration found" } as ReceiptResult),
+        JSON.stringify({ status: 'error', error_code: 'API_ERROR', message: credsResult.error } as ReceiptResult),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-
-    const shopId = (bepaidInstance.config as any).shop_id;
-    const secretKey = (bepaidInstance.config as any).secret_key || Deno.env.get("BEPAID_SECRET_KEY");
-    const auth = btoa(`${shopId}:${secretKey}`);
+    const auth = createBepaidAuthHeader(credsResult);
 
     // Fetch transaction from bePaid to get receipt URL
     console.log(`[bepaid-get-receipt] Fetching transaction ${providerUid} from bePaid`);
+
+    // PATCH-P0.9.1: audit marker before bePaid request
+    await supabaseAdmin.from('audit_logs').insert({
+      action: 'bepaid.request.attempt',
+      actor_type: 'system',
+      actor_user_id: null,
+      actor_label: 'bepaid-get-receipt',
+      meta: {
+        fn: 'bepaid-get-receipt',
+        endpoint: `/transactions/${providerUid}`,
+        shop_id_last4: String(credsResult.shop_id).slice(-4),
+        test_mode: !!credsResult.test_mode,
+      }
+    });
     
     const response = await fetch(`https://gateway.bepaid.by/transactions/${providerUid}`, {
       method: "GET",
       headers: {
-        Authorization: `Basic ${auth}`,
+        Authorization: auth,
         Accept: "application/json",
       },
     });
