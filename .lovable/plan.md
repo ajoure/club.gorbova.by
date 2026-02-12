@@ -1,261 +1,133 @@
-# PATCH TG-P0.9.2 — Wrongful Telegram Kicks After Renewal (Cron/Triggers/Grants)
+# TG-P0.9.2 — Follow-up RESULT (24h) + Next PATCHES
 
-## Жёсткие правила исполнения для [Lovable.dev](http://Lovable.dev)
+## STATUS
 
-1) Ничего не ломать и не трогать лишнее. Только в рамках scope.  
-
-2) Add-only, минимальный diff. Удаления — только если заменяем 1:1 (дубликат/опасная логика).  
-
-3) Dry-run → Execute везде, где есть массовые действия/крон/очереди.  
-
-4) STOP-guards обязательны: лимиты, батчи, таймауты, “abort if >N”, защита сотрудников.  
-
-5) Никаких BEPAID/TG секретов/PII в логах. В audit_logs — только безопасные meta.  
-
-6) DoD только по фактам: (a) SQL-результаты, (b) audit_logs записи, (c) UI-скрины из админки (учётка [7500084@gmail.com](mailto:7500084@gmail.com)), (d) diff-summary.  
-
-7) SYSTEM ACTOR Proof обязателен: должна появиться реальная запись в `audit_logs` с `actor_type='system'`, `actor_user_id=NULL`, `actor_label` заполнен — для каждого execute-шага (миграция/ремонт/крон-фиксы).
+TG-P0.9.2 = CLOSED ✅ (подтверждено follow-up проверками)
 
 ---
 
-## Проблема
+## A) FOLLOW-UP CHECKS (ФАКТЫ)
 
-Пользователей кикает после продления подписки: `subscriptions_v2.access_end_at` продлён, но `telegram_access_grants.end_at` остался старым → крон/проверки считают доступ истёкшим и кикают.
+### A1) Audit logs (24h)
 
-Причины:
+- telegram.autokick.attempt: 1 запись → natalya_grinkevich, access_valid=false (легитимно: подписка истекла до крона)
 
-- `telegram-cron-sync` использует локальный `hasActiveAccess()` без проверки `subscriptions_v2` → ошибочные AUTOKICK.
+- telegram.autokick.guard_skip: 0
 
-- `telegram-check-expired` имеет ветку кика “violators” по `access_status` без валидации активной подписки.
+- false kicks: 0 ✅
 
-- `trg_subscription_grant_telegram` не срабатывает при renewal (status остаётся `active`), т.к. преждевременно RETURN при UPDATE.
+### A2) Почему “117 at-risk” из SQL — ложный сигнал
 
----
+1) **115 no_grant** относятся к клубу **“Бухгалтерия как бизнес” (club_id=4f8f9d8f)**, но **product_club_mapping указывает на “Gorbova Club” (club_id=fa547c41)** → гранты создаются для fa547c41, а SQL искал для 4f8f9d8f.
 
-## Scope (минимально достаточный)
+   - Риск кика: НЕТ ✅ (hasValidAccessBatch видит active subscription и возвращает valid=true)
 
-### Код (2 edge functions)
+2) **lori-30**: есть актуальный грант `5d468c1d` end_at=2026-03-14; старые активные гранты с end_at=2026-02-12 — артефакты.
 
-1) `supabase/functions/telegram-cron-sync/index.ts`
+   - Риск кика: НЕТ ✅
 
-2) `supabase/functions/telegram-check-expired/index.ts`
+3) **slmmls**: актуальный грант на нужный клуб end_at=2026-03-11 = sub.access_end_at; другой грант — артефакт.
 
-### БД (1 migration)
+   - Риск кика: НЕТ ✅
 
-3) `supabase/migrations/XXXXXXXXXXXX_tg_grants_on_renewal.sql`:
+### A3) Реальный at-risk для кика
 
-   - фикс триггера `trg_subscription_grant_telegram` (fire on access_end_at change)
-
-   - data repair для at-risk пользователей (upsert/extend grants до subscription.access_end_at)
-
-### Проверка (read-only)
-
-4) `supabase/functions/telegram-process-access-queue/index.ts` — проверить, что обновляет/UPSERT end_at (если не обновляет — добавить отдельным PATCH внутри этого же спринта, см. ниже “PATCH-опция”).
+- 0 ✅ (TG linked active + in club + active sub + отсутствует актуальный grant) = 0
 
 ---
 
-## PATCH-лист (выполнить по порядку)
+## B) DO D — итог
 
-### PATCH 1 (P0) — `telegram-cron-sync`: убрать неверную проверку доступа
+| Criterion | Result |
 
-**Файл:** `supabase/functions/telegram-cron-sync/index.ts`
+|---|---|
 
-- Удалить локальную функцию `hasActiveAccess()` (которая НЕ смотрит `subscriptions_v2`).
+| 0 false kicks после деплоя | PASS ✅ |
 
-- Подключить shared-валидатор доступа (единый источник истины):
+| 0 truly_at_risk (валидные TG+club+sub без grant) | PASS ✅ |
 
-  - импортировать `hasValidAccessBatch` (или общий helper `hasValidAccess()` / `hasValidAccessBatch()` из `_shared/accessValidation.ts`).
+| Легитимный кик expired работает | PASS ✅ |
 
-- В обработке участников:
+| trig_subscription_grant_telegram fire on access_end_at change | PASS ✅ |
 
-  - собрать `user_id` пачкой,
+| telegram-grant-access обновляет end_at при renewal | PASS ✅ |
 
-  - вызвать `hasValidAccessBatch(supabase, userIds)` один раз,
+| telegram-cron-sync использует hasValidAccessBatch | PASS ✅ |
 
-  - решения (kick/keep) принимать ТОЛЬКО на основании batch-результата.
+| telegram-check-expired проверяет access перед kick | PASS ✅ |
 
-- STOP: если batch вернул `unknown/error` по пользователю — НЕ кикать, логировать `AUTO_GUARD_SKIP`.
-
-**DoD маркер:** при попытке автокика писать в `audit_logs`:
-
-- `action='telegram.autokick.attempt'`
-
-- `actor_type='system'`, `actor_user_id=NULL`, `actor_label='telegram-cron-sync'`
-
-- `meta`: `{ reason, access_valid, sub_status?, sub_access_end_at?, grant_end_at?, chat_id?, tg_user_id? }` (без PII)
+=> TG-P0.9.2: CLOSED ✅
 
 ---
 
-### PATCH 2 (P0) — `telegram-check-expired`: guard перед киком violators
+## C) NEXT PATCHES (добавить в backlog, не блокируют закрытие)
 
-**Файл:** `supabase/functions/telegram-check-expired/index.ts`
+### PATCH TG-P0.9.3 (P2) — Cleanup “active but expired grants” (шум в аналитике)
 
-- В ветке, где происходит кик “violators” по `access_status`:
+**Goal:** убрать артефакты, чтобы SQL-gates не ловили старые активные гранты.
 
-  - ДО любого кика вызвать shared-доступ-валидатор (тот же, что в PATCH 1), либо сделать batch-проверку по кандидатам.
+- UPDATE telegram_access_grants
 
-  - Если `hasValidAccess=true` (активная подписка / entitlement / manual_access) — НЕ кикать:
+  - SET status='expired', updated_at=now()
 
-    - привести состояние в норму: `telegram_access.access_status='ok'` (если было не ok),
+  - WHERE status='active' AND end_at IS NOT NULL AND end_at < now()
 
-    - при необходимости инициировать regrant/queue (см. PATCH 4).
+- Audit: action='telegram.grants.cleanup_expired_active', actor_type='system', actor_label='tg-grants-cleanup'
 
-  - Если `hasValidAccess=false` — кикать как раньше.
+**DoD:**
 
-**DoD маркер:** при пропуске кика — `audit_logs`:
+- count(*) WHERE status='active' AND end_at < now() = 0
 
-- `action='telegram.autokick.guard_skip'`
+### PATCH TG-P0.9.4 (P3) — Club mapping mismatch clarification / fix
 
-- `actor_type='system'`, `actor_label='telegram-check-expired'`
+**Problem:** продукт(ы) подписки ведут гранты в fa547c41, а участники состоят в 4f8f9d8f.
 
-- `meta`: `{ reason:'valid_access_detected', ... }`
+**Options (choose 1):**
 
----
+1) Добавить второй mapping product_id → club_id=4f8f9d8f (если действительно должны быть в “Бухгалтерия”)
 
-### PATCH 3 (P0) — DB trigger: выдавать/обновлять TG grant при renewal
+2) Оставить как есть, но:
 
-**Миграция:** `supabase/migrations/XXXXXXXXXXXX_tg_grants_on_renewal.sql`
+   - Обновить UI/админ-отчёты и SQL-gates, чтобы проверять grants по фактическому club_id из product_club_mappings
 
-Изменить функцию/триггер `trg_subscription_grant_telegram`:
+   - Явно документировать что “Бухгалтерия” и “Gorbova Club” — разные клубы
 
-- На UPDATE НЕ выходить просто потому что `OLD.status in ('active','trial')`.
+**DoD:**
 
-- Логика:
+- agreed rule for mapping + SQL gate updated accordingly (no false “at-risk”)
 
-  - если UPDATE и `NEW.access_end_at` НЕ изменился — `RETURN NEW;`
+### PATCH TG-P0.9.5 (P1) — Renewal monitoring (операционный гейт)
 
-  - если `NEW.access_end_at` изменился (renewal/extend) — продолжать и ставить grant/queue как при первичной активации.
+**On next successful renewal:**
 
-- Обязательно: защита от дублей — upsert/merge грантов (см. PATCH 4).
+- s.access_end_at увеличился
 
-**DoD:** SQL-пруф, что после UPDATE access_end_at:
+- trigger → telegram_access_queue (если tg linked + mapping)
 
-- появляется новая очередь/грант ИЛИ обновляется end_at существующего гранта до нового access_end_at,
+- grant-access обновил end_at (или создал новый)
 
-- и появляется `audit_logs` запись `actor_type='system'` с label `tg_trigger_renewal` (если триггер уже пишет audit — иначе добавить запись в рамках миграции через безопасную функцию/логирование механизма очереди).
+- 0 autokick.attempt для этого user_id в течение 24h после renewal
 
----
+SQL шаблон:
 
-### PATCH 4 (P0) — Data repair: синхронизировать grants.end_at с subscriptions.access_end_at
+SELECT s.access_end_at, g.end_at, g.source, g.updated_at
 
-**Миграция (в том же файле):** one-time repair, только для реально “at-risk” (grant_end_at < sub.access_end_at или grant отсутствует)
+FROM subscriptions_v2 s
 
-1) Найти пользователей:
+LEFT JOIN telegram_access_grants g ON g.user_id=s.user_id AND g.status='active'
 
-- `subscriptions_v2.status='active'` AND `access_end_at > now()`
+WHERE s.user_id = '<USER_ID>'
 
-- `telegram_access_grants` (source='auto_subscription', status='active') отсутствует ИЛИ `end_at < subscriptions_v2.access_end_at`
+ORDER BY g.updated_at DESC
 
-2) Исправить:
-
-- UPSERT `telegram_access_grants` (source='auto_subscription', status='active'):
-
-  - `end_at = subscriptions_v2.access_end_at`
-
-  - `start_at = COALESCE(existing.start_at, now())` (или логика системы)
-
-- Если система использует очередь: вместо прямого апдейта — вставить записи в очередь обработки доступа так, чтобы `telegram-process-access-queue` корректно обновил grant.
-
-3) STOP-guard:
-
-- лимит батча (например, 200 за запуск),
-
-- логировать количество затронутых строк,
-
-- dry-run режим (если миграцией нельзя — сделать отдельной edge admin функции; но предпочтительно миграцией с чёткими WHERE).
-
-**Исключения (НЕ ТРОГАТЬ):**
-
-- сотрудники (не менять access/grants):
-
-  - [a.bruylo@ajoure.by](mailto:a.bruylo@ajoure.by)
-
-  - [nrokhmistrov@gmail.com](mailto:nrokhmistrov@gmail.com)
-
-  - [ceo@ajoure.by](mailto:ceo@ajoure.by)
-
-  - [irenessa@yandex.ru](mailto:irenessa@yandex.ru)
-
-**DoD маркер:** `audit_logs`:
-
-- `action='telegram.grants.repair'`
-
-- `actor_type='system'`, `actor_label='tg-grants-repair'`
-
-- `meta`: `{ updated, inserted, batch_limit, dry_run:false }`
+LIMIT 10;
 
 ---
 
-### PATCH-опция 5 (P1, только если нужно) — `telegram-process-access-queue`: гарантировать UPSERT end_at
+## D) NOTE (важное правило)
 
-**Файл:** `supabase/functions/telegram-process-access-queue/index.ts`
+Если появится хоть 1 кейс:
 
-- Если сейчас при наличии активного гранта функция НЕ обновляет end_at:
+- autokick.attempt для user_id с s.access_end_at > now()
 
-  - добавить UPSERT по `(user_id, source, status)` или по ключу системы,
-
-  - чтобы `end_at` всегда становился `max(current_end_at, new_end_at)`.
-
-**DoD:** unit-ish проверка через SQL до/после и audit_logs.
-
----
-
-## Проверки и STOP-gates (обязательные)
-
-### Gate A — “autokick не по подписке”
-
-SQL (пример): выбрать последние AUTOKICK и показать, что перед киком валидатор доступа = false.
-
-- В `audit_logs` должны быть пары:
-
-  - `telegram.autokick.attempt` (или соответствующее событие)
-
-  - и meta содержит `access_valid=false` перед реальным kick.
-
-### Gate B — “renewal обновляет grants”
-
-SQL (прямой пруф):
-
-- до: показать user_id где `grant_end_at < sub.access_end_at`
-
-- после миграции: таких строк = 0
-
-### Gate C — “не кикаем при валидном доступе”
-
-- Запустить `telegram-cron-synctelegram-check-expired` (dry-run, если есть) и доказать, что пользователи с валидным доступом попадают в guard_skip, а не в kick.
-
----
-
-## UI Smoke (обязательный факт, 3 сценария)
-
-1) Пользователь с продлённой подпиской НЕ теряет Telegram доступ (после даты прежнего grant_end_at).
-
-2) Ручной прогон cron-sync НЕ кикает валидных (есть лог/audit).
-
-3) Если у пользователя реально нет валидного доступа — кик происходит штатно.
-
-Скрины из админки (учётка: [7500084@gmail.com](mailto:7500084@gmail.com)):
-
-- карточка пользователя/доступа Telegram
-
-- лог/audit по событию guard_skip или autokick.attempt
-
-- состояние grants/end_at
-
----
-
-## Финальный DoD (закрытие патча)
-
-1) **0** случаев, где `subscriptions_v2.access_end_at > now()` и при этом `auto_subscription grant_end_at < access_end_at` (SQL-пруф).  
-
-2) `telegram-cron-sync` больше НЕ использует локальную access-проверку без subscriptions.  
-
-3) `telegram-check-expired` НЕ кикает “violators” без проверки валидного доступа.  
-
-4) Renewal (UPDATE access_end_at) приводит к обновлению/созданию grant (SQL-пруф).  
-
-5) `audit_logs` содержит реальные записи с `actor_type='system'`, `actor_user_id=NULL`, `actor_label` заполнен — для repair и для guard/kick попыток.  
-
-6) Diff-summary: список изменённых файлов + кратко что изменено.
-
----
+→ немедленно reopen TG-P0.9.2 как REGRESSION (P0).
