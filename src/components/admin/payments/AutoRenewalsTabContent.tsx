@@ -56,7 +56,7 @@ const STAFF_EMAILS = [
   'irenessa@yandex.ru',
 ];
 
-type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry';
+type FilterType = 'all' | 'due_today' | 'due_week' | 'overdue' | 'no_card' | 'no_token' | 'pm_inactive' | 'max_attempts' | 'no_charge_date' | 'in_grace' | 'expired_reentry' | 'bepaid';
 
 const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'all', label: 'Все' },
@@ -70,6 +70,7 @@ const FILTER_OPTIONS: { value: FilterType; label: string; icon?: any }[] = [
   { value: 'no_token', label: 'Без токена' },
   { value: 'pm_inactive', label: 'PM неактивен' },
   { value: 'max_attempts', label: 'Макс. попыток' },
+  { value: 'bepaid', label: 'BePaid подписки', icon: CreditCard },
 ];
 
 // Relevant event types for notification indicators
@@ -679,6 +680,10 @@ export function AutoRenewalsTabContent() {
       case 'expired_reentry':
         result = result.filter(r => r.grace_period_status === 'expired_reentry');
         break;
+      case 'bepaid':
+        // AR-P0.9.7: filter only provider_managed (BePaid) subscriptions
+        result = result.filter(r => r.billing_type === 'provider_managed');
+        break;
     }
     
     // Apply search
@@ -741,12 +746,23 @@ export function AutoRenewalsTabContent() {
     const sumAmount = (list: AutoRenewal[]) => 
       list.reduce((sum, r) => sum + getChargeAmount(r).amount, 0);
     
+    // AR-P0.9.7: MIT/BePaid split
+    const bepaidTotal = renewals.filter(r => r.billing_type === 'provider_managed').length;
+    const mitTotal = renewals.length - bepaidTotal;
+    const mitDueToday = dueTodayList.filter(r => r.billing_type !== 'provider_managed').length;
+    const bepaidDueToday = dueTodayList.filter(r => r.billing_type === 'provider_managed').length;
+
     return {
       total: { count: renewals.length, sum: sumAmount(renewals) },
       dueToday: { count: dueTodayList.length, sum: sumAmount(dueTodayList) },
       overdue: { count: overdueList.length, sum: sumAmount(overdueList) },
       noCard: { count: noCardList.length, sum: sumAmount(noCardList) },
-      noChargeDate: { count: noChargeDateList.length, sum: 0 }, // No sum for NULL dates
+      noChargeDate: { count: noChargeDateList.length, sum: 0 },
+      // AR-P0.9.7: split counts
+      bepaidTotal,
+      mitTotal,
+      mitDueToday,
+      bepaidDueToday,
     };
   }, [renewals]);
 
@@ -1125,6 +1141,11 @@ export function AutoRenewalsTabContent() {
               <div className="text-sm font-medium mt-1">
                 {stats.total.sum.toFixed(2)} BYN
               </div>
+              {stats.bepaidTotal > 0 && (
+                <div className="text-[10px] text-muted-foreground mt-0.5">
+                  MIT: {stats.mitTotal} · BePaid: {stats.bepaidTotal}
+                </div>
+              )}
             </Card>
             <Card 
               className={cn(
@@ -1140,6 +1161,11 @@ export function AutoRenewalsTabContent() {
               <div className="text-sm font-medium text-blue-600 mt-1">
                 {stats.dueToday.sum.toFixed(2)} BYN
               </div>
+              {(stats.mitDueToday > 0 || stats.bepaidDueToday > 0) && (
+                <div className="text-[10px] text-muted-foreground mt-0.5">
+                  MIT: {stats.mitDueToday} · BePaid: {stats.bepaidDueToday}
+                </div>
+              )}
             </Card>
             <Card 
               className={cn(
