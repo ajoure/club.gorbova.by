@@ -264,6 +264,8 @@ interface AutoRenewal {
   grace_period_ends_at: string | null;
   // PATCH-7: Billing type (provider-managed subscriptions)
   billing_type: 'mit' | 'provider_managed';
+  // PATCH 3.1: BePaid flag from provider_subscriptions (source of truth)
+  is_bepaid: boolean;
 }
 
 // Helper to get charge amount with priority (PATCH-3: Trial handling, PATCH-6: Staff/comped)
@@ -447,16 +449,36 @@ export function AutoRenewalsTabContent() {
       
       if (error) throw error;
 
-      // Fetch profiles separately
-      const userIds = [...new Set((data || []).map(s => s.user_id))];
+      // PATCH 3.1: Fetch active provider_subscriptions to determine BePaid status (source of truth)
+      const { data: providerSubs } = await supabase
+        .from('provider_subscriptions')
+        .select('id, subscription_v2_id, provider_subscription_id, user_id, profile_id, amount_cents, currency, next_charge_at, card_brand, card_last4, raw_data, state')
+        .eq('state', 'active');
+
+      // Build lookup: subscription_v2_id → provider_subscription record
+      const linkedPsMap = new Map<string, any>();
+      const orphanPs: any[] = [];
+      for (const ps of (providerSubs || [])) {
+        if (ps.subscription_v2_id) {
+          linkedPsMap.set(ps.subscription_v2_id, ps);
+        } else {
+          orphanPs.push(ps);
+        }
+      }
+
+      // Fetch profiles separately (include orphan PS user_ids)
+      const orphanUserIds = orphanPs.map(ps => ps.user_id).filter(Boolean);
+      const allUserIds = [...new Set([...(data || []).map(s => s.user_id), ...orphanUserIds])];
       const { data: profiles } = await supabase
         .from('profiles')
         .select('id, user_id, full_name, email')
-        .in('user_id', userIds);
+        .in('user_id', allUserIds);
 
       const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
+      // PATCH 3.1: Also build profile map by profile_id for orphans
+      const profileByIdMap = new Map(profiles?.map(p => [p.id, p]) || []);
 
-      return (data || []).map((sub): AutoRenewal => {
+      const mappedSubs = (data || []).map((sub): AutoRenewal => {
         const tariff = sub.tariffs as any;
         const product = tariff?.products_v2 as any;
         const pm = sub.payment_methods as any;
@@ -529,11 +551,16 @@ export function AutoRenewalsTabContent() {
           grace_period_ends_at: (sub as any).grace_period_ends_at || null,
           // PATCH-7: Billing type
           billing_type: (sub as any).billing_type || 'mit',
+          // PATCH 3.1: BePaid flag — ONLY from provider_subscriptions active records (source of truth)
+          is_bepaid: linkedPsMap.has(sub.id),
         };
+      });
+
       // PATCH-2: Filter out non-subscription (one-time) products
-      }).filter(sub => sub.is_subscription)
+      const filteredSubs = mappedSubs.filter(sub => sub.is_subscription);
+
       // PATCH P0.9.6: Dedup by user_id+product_name — keep only the "best" (latest access_end_at, NULL=∞)
-      .reduce((acc: AutoRenewal[], sub) => {
+      const dedupedSubs = filteredSubs.reduce((acc: AutoRenewal[], sub) => {
         const key = `${sub.user_id}::${sub.product_name || sub.tariff_name || 'unknown'}`;
         const existing = acc.find(s => `${s.user_id}::${s.product_name || s.tariff_name || 'unknown'}` === key);
         if (!existing) {
@@ -549,6 +576,50 @@ export function AutoRenewalsTabContent() {
         }
         return acc;
       }, []);
+
+      // PATCH 3.1: Append orphan provider_subscriptions (active, not linked to subscriptions_v2)
+      for (const ps of orphanPs) {
+        const profile = ps.user_id ? profileMap.get(ps.user_id) : (ps.profile_id ? profileByIdMap.get(ps.profile_id) : null);
+        const planTitle = ps.raw_data?.plan?.title || ps.raw_data?.plan?.name || null;
+        const amountByn = (ps.amount_cents || 0) / 100;
+        
+        dedupedSubs.push({
+          id: ps.id, // use provider_subscriptions UUID
+          user_id: ps.user_id || '',
+          order_id: null,
+          next_charge_at: ps.next_charge_at || null,
+          access_end_at: ps.next_charge_at || '',
+          status: 'active',
+          charge_attempts: 0,
+          payment_method_id: null,
+          has_payment_token: false,
+          meta: { provider_subscription_id: ps.provider_subscription_id },
+          product_name: planTitle,
+          tariff_name: planTitle,
+          contact_name: profile?.full_name || null,
+          contact_email: profile?.email || null,
+          profile_id: profile?.id || ps.profile_id || null,
+          pm_status: null,
+          pm_last4: ps.card_last4 || null,
+          pm_brand: ps.card_brand || null,
+          order_final_price: amountByn,
+          order_currency: ps.currency || 'BYN',
+          is_subscription: true,
+          is_trial: false,
+          tariff_original_price: amountByn,
+          tariff_trial_price: null,
+          is_staff: false,
+          is_comped: false,
+          pricing_source: 'order',
+          grace_period_status: null,
+          grace_period_started_at: null,
+          grace_period_ends_at: null,
+          billing_type: 'provider_managed',
+          is_bepaid: true,
+        });
+      }
+
+      return dedupedSubs;
     },
     refetchInterval: 60000,
   });
@@ -681,8 +752,8 @@ export function AutoRenewalsTabContent() {
         result = result.filter(r => r.grace_period_status === 'expired_reentry');
         break;
       case 'bepaid':
-        // AR-P0.9.7: filter only provider_managed (BePaid) subscriptions
-        result = result.filter(r => r.billing_type === 'provider_managed');
+        // PATCH 3.1: filter by is_bepaid (source of truth from provider_subscriptions)
+        result = result.filter(r => r.is_bepaid);
         break;
     }
     
@@ -737,8 +808,8 @@ export function AutoRenewalsTabContent() {
     
     const dueTodayList = eligibleForMetrics.filter(r => isTodayMinsk(new Date(r.next_charge_at!)));
     const overdueList = eligibleForMetrics.filter(r => isPastMinsk(new Date(r.next_charge_at!)));
-    // AR-P0.9.6: exclude provider_managed from "no card" stat
-    const noCardList = renewals.filter(r => !r.payment_method_id && r.billing_type !== 'provider_managed');
+    // AR-P0.9.6: exclude BePaid from "no card" stat (PATCH 3.1: use is_bepaid)
+    const noCardList = renewals.filter(r => !r.payment_method_id && !r.is_bepaid);
     
     // PATCH-6: Count subscriptions with NULL next_charge_at
     const noChargeDateList = renewals.filter(r => !r.next_charge_at);
@@ -746,11 +817,11 @@ export function AutoRenewalsTabContent() {
     const sumAmount = (list: AutoRenewal[]) => 
       list.reduce((sum, r) => sum + getChargeAmount(r).amount, 0);
     
-    // AR-P0.9.7: MIT/BePaid split
-    const bepaidTotal = renewals.filter(r => r.billing_type === 'provider_managed').length;
+    // PATCH 3.1: MIT/BePaid split using is_bepaid (source of truth)
+    const bepaidTotal = renewals.filter(r => r.is_bepaid).length;
     const mitTotal = renewals.length - bepaidTotal;
-    const mitDueToday = dueTodayList.filter(r => r.billing_type !== 'provider_managed').length;
-    const bepaidDueToday = dueTodayList.filter(r => r.billing_type === 'provider_managed').length;
+    const mitDueToday = dueTodayList.filter(r => !r.is_bepaid).length;
+    const bepaidDueToday = dueTodayList.filter(r => r.is_bepaid).length;
 
     return {
       total: { count: renewals.length, sum: sumAmount(renewals) },
