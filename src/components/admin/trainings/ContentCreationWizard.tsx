@@ -535,46 +535,45 @@ export function ContentCreationWizard({
         }
       }
 
-      // Create questions - FOR ALL SECTIONS
+      // Create questions — only for KB flow (kb_questions table)
       console.log("[kb-wizard] flow:", isKbFlow ? "kb" : "lesson");
-      const allQuestions = isKbFlow 
-        ? wizardData.kbLesson.questions 
-        : (wizardData.lesson.questions || []);
       
-      console.log("[kb-wizard] questions raw count:", allQuestions.length);
-      
-      if (allQuestions.length > 0) {
-        const questionsToInsert = allQuestions
-          .filter(q => q.title.trim()) // Only insert questions with titles
-          .map((q, idx) => ({
-            lesson_id: newLesson.id,
-            episode_number: isKbFlow ? wizardData.kbLesson.episode_number : 0,
-            question_number: idx + 1,
-            title: q.title.trim(),
-            full_question: q.full_question?.trim() || null,
-            timecode_seconds: q.timecode ? parseTimecode(q.timecode) : null,
-            kinescope_url: kinescopeUrl || null,
-            answer_date: answerDate 
-              ? new Date(answerDate).toISOString().split("T")[0]
-              : new Date().toISOString().split("T")[0],
-          }));
-
-        console.log("[kb-wizard] questions filtered count:", questionsToInsert.length);
+      if (isKbFlow) {
+        const allQuestions = wizardData.kbLesson.questions;
+        console.log("[kb-wizard] questions raw count:", allQuestions.length);
         
-        if (questionsToInsert.length > 0) {
-          const { error: qError } = await supabase
-            .from("kb_questions")
-            .insert(questionsToInsert);
+        if (allQuestions.length > 0) {
+          const questionsToInsert = allQuestions
+            .filter(q => q.title.trim())
+            .map((q, idx) => ({
+              lesson_id: newLesson.id,
+              episode_number: wizardData.kbLesson.episode_number,
+              question_number: idx + 1,
+              title: q.title.trim(),
+              full_question: q.full_question?.trim() || null,
+              timecode_seconds: q.timecode ? parseTimecode(q.timecode) : null,
+              kinescope_url: kinescopeUrl || null,
+              answer_date: answerDate 
+                ? new Date(answerDate).toISOString().split("T")[0]
+                : new Date().toISOString().split("T")[0],
+            }));
+
+          console.log("[kb-wizard] questions filtered count:", questionsToInsert.length);
           
-          if (qError) {
-            console.error("[kb-wizard] kb_questions insert failed:", qError);
-            toast.error("Урок создан, но не удалось добавить вопросы");
+          if (questionsToInsert.length > 0) {
+            const { error: qError } = await supabase
+              .from("kb_questions")
+              .insert(questionsToInsert);
+            
+            if (qError) {
+              console.error("[kb-wizard] kb_questions insert failed:", qError);
+              toast.error("Урок создан, но не удалось добавить вопросы");
+            } else {
+              console.log("[kb-wizard] kb_questions inserted OK:", questionsToInsert.length);
+            }
           } else {
-            console.log("[kb-wizard] kb_questions inserted OK:", questionsToInsert.length);
+            console.log("[kb-wizard] all question rows empty after filter, skipping insert");
           }
-        } else {
-          // Only log, don't toast — empty rows may be UI defaults, not user input
-          console.log("[kb-wizard] all question rows empty after filter, skipping insert");
         }
       }
 
