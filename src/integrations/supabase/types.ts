@@ -9814,6 +9814,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      has_role_v2: {
+        Args: { _role_code: string; _user_id: string }
+        Returns: boolean
+      }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       is_superadmin: { Args: { check_user_id: string }; Returns: boolean }
       normalize_card_brand: { Args: { _brand: string }; Returns: string }
