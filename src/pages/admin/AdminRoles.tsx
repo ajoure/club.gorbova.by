@@ -115,10 +115,35 @@ export default function AdminRoles() {
   // Create role with template
   const [createRoleDialog, setCreateRoleDialog] = useState(false);
   const [templateSelectorOpen, setTemplateSelectorOpen] = useState(false);
-  const [newRoleCode, setNewRoleCode] = useState("");
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleDescription, setNewRoleDescription] = useState("");
   const [newRolePermissions, setNewRolePermissions] = useState<string[]>([]);
+
+  // Auto-generate role code from name
+  const RESERVED_CODES = ["super_admin", "admin", "user", "support", "editor", "admin_gost", "news_editor", "staff"];
+  const TRANSLIT_SIMPLE: Record<string, string> = {
+    а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'yo',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',м:'m',
+    н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'kh',ц:'ts',ч:'ch',ш:'sh',щ:'shch',
+    ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya',
+  };
+  const generateRoleCode = (name: string): string => {
+    const slug = name.toLowerCase()
+      .split('')
+      .map(ch => TRANSLIT_SIMPLE[ch] ?? ch)
+      .join('')
+      .replace(/\s+/g, '_')
+      .replace(/[^a-z0-9_]/g, '')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '');
+    if (!slug) return '';
+    const existingCodes = roles.map(r => r.code);
+    const allCodes = [...RESERVED_CODES, ...existingCodes];
+    if (!allCodes.includes(slug)) return slug;
+    let i = 2;
+    while (allCodes.includes(`${slug}_${i}`)) i++;
+    return `${slug}_${i}`;
+  };
+  const generatedCode = useMemo(() => generateRoleCode(newRoleName), [newRoleName, roles]);
 
   // Delete role dialog
   const [deleteRoleDialog, setDeleteRoleDialog] = useState<{
@@ -252,22 +277,19 @@ export default function AdminRoles() {
   };
 
   const handleCreateRole = async () => {
-    if (newRoleCode && newRoleName) {
-      const success = await createRole(newRoleCode, newRoleName, newRoleDescription);
-      if (success && newRolePermissions.length > 0) {
-        // Find the newly created role and set permissions
-        await refetch();
-        const newRole = roles.find(r => r.code === newRoleCode);
-        if (newRole) {
-          await setRolePermissions(newRole.id, newRolePermissions);
-        }
+    if (!newRoleName.trim() || !generatedCode) return;
+    const success = await createRole(generatedCode, newRoleName, newRoleDescription);
+    if (success && newRolePermissions.length > 0) {
+      await refetch();
+      const newRole = roles.find(r => r.code === generatedCode);
+      if (newRole) {
+        await setRolePermissions(newRole.id, newRolePermissions);
       }
-      setCreateRoleDialog(false);
-      setNewRoleCode("");
-      setNewRoleName("");
-      setNewRoleDescription("");
-      setNewRolePermissions([]);
     }
+    setCreateRoleDialog(false);
+    setNewRoleName("");
+    setNewRoleDescription("");
+    setNewRolePermissions([]);
   };
 
   const handleTemplateSelect = (permissionCodes: string[]) => {
@@ -752,53 +774,56 @@ export default function AdminRoles() {
 
       {/* Create Role Dialog */}
       <Dialog open={createRoleDialog} onOpenChange={setCreateRoleDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Создать новую роль</DialogTitle>
+        <DialogContent className="max-w-md overflow-hidden rounded-2xl border-border/30 backdrop-blur-xl bg-card/80">
+          <DialogHeader className="shrink-0 pb-4 border-b border-border/20">
+            <DialogTitle className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Plus className="h-4 w-4 text-primary" />
+              </div>
+              Создать новую роль
+            </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="role-code">Код роли</Label>
-              <Input
-                id="role-code"
-                placeholder="например: moderator"
-                value={newRoleCode}
-                onChange={(e) => setNewRoleCode(e.target.value.toLowerCase().replace(/\s/g, "_"))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="role-name">Название</Label>
+              <Label htmlFor="role-name" className="text-sm font-medium">Название</Label>
               <Input
                 id="role-name"
                 placeholder="например: Модератор"
                 value={newRoleName}
                 onChange={(e) => setNewRoleName(e.target.value)}
+                className="rounded-xl border-border/30 bg-white/5"
               />
+              {newRoleName.trim() && generatedCode && (
+                <p className="text-xs text-muted-foreground/60 pl-1">
+                  Код: <span className="font-mono text-muted-foreground/80">{generatedCode}</span>
+                </p>
+              )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="role-description">Описание (опционально)</Label>
+              <Label htmlFor="role-description" className="text-sm font-medium">Описание <span className="text-muted-foreground/50 font-normal">(опционально)</span></Label>
               <Input
                 id="role-description"
-                placeholder="Описание роли"
+                placeholder="Краткое описание роли"
                 value={newRoleDescription}
                 onChange={(e) => setNewRoleDescription(e.target.value)}
+                className="rounded-xl border-border/30 bg-white/5"
               />
             </div>
             {newRolePermissions.length > 0 && (
-              <div className="p-3 rounded-lg bg-muted">
-                <p className="text-sm font-medium mb-1">Выбранные права из шаблона:</p>
-                <p className="text-sm text-muted-foreground">
-                  {newRolePermissions.length} прав будет добавлено после создания роли
+              <div className="p-3 rounded-xl border border-border/20 bg-white/[0.03]">
+                <p className="text-sm font-medium mb-0.5">Права из шаблона</p>
+                <p className="text-xs text-muted-foreground">
+                  {newRolePermissions.length} прав будет добавлено после создания
                 </p>
               </div>
             )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
+          <DialogFooter className="shrink-0 pt-4 border-t border-border/20 gap-2">
+            <Button variant="outline" className="rounded-xl" onClick={() => {
               setCreateRoleDialog(false);
               setNewRolePermissions([]);
             }}>Отмена</Button>
-            <Button onClick={handleCreateRole} disabled={!newRoleCode || !newRoleName}>Создать</Button>
+            <Button onClick={handleCreateRole} disabled={!newRoleName.trim() || !generatedCode} className="rounded-xl">Создать</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
