@@ -536,14 +536,15 @@ export function ContentCreationWizard({
       }
 
       // Create questions - FOR ALL SECTIONS
-      const questions = isKbFlow 
+      console.log("[kb-wizard] flow:", isKbFlow ? "kb" : "lesson");
+      const allQuestions = isKbFlow 
         ? wizardData.kbLesson.questions 
         : (wizardData.lesson.questions || []);
       
-      console.log("[kb-wizard] questions raw count:", questions.length);
+      console.log("[kb-wizard] questions raw count:", allQuestions.length);
       
-      if (questions.length > 0) {
-        const questionsToInsert = questions
+      if (allQuestions.length > 0) {
+        const questionsToInsert = allQuestions
           .filter(q => q.title.trim()) // Only insert questions with titles
           .map((q, idx) => ({
             lesson_id: newLesson.id,
@@ -572,7 +573,8 @@ export function ContentCreationWizard({
             console.log("[kb-wizard] kb_questions inserted OK:", questionsToInsert.length);
           }
         } else {
-          toast.info("Вопросы не сохранены: все строки оказались пустыми");
+          // Only log, don't toast — empty rows may be UI defaults, not user input
+          console.log("[kb-wizard] all question rows empty after filter, skipping insert");
         }
       }
 
