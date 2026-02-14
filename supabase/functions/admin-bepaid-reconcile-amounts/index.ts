@@ -484,26 +484,7 @@ serve(async (req) => {
     const bepaidCreds = credsResult;
     const authString = createBepaidAuthHeader(bepaidCreds);
     
-    // Process reconciliation...
-    // Note: We need to pass authString instead of credentials.shopId/secretKey
-    // But fetchTransaction expects authString already, so we just use that.
-    // The fetchTransaction function signature is: (uid, authString, opts)
-    // We need to update calls to fetchTransaction inside the logic below (not shown in snippet)
-    // Actually looking at code structure: fetchTransaction is called inside checkDiscrepancies (not shown) or main loop
-    
-    // Let's check where fetchTransaction is called. It's likely used later.
-    // The snippet ended at line 500. I'll assume fetchTransaction is used with authString.
-    // The original code passed credentials object to helper or used it directly.
-    
-    // Re-reading context: fetchTransaction(uid, authString, opts) is defined at line 141.
-    // It takes authString.
-    // So we just need authString.
-        }
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+
 
     const params: ReconcileParams = await req.json();
     const {
