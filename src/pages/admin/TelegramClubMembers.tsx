@@ -749,9 +749,13 @@ export default function TelegramClubMembers() {
 
   // Normalize error message for UI display
   const formatClubError = (err: unknown): { title: string; message: string } => {
+    const e = err && typeof err === "object" ? (err as Record<string, any>) : {};
     const raw =
-      (err && typeof err === 'object' && 'message' in err && typeof (err as any).message === 'string' && (err as any).message) ||
-      '';
+      (typeof e.message === "string" && e.message) ||
+      (typeof e.error_description === "string" && e.error_description) ||
+      (typeof e.details === "string" && e.details) ||
+      (typeof e.hint === "string" && e.hint) ||
+      "";
     const text = raw.toLowerCase();
 
     if (text.includes('forbidden') || text.includes('42501') || text.includes('unauthorized') || text.includes('jwt') || text.includes('not authorized')) {
@@ -762,6 +766,11 @@ export default function TelegramClubMembers() {
     }
     return { title: 'Ошибка загрузки', message: raw || 'Неизвестная ошибка.' };
   };
+
+  const errorInfo =
+    isMembersError || isStatsError
+      ? formatClubError(isMembersError ? membersError : statsError)
+      : null;
 
   if (!club) {
     return (
@@ -883,27 +892,24 @@ export default function TelegramClubMembers() {
         </div>
 
         {/* Error Alert for members or stats */}
-        {(isMembersError || isStatsError) && (() => {
-          const errInfo = formatClubError(isMembersError ? membersError : statsError);
-          return (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>{errInfo.title}</AlertTitle>
-              <AlertDescription className="flex items-center justify-between gap-4">
-                <span>{errInfo.message}</span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => { refetchMembers(); refetchStats(); }}
-                  className="shrink-0"
-                >
-                  <RefreshCw className="h-3 w-3 mr-1" />
-                  Повторить
-                </Button>
-              </AlertDescription>
-            </Alert>
-          );
-        })()}
+        {errorInfo && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>{errorInfo.title}</AlertTitle>
+            <AlertDescription className="flex items-center justify-between gap-4">
+              <span className="min-w-0 break-words">{errorInfo.message}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { refetchMembers?.(); refetchStats?.(); }}
+                className="shrink-0"
+              >
+                <RefreshCw className="h-3 w-3 mr-1" />
+                Повторить
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Unknown counter badge + search indicator */}
         <div className="flex items-center gap-2 flex-wrap">
