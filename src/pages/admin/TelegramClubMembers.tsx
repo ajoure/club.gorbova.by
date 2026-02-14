@@ -140,11 +140,14 @@ export default function TelegramClubMembers() {
     return () => clearTimeout(timer);
   }, [search]);
   
-  const { data: members, isLoading, refetch } = useClubMembers(clubId || null, { 
+  const { data: members, isLoading, isError: isMembersError, error: membersError, refetch: refetchMembers } = useClubMembers(clubId || null, { 
     scope, 
     search: debouncedSearch 
   });
-  const { data: stats } = useClubMemberStats(clubId || null);
+  const { data: stats, isError: isStatsError, error: statsError, refetch: refetchStats } = useClubMemberStats(clubId || null);
+  
+  // Alias for backward compat (refetch used in many places)
+  const refetch = refetchMembers;
   const syncMembers = useSyncClubMembers();
   const kickViolators = useKickViolators();
   const grantAccess = useGrantTelegramAccess();
@@ -744,6 +747,22 @@ export default function TelegramClubMembers() {
     );
   };
 
+  // Normalize error message for UI display
+  const formatClubError = (err: unknown): { title: string; message: string } => {
+    const raw =
+      (err && typeof err === 'object' && 'message' in err && typeof (err as any).message === 'string' && (err as any).message) ||
+      '';
+    const text = raw.toLowerCase();
+
+    if (text.includes('forbidden') || text.includes('42501') || text.includes('unauthorized') || text.includes('jwt') || text.includes('not authorized')) {
+      return { title: 'Нет доступа', message: 'Запрос отклонён (401/403). Проверьте роль/права пользователя и доступ к RPC.' };
+    }
+    if (text.includes('network') || text.includes('failed to fetch') || text.includes('timeout') || text.includes('fetch')) {
+      return { title: 'Сетевая ошибка', message: 'Не удалось загрузить данные. Проверьте соединение и повторите.' };
+    }
+    return { title: 'Ошибка загрузки', message: raw || 'Неизвестная ошибка.' };
+  };
+
   if (!club) {
     return (
       <AdminLayout>
@@ -817,8 +836,8 @@ export default function TelegramClubMembers() {
               <CardDescription>DB Tracked</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-lg">В чате: <span className="font-bold">{stats?.in_chat ?? 0}</span></div>
-              <div className="text-lg">В канале: <span className="font-bold">{stats?.in_channel ?? 0}</span></div>
+              <div className="text-lg">В чате: <span className="font-bold">{isStatsError ? '—' : (stats?.in_chat ?? 0)}</span></div>
+              <div className="text-lg">В канале: <span className="font-bold">{isStatsError ? '—' : (stats?.in_channel ?? 0)}</span></div>
             </CardContent>
           </Card>
 
@@ -831,7 +850,7 @@ export default function TelegramClubMembers() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">{stats?.has_active_access ?? 0}</div>
+              <div className="text-2xl font-bold text-green-600">{isStatsError ? '—' : (stats?.has_active_access ?? 0)}</div>
             </CardContent>
           </Card>
 
@@ -844,7 +863,7 @@ export default function TelegramClubMembers() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-destructive">{stats?.violators ?? 0}</div>
+              <div className="text-2xl font-bold text-destructive">{isStatsError ? '—' : (stats?.violators ?? 0)}</div>
             </CardContent>
           </Card>
 
@@ -857,11 +876,34 @@ export default function TelegramClubMembers() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-yellow-600">{stats?.bought_not_joined ?? 0}</div>
+              <div className="text-2xl font-bold text-yellow-600">{isStatsError ? '—' : (stats?.bought_not_joined ?? 0)}</div>
               <p className="text-xs text-muted-foreground">с доступом</p>
             </CardContent>
           </Card>
         </div>
+
+        {/* Error Alert for members or stats */}
+        {(isMembersError || isStatsError) && (() => {
+          const errInfo = formatClubError(isMembersError ? membersError : statsError);
+          return (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>{errInfo.title}</AlertTitle>
+              <AlertDescription className="flex items-center justify-between gap-4">
+                <span>{errInfo.message}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { refetchMembers(); refetchStats(); }}
+                  className="shrink-0"
+                >
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                  Повторить
+                </Button>
+              </AlertDescription>
+            </Alert>
+          );
+        })()}
 
         {/* Unknown counter badge + search indicator */}
         <div className="flex items-center gap-2 flex-wrap">
