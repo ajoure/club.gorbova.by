@@ -520,7 +520,7 @@ export function ContentCreationWizard({
         : wizardData.lesson.kinescope_url;
       
       if (kinescopeUrl) {
-        await supabase.from("lesson_blocks").insert({
+        const { error: blockError } = await supabase.from("lesson_blocks").insert({
           lesson_id: newLesson.id,
           block_type: "video",
           content: {
@@ -529,12 +529,18 @@ export function ContentCreationWizard({
           },
           sort_order: 0,
         });
+        if (blockError) {
+          console.error("[kb-wizard] lesson_blocks insert failed:", blockError);
+          toast.error("Не удалось создать видео-блок");
+        }
       }
 
       // Create questions - FOR ALL SECTIONS
       const questions = isKbFlow 
         ? wizardData.kbLesson.questions 
         : (wizardData.lesson.questions || []);
+      
+      console.log("[kb-wizard] questions raw count:", questions.length);
       
       if (questions.length > 0) {
         const questionsToInsert = questions
@@ -552,15 +558,21 @@ export function ContentCreationWizard({
               : new Date().toISOString().split("T")[0],
           }));
 
+        console.log("[kb-wizard] questions filtered count:", questionsToInsert.length);
+        
         if (questionsToInsert.length > 0) {
           const { error: qError } = await supabase
             .from("kb_questions")
             .insert(questionsToInsert);
           
           if (qError) {
-            console.error("Error inserting questions:", qError);
+            console.error("[kb-wizard] kb_questions insert failed:", qError);
             toast.error("Урок создан, но не удалось добавить вопросы");
+          } else {
+            console.log("[kb-wizard] kb_questions inserted OK:", questionsToInsert.length);
           }
+        } else {
+          toast.info("Вопросы не сохранены: все строки оказались пустыми");
         }
       }
 
@@ -740,7 +752,7 @@ export function ContentCreationWizard({
       queryClient.invalidateQueries({ queryKey: ["module-access"] });
       
       toast.success(isKbFlow ? "Выпуск создан" : "Урок создан");
-      setStep(4);
+      setStep(5);
     } catch (error: any) {
       console.error("Error creating standalone lesson:", error);
       toast.error(`Ошибка создания урока: ${error.message}`);
