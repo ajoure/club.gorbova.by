@@ -254,8 +254,11 @@ Deno.serve(async (req) => {
     const { data: { user }, error: userError } = await supabase.auth.getUser(token);
     if (userError || !user) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    const { data: hasAdminRole } = await supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' });
-    if (!hasAdminRole) return new Response(JSON.stringify({ ok: false, error: "Admin access required" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const [{ data: hasAdmin }, { data: hasSuperAdmin }] = await Promise.all([
+      supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' }),
+      supabase.rpc('has_role', { _user_id: user.id, _role: 'superadmin' }),
+    ]);
+    if (!hasAdmin && !hasSuperAdmin) return new Response(JSON.stringify({ ok: false, error: "Admin access required" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
     const body: ReconcileRequest = await req.json().catch(() => ({}));
     const from_date = body.from_date || '2026-01-01';

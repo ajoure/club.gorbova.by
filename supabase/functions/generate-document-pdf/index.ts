@@ -399,9 +399,12 @@ serve(async (req) => {
 
     // Check access
     const isOwner = order.user_id === user.id;
-    const { data: isAdmin } = await supabaseClient.rpc('has_role', { _user_id: user.id, _role: 'admin' });
+    const [{ data: isAdmin }, { data: isSuperAdmin }] = await Promise.all([
+      supabaseClient.rpc('has_role', { _user_id: user.id, _role: 'admin' }),
+      supabaseClient.rpc('has_role', { _user_id: user.id, _role: 'superadmin' }),
+    ]);
     
-    if (!isOwner && !isAdmin) {
+    if (!isOwner && !isAdmin && !isSuperAdmin) {
       throw new Error('Access denied');
     }
 

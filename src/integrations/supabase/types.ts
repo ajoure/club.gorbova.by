@@ -9803,6 +9803,13 @@ export type Database = {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
       }
+      has_any_role: {
+        Args: {
+          p_roles: Database["public"]["Enums"]["app_role"][]
+          p_user_id: string
+        }
+        Returns: boolean
+      }
       has_permission: {
         Args: { _permission_code: string; _user_id: string }
         Returns: boolean
