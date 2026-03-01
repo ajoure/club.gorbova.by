@@ -9,6 +9,9 @@
     
     <!-- Preload LCP image (header logo) for faster initial render -->
     <link rel="preload" href="/favicon.png" as="image" type="image/png" fetchpriority="high" />
+    
+    <!-- Prefetch public-product API to break critical request chain (HTML→JS→API) -->
+    <link rel="preload" href="https://hdjgkjceownmmnrqqtuz.supabase.co/functions/v1/public-product?domain=club.gorbova.by" as="fetch" crossorigin="anonymous" />
 
     <!-- iOS Safari preview guard moved to React (App.tsx) for HMR compatibility -->
 
