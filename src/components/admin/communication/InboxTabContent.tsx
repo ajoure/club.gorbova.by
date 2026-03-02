@@ -591,12 +591,12 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
       <div className="h-full min-h-0 flex flex-col overflow-hidden p-2">
 
         {channel === "support" ? (
-          <div className="flex-1 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
+          <div className="flex-1 min-h-0 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
             <SupportTabContent />
           </div>
         ) : channel === "email" ? (
-          <div className="flex-1 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
-            <EmailInboxView 
+          <div className="flex-1 min-h-0 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
+            <EmailInboxView
               onContactClick={(userId) => navigate(`/admin/contacts?contact=${userId}`)}
             />
           </div>
@@ -865,18 +865,18 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                               )}
                             </div>
                             <div className="flex-1 min-w-0 overflow-hidden">
-                              <div className="flex items-center justify-between gap-2 min-w-0">
-                                <span className="text-xs font-semibold truncate min-w-0">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="text-xs font-semibold truncate flex-1 min-w-0">
                                   {dialog.profile?.full_name 
                                     ? formatContactName({ full_name: dialog.profile.full_name }) 
                                     : dialog.profile?.email || "Неизвестный"}
                                 </span>
                                 {(dialog.last_bot_name || dialog.last_bot_username) && (
-                                  <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 shrink-0 font-normal text-muted-foreground border-border/40">
+                                  <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 shrink-0 font-normal text-muted-foreground border-border/40 whitespace-nowrap max-w-[100px] truncate">
                                     {displayBotLabel(dialog.last_bot_name, dialog.last_bot_username)}
                                   </Badge>
                                 )}
-                                <span className="text-[10px] text-muted-foreground shrink-0">
+                                <span className="text-[10px] text-muted-foreground shrink-0 whitespace-nowrap">
                                   {formatDistanceToNow(new Date(dialog.last_message_at), { addSuffix: false, locale: ru })}
                                 </span>
                               </div>
