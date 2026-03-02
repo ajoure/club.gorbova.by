@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, ChevronLeft, ChevronRight, FileText, Download, CheckCircle2, Lock, Play } from "lucide-react";
 import { useQuestLesson } from "@/hooks/useQuests";
 import { useState, useEffect } from "react";
+import DOMPurify from "dompurify";
 
 export default function QuestLesson() {
   const navigate = useNavigate();
@@ -37,8 +38,14 @@ export default function QuestLesson() {
         });
         
         const result = await response.json();
-        if (result.embed_code) {
-          setEmbedCode(result.embed_code);
+        const rawEmbed = result.embed_code || result.data?.iframe;
+        if (rawEmbed) {
+          const sanitized = DOMPurify.sanitize(rawEmbed, {
+            ALLOWED_TAGS: ['iframe'],
+            ALLOWED_ATTR: ['src', 'width', 'height', 'frameborder', 'allow', 'allowfullscreen', 'style', 'class'],
+            ALLOWED_URI_REGEXP: /^https:\/\/kinescope\.io\//,
+          });
+          setEmbedCode(sanitized);
         }
       } catch (err) {
         console.error("Failed to fetch embed code:", err);
