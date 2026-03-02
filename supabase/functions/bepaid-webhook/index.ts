@@ -63,6 +63,20 @@ interface GetCourseUserData {
   lastName?: string | null;
 }
 
+// Extract bePaid description from webhook payload (P-DESC.1)
+function extractBepaidDescription(body: any): string | null {
+  const planTitle = body?.plan?.title;
+  const planDesc = body?.plan?.description;
+  const txDesc =
+    body?.transaction?.description ||
+    body?.payment?.description ||
+    body?.last_transaction?.description ||
+    body?.transaction?.payment?.description ||
+    null;
+  const v = planTitle || planDesc || txDesc;
+  return typeof v === 'string' && v.trim().length ? v.trim() : null;
+}
+
 // Generate a consistent deal_number from orderNumber for GetCourse updates
 function generateDealNumber(orderNumber: string): number {
   let hash = 0;
@@ -1482,6 +1496,7 @@ Deno.serve(async (req) => {
             meta: {
               bepaid_subscription_id: subscriptionId,
               provider_managed: true,
+              bepaid_description: extractBepaidDescription(body),
             },
           });
         console.log('[WEBHOOK-SUBSCRIPTION] payments_v2 created');
@@ -2123,6 +2138,7 @@ Deno.serve(async (req) => {
           meta: {
             bepaid_subscription_id: subscriptionId,
             source: 'link_order_subscription_webhook',
+            bepaid_description: extractBepaidDescription(body),
           },
       };
 
@@ -2722,7 +2738,7 @@ Deno.serve(async (req) => {
         is_recurring: false,
         origin: 'payment_link',
         provider_response: { transaction_uid: transactionUid, status: transactionStatus, amount: transaction?.amount, currency: transaction?.currency, paid_at: transaction?.paid_at },
-        meta: { source: 'link_payment_webhook', tracking_id: rawTrackingId },
+        meta: { source: 'link_payment_webhook', tracking_id: rawTrackingId, bepaid_description: extractBepaidDescription(body) },
         receipt_url: transaction?.receipt_url || null,
       };
 
@@ -4232,6 +4248,7 @@ ${userName}, к сожалению, не удалось провести опл�
               customer_phone: customerPhone,
               receipt: receiptText,
               extracted_sub_uid: extractedSubUid,
+              bepaid_description: receiptText || extractBepaidDescription(body),
             },
           };
 
