@@ -992,7 +992,7 @@ export function ContactTelegramChat({
         key={msg.id}
         className={`flex ${msg.direction === "outgoing" ? "justify-end" : "justify-start"} group`}
       >
-        <div className="flex items-start gap-1 min-w-0 max-w-full">
+        <div className="flex items-start gap-1 min-w-0 max-w-[85%]">
           {msg.direction === "outgoing" && (canEdit || canDelete) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -1032,10 +1032,10 @@ export function ContactTelegramChat({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          <div className="flex flex-col">
+          <div className="flex flex-col w-full min-w-0">
             <div className="relative">
               <div
-                className={`max-w-[85%] rounded-lg p-3 break-words overflow-hidden ${
+                className={`rounded-lg p-3 break-words overflow-hidden ${
                   msg.direction === "outgoing"
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted"
@@ -1196,7 +1196,7 @@ export function ContactTelegramChat({
         )}
 
         {/* Messages + Events - flex-1 with min-h-0 for proper scrolling */}
-        <ScrollArea className="flex-1 min-h-0 py-3" ref={scrollRef}>
+        <ScrollArea className="flex-1 min-h-0 py-3 [&>div]:!overflow-x-hidden" ref={scrollRef}>
           {isLoading ? (
             <div className="space-y-3 px-1">
               {[1, 2, 3].map((i) => (
@@ -1212,7 +1212,7 @@ export function ContactTelegramChat({
               </div>
             </div>
           ) : (
-            <div className="space-y-3 px-2 overflow-x-hidden">
+            <div className="space-y-3 px-2 overflow-x-hidden w-full max-w-full box-border">
               {chatItems.map((item, index) => {
                 const currentDate = new Date(item.created_at);
                 const prevItem = index > 0 ? chatItems[index - 1] : null;

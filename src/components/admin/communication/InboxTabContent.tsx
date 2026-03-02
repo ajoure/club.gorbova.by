@@ -968,8 +968,9 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
               "min-w-0 bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl overflow-hidden",
               !selectedUserId && "hidden md:flex items-center justify-center"
             )}>
+              <style dangerouslySetInnerHTML={{ __html: `@media (max-width: 767px) { [data-panel-group-id] > [data-panel] { flex: 1 1 100% !important; max-width: 100% !important; } [data-panel-group-id] > [data-resize-handle-id] { display: none !important; } }` }} />
               {selectedUserId ? (
-                <div className="h-full min-h-0 flex flex-col overflow-hidden">
+                <div className="h-full min-h-0 min-w-0 w-full flex flex-col overflow-hidden">
                   {/* Chat Header with clickable contact */}
                   <div className="p-3 border-b border-border/20 bg-card/80 backdrop-blur flex items-center gap-3">
                     {/* Mobile back button */}
@@ -1041,7 +1042,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                       </p>
                     </button>
                   </div>
-                  <div className="flex-1 min-h-0 overflow-hidden">
+                  <div className="flex-1 min-h-0 min-w-0 w-full overflow-hidden">
                     <ContactTelegramChat
                       userId={selectedUserId}
                       telegramUserId={selectedDialog?.profile?.telegram_user_id || null}
