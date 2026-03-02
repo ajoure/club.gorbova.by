@@ -14,12 +14,14 @@ import { initExternalLinkKillSwitch, BUILD_MARKER } from "@/lib/externalLinkKill
 
 import { Loader2 } from "lucide-react";
 
-// Critical pages - loaded immediately (first screen)
+// Critical pages - Landing/DomainHomePage loaded immediately (first screen)
 import Landing from "./pages/Landing";
 import { DomainHomePage } from "./components/layout/DomainRouter";
-import Dashboard from "./pages/Dashboard";
-import Auth from "./pages/Auth";
-import NotFound from "./pages/NotFound";
+
+// Non-landing pages - lazy loaded to reduce initial bundle
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Auth = lazy(() => import("./pages/Auth"));
+const NotFound = lazy(() => import("./pages/NotFound"));
 
 // Lazy-loaded pages - code splitting for bundle optimization
 const Accountant = lazy(() => import("./pages/Accountant"));
@@ -149,7 +151,7 @@ const App = () => {
                 <Routes>
               {/* Public routes */}
               <Route path="/" element={<DomainHomePage />} />
-              <Route path="/auth" element={<Auth />} />
+              <Route path="/auth" element={<LazyRoute><Auth /></LazyRoute>} />
               <Route path="/pricing" element={<Navigate to="/#pricing" replace />} />
               <Route path="/order-payment" element={<LazyRoute><OrderPayment /></LazyRoute>} />
               <Route path="/offer" element={<LazyRoute><Offer /></LazyRoute>} />
@@ -165,7 +167,7 @@ const App = () => {
               
               {/* Protected routes */}
               <Route path="/products" element={<ProtectedRoute><LazyRoute><Learning /></LazyRoute></ProtectedRoute>} />
-              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/dashboard" element={<ProtectedRoute><LazyRoute><Dashboard /></LazyRoute></ProtectedRoute>} />
               <Route path="/money" element={<ProtectedRoute><LazyRoute><Money /></LazyRoute></ProtectedRoute>} />
               <Route path="/ai" element={<ProtectedRoute><LazyRoute><AI /></LazyRoute></ProtectedRoute>} />
               <Route path="/knowledge" element={<ProtectedRoute><LazyRoute><Knowledge /></LazyRoute></ProtectedRoute>} />
@@ -276,7 +278,7 @@ const App = () => {
               <Route path="/admin/amocrm" element={<Navigate to="/admin/integrations/crm" replace />} />
               <Route path="/admin/duplicates" element={<Navigate to="/admin/contacts/duplicates" replace />} />
               
-              <Route path="*" element={<NotFound />} />
+              <Route path="*" element={<LazyRoute><NotFound /></LazyRoute>} />
               </Routes>
             </div>
           </HelpModeProvider>
