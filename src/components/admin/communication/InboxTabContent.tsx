@@ -866,7 +866,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
                             </div>
                             <div className="flex-1 min-w-0 overflow-hidden">
                               <div className="flex items-center gap-1.5 min-w-0">
-                                <span className="text-xs font-semibold truncate flex-1 min-w-0">
+                                <span className="text-xs font-semibold truncate flex-1 min-w-0 whitespace-nowrap">
                                   {dialog.profile?.full_name 
                                     ? formatContactName({ full_name: dialog.profile.full_name }) 
                                     : dialog.profile?.email || "Неизвестный"}

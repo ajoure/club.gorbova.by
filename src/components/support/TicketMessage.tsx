@@ -118,7 +118,7 @@ export function TicketMessage({ message, isCurrentUser, isAdmin, reactions, onTo
   return (
     <div
       className={cn(
-        "flex gap-3 mb-4 group/msg",
+        "flex gap-3 mb-4 group/msg min-w-0",
         isCurrentUser && "flex-row-reverse"
       )}
     >
@@ -139,7 +139,7 @@ export function TicketMessage({ message, isCurrentUser, isAdmin, reactions, onTo
         </AvatarFallback>
       </Avatar>
 
-      <div className={cn("flex flex-col max-w-[75%]", isCurrentUser && "items-end")}>
+      <div className={cn("flex flex-col max-w-[min(75%,calc(100%-3rem))]", isCurrentUser && "items-end")}>
         <div className="flex items-center gap-2 mb-1">
           <span className="text-xs font-medium">
             {isSupport ? (message.author_name || "Поддержка") : (message.author_name || "Вы")}
