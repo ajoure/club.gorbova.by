@@ -324,7 +324,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
 
   return (
     <div className="flex flex-col h-full">
-      <ScrollArea ref={scrollRef} className="flex-1 p-4">
+      <ScrollArea ref={scrollRef} className="flex-1 p-4 overflow-x-hidden">
         {visibleMessages?.map((msg) => (
           <TicketMessage
             key={msg.id}
