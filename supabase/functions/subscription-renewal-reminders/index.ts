@@ -856,7 +856,7 @@ Deno.serve(async (req) => {
         duplicate_suppressed: telegramResult.duplicateSuppressed,
       });
 
-      console.log(`Expiring-without-SBS for user ${userId}: sent=${telegramResult.sent}, paymentLink=${!!paymentLinkUrl}`);
+      console.log(`Expiring-without-SBS for user ${userId}: sent=${telegramResult.sent}, oneTime=${!!ncOneTimeUrl}, sub=${!!ncSubscriptionUrl}`);
     }
 
     // ============ Statistics ============
