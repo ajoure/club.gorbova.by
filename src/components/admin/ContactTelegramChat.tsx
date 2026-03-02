@@ -1261,7 +1261,24 @@ export function ContactTelegramChat({
         )}
 
         {/* Input - shrink-0 sticky bottom to always stay visible */}
-        <div className="pt-3 border-t shrink-0 sticky bottom-0 bg-background z-10" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+        <div className="pt-2 border-t shrink-0 sticky bottom-0 bg-background z-10" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+          {activeBots.length > 1 && (
+            <div className="flex items-center gap-1.5 pb-1.5">
+              <Select value={selectedBotId || ""} onValueChange={handleBotChange}>
+                <SelectTrigger className="h-7 w-auto min-w-[100px] text-[11px] rounded-lg border-border/40 bg-muted/30 gap-1 px-2">
+                  <Bot className="h-3 w-3 shrink-0" />
+                  <SelectValue placeholder="Бот" />
+                </SelectTrigger>
+                <SelectContent>
+                  {activeBots.map(bot => (
+                    <SelectItem key={bot.id} value={bot.id} className="text-xs">
+                      {bot.bot_name?.trim() ? bot.bot_name : `@${bot.bot_username}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="flex gap-2">
           <div className="flex flex-col gap-1">
             <Popover>
@@ -1404,21 +1421,6 @@ export function ContactTelegramChat({
             disabled={sendMutation.isPending || isUploading}
           />
           <div className="flex flex-col gap-1 items-end">
-            {activeBots.length > 1 && (
-              <Select value={selectedBotId || ""} onValueChange={handleBotChange}>
-                <SelectTrigger className="h-6 w-auto min-w-[90px] text-[10px] rounded-md border-border/40">
-                  <Bot className="h-3 w-3 mr-0.5" />
-                  <SelectValue placeholder="Бот" />
-                </SelectTrigger>
-                <SelectContent>
-                  {activeBots.map(bot => (
-                    <SelectItem key={bot.id} value={bot.id} className="text-xs">
-                      {bot.bot_name?.trim() ? bot.bot_name : `@${bot.bot_username}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
             <Button
               onClick={handleSend}
               disabled={(!message.trim() && !selectedFile) || sendMutation.isPending || isUploading || !selectedBotId}
