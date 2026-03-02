@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useId } from "react";
+import DOMPurify from "dompurify";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -183,7 +184,7 @@ export function VideoUnskippableBlock({
     return (
       <div className="space-y-4">
         {content.title && (
-          <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: content.title }} />
+          <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content.title) }} />
         )}
         
         {embedUrl && (
@@ -209,7 +210,7 @@ export function VideoUnskippableBlock({
   return (
     <div className="space-y-4">
       {content.title && (
-        <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: content.title }} />
+        <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content.title) }} />
       )}
 
       {embedUrl ? (
