@@ -11,6 +11,7 @@ import { useIncomingMessageAlert } from "@/hooks/useIncomingMessageAlert";
 
 interface AdminLayoutProps {
   children: ReactNode;
+  fullHeight?: boolean;
 }
 
 // Map admin routes to page titles
@@ -66,7 +67,7 @@ const routeToHelpAnchor: Record<string, string> = {
   '/admin/audit': 'admin',
 };
 
-export function AdminLayout({ children }: AdminLayoutProps) {
+export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { hasAdminAccess, loading } = usePermissions();
@@ -121,7 +122,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
     <SidebarProvider>
       <div className="h-screen flex w-full overflow-hidden">
         <AdminSidebar />
-        <main className="flex-1 h-full flex flex-col min-w-0 min-h-0 overflow-y-auto overflow-x-hidden">
+        <main className={`flex-1 h-full flex flex-col min-w-0 min-h-0 overflow-x-hidden ${fullHeight ? "overflow-hidden" : "overflow-y-auto"}`}>
           <header 
             className="border-b border-border/30 flex items-center justify-between px-3 md:px-4 bg-background/60 backdrop-blur-xl sticky top-0 z-10"
             style={{ 
@@ -159,11 +160,11 @@ export function AdminLayout({ children }: AdminLayoutProps) {
           </header>
           <PullToRefresh>
             <div 
-              className="flex-1 min-h-0 flex flex-col"
+              className={`flex-1 min-h-0 flex flex-col ${fullHeight ? "overflow-hidden" : ""}`}
               style={{
                 paddingLeft: 'max(1rem, env(safe-area-inset-left, 0px))',
                 paddingRight: 'max(1rem, env(safe-area-inset-right, 0px))',
-                paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))'
+                ...(fullHeight ? {} : { paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' })
               }}
             >
               {children}
