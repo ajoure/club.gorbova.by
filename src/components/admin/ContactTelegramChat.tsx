@@ -990,48 +990,9 @@ export function ContactTelegramChat({
     return (
       <div
         key={msg.id}
-        className={`flex ${msg.direction === "outgoing" ? "justify-end" : "justify-start"} group`}
+        className={`flex w-full min-w-0 ${msg.direction === "outgoing" ? "justify-end" : "justify-start"} group`}
       >
-        <div className="flex items-start gap-1 min-w-0 max-w-[85%]">
-          {msg.direction === "outgoing" && (canEdit || canDelete) && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <MoreVertical className="w-3 h-3" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {canEdit && (
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setEditingMessage(msg);
-                      setEditText(msg.message_text || "");
-                    }}
-                  >
-                    <Edit2 className="w-4 h-4 mr-2" />
-                    Редактировать
-                  </DropdownMenuItem>
-                )}
-                {canDelete && (
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={() => {
-                      if (msg.message_id) {
-                        deleteMutation.mutate({ dbMessageId: msg.id, messageId: msg.message_id });
-                      }
-                    }}
-                  >
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Удалить
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+        <div className="relative max-w-[85%] min-w-0">
           <div className="flex flex-col w-full min-w-0">
             <div className="relative">
               <div
@@ -1166,6 +1127,47 @@ export function ContactTelegramChat({
               </div>
             )}
           </div>
+          {msg.direction === "outgoing" && (canEdit || canDelete) && (
+            <div className="absolute -left-8 top-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                  >
+                    <MoreVertical className="w-3 h-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {canEdit && (
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setEditingMessage(msg);
+                        setEditText(msg.message_text || "");
+                      }}
+                    >
+                      <Edit2 className="w-4 h-4 mr-2" />
+                      Редактировать
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && (
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => {
+                        if (msg.message_id) {
+                          deleteMutation.mutate({ dbMessageId: msg.id, messageId: msg.message_id });
+                        }
+                      }}
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Удалить
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
         </div>
       </div>
     );
