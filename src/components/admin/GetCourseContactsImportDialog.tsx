@@ -249,28 +249,12 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
       const chunkRows = allRows.slice(i * chunkSize, (i + 1) * chunkSize);
       setChunkProgress({ current: i + 1, total: totalChunks });
 
-      // Build batch_totals for last execute chunk
-      const isLastChunk = i === totalChunks - 1;
       const body: Record<string, unknown> = {
         mode,
         batch_id: currentBatchId,
         rows: chunkRows,
         chunk: { index: i, total: totalChunks },
       };
-
-      if (mode === 'execute' && isLastChunk) {
-        body.batch_totals = {
-          total: aggregatedCounts.total + chunkRows.length,
-          created: aggregatedCounts.created,
-          updated: aggregatedCounts.updated,
-          filtered_out: aggregatedCounts.filtered_out,
-          invalid: aggregatedCounts.invalid,
-          conflicts: aggregatedCounts.conflicts,
-          errors: aggregatedCounts.errors,
-          skipped_active: aggregatedCounts.will_skip_active,
-          skipped_no_changes: aggregatedCounts.will_skip_exists,
-        };
-      }
 
       const { data, error } = await supabase.functions.invoke('import-contacts-gc', { body });
 
@@ -340,6 +324,33 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
 
       setTotalCounts(result.totals);
       setAbortedAtChunk(result.abortedChunk);
+
+      // ── Finalize: write audit log with accurate totals ──
+      try {
+        await supabase.functions.invoke('import-contacts-gc', {
+          body: {
+            mode: 'finalize',
+            batch_id: batchId,
+            rows: [],
+            chunk: { index: 0, total: 1 },
+            batch_totals: {
+              total: result.totals.total,
+              created: result.totals.created,
+              updated: result.totals.updated,
+              filtered_out: result.totals.filtered_out,
+              invalid: result.totals.invalid,
+              conflicts: result.totals.conflicts,
+              errors: result.totals.errors,
+              skipped_active: result.totals.will_skip_active,
+              skipped_no_changes: result.totals.will_skip_exists,
+            },
+          },
+        });
+      } catch (finalizeErr: any) {
+        console.error('[GC Import] Finalize audit error:', finalizeErr);
+        toast.error('Audit finalize failed — импорт выполнен, но лог не записан');
+      }
+
       setStep('done');
       
       if (result.abortedChunk !== null) {
