@@ -59,7 +59,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
   const [voicePreviewUrl, setVoicePreviewUrl] = useState<string | null>(null);
   const [sendAsUserId, setSendAsUserId] = useState<string>("self");
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load admin/support users for "Send as" dropdown
@@ -127,15 +127,25 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
     }
   }, [ticketId, isAdmin]);
 
-  // Scroll to bottom on new messages
+  // Scroll to bottom on new messages (only if user is near bottom)
+  const AUTOSCROLL_THRESHOLD_PX = 120;
+  const lastId = visibleMessages?.at(-1)?.id ?? '';
+
   useEffect(() => {
-    if (scrollRef.current) {
-      const el = scrollRef.current;
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
+    if (!scrollEndRef.current) return;
+    const root = scrollEndRef.current.closest('[data-radix-scroll-area-root]') as HTMLElement | null;
+    const viewport = root?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
+    if (viewport) {
+      const { scrollTop, scrollHeight, clientHeight } = viewport;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < AUTOSCROLL_THRESHOLD_PX;
+      if (isNearBottom) {
+        scrollEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      }
+    } else {
+      // Fallback: first render, always scroll
+      scrollEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
     }
-  }, [messages]);
+  }, [visibleMessages?.length, lastId]);
 
   // Show TG checkbox only for admin when user has telegram and bridge is on
   const canBridgeToTelegram = isAdmin && telegramBridgeEnabled && telegramUserId;
@@ -324,7 +334,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
 
   return (
     <div className="flex flex-col h-full">
-      <ScrollArea ref={scrollRef} className="flex-1 p-4 overflow-x-hidden">
+      <ScrollArea className="flex-1 p-4 overflow-x-hidden">
         {visibleMessages?.map((msg) => (
           <TicketMessage
             key={msg.id}
@@ -349,6 +359,7 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
             Пока нет сообщений
           </p>
         )}
+        <div ref={scrollEndRef} />
       </ScrollArea>
 
       {!isClosed && (

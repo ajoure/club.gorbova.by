@@ -1028,13 +1028,13 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
             />
           </div>
         ) : isMobile ? (
-          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+          <div className="flex-1 min-h-0 overflow-x-hidden">
             {!selectedUserId ? (
               <div className="flex flex-col h-full min-h-0 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
                 {dialogListContent}
               </div>
             ) : (
-              <div className="h-full min-h-0 bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl overflow-y-auto overflow-x-hidden">
+              <div className="flex flex-col h-full min-h-0 bg-card/60 backdrop-blur-xl border border-border/30 rounded-2xl shadow-xl overflow-x-hidden">
                 {chatPanelContent}
               </div>
             )}
