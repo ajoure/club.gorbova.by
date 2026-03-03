@@ -1,27 +1,22 @@
 
-## PATCH: Ghost→«Без аккаунта» + скролл контакт-центра + бан-лист (план v4 — ВЫПОЛНЕН)
 
----
+## Две правки
 
-### 1) EditContactDialog — Ghost → «Без аккаунта» ✅ DONE
+### 1. Кнопка «В бан-лист» — перенести из шапки в блок «Действия администратора»
 
-### 2) Скролл контакт-центра ✅ DONE
-- TicketChat: scrollEndRef + first-render always-scroll + threshold 120px + lastId dependency
-- InboxTabContent: убран overflow-y-auto на mobile wrapper
+**Файл:** `src/components/admin/ContactDetailSheet.tsx`
 
-### 3) Бан-лист ✅ DONE
+- **Удалить** строки 1439–1478 (кнопки «В бан-лист» и «Снять бан» в шапке карточки).
+- **Добавить** в блок «Действия администратора» (строки 2060–2109) две новые кнопки:
+  - «Добавить в бан-лист» — `variant="destructive"`, полная ширина (`w-full`), иконка `Ban`, только для `super_admin`, открывает существующий `AlertDialog`. Показывается когда `resolvedStatus !== "banned"`.
+  - «Снять бан» — `variant="outline"` с зелёным стилем, `w-full`, иконка `ShieldCheck`, только для `super_admin`, вызывает существующую логику remove. Показывается когда `resolvedStatus === "banned"`.
+- Блок «Действия администратора» расширить условие показа: показывать также если `isSuperAdmin()` (чтобы кнопка бана была видна даже без прав impersonate/reset).
+- Бейдж «ЗАБАНЕН» в шапке (строки 1432–1437) — оставить как есть (информационный).
 
-- **DB:** ban_cases, ban_identifiers (is_active + partial unique index), norm_email/norm_phone/norm_tg_username, check_ban_by_identifiers, ban_case_upsert_identifiers (с merge логикой)
-- **handle_new_user:** ban-check по email перед созданием профиля, SYSTEM ACTOR proof в audit_logs
-- **Edge: ban-list-manage** — add/remove/check (super_admin only)
-- **Edge: ban-intake** — системный intake по profileId
-- **UI: /banned** — красный экран + ProtectedRoute guard
-- **UI: ContactDetailSheet** — кнопка «В бан-лист» / «Снять бан» (super_admin) + бейдж ЗАБАНЕН
-- **App.tsx** — route /banned
+### 2. Дефолтная вкладка «Активные» вместо «Все»
 
-### DoD
+**Файл:** `src/pages/admin/AdminContacts.tsx`
 
-1. ✅ Ghost→Без аккаунта: слово "Ghost" отсутствует в UI
-2. ✅ Скролл: scrollEndRef, first-render scroll, threshold 120px, lastId dep
-3. ✅ Бан-лист: таблицы + функции + handle_new_user + edge + UI
-4. ✅ SYSTEM ACTOR proof: actor_type='system' в колонках audit_logs
+- **Строка 300:** `useState("all")` → `useState("active")`
+- **Строка 298 (комментарий):** обновить на `// Initialize with "active" preset`
+
