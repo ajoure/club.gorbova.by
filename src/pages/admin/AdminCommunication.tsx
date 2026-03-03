@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { MessageCircle, Send, LifeBuoy, Inbox, Settings, ChevronDown, MessageSquare, Mail } from "lucide-react";
+import { MessageCircle, Send, LifeBuoy, Inbox, Settings, ChevronDown, MessageSquare, Mail, Instagram } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -31,7 +31,7 @@ const tabs = [
 export default function AdminCommunication() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<string>(searchParams.get("tab") || "inbox");
-  const [inboxChannel, setInboxChannel] = useState<"telegram" | "email" | "support">("telegram");
+  const [inboxChannel, setInboxChannel] = useState<"telegram" | "email" | "support" | "instagram">("telegram");
 
   // Unread counts for badges
   const telegramUnread = useUnreadMessagesCount();
@@ -151,6 +151,16 @@ export default function AdminCommunication() {
                             {ticketsUnread}
                           </Badge>
                         )}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={() => { handleTabChange("inbox"); setInboxChannel("instagram"); }}
+                        className={cn(
+                          "flex items-center gap-2 text-xs cursor-pointer rounded-md",
+                          inboxChannel === "instagram" && activeTab === "inbox" && "bg-muted"
+                        )}
+                      >
+                        <Instagram className="h-3.5 w-3.5" />
+                        Instagram
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>

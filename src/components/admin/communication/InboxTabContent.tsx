@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ContactTelegramChat } from "@/components/admin/ContactTelegramChat";
 import { EmailInboxView } from "@/components/admin/email";
 import { SupportTabContent } from "@/components/admin/communication/SupportTabContent";
+import { InstagramInboxView } from "@/components/admin/communication/instagram/InstagramInboxView";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -166,7 +167,7 @@ const initialFilters: Filters = {
 };
 
 interface InboxTabContentProps {
-  defaultChannel?: "telegram" | "email" | "support";
+  defaultChannel?: "telegram" | "email" | "support" | "instagram";
 }
 
 const PANEL_SIZE_KEY = "communication-panel-sizes";
@@ -176,7 +177,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const [channel, setChannel] = useState<"telegram" | "email" | "support">(defaultChannel);
+  const [channel, setChannel] = useState<"telegram" | "email" | "support" | "instagram">(defaultChannel);
   
   // Load saved panel size from localStorage
   // Default: 40% for contacts panel (user wants contacts list fully visible)
@@ -1026,6 +1027,10 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
             <EmailInboxView
               onContactClick={(userId) => navigate(`/admin/contacts?contact=${userId}`)}
             />
+          </div>
+        ) : channel === "instagram" ? (
+          <div className="flex-1 min-h-0 bg-card/40 backdrop-blur-md border border-border/20 rounded-xl shadow-md overflow-hidden">
+            <InstagramInboxView />
           </div>
         ) : isMobile ? (
           <div className="flex-1 min-h-0 overflow-x-hidden">

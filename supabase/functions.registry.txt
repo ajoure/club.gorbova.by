@@ -70,3 +70,5 @@ bepaid-subscription-audit-cron
 log-deployment
 training-copy-move
 manage-news-schedule
+instagram-webhook
+instagram-admin-chat

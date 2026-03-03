@@ -4,7 +4,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Link2, CreditCard, Mail, Send, Users, Download, Settings } from "lucide-react";
+import { Plus, Link2, CreditCard, Mail, Send, Users, Download, Settings, Share2 } from "lucide-react";
 import {
   useIntegrations,
   PROVIDERS,
@@ -24,6 +24,7 @@ import { TelegramClubsTab } from "@/components/telegram/TelegramClubsTab";
 import { TelegramLogsTab } from "@/components/telegram/TelegramLogsTab";
 import { MassBroadcastDialog } from "@/components/telegram/MassBroadcastDialog";
 import { OtherIntegrationsTab } from "@/components/integrations/kinescope/OtherIntegrationsTab";
+import { SocialIntegrationsTab } from "@/components/integrations/socials/SocialIntegrationsTab";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
@@ -34,6 +35,7 @@ const CATEGORY_ICONS: Record<string, React.ElementType> = {
   payments: CreditCard,
   email: Mail,
   telegram: Send,
+  socials: Share2,
   other: Settings,
 };
 
@@ -62,6 +64,7 @@ export default function AdminIntegrations() {
     if (location.pathname.includes("/integrations/payments")) return "payments";
     if (location.pathname.includes("/integrations/email")) return "email";
     if (location.pathname.includes("/integrations/telegram")) return "telegram";
+    if (location.pathname.includes("/integrations/socials")) return "socials";
     if (location.pathname.includes("/integrations/other")) return "other";
     return "crm";
   };
@@ -151,7 +154,7 @@ export default function AdminIntegrations() {
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
         <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-          <TabsList className="inline-flex w-auto min-w-max sm:grid sm:grid-cols-5 sm:max-w-2xl">
+          <TabsList className="inline-flex w-auto min-w-max sm:grid sm:grid-cols-6 sm:max-w-3xl">
             {CATEGORIES.map((cat) => {
               const Icon = CATEGORY_ICONS[cat.id] || Link2;
               const count = cat.id === "telegram" ? 0 : (instances || []).filter(
@@ -211,6 +214,10 @@ export default function AdminIntegrations() {
         ) : activeTab === "other" ? (
           <div className="mt-6">
             <OtherIntegrationsTab />
+          </div>
+        ) : activeTab === "socials" ? (
+          <div className="mt-6">
+            <SocialIntegrationsTab />
           </div>
         ) : (
         <div className="mt-6 space-y-6">

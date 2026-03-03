@@ -2981,6 +2981,157 @@ export type Database = {
           },
         ]
       }
+      instagram_accounts: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          id: string
+          instagram_page_id: string | null
+          integration_instance_id: string
+          is_active: boolean
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          instagram_page_id?: string | null
+          integration_instance_id: string
+          is_active?: boolean
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          instagram_page_id?: string | null
+          integration_instance_id?: string
+          is_active?: boolean
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instagram_accounts_integration_instance_id_fkey"
+            columns: ["integration_instance_id"]
+            isOneToOne: false
+            referencedRelation: "integration_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      instagram_contacts: {
+        Row: {
+          created_at: string
+          id: string
+          instagram_account_id: string
+          instagram_user_id: string
+          instagram_username: string | null
+          profile_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          instagram_account_id: string
+          instagram_user_id: string
+          instagram_username?: string | null
+          profile_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          instagram_account_id?: string
+          instagram_user_id?: string
+          instagram_username?: string | null
+          profile_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instagram_contacts_instagram_account_id_fkey"
+            columns: ["instagram_account_id"]
+            isOneToOne: false
+            referencedRelation: "instagram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "instagram_contacts_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      instagram_messages: {
+        Row: {
+          created_at: string
+          direction: string
+          error_message: string | null
+          external_message_id: string | null
+          id: string
+          ig_thread_id: string | null
+          instagram_account_id: string
+          is_read: boolean
+          media_type: string | null
+          media_url: string | null
+          message_text: string | null
+          raw_payload: Json | null
+          read_at: string | null
+          sender_id: string
+          sender_name: string | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          direction: string
+          error_message?: string | null
+          external_message_id?: string | null
+          id?: string
+          ig_thread_id?: string | null
+          instagram_account_id: string
+          is_read?: boolean
+          media_type?: string | null
+          media_url?: string | null
+          message_text?: string | null
+          raw_payload?: Json | null
+          read_at?: string | null
+          sender_id: string
+          sender_name?: string | null
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          direction?: string
+          error_message?: string | null
+          external_message_id?: string | null
+          id?: string
+          ig_thread_id?: string | null
+          instagram_account_id?: string
+          is_read?: boolean
+          media_type?: string | null
+          media_url?: string | null
+          message_text?: string | null
+          raw_payload?: Json | null
+          read_at?: string | null
+          sender_id?: string
+          sender_name?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instagram_messages_instagram_account_id_fkey"
+            columns: ["instagram_account_id"]
+            isOneToOne: false
+            referencedRelation: "instagram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       installment_payments: {
         Row: {
           amount: number
@@ -10056,6 +10207,10 @@ export type Database = {
           unread_count: number
           user_id: string
         }[]
+      }
+      get_instagram_dialogs_v1: {
+        Args: { p_account_id: string }
+        Returns: Json
       }
       get_next_document_number: {
         Args: { p_document_type: string; p_prefix?: string }

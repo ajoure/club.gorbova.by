@@ -1,0 +1,237 @@
+import { useState, useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Instagram, Send, AlertCircle, Image as ImageIcon } from "lucide-react";
+import { format } from "date-fns";
+import { ru } from "date-fns/locale";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+
+interface Message {
+  id: string;
+  external_message_id: string;
+  sender_id: string;
+  sender_name: string | null;
+  direction: "inbound" | "outbound";
+  message_text: string | null;
+  media_url: string | null;
+  media_type: string | null;
+  status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
+interface ContactInstagramChatProps {
+  accountId: string;
+  senderId: string;
+  threadId: string | null;
+  senderName: string;
+}
+
+export function ContactInstagramChat({
+  accountId,
+  senderId,
+  threadId,
+  senderName,
+}: ContactInstagramChatProps) {
+  const queryClient = useQueryClient();
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const { data: messages, isLoading } = useQuery({
+    queryKey: ["instagram-chat", accountId, senderId, threadId],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke("instagram-admin-chat", {
+        body: {
+          action: "get_history",
+          instagram_account_id: accountId,
+          sender_id: senderId,
+          thread_id: threadId,
+          limit: 100,
+        },
+      });
+      if (error) throw error;
+      return (data.messages || []) as Message[];
+    },
+    refetchInterval: 10000,
+  });
+
+  // Realtime for this chat
+  useEffect(() => {
+    const channel = supabase
+      .channel(`ig-chat-rt:${accountId}:${senderId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "instagram_messages",
+        },
+        (payload) => {
+          const msg = payload.new as any;
+          if (
+            msg.instagram_account_id === accountId &&
+            (msg.sender_id === senderId || msg.sender_id === "admin")
+          ) {
+            queryClient.invalidateQueries({ queryKey: ["instagram-chat", accountId, senderId, threadId] });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [accountId, senderId, threadId, queryClient]);
+
+  // Auto-scroll
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const handleSend = async () => {
+    if (!message.trim() || sending) return;
+    setSending(true);
+
+    try {
+      const clientMsgId = crypto.randomUUID();
+      const { data, error } = await supabase.functions.invoke("instagram-admin-chat", {
+        body: {
+          action: "send_reply",
+          instagram_account_id: accountId,
+          sender_id: senderId,
+          thread_id: threadId,
+          message_text: message.trim(),
+          client_msg_id: clientMsgId,
+        },
+      });
+
+      if (error) {
+        toast.error("Ошибка отправки: " + error.message);
+        return;
+      }
+
+      if (data?.ok === false) {
+        toast.error(data.error || "Ошибка отправки");
+      } else {
+        setMessage("");
+        queryClient.invalidateQueries({ queryKey: ["instagram-chat", accountId, senderId, threadId] });
+        queryClient.invalidateQueries({ queryKey: ["instagram-dialogs"] });
+      }
+    } catch (e: any) {
+      toast.error("Ошибка: " + e.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      {/* Header */}
+      <div className="p-3 border-b border-border/20 flex items-center gap-3 shrink-0">
+        <Avatar className="h-8 w-8">
+          <AvatarFallback className="bg-gradient-to-br from-pink-500/20 to-purple-500/20 text-xs">
+            {senderName[0]?.toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+        <div>
+          <p className="text-sm font-medium">{senderName}</p>
+          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+            <Instagram className="h-3 w-3" /> Instagram Direct
+          </p>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+        {isLoading ? (
+          <p className="text-center text-xs text-muted-foreground">Загрузка...</p>
+        ) : !messages?.length ? (
+          <p className="text-center text-xs text-muted-foreground">Нет сообщений</p>
+        ) : (
+          messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={cn(
+                "max-w-[75%] rounded-xl px-3 py-2",
+                msg.direction === "outbound"
+                  ? "ml-auto bg-primary/10 border border-primary/20"
+                  : "mr-auto bg-muted/50 border border-border/30"
+              )}
+            >
+              {msg.media_url && (
+                <div className="mb-1">
+                  {msg.media_type?.startsWith("image") ? (
+                    <img
+                      src={msg.media_url}
+                      alt="media"
+                      className="rounded-lg max-h-48 object-cover"
+                    />
+                  ) : (
+                    <a
+                      href={msg.media_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-xs text-primary underline"
+                    >
+                      <ImageIcon className="h-3 w-3" /> Медиа
+                    </a>
+                  )}
+                </div>
+              )}
+              {msg.message_text && (
+                <p className="text-sm whitespace-pre-wrap break-words">{msg.message_text}</p>
+              )}
+              <div className="flex items-center justify-between mt-1 gap-2">
+                <span className="text-[10px] text-muted-foreground">
+                  {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
+                </span>
+                {msg.status === "failed" && (
+                  <span className="flex items-center gap-0.5 text-[10px] text-destructive">
+                    <AlertCircle className="h-3 w-3" />
+                    {msg.error_message?.slice(0, 40) || "Ошибка"}
+                  </span>
+                )}
+                {msg.status === "pending" && (
+                  <Badge variant="outline" className="text-[10px] h-4 px-1">
+                    Ожидает
+                  </Badge>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Input */}
+      <div className="p-3 border-t border-border/20 shrink-0">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSend();
+          }}
+          className="flex items-center gap-2"
+        >
+          <Input
+            className="flex-1 h-9 text-sm"
+            placeholder="Написать сообщение..."
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            disabled={sending}
+          />
+          <Button type="submit" size="icon" className="h-9 w-9 shrink-0" disabled={sending || !message.trim()}>
+            <Send className="h-4 w-4" />
+          </Button>
+        </form>
+      </div>
+    </div>
+  );
+}
