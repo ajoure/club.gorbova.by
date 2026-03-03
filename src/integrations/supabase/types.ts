@@ -3080,10 +3080,15 @@ export type Database = {
           media_type: string | null
           media_url: string | null
           message_text: string | null
+          peer_id: string
           raw_payload: Json | null
           read_at: string | null
+          recipient_id: string | null
           sender_id: string
           sender_name: string | null
+          sending_at: string | null
+          sending_lock_id: string | null
+          sent_by_admin: string | null
           status: string
         }
         Insert: {
@@ -3098,10 +3103,15 @@ export type Database = {
           media_type?: string | null
           media_url?: string | null
           message_text?: string | null
+          peer_id: string
           raw_payload?: Json | null
           read_at?: string | null
+          recipient_id?: string | null
           sender_id: string
           sender_name?: string | null
+          sending_at?: string | null
+          sending_lock_id?: string | null
+          sent_by_admin?: string | null
           status?: string
         }
         Update: {
@@ -3116,10 +3126,15 @@ export type Database = {
           media_type?: string | null
           media_url?: string | null
           message_text?: string | null
+          peer_id?: string
           raw_payload?: Json | null
           read_at?: string | null
+          recipient_id?: string | null
           sender_id?: string
           sender_name?: string | null
+          sending_at?: string | null
+          sending_lock_id?: string | null
+          sent_by_admin?: string | null
           status?: string
         }
         Relationships: [

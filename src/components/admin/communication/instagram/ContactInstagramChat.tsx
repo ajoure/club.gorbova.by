@@ -3,10 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Instagram, Send, AlertCircle, Image as ImageIcon } from "lucide-react";
+import { Instagram, Send, AlertCircle, Clock, Loader2, Image as ImageIcon } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -17,6 +16,9 @@ interface Message {
   external_message_id: string;
   sender_id: string;
   sender_name: string | null;
+  peer_id: string;
+  sent_by_admin: string | null;
+  recipient_id: string | null;
   direction: "inbound" | "outbound";
   message_text: string | null;
   media_url: string | null;
@@ -62,23 +64,21 @@ export function ContactInstagramChat({
     refetchInterval: 10000,
   });
 
-  // Realtime for this chat
+  // PATCH-6: Realtime with filter + local guard by peer_id
   useEffect(() => {
     const channel = supabase
       .channel(`ig-chat-rt:${accountId}:${senderId}`)
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "instagram_messages",
+          filter: `instagram_account_id=eq.${accountId}`,
         },
         (payload) => {
-          const msg = payload.new as any;
-          if (
-            msg.instagram_account_id === accountId &&
-            (msg.sender_id === senderId || msg.sender_id === "admin")
-          ) {
+          const msg = (payload.new || payload.old) as any;
+          if (msg?.peer_id === senderId) {
             queryClient.invalidateQueries({ queryKey: ["instagram-chat", accountId, senderId, threadId] });
           }
         }
@@ -130,6 +130,39 @@ export function ContactInstagramChat({
       toast.error("Ошибка: " + e.message);
     } finally {
       setSending(false);
+    }
+  };
+
+  const renderStatusBadge = (msg: Message) => {
+    if (msg.direction !== "outbound") return null;
+    switch (msg.status) {
+      case "queued":
+        return (
+          <span className="flex items-center gap-0.5 text-[10px] text-amber-500">
+            <Clock className="h-3 w-3" /> В очереди
+          </span>
+        );
+      case "sending":
+        return (
+          <span className="flex items-center gap-0.5 text-[10px] text-blue-500">
+            <Loader2 className="h-3 w-3 animate-spin" /> Отправляется
+          </span>
+        );
+      case "failed":
+        return (
+          <span className="flex items-center gap-0.5 text-[10px] text-destructive">
+            <AlertCircle className="h-3 w-3" />
+            {msg.error_message?.slice(0, 40) || "Ошибка"}
+          </span>
+        );
+      case "pending":
+        return (
+          <Badge variant="outline" className="text-[10px] h-4 px-1">
+            Ожидает
+          </Badge>
+        );
+      default:
+        return null; // delivered — no badge
     }
   };
 
@@ -194,17 +227,7 @@ export function ContactInstagramChat({
                 <span className="text-[10px] text-muted-foreground">
                   {format(new Date(msg.created_at), "HH:mm", { locale: ru })}
                 </span>
-                {msg.status === "failed" && (
-                  <span className="flex items-center gap-0.5 text-[10px] text-destructive">
-                    <AlertCircle className="h-3 w-3" />
-                    {msg.error_message?.slice(0, 40) || "Ошибка"}
-                  </span>
-                )}
-                {msg.status === "pending" && (
-                  <Badge variant="outline" className="text-[10px] h-4 px-1">
-                    Ожидает
-                  </Badge>
-                )}
+                {renderStatusBadge(msg)}
               </div>
             </div>
           ))
