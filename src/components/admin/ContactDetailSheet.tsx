@@ -1436,43 +1436,6 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               </Badge>
             ) : null}
 
-            {isSuperAdmin() && resolvedStatus !== "banned" && (
-              <Badge
-                variant="outline"
-                className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-destructive/30 text-destructive hover:bg-destructive/10"
-                onClick={() => { setBanReason(""); setBanDialogOpen(true); }}
-              >
-                <Ban className="w-3 h-3" />
-                В бан-лист
-              </Badge>
-            )}
-
-            {isSuperAdmin() && resolvedStatus === "banned" && (
-              <Badge
-                variant="outline"
-                className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-green-500/30 text-green-600 hover:bg-green-500/10"
-                onClick={async () => {
-                  setIsBanning(true);
-                  try {
-                    const { error } = await supabase.functions.invoke("ban-list-manage", {
-                      body: { action: "remove", profileId: contact?.id },
-                    });
-                    if (error) throw error;
-                    queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
-                    queryClient.invalidateQueries({ queryKey: ["contact-detail"] });
-                    toast.success("Бан снят");
-                  } catch (e: any) {
-                    toast.error("Ошибка: " + e.message);
-                  } finally {
-                    setIsBanning(false);
-                  }
-                }}
-                aria-disabled={isBanning}
-              >
-                {isBanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
-                Снять бан
-              </Badge>
-            )}
           </div>
         </SheetHeader>
 
@@ -2058,7 +2021,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               )}
 
               {/* Admin Actions Card */}
-              {contact.user_id && (hasPermission("users.impersonate") || hasPermission("users.reset_password")) && (
+              {(contact.user_id && (hasPermission("users.impersonate") || hasPermission("users.reset_password"))) || isSuperAdmin() ? (
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
@@ -2067,7 +2030,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    {hasPermission("users.impersonate") && (
+                    {hasPermission("users.impersonate") && contact.user_id && (
                       <Button
                         variant="outline"
                         className="w-full gap-2"
@@ -2082,7 +2045,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         Войти от имени клиента
                       </Button>
                     )}
-                    {hasPermission("users.reset_password") && contact.email && (
+                    {hasPermission("users.reset_password") && contact.email && contact.user_id && (
                       <Button
                         variant="outline"
                         className="w-full gap-2"
@@ -2104,9 +2067,47 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         Сбросить пароль
                       </Button>
                     )}
+
+                    {isSuperAdmin() && resolvedStatus !== "banned" && (
+                      <Button
+                        variant="destructive"
+                        className="w-full gap-2"
+                        onClick={() => { setBanReason(""); setBanDialogOpen(true); }}
+                      >
+                        <Ban className="w-4 h-4" />
+                        Добавить в бан-лист
+                      </Button>
+                    )}
+
+                    {isSuperAdmin() && resolvedStatus === "banned" && (
+                      <Button
+                        variant="outline"
+                        className="w-full gap-2 border-green-500/30 text-green-600 hover:bg-green-500/10 hover:text-green-700"
+                        onClick={async () => {
+                          setIsBanning(true);
+                          try {
+                            const { error } = await supabase.functions.invoke("ban-list-manage", {
+                              body: { action: "remove", profileId: contact?.id },
+                            });
+                            if (error) throw error;
+                            queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+                            queryClient.invalidateQueries({ queryKey: ["contact-detail"] });
+                            toast.success("Бан снят");
+                          } catch (e: any) {
+                            toast.error("Ошибка: " + e.message);
+                          } finally {
+                            setIsBanning(false);
+                          }
+                        }}
+                        disabled={isBanning}
+                      >
+                        {isBanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                        Снять бан
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
-              )}
+              ) : null}
             </TabsContent>
 
             {/* Telegram Chat Tab */}
