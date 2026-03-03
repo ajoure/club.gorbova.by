@@ -1338,7 +1338,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-[75vw] lg:max-w-4xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden">
+      <SheetContent className="w-full sm:max-w-[60vw] lg:max-w-3xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden">
         {/* Compact header for mobile - with padding-right for close button */}
         <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 border-b flex-shrink-0">
           {/* Row 1: Avatar + Name + Email */}
@@ -1790,9 +1790,16 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                           <div className="flex justify-between items-start gap-2">
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium truncate">{productName}</p>
-                              <p className="text-xs text-muted-foreground">
-                                ID: {sub.provider_subscription_id?.slice(0, 12)}...
-                              </p>
+                              <a
+                                href={`/admin/payments/bepaid-subscriptions?search=${sub.provider_subscription_id}`}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  navigate(`/admin/payments/bepaid-subscriptions?search=${sub.provider_subscription_id}`);
+                                }}
+                                className="text-xs text-primary hover:underline cursor-pointer break-all"
+                              >
+                                ID: {sub.provider_subscription_id}
+                              </a>
                               <div className="flex items-center gap-2 mt-1 flex-wrap">
                                 <Badge 
                                   variant={isActive ? 'default' : 'secondary'}
