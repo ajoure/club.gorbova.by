@@ -2,54 +2,41 @@
 
 ## Проблема
 
-ApiX-Drive отправляет данные как `application/x-www-form-urlencoded`, а наш `instagram-webhook` принимает только `application/json` (`req.json()`). В логах видно 3 отклонённых запроса от ApiX:
+ApiX-Drive отправляет данные из Instagram, но запросы отклоняются с ошибкой `missing_instance_id`. Причина: ApiX не включает `integration_instance_id` в тело запроса — он передаёт только поля сообщения.
 
-```
-22:10:05  REJECTED: invalid_json  content_type: application/x-www-form-urlencoded
-22:06:12  REJECTED: invalid_json  content_type: application/x-www-form-urlencoded
-```
+Кроме того, данные от ApiX приходят как `application/x-www-form-urlencoded`, но ключи в body выглядят как одна склеенная строка — это значит, что ApiX кодирует данные некорректно или использует нестандартный формат.
 
-Также на скриншоте ApiX видно, что "Содержимое" — это сплошная строка (form-encoded), не JSON.
+## Решение (2 правки)
 
-## Решение
+### 1. Webhook URL с instance_id в query параметре
 
-**Файл:** `supabase/functions/instagram-webhook/index.ts`
+**Файл:** `src/components/integrations/socials/SocialIntegrationsTab.tsx`
 
-Заменить блок парсинга body (строки 72-96) — вместо только `req.json()` добавить:
+Добавить `?integration_instance_id=<UUID>` в URL, который показывается пользователю для вставки в ApiX-Drive:
 
-1. Проверить `content-type`
-2. Если `application/x-www-form-urlencoded` — парсить через `URLSearchParams` из `req.text()`
-3. Если `application/json` — парсить через `req.json()`
-4. Иначе — попробовать JSON, затем form-urlencoded как fallback
-
-Конкретно:
 ```typescript
-const rawText = await req.text();
-const ct = (req.headers.get('content-type') || '').toLowerCase();
-
-if (ct.includes('application/json')) {
-  body = JSON.parse(rawText);
-} else if (ct.includes('application/x-www-form-urlencoded')) {
-  const params = new URLSearchParams(rawText);
-  body = Object.fromEntries(params.entries());
-} else {
-  // Fallback: try JSON, then form-urlencoded
-  try { body = JSON.parse(rawText); } catch {
-    try {
-      const params = new URLSearchParams(rawText);
-      if ([...params.keys()].length > 0) {
-        body = Object.fromEntries(params.entries());
-      } else { throw new Error('empty'); }
-    } catch { /* reject */ }
-  }
-}
+const webhookUrl = instagramInstances.length > 0
+  ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/instagram-webhook?integration_instance_id=${instagramInstances[0].id}`
+  : null;
 ```
 
-Остальной код без изменений — tolerant mapping, валидация, логирование продолжат работать.
+### 2. Edge function: читать instance_id из query параметров
 
-## Файлы
+**Файл:** `supabase/functions/instagram-webhook/index.ts` (строки 122-123)
+
+Добавить fallback на URL query параметр:
+
+```typescript
+const url = new URL(req.url);
+const instanceId = body.integration_instance_id || url.searchParams.get('integration_instance_id');
+```
+
+### Итого
 
 | Файл | Изменение |
 |------|-----------|
-| `supabase/functions/instagram-webhook/index.ts` | Строки 72-96: добавить парсинг form-urlencoded |
+| `src/components/integrations/socials/SocialIntegrationsTab.tsx` | Webhook URL включает `?integration_instance_id=` |
+| `supabase/functions/instagram-webhook/index.ts` | Строка 123: fallback на query param |
+
+После применения — обновить URL в ApiX-Drive (скопировать новый) и отправить тест повторно.
 
