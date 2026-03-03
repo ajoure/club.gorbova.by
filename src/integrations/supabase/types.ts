@@ -5674,13 +5674,16 @@ export type Database = {
       profiles: {
         Row: {
           avatar_url: string | null
+          birth_date: string | null
           card_holder_names: Json | null
           card_masks: Json | null
+          city: string | null
           club_exit_at: string | null
           club_exit_reason: string | null
           communication_style: Json | null
           consent_given_at: string | null
           consent_version: string | null
+          country: string | null
           created_at: string
           duplicate_flag: string | null
           duplicate_group_id: string | null
@@ -5690,8 +5693,10 @@ export type Database = {
           external_id_gc: string | null
           first_name: string | null
           full_name: string | null
+          gc_registered_at: string | null
           id: string
           import_batch_id: string | null
+          instagram_url: string | null
           is_archived: boolean | null
           last_name: string | null
           last_seen_at: string | null
@@ -5731,13 +5736,16 @@ export type Database = {
         }
         Insert: {
           avatar_url?: string | null
+          birth_date?: string | null
           card_holder_names?: Json | null
           card_masks?: Json | null
+          city?: string | null
           club_exit_at?: string | null
           club_exit_reason?: string | null
           communication_style?: Json | null
           consent_given_at?: string | null
           consent_version?: string | null
+          country?: string | null
           created_at?: string
           duplicate_flag?: string | null
           duplicate_group_id?: string | null
@@ -5747,8 +5755,10 @@ export type Database = {
           external_id_gc?: string | null
           first_name?: string | null
           full_name?: string | null
+          gc_registered_at?: string | null
           id?: string
           import_batch_id?: string | null
+          instagram_url?: string | null
           is_archived?: boolean | null
           last_name?: string | null
           last_seen_at?: string | null
@@ -5788,13 +5798,16 @@ export type Database = {
         }
         Update: {
           avatar_url?: string | null
+          birth_date?: string | null
           card_holder_names?: Json | null
           card_masks?: Json | null
+          city?: string | null
           club_exit_at?: string | null
           club_exit_reason?: string | null
           communication_style?: Json | null
           consent_given_at?: string | null
           consent_version?: string | null
+          country?: string | null
           created_at?: string
           duplicate_flag?: string | null
           duplicate_group_id?: string | null
@@ -5804,8 +5817,10 @@ export type Database = {
           external_id_gc?: string | null
           first_name?: string | null
           full_name?: string | null
+          gc_registered_at?: string | null
           id?: string
           import_batch_id?: string | null
+          instagram_url?: string | null
           is_archived?: boolean | null
           last_name?: string | null
           last_seen_at?: string | null

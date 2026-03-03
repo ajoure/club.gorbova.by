@@ -37,6 +37,7 @@ public-product
 send-email
 email-mass-broadcast
 getcourse-sync
+import-contacts-gc
 amocrm-sync
 subscription-actions
 subscription-admin-actions

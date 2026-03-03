@@ -368,3 +368,6 @@ verify_jwt = false
 
 [functions.admin-bepaid-webhook-replay]
 verify_jwt = false
+
+[functions.import-contacts-gc]
+verify_jwt = false

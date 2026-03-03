@@ -149,20 +149,21 @@ Deno.serve(async (req) => {
           .eq('email', deal.email.toLowerCase().trim())
           .maybeSingle();
 
-        let profileUserId: string;
+        let profileId: string;
+        let profileUserId: string | null;
 
         if (existingProfile) {
+          profileId = existingProfile.id;
           profileUserId = existingProfile.user_id;
           result.profiles_updated++;
         } else {
-          // Создаём ghost профиль
+          // Создаём ghost профиль (user_id=NULL для AUTO-CLAIM при регистрации)
           const fullName = [deal.firstName, deal.lastName].filter(Boolean).join(' ') || null;
-          const ghostUserId = crypto.randomUUID();
 
           const { data: newProfile, error: profileError } = await supabase
             .from('profiles')
             .insert({
-              user_id: ghostUserId,
+              user_id: null,
               email: deal.email.toLowerCase().trim(),
               full_name: fullName,
               phone: deal.phone,
@@ -178,7 +179,8 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          profileUserId = newProfile.user_id;
+          profileId = newProfile.id;
+          profileUserId = newProfile.user_id; // null now
           result.profiles_created++;
         }
 
