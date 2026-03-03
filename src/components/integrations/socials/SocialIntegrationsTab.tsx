@@ -167,29 +167,29 @@ export function SocialIntegrationsTab() {
                       {copiedWebhook ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                     </Button>
                   </div>
-                  <div className="flex items-center gap-2 mt-2">
+                  <div className="flex items-center gap-2 mt-3">
                     <Button
-                      variant="outline"
-                      size="sm"
+                      variant="default"
+                      size="default"
                       onClick={handleTestWebhook}
                       disabled={testingWebhook}
                     >
                       {testingWebhook ? (
-                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       ) : (
-                        <FlaskConical className="h-3.5 w-3.5 mr-1.5" />
+                        <FlaskConical className="h-4 w-4 mr-2" />
                       )}
                       Проверить webhook
                     </Button>
                     <Button
-                      variant="ghost"
-                      size="sm"
+                      variant="outline"
+                      size="default"
                       onClick={() => setShowEvents(!showEvents)}
                     >
                       {showEvents ? (
-                        <ChevronUp className="h-3.5 w-3.5 mr-1.5" />
+                        <ChevronUp className="h-4 w-4 mr-2" />
                       ) : (
-                        <ChevronDown className="h-3.5 w-3.5 mr-1.5" />
+                        <ChevronDown className="h-4 w-4 mr-2" />
                       )}
                       Webhook события
                     </Button>
