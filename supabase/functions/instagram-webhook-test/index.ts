@@ -38,8 +38,8 @@ Deno.serve(async (req) => {
 
   // RBAC: admin or super_admin
   const { data: isAdmin } = await supabaseAdmin.rpc('has_any_role', {
-    _user_id: userData.user.id,
-    _role_codes: ['admin', 'super_admin', 'superadmin'],
+    p_user_id: userData.user.id,
+    p_roles: ['admin', 'superadmin'],
   });
 
   if (!isAdmin) {
