@@ -83,13 +83,35 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    body = await req.json();
-  } catch {
-    console.error('[instagram-webhook] REJECTED: invalid_json', JSON.stringify({
+
+    const rawText = await req.text();
+    const ct = (req.headers.get('content-type') || '').toLowerCase();
+
+    if (ct.includes('application/json')) {
+      body = JSON.parse(rawText);
+    } else if (ct.includes('application/x-www-form-urlencoded')) {
+      const params = new URLSearchParams(rawText);
+      body = Object.fromEntries(params.entries());
+    } else {
+      // Fallback: try JSON first, then form-urlencoded
+      try {
+        body = JSON.parse(rawText);
+      } catch {
+        const params = new URLSearchParams(rawText);
+        if ([...params.keys()].length > 0) {
+          body = Object.fromEntries(params.entries());
+        } else {
+          throw new Error('Unparseable body');
+        }
+      }
+    }
+  } catch (parseErr) {
+    console.error('[instagram-webhook] REJECTED: unparseable_body', JSON.stringify({
       has_auth: !!(req.headers.get('authorization') || req.headers.get('x-webhook-secret')),
       content_type: req.headers.get('content-type') || 'unknown',
+      error: String(parseErr),
     }));
-    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+    return new Response(JSON.stringify({ error: 'Invalid request body' }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
