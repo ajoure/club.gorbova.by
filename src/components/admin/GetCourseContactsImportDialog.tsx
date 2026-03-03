@@ -221,9 +221,10 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
           last_name: parsed.last_name,
           full_name: parsed.full_name,
         });
-        parsed.first_name = normalized.first_name || parsed.first_name;
-        parsed.last_name = normalized.last_name || parsed.last_name;
-        parsed.full_name = normalized.full_name || parsed.full_name;
+        // Всегда перезаписываем нормализованными значениями (не fallback на сырые)
+        parsed.first_name = normalized.first_name;
+        parsed.last_name = normalized.last_name;
+        parsed.full_name = normalized.full_name;
         return parsed;
       });
 
