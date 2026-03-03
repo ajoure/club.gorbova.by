@@ -1,63 +1,30 @@
 
 
-## PATCH CONTACT-SHEET-UI.2 — Ширина 60% + полный ID подписки + навигация в BePaid
+## PATCH: BePaid-подписки — чтение `?search=` из URL
 
-### Изменения — 3 файла
+### Проблема
+Страница `/admin/payments/bepaid-subscriptions?search=sbs_xxx` открывается, но поле поиска не подхватывает параметр `?search=` из URL — `searchQuery` инициализируется пустой строкой.
 
----
+### Файл
+`src/components/admin/payments/BepaidSubscriptionsTabContent.tsx`
 
-### 1) Ширина карточки: 75vw → 60vw
+### Изменения
 
-**Файлы:**
-- `src/components/admin/ContactDetailSheet.tsx` (строка 1341)
-- `src/components/admin/DealDetailSheet.tsx` (строка 450)
+1. Добавить `useLocation` из `react-router-dom` в импорты (строка 1).
+2. В начале компонента `BepaidSubscriptionsTabContent` (строка 307-312):
+   - Прочитать `location.search` через `useLocation()`.
+   - Извлечь `new URLSearchParams(location.search).get("search")`.
+   - Инициализировать `searchQuery` этим значением (или пустой строкой).
+   - При наличии `?search=` — сбросить `statusFilter` на `"all"`, чтобы подписка не была скрыта фильтром статуса (по умолчанию стоит `"active"`).
 
-Заменить `sm:max-w-[75vw] lg:max-w-4xl` → `sm:max-w-[60vw] lg:max-w-3xl`
-
----
-
-### 2) Полный ID подписки BePaid + ссылка-навигация
-
-**Файл:** `src/components/admin/ContactDetailSheet.tsx` (строки 1793-1794)
-
-Сейчас:
+Код:
 ```tsx
-<p className="text-xs text-muted-foreground">
-  ID: {sub.provider_subscription_id?.slice(0, 12)}...
-</p>
+const location = useLocation();
+const urlSearch = new URLSearchParams(location.search).get("search") || "";
+const [searchQuery, setSearchQuery] = useState(urlSearch);
+const [statusFilter, setStatusFilter] = useState<StatusFilter>(urlSearch ? "all" : "active");
 ```
-
-Заменить на:
-```tsx
-<a
-  href={`/admin/payments/bepaid-subscriptions?search=${sub.provider_subscription_id}`}
-  onClick={(e) => {
-    e.preventDefault();
-    navigate(`/admin/payments/bepaid-subscriptions?search=${sub.provider_subscription_id}`);
-  }}
-  className="text-xs text-blue-600 hover:underline cursor-pointer break-all"
->
-  ID: {sub.provider_subscription_id}
-</a>
-```
-
-- Показываем полный ID (убираем `.slice(0, 12)`)
-- Клик → навигация на `/admin/payments/bepaid-subscriptions?search=sbs_xxxxx`
-- Страница BePaid-подписок подхватит `?search=` и покажет отфильтрованный результат
-
-Нужно убедиться, что `navigate` из `react-router-dom` доступен в компоненте (проверю наличие `useNavigate`).
-
----
 
 ### Итого
-
-| Файл | Что меняем |
-|------|-----------|
-| ContactDetailSheet.tsx | Ширина 60vw, полный ID, ссылка-навигация |
-| DealDetailSheet.tsx | Ширина 60vw |
-
-### DoD
-- Карточки контакта и сделки ~60% ширины экрана
-- ID подписки BePaid показан полностью, без обрезки
-- Клик по ID переходит на страницу BePaid-подписок с фильтром по этому ID
+- При переходе по ссылке `/admin/payments/bepaid-subscriptions?search=sbs_xxx` поле поиска заполняется ID, фильтр статуса сбрасывается на «все», и на странице отображается ровно одна подписка.
 
