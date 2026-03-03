@@ -95,21 +95,26 @@ export function normalizeGCName(row: {
 
   let tokens = raw.split(' ');
 
-  // Дедупликация повторяющихся токенов (case-insensitive)
-  // "A B A" → "A B", "A A B" → "A B", "B A A" → "B A"
-  if (tokens.length >= 3) {
-    const seen = new Map<string, number>(); // lowercase → first index
-    const dedupedIndices: number[] = [];
-    for (let i = 0; i < tokens.length; i++) {
-      const key = tokens[i].toLowerCase();
-      if (!seen.has(key)) {
-        seen.set(key, i);
-        dedupedIndices.push(i);
+  // Правило 1: если первый токен == последний (case-insensitive) → удалить последний
+  // "Добровольская Марина Добровольская" → ["Добровольская","Марина"]
+  // "Байгус Ольга Анатольевна Байгус" → ["Байгус","Ольга","Анатольевна"]
+  if (tokens.length >= 3 && tokens[0].toLowerCase() === tokens[tokens.length - 1].toLowerCase()) {
+    tokens.pop();
+  }
+
+  // Правило 2: общая дедупликация токенов (case-insensitive), сохраняем первое вхождение
+  // "A A B" → ["A","B"], "B A A" → ["B","A"]
+  if (tokens.length >= 2) {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const t of tokens) {
+      const k = t.toLowerCase();
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push(t);
       }
     }
-    if (dedupedIndices.length < tokens.length) {
-      tokens = dedupedIndices.map(i => tokens[i]);
-    }
+    tokens = out;
   }
 
   let firstName = '';
