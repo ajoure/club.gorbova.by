@@ -10394,6 +10394,38 @@ export type Database = {
         Args: { _role_code: string; _user_id: string }
         Returns: boolean
       }
+      instagram_outbox_pull_v1: {
+        Args: { p_account_id: string; p_limit: number; p_lock_id: string }
+        Returns: {
+          created_at: string
+          direction: string
+          error_message: string | null
+          external_message_id: string | null
+          id: string
+          ig_thread_id: string | null
+          instagram_account_id: string
+          is_read: boolean
+          media_type: string | null
+          media_url: string | null
+          message_text: string | null
+          peer_id: string
+          raw_payload: Json | null
+          read_at: string | null
+          recipient_id: string | null
+          sender_id: string
+          sender_name: string | null
+          sending_at: string | null
+          sending_lock_id: string | null
+          sent_by_admin: string | null
+          status: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "instagram_messages"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       inv20_paid_orders_without_payments: {
         Args: { p_limit?: number; p_since: string }
         Returns: {

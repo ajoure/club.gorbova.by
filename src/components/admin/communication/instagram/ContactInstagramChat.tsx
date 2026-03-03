@@ -71,13 +71,28 @@ export function ContactInstagramChat({
       .on(
         "postgres_changes",
         {
-          event: "*",
+          event: "INSERT",
           schema: "public",
           table: "instagram_messages",
           filter: `instagram_account_id=eq.${accountId}`,
         },
         (payload) => {
-          const msg = (payload.new || payload.old) as any;
+          const msg = payload.new as any;
+          if (msg?.peer_id === senderId) {
+            queryClient.invalidateQueries({ queryKey: ["instagram-chat", accountId, senderId, threadId] });
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "instagram_messages",
+          filter: `instagram_account_id=eq.${accountId}`,
+        },
+        (payload) => {
+          const msg = payload.new as any;
           if (msg?.peer_id === senderId) {
             queryClient.invalidateQueries({ queryKey: ["instagram-chat", accountId, senderId, threadId] });
           }
