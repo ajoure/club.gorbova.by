@@ -31,7 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Loader2, AlertTriangle, Ghost } from "lucide-react";
+import { Loader2, AlertTriangle, UserX } from "lucide-react";
 import { MultiContactInput, ContactItem } from "@/components/ui/MultiContactInput";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { Badge } from "@/components/ui/badge";
@@ -273,9 +273,9 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
             <DialogTitle className="flex items-center gap-2">
               Редактирование контакта
               {isGhost && (
-                <Badge variant="outline" className="text-xs gap-1">
-                  <Ghost className="h-3 w-3" />
-                  Ghost
+                <Badge variant="outline" className="text-xs gap-1 border-amber-400 text-amber-600">
+                  <UserX className="h-3 w-3" />
+                  Без аккаунта
                 </Badge>
               )}
             </DialogTitle>
@@ -348,7 +348,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
               </Select>
               {isGhost && (
                 <p className="text-xs text-muted-foreground">
-                  Ghost-контакты не могут иметь статус "Активен" — только зарегистрированные пользователи
+                  Контакты без аккаунта не могут иметь статус «Активен» — только зарегистрированные пользователи
                 </p>
               )}
             </div>

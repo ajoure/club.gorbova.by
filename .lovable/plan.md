@@ -1,60 +1,66 @@
 
-## PATCH: Ghost→«Без аккаунта» + скролл контакт-центра + бан-лист (финальный план v3)
+## PATCH: Ghost→«Без аккаунта» + скролл контакт-центра + бан-лист (план v4 — финальный)
 
 ---
 
-### 1) EditContactDialog — Ghost → «Без аккаунта»
+### 1) EditContactDialog — Ghost → «Без аккаунта» ✅ DONE
 
 **Файл:** `src/components/admin/EditContactDialog.tsx`
 - Импорт: `Ghost` → `UserX`
-- Бейдж (строка ~276): `Ghost` → `Без аккаунта` с `border-amber-400 text-amber-600`
-- Текст подсказки (строка ~351): `Ghost-контакты...` → `Контакты без аккаунта не могут иметь статус «Активен» — только зарегистрированные пользователи`
+- Бейдж: `Ghost` → `Без аккаунта` с `border-amber-400 text-amber-600`
+- Текст подсказки: `Контакты без аккаунта не могут иметь статус «Активен» — только зарегистрированные пользователи`
 
 **DoD:** Слово "Ghost" отсутствует в UI.
 
 ---
 
-### 2) Скролл контакт-центра (детерминированный фикс)
+### 2) Скролл контакт-центра (детерминированный фикс) ✅ DONE
 
 #### 2.1 TicketChat.tsx — scrollEndRef внутри viewport-контента
 
 **Корневая причина:** `ScrollArea` форвардит `ref` на `ScrollAreaPrimitive.Root` (overflow:hidden). Скроллящий элемент — `Viewport` (дочерний). `scrollRef.current.scrollTop = scrollHeight` на Root ничего не делает.
 
-**Фикс:**
+**Реализованный фикс:**
 ```tsx
 const scrollEndRef = useRef<HTMLDivElement | null>(null);
+const AUTOSCROLL_THRESHOLD_PX = 120;
+const lastId = visibleMessages?.at(-1)?.id ?? '';
 
 useEffect(() => {
-  // Автоскролл только если пользователь уже внизу (threshold 120px)
-  const viewport = scrollEndRef.current?.closest('[data-radix-scroll-area-viewport]');
+  if (!scrollEndRef.current) return;
+  const root = scrollEndRef.current.closest('[data-radix-scroll-area-root]') as HTMLElement | null;
+  const viewport = root?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
   if (viewport) {
     const { scrollTop, scrollHeight, clientHeight } = viewport;
-    const isNearBottom = scrollHeight - scrollTop - clientHeight < 120;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < AUTOSCROLL_THRESHOLD_PX;
     if (isNearBottom) {
       scrollEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
     }
+  } else {
+    scrollEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
   }
-}, [visibleMessages.length]);
+}, [visibleMessages?.length, lastId]);
 
-// JSX (внутри ScrollArea viewport контента, после списка сообщений)
-{visibleMessages.map(...)}
-<div ref={scrollEndRef} />
+// JSX: <div ref={scrollEndRef} /> после списка сообщений внутри ScrollArea
 ```
 
 **Правила:**
 - `scrollEndRef` вставляется после списка сообщений, гарантированно внутри Radix viewport.
+- Viewport ищется через `closest('[data-radix-scroll-area-root]')` → `querySelector('[data-radix-scroll-area-viewport]')` внутри root (детерминированно, не глобально).
 - `behavior: 'auto'` (НЕ `'instant'` — невалидное значение).
-- Автоскролл выполняется ТОЛЬКО если пользователь уже внизу (threshold 80–120px).
+- Зависимость useEffect: `[visibleMessages?.length, lastId]` — срабатывает при изменении числа сообщений И при изменении последнего сообщения (статус/редактирование).
+- `AUTOSCROLL_THRESHOLD_PX = 120` — константа.
+- Автоскролл выполняется ТОЛЬКО если пользователь уже внизу (threshold 120px).
 - Если пользователь пролистал вверх — новые сообщения НЕ принудительно уводят вниз.
-- (Опционально в будущем: кнопка «Вниз / Новые сообщения».)
 
 #### 2.2 InboxTabContent.tsx — mobile wrapper
 
-- Убрать `overflow-y-auto` с mobile-обёртки чата.
-- Цепочка контейнеров, окружающих ContactTelegramChat:
-  - Родитель: `flex flex-col h-full min-h-0`
-  - Контейнер чата: `flex-1 min-h-0`
-  - Запрещено ставить `overflow: hidden` на уровень, который становится скроллящим предком viewport'а.
+- Убран `overflow-y-auto` с mobile-обёртки чата.
+- Убран `overflow-y-auto overflow-x-hidden` с контейнера чата (заменён на `flex flex-col h-full min-h-0 overflow-x-hidden`).
+- Цепочка контейнеров:
+  - Родитель: `flex-1 min-h-0 overflow-x-hidden`
+  - Контейнер чата: `flex flex-col h-full min-h-0`
+  - Запрещено `overflow-hidden` на контейнере, который непосредственно ограничивает высоту чата (flex-1 min-h-0), если внутри используется ScrollArea.
 
 **DoD (скролл):**
 1. Desktop: wheel/trackpad скроллит историю сообщений.
@@ -66,7 +72,7 @@ useEffect(() => {
 
 ---
 
-### 3) Бан-лист — полная реализация с merge и intake
+### 3) Бан-лист — полная реализация с merge и intake (TODO)
 
 #### 3A) SQL-миграция
 
@@ -91,7 +97,6 @@ CREATE TABLE public.ban_identifiers (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Частичный уникальный индекс (только активные)
 CREATE UNIQUE INDEX ban_identifiers_unique_active
 ON public.ban_identifiers(kind, value_norm)
 WHERE is_active = true;
@@ -106,7 +111,7 @@ UPDATE public.ban_identifiers SET is_active = false WHERE ban_case_id = _case_id
 
 **Нормализаторы (IMMUTABLE):**
 - `norm_email(text)` → `lower(trim(...))`
-- `norm_phone(text)` → `regexp_replace(..., '[^0-9+]', '', 'g')`
+- `norm_phone(text)` → `regexp_replace` → оставить + и цифры → `+` допускается только первым символом → пустые/короткие (<7 цифр) телефоны не сохраняются как identifier (возвращается NULL)
 - `norm_tg_username(text)` → `lower(ltrim(trim(...), '@'))`
 
 **Функция поиска бана:**
@@ -129,11 +134,14 @@ CREATE FUNCTION public.ban_case_upsert_identifiers(
 - Если `ban_cases.profile_id` совпадает с текущим профилем — он target.
 - Иначе target = кейс с `created_at` самым ранним (первичный источник бана).
 - При конфликте `(kind,value_norm)` активного identifier из другого кейса:
-  - Переназначить `ban_identifiers.ban_case_id` на target case (или: деактивировать старый + создать новый в target).
+  - Сначала `UPDATE ... SET ban_case_id = target` (или `SET is_active=false` на старом + INSERT в target).
+  - При любом конфликте по partial unique index — делать UPDATE existing row, а не падать.
   - Деактивировать «проигравший» кейс, если в нём не осталось активных identifiers.
   - audit_log `ban_case_merged`.
 
-**DoD merge:** После серии merge не существует двух активных кейсов, содержащих пересекающиеся identifiers.
+**DoD merge:**
+- После серии merge не существует двух активных кейсов, содержащих пересекающиеся identifiers.
+- `ban_case_upsert_identifiers` никогда не падает на `unique_active`, а приводит к единственному активному identifier.
 
 #### 3B) handle_new_user — post-signup ban-check (email-only)
 
@@ -145,8 +153,9 @@ FROM public.check_ban_by_identifiers(_email := _email) bc LIMIT 1;
 
 IF _ban_case_id IS NOT NULL THEN
   -- Профиль создаётся, но со статусом banned
+  -- ON CONFLICT обновляет ТОЛЬКО status и updated_at (add-only, не теряет поля)
   INSERT INTO profiles (...) VALUES (..., 'banned', ...)
-  ON CONFLICT (user_id) DO UPDATE SET status = 'banned';
+  ON CONFLICT (user_id) DO UPDATE SET status = 'banned', updated_at = now();
 
   -- Добавить email в ban_case
   PERFORM public.ban_case_upsert_identifiers(_ban_case_id,
@@ -166,7 +175,9 @@ IF _ban_case_id IS NOT NULL THEN
 END IF;
 ```
 
-**Важно:** `actor_type`, `actor_user_id`, `actor_label` — это колонки таблицы `audit_logs`, НЕ поля внутри `meta`.
+**Важно:**
+- `actor_type`, `actor_user_id`, `actor_label` — это колонки таблицы `audit_logs`, НЕ поля внутри `meta`.
+- `ON CONFLICT` обновляет **только** `status='banned'` и `updated_at=now()` — не перезатирает другие поля.
 
 #### 3C) ban-intake — системный intake при изменении phone/tg/email
 
@@ -182,7 +193,7 @@ END IF;
 3. Если match:
    - `profiles.status='banned'`
    - `ban_case_upsert_identifiers(matched_case, all_identifiers)` — добавит новый email/телефон в бан автоматически
-   - `audit_logs`: `actor_type='system'`, `actor_label='ban-intake'`
+   - `audit_logs`: `actor_type='system'`, `actor_user_id=NULL`, `actor_label='ban-intake'`
 
 **DoD:**
 - Кейс «новый email + banned phone» → бан + новый email добавлен в ban_identifiers.
@@ -198,11 +209,11 @@ END IF;
 
 #### 3E) Guards + страница /banned
 
-- **RLS:** Если `profiles.status='banned'` и пользователь не admin → deny all на основные таблицы приложения (минимум: products/content/entitlements/messages/payments). Не «аналогично archived», а явное правило.
+- **RLS:** Если `profiles.status='banned'` и пользователь не admin → deny all на основные таблицы приложения (минимум: products/content/entitlements/messages/payments). Явное правило, не «аналогично archived».
 - **Frontend guard:** В AuthContext/ProtectedRoute — если `profiles.status === 'banned'` → редирект на `/banned`.
 - **`src/pages/Banned.tsx`:** красный экран «Доступ запрещён администратором» (без раскрытия деталей бана).
 
-**DoD:** banned пользователь не может читать/писать данные напрямую через client SDK (проверка в devtools/network: 401/permission denied).
+**DoD:** Запросы к защищённым таблицам от banned пользователя не возвращают данные и не позволяют запись (RLS denies).
 
 #### 3F) UI кнопка в ContactDetailSheet (super_admin)
 
@@ -215,31 +226,34 @@ END IF;
 
 ### Итого файлов
 
-| Артефакт | Что |
-|----------|-----|
-| `src/components/admin/EditContactDialog.tsx` | Ghost → «Без аккаунта» |
-| `src/components/support/TicketChat.tsx` | scrollEndRef внутри viewport, автоскролл с threshold |
-| `src/components/admin/communication/InboxTabContent.tsx` | Убрать overflow-y-auto на mobile, min-h-0 цепочка |
-| SQL-миграция | ban_cases, ban_identifiers (+is_active, partial unique), нормализаторы, check/upsert/merge, handle_new_user ban-check |
-| `supabase/functions/ban-list-manage/index.ts` | add/remove/check |
-| `supabase/functions/ban-intake/index.ts` | системный intake при phone/tg/email |
-| `src/pages/Banned.tsx` | Красный экран запрета |
-| `src/components/admin/ContactDetailSheet.tsx` | Кнопка «В бан-лист» + бейдж BANNED |
-| Routing/guards | Редирект banned → /banned |
+| Артефакт | Статус | Что |
+|----------|--------|-----|
+| `src/components/admin/EditContactDialog.tsx` | ✅ | Ghost → «Без аккаунта» |
+| `src/components/support/TicketChat.tsx` | ✅ | scrollEndRef внутри viewport, автоскролл с threshold 120px |
+| `src/components/admin/communication/InboxTabContent.tsx` | ✅ | Убран overflow-y-auto на mobile, min-h-0 цепочка |
+| SQL-миграция | TODO | ban_cases, ban_identifiers (+is_active, partial unique), нормализаторы (norm_phone с валидацией длины), check/upsert/merge, handle_new_user ban-check |
+| `supabase/functions/ban-list-manage/index.ts` | TODO | add/remove/check |
+| `supabase/functions/ban-intake/index.ts` | TODO | системный intake при phone/tg/email |
+| `src/pages/Banned.tsx` | TODO | Красный экран запрета |
+| `src/components/admin/ContactDetailSheet.tsx` | TODO | Кнопка «В бан-лист» + бейдж BANNED |
+| Routing/guards | TODO | Редирект banned → /banned |
 
 ### DoD (финальный)
 
-1. **Ghost→Без аккаунта:** слово "Ghost" отсутствует в UI.
-2. **Скролл:**
+1. **Ghost→Без аккаунта:** слово "Ghost" отсутствует в UI. ✅
+2. **Скролл:** ✅
    - Telegram-chat и TicketChat скроллятся на desktop/mobile.
    - Автоскролл вниз работает только если пользователь внизу (threshold 120px).
    - Если пролистал вверх — автоскролл НЕ срабатывает.
    - Скрытие скроллбара не отключает pointer/scroll события.
    - В DevTools скроллится `[data-radix-scroll-area-viewport]`.
-3. **Бан-лист:**
+3. **Бан-лист (TODO):**
    - Бан по email → регистрация возможна, доступ запрещён после входа.
    - Новый email + banned phone → после ввода телефона банится и новый email добавляется в тот же ban_case.
    - Деактивация кейса: `is_active=false` на case + identifiers → пользователь снова проходит guard.
    - После merge нет двух активных кейсов с пересекающимися identifiers.
-   - banned пользователь не может читать/писать данные через client SDK.
+   - `ban_case_upsert_identifiers` никогда не падает на `unique_active`.
+   - banned пользователь не может читать/писать данные через client SDK (RLS denies).
+   - `ON CONFLICT` в `handle_new_user` обновляет только `status` и `updated_at`.
+   - `norm_phone`: `+` только первым символом, пустые/короткие (<7 цифр) → NULL.
 4. **SYSTEM ACTOR proof:** авто-бан записан в `audit_logs` с `actor_type='system'` (колонка), `actor_user_id=NULL`, `actor_label` заполнен. НЕ внутри `meta`.
