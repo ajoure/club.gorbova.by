@@ -1,40 +1,26 @@
 
 
-## Проблема
+## Диагностика
 
-При создании Instagram-подключения:
-1. Статус ставится `disconnected` и нет способа его изменить через UI
-2. Запись `instagram_accounts` не создаётся — webhook требует её и возвращает 404
-3. Кнопка «Проверить» в SocialIntegrationsTab — заглушка `() => {}`
+### 1. Ошибка "Invalid webhook secret" при нажатии "Проверить webhook"
 
-Итого: интеграция создана, но неработоспособна.
+**Причина**: `instagram-webhook-test` отправляет секрет через `Authorization: Bearer ...`, но Supabase Gateway может модифицировать этот заголовок при вызове edge function → edge function внутри проекта. Прошлые успешные тесты (curl) использовали заголовок `x-webhook-secret`.
 
-## Решение (3 точечных правки)
+**Факт**: В логах видно `auth_scheme: bearer`, `has_auth_header: true`, но результат `invalid_secret` — токен приходит изменённым.
 
-### 1. AddIntegrationDialog — auto-create `instagram_accounts` при сохранении Instagram
+**Решение**: В `instagram-webhook-test` заменить `Authorization: Bearer ${webhookSecret}` на `x-webhook-secret: ${webhookSecret}`.
 
-В `handleSubmit` после `createInstance.mutateAsync` для `apix_instagram_dm`:
-- вставить запись в `instagram_accounts` с `integration_instance_id = result.id`, `is_active = true`
-- обновить `integration_instances.status` на `connected`
+### 2. Видимость кнопок
 
-Это одноразовое действие при создании подключения.
+На скриншоте кнопки "Проверить webhook" и "Webhook события" мелкие, внутри блока webhook URL. Нужно сделать их заметнее:
+- Увеличить размер кнопок
+- "Проверить webhook" → variant `default` (основной цвет) вместо `outline`
+- "Webhook события" → variant `outline` вместо `ghost`
 
-### 2. SocialIntegrationsTab — подключить реальный healthcheck
+## Файлы и правки
 
-Заменить `onHealthCheck={() => {}}` на вызов `integration-healthcheck` (как в `AdminIntegrations.tsx`). Для `apix_instagram_dm` healthcheck просто проверит наличие `instagram_accounts` + конфигурации и выставит статус `connected`.
-
-### 3. integration-healthcheck — добавить case `apix_instagram_dm`
-
-В edge-функции добавить обработчик:
-- Проверить что `instagram_accounts` существует для `instance_id`
-- Проверить что `webhook_secret` заполнен в config
-- Если ок — success, иначе — error с понятным сообщением
-
-## Файлы
-
-| Файл | Изменение |
-|------|-----------|
-| `src/components/integrations/AddIntegrationDialog.tsx` | После создания Instagram — upsert `instagram_accounts` + update status |
-| `src/components/integrations/socials/SocialIntegrationsTab.tsx` | Подключить реальный `onHealthCheck` |
-| `supabase/functions/integration-healthcheck/index.ts` | Добавить case `apix_instagram_dm` |
+| Файл | Что меняется |
+|------|-------------|
+| `supabase/functions/instagram-webhook-test/index.ts` | Заголовок `Authorization: Bearer` → `x-webhook-secret` |
+| `src/components/integrations/socials/SocialIntegrationsTab.tsx` | Увеличить/выделить кнопки "Проверить webhook" и "Webhook события" |
 
