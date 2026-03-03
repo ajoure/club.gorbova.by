@@ -1,53 +1,63 @@
 
 
-## PATCH CONTACT-SHEET-UI.1 — Ширина карточки 75% + визуальное разделение шапки + баг orders enrichment
+## PATCH CONTACT-SHEET-UI.2 — Ширина 60% + полный ID подписки + навигация в BePaid
 
-### Две задачи
-
----
-
-### A) Баг: сделки не загружаются при первом открытии вкладки "Активные"
-
-**Причина:** `queryKey: ["admin-contacts-orders", profileIds.length]` (строка 555). Ключ зависит только от длины массива profileIds, а не от фактических ID. Если на вкладке "Активные" загружено 100 профилей и на "С покупками" тоже 100 — react-query считает это одним и тем же запросом и возвращает кэш из другой вкладки (или не рефетчит).
-
-**Файл:** `src/pages/admin/AdminContacts.tsx`, строка 555
-
-**Фикс:** Изменить queryKey на `["admin-contacts-orders", activePreset, debouncedSearch, profileIds.length]` — чтобы при смене вкладки orders перезапрашивались для актуальных профилей.
+### Изменения — 3 файла
 
 ---
 
-### B) Визуальные улучшения карточки контакта
+### 1) Ширина карточки: 75vw → 60vw
 
-**Файл:** `src/components/admin/ContactDetailSheet.tsx`
+**Файлы:**
+- `src/components/admin/ContactDetailSheet.tsx` (строка 1341)
+- `src/components/admin/DealDetailSheet.tsx` (строка 450)
 
-**B1) Ширина 75%**
-
-Строка 1341: заменить `sm:max-w-xl` на `sm:max-w-[75vw] lg:max-w-4xl` — карточка станет ~75% экрана на десктопе, но с ограничением max-w-4xl чтобы на огромных мониторах не растягивалась.
-
-Аналогично расширить `DealDetailSheet.tsx` (строка 450): `sm:max-w-xl` → `sm:max-w-[75vw] lg:max-w-4xl`.
-
-**B2) Визуальное разделение шапки**
-
-Текущая проблема: Row 1 (имя+email) и Row 2 (бейджи) сливаются визуально.
-
-Решение:
-- Row 1 (аватар + имя + email): оставить как есть, но увеличить имя до `text-lg sm:text-xl font-bold` для лучшего акцента.
-- Между Row 1 и Row 2: добавить `<Separator className="my-2" />` — тонкая горизонтальная линия.
-- Row 2 (бейджи): уменьшить `mt-2` → убрать (separator уже даёт отступ). Добавить `opacity-80` или `text-muted-foreground`-подобный приглушённый стиль для бейджей, чтобы они не перебивали имя.
-
-Альтернативно можно Row 2 поместить в блок с `bg-muted/30 rounded-lg px-3 py-2` — лёгкий фон, чтобы визуально это был отдельный «блок» действий.
+Заменить `sm:max-w-[75vw] lg:max-w-4xl` → `sm:max-w-[60vw] lg:max-w-3xl`
 
 ---
 
-### Итого файлы
+### 2) Полный ID подписки BePaid + ссылка-навигация
 
-1. `src/pages/admin/AdminContacts.tsx` — строка 555: queryKey orders
-2. `src/components/admin/ContactDetailSheet.tsx` — строка 1341 (ширина) + строки 1343-1427 (разделитель, стили)
-3. `src/components/admin/DealDetailSheet.tsx` — строка 450 (ширина)
+**Файл:** `src/components/admin/ContactDetailSheet.tsx` (строки 1793-1794)
+
+Сейчас:
+```tsx
+<p className="text-xs text-muted-foreground">
+  ID: {sub.provider_subscription_id?.slice(0, 12)}...
+</p>
+```
+
+Заменить на:
+```tsx
+<a
+  href={`/admin/payments/bepaid-subscriptions?search=${sub.provider_subscription_id}`}
+  onClick={(e) => {
+    e.preventDefault();
+    navigate(`/admin/payments/bepaid-subscriptions?search=${sub.provider_subscription_id}`);
+  }}
+  className="text-xs text-blue-600 hover:underline cursor-pointer break-all"
+>
+  ID: {sub.provider_subscription_id}
+</a>
+```
+
+- Показываем полный ID (убираем `.slice(0, 12)`)
+- Клик → навигация на `/admin/payments/bepaid-subscriptions?search=sbs_xxxxx`
+- Страница BePaid-подписок подхватит `?search=` и покажет отфильтрованный результат
+
+Нужно убедиться, что `navigate` из `react-router-dom` доступен в компоненте (проверю наличие `useNavigate`).
+
+---
+
+### Итого
+
+| Файл | Что меняем |
+|------|-----------|
+| ContactDetailSheet.tsx | Ширина 60vw, полный ID, ссылка-навигация |
+| DealDetailSheet.tsx | Ширина 60vw |
 
 ### DoD
-- При перезагрузке страницы на вкладке "Активные" колонка "Сделок" показывает корректные числа сразу.
-- Карточка контакта занимает ~75% ширины экрана.
-- Имя/фамилия визуально отделены от строки бейджей (separator или фон).
-- Карточка сделки тоже расширена.
+- Карточки контакта и сделки ~60% ширины экрана
+- ID подписки BePaid показан полностью, без обрезки
+- Клик по ID переходит на страницу BePaid-подписок с фильтром по этому ID
 
