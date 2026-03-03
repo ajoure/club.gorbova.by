@@ -63,6 +63,8 @@ const Knowledge = lazy(() => import("./pages/Knowledge"));
 const BusinessTraining = lazy(() => import("./pages/BusinessTraining"));
 const BusinessTrainingContent = lazy(() => import("./pages/BusinessTrainingContent"));
 
+const Banned = lazy(() => import("./pages/Banned"));
+
 // Admin pages - lazy loaded (heavy components)
 const AdminLayout = lazy(() => import("./components/layout/AdminLayout").then(m => ({ default: m.AdminLayout })));
 const AdminContacts = lazy(() => import("./pages/admin/AdminContacts"));
@@ -164,6 +166,8 @@ const App = () => {
               <Route path="/course-accountant" element={<LazyRoute><CourseAccountant /></LazyRoute>} />
               <Route path="/business-training" element={<LazyRoute><BusinessTraining /></LazyRoute>} />
               <Route path="/club" element={<Landing />} />
+              
+              <Route path="/banned" element={<LazyRoute><Banned /></LazyRoute>} />
               
               {/* Protected routes */}
               <Route path="/products" element={<ProtectedRoute><LazyRoute><Learning /></LazyRoute></ProtectedRoute>} />

@@ -214,6 +214,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const [bepaidLinkModalOpen, setBepaidLinkModalOpen] = useState(false);
   const [bepaidLinkUrl, setBepaidLinkUrl] = useState<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [banDialogOpen, setBanDialogOpen] = useState(false);
+  const [banReason, setBanReason] = useState("");
+  const [isBanning, setIsBanning] = useState(false);
 
   // Reset scroll position when tab changes
   useEffect(() => {
@@ -1337,6 +1340,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   if (!contact) return null;
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-[60vw] lg:max-w-3xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden">
         {/* Compact header for mobile - with padding-right for close button */}
@@ -1425,7 +1429,50 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 <XCircle className="w-3 h-3" />
                 Архивный
               </Badge>
+            ) : resolvedStatus === "banned" ? (
+              <Badge variant="destructive" className="h-7 px-2.5 text-xs gap-1">
+                <Ban className="w-3 h-3" />
+                ЗАБАНЕН
+              </Badge>
             ) : null}
+
+            {isSuperAdmin() && resolvedStatus !== "banned" && (
+              <Badge
+                variant="outline"
+                className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-destructive/30 text-destructive hover:bg-destructive/10"
+                onClick={() => { setBanReason(""); setBanDialogOpen(true); }}
+              >
+                <Ban className="w-3 h-3" />
+                В бан-лист
+              </Badge>
+            )}
+
+            {isSuperAdmin() && resolvedStatus === "banned" && (
+              <Badge
+                variant="outline"
+                className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-green-500/30 text-green-600 hover:bg-green-500/10"
+                onClick={async () => {
+                  setIsBanning(true);
+                  try {
+                    const { error } = await supabase.functions.invoke("ban-list-manage", {
+                      body: { action: "remove", profileId: contact?.id },
+                    });
+                    if (error) throw error;
+                    queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+                    queryClient.invalidateQueries({ queryKey: ["contact-detail"] });
+                    toast.success("Бан снят");
+                  } catch (e: any) {
+                    toast.error("Ошибка: " + e.message);
+                  } finally {
+                    setIsBanning(false);
+                  }
+                }}
+                aria-disabled={isBanning}
+              >
+                {isBanning ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+                Снять бан
+              </Badge>
+            )}
           </div>
         </SheetHeader>
 
@@ -3275,5 +3322,67 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         </Dialog>
       </SheetContent>
     </Sheet>
+
+    {/* Ban AlertDialog */}
+    <AlertDialog open={banDialogOpen} onOpenChange={setBanDialogOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+            <Ban className="h-5 w-5" />
+            Добавить в бан-лист
+          </AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-3">
+              <p>
+                Все идентификаторы контакта будут добавлены в бан-лист. Повторная регистрация с этими данными будет автоматически заблокирована.
+              </p>
+              <div className="space-y-1 text-sm">
+                {contact?.email && <div>Email: <strong>{contact.email}</strong></div>}
+                {contact?.phone && <div>Телефон: <strong>{contact.phone}</strong></div>}
+                {contact?.telegram_username && <div>Telegram: <strong>@{contact.telegram_username}</strong></div>}
+              </div>
+              <div className="space-y-1">
+                <Label>Причина бана</Label>
+                <Textarea
+                  value={banReason}
+                  onChange={(e) => setBanReason(e.target.value)}
+                  placeholder="Укажите причину..."
+                  rows={2}
+                />
+              </div>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Отмена</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive hover:bg-destructive/90"
+            disabled={isBanning}
+            onClick={async (e) => {
+              e.preventDefault();
+              setIsBanning(true);
+              try {
+                const { error } = await supabase.functions.invoke("ban-list-manage", {
+                  body: { action: "add", profileId: contact?.id, reason: banReason || undefined },
+                });
+                if (error) throw error;
+                queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+                queryClient.invalidateQueries({ queryKey: ["contact-detail"] });
+                toast.success("Контакт добавлен в бан-лист");
+                setBanDialogOpen(false);
+              } catch (err: any) {
+                toast.error("Ошибка: " + err.message);
+              } finally {
+                setIsBanning(false);
+              }
+            }}
+          >
+            {isBanning && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            Забанить
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
