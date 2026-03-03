@@ -48,6 +48,7 @@ import {
   RefreshCw,
   
   Archive,
+  Ban,
   FileSpreadsheet,
   Sparkles,
   ShoppingCart,
@@ -503,10 +504,12 @@ export default function AdminContacts() {
         query = query.is("user_id", null).neq("status", "archived");
       } else if (activePreset === "duplicates") {
         query = query.not("duplicate_flag", "is", null).neq("duplicate_flag", "none");
-      } else if (activePreset === "archived") {
-        query = query.eq("status", "archived");
-      }
-      // "all" — no extra filter
+    } else if (activePreset === "archived") {
+      query = query.eq("status", "archived");
+    } else if (activePreset === "banned") {
+      query = query.eq("status", "banned");
+    }
+    // "all" — no extra filter
 
       // Server-side search
       if (debouncedSearch) {
@@ -915,7 +918,7 @@ export default function AdminContacts() {
 
   // Server-side counts for presets
   const presetCounts = useMemo(() => {
-    if (!tabCounts) return { active: 0, withAccount: 0, withDeals: 0, duplicates: 0, archived: 0, noAccount: 0 };
+    if (!tabCounts) return { active: 0, withAccount: 0, withDeals: 0, duplicates: 0, archived: 0, noAccount: 0, banned: 0 };
     return {
       active: tabCounts.active,
       withAccount: tabCounts.active,
@@ -923,6 +926,7 @@ export default function AdminContacts() {
       duplicates: tabCounts.duplicates,
       archived: tabCounts.archived,
       noAccount: tabCounts.no_account,
+      banned: (tabCounts as any).banned ?? 0,
     };
   }, [tabCounts]);
 
@@ -1182,6 +1186,21 @@ export default function AdminContacts() {
             </>
           )}
 
+          {/* Banned pill (only when banned preset is active) */}
+          {activePreset === "banned" && (
+            <>
+              <div className="w-px h-5 bg-border/30 mx-1" />
+              <button
+                className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-destructive/20 text-destructive border border-destructive/30 whitespace-nowrap"
+                onClick={() => handleTabChange("active")}
+              >
+                <Ban className="w-3 h-3" />
+                <span>Бан-лист ({presetCounts.banned})</span>
+                <XCircle className="w-3 h-3 ml-0.5" />
+              </button>
+            </>
+          )}
+
           {/* Separator */}
           <div className="w-px h-5 bg-border/30 mx-1" />
 
@@ -1315,6 +1334,10 @@ export default function AdminContacts() {
               <DropdownMenuItem onClick={() => handleTabChange("archived")}>
                 <Archive className="h-4 w-4 mr-2" />
                 Архивные / удалённые ({presetCounts.archived})
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleTabChange("banned")}>
+                <Ban className="h-4 w-4 mr-2" />
+                Бан-лист ({presetCounts.banned})
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => refetch()}>
