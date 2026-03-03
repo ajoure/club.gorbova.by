@@ -371,3 +371,9 @@ verify_jwt = false
 
 [functions.import-contacts-gc]
 verify_jwt = false
+
+[functions.ban-list-manage]
+verify_jwt = false
+
+[functions.ban-intake]
+verify_jwt = false

@@ -509,6 +509,79 @@ export type Database = {
         }
         Relationships: []
       }
+      ban_cases: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          profile_id: string | null
+          reason: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          profile_id?: string | null
+          reason?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          profile_id?: string | null
+          reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ban_cases_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ban_identifiers: {
+        Row: {
+          ban_case_id: string
+          created_at: string
+          id: string
+          is_active: boolean
+          kind: string
+          value: string
+          value_norm: string
+        }
+        Insert: {
+          ban_case_id: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          kind: string
+          value: string
+          value_norm: string
+        }
+        Update: {
+          ban_case_id?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          kind?: string
+          value?: string
+          value_norm?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ban_identifiers_ban_case_id_fkey"
+            columns: ["ban_case_id"]
+            isOneToOne: false
+            referencedRelation: "ban_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bepaid_product_mappings: {
         Row: {
           auto_create_order: boolean | null
@@ -9662,9 +9735,26 @@ export type Database = {
         }
         Returns: Json
       }
+      ban_case_upsert_identifiers: {
+        Args: { _ban_case_id: string; _identifiers: Json }
+        Returns: number
+      }
       cascade_order_cancellation: {
         Args: { p_order_id: string; p_reason?: string }
         Returns: Json
+      }
+      check_ban_by_identifiers: {
+        Args: {
+          _email?: string
+          _phone?: string
+          _tg_user_id?: number
+          _tg_username?: string
+        }
+        Returns: {
+          ban_case_id: string
+          matched_kind: string
+          matched_value: string
+        }[]
       }
       check_payment_status_for_deal: {
         Args: { p_payment_id: string; p_payment_source: string }
@@ -10155,6 +10245,9 @@ export type Database = {
         }
         Returns: undefined
       }
+      norm_email: { Args: { _val: string }; Returns: string }
+      norm_phone: { Args: { _val: string }; Returns: string }
+      norm_tg_username: { Args: { _val: string }; Returns: string }
       normalize_card_brand: { Args: { _brand: string }; Returns: string }
       queue_telegram_notification: {
         Args: {

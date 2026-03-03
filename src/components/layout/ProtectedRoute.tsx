@@ -13,30 +13,24 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { user, loading } = useAuth();
   const location = useLocation();
   
-  // Дополнительная задержка для HMR — даём время Supabase восстановить сессию
   const [isInitializing, setIsInitializing] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
+  const [isBanned, setIsBanned] = useState<boolean | null>(null);
   
   useEffect(() => {
-    // Определяем мобильный Safari — там восстановление сессии занимает дольше
     const isMobileSafari = /iPhone|iPad|iPod/.test(navigator.userAgent) && 
                            /Safari/.test(navigator.userAgent) &&
                            !/Chrome/.test(navigator.userAgent);
-    
-    // Для мобильного Safari даём 1500ms, для остальных 600ms
     const delay = isMobileSafari ? 1500 : 600;
-    
     const timer = setTimeout(() => setIsInitializing(false), delay);
     return () => clearTimeout(timer);
   }, []);
 
-  // Повторная проверка сессии если пользователь не найден после инициализации
+  // Retry session
   useEffect(() => {
     if (!loading && !isInitializing && !user && retryCount < 2) {
-      // Попробуем ещё раз получить сессию
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session) {
-          // Session found on retry - don't reload, let AuthContext sync naturally
           console.log("Session found on retry, waiting for AuthContext sync");
         }
       });
@@ -44,14 +38,37 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     }
   }, [loading, isInitializing, user, retryCount]);
 
-  // Сохраняем текущий маршрут при каждом изменении (если авторизован)
+  // Check banned status
+  useEffect(() => {
+    if (!user) {
+      setIsBanned(null);
+      return;
+    }
+
+    let mounted = true;
+    const checkBanned = async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("status")
+        .eq("user_id", user.id)
+        .single();
+
+      if (mounted) {
+        setIsBanned(!error && data?.status === "banned");
+      }
+    };
+
+    checkBanned();
+    return () => { mounted = false; };
+  }, [user]);
+
+  // Save route
   useEffect(() => {
     if (user && !loading) {
       saveLastRoute(location.pathname, location.search);
     }
   }, [user, loading, location.pathname, location.search]);
 
-  // Показываем loader пока loading ИЛИ пока идёт инициализация
   if (loading || isInitializing) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-background">
@@ -61,15 +78,25 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   }
 
   if (!user) {
-    // Guest guard for /products: redirect to landing (not /auth)
-    // This ensures guests landing on protected /products route go to public landing
     if (location.pathname === "/products") {
       return <Navigate to="/" replace />;
     }
-    
-    // Encode the full path including search params
     const redirectTo = encodeURIComponent(location.pathname + location.search);
     return <Navigate to={`/auth?redirectTo=${redirectTo}`} replace />;
+  }
+
+  // Redirect banned users
+  if (isBanned === true) {
+    return <Navigate to="/banned" replace />;
+  }
+
+  // Still checking banned status
+  if (isBanned === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
   }
 
   return <>{children}</>;

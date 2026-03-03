@@ -131,19 +131,26 @@ export function TicketChat({ ticketId, isAdmin, isClosed, telegramUserId, telegr
   const AUTOSCROLL_THRESHOLD_PX = 120;
   const lastId = visibleMessages?.at(-1)?.id ?? '';
 
+  const isFirstRender = useRef(true);
+
   useEffect(() => {
     if (!scrollEndRef.current) return;
+
+    // Always scroll on first render or when very few messages
+    if (isFirstRender.current || (visibleMessages?.length ?? 0) <= 1) {
+      isFirstRender.current = false;
+      scrollEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
+      return;
+    }
+
     const root = scrollEndRef.current.closest('[data-radix-scroll-area-root]') as HTMLElement | null;
     const viewport = root?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
     if (viewport) {
       const { scrollTop, scrollHeight, clientHeight } = viewport;
       const isNearBottom = scrollHeight - scrollTop - clientHeight < AUTOSCROLL_THRESHOLD_PX;
       if (isNearBottom) {
-        scrollEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+        scrollEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
       }
-    } else {
-      // Fallback: first render, always scroll
-      scrollEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
     }
   }, [visibleMessages?.length, lastId]);
 
