@@ -1341,81 +1341,89 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       <SheetContent className="w-full sm:max-w-xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden">
         {/* Compact header for mobile - with padding-right for close button */}
         <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 border-b flex-shrink-0">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <AvatarZoomDialog
-                avatarUrl={contact.avatar_url}
-                fallbackText={formatContactName(contact)?.[0]?.toUpperCase() || contact.email?.[0]?.toUpperCase() || "?"}
-                name={formatContactName(contact)}
-                onFetchFromTelegram={resolvedTelegramUserId ? fetchPhotoFromTelegram : undefined}
-                isFetchingPhoto={isFetchingPhoto}
-                size="md"
-              />
-              <div className="min-w-0 flex-1">
-                <SheetTitle className="text-lg sm:text-xl truncate">{formatContactName(contact)}</SheetTitle>
-                <p className="text-xs sm:text-sm text-muted-foreground truncate">{contact.email}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 flex-shrink-0 mt-1">
-              {/* Loyalty Pulse */}
-              {profileData?.loyalty_score && (
-                <LoyaltyPulse score={profileData.loyalty_score} size="sm" />
-              )}
-              {!resolvedUserId && (
-                <Badge variant="outline" className="text-xs gap-1 border-amber-400 text-amber-600 dark:text-amber-400">
-                  <UserX className="w-3 h-3" />
-                  Без аккаунта
-                </Badge>
-              )}
-              {resolvedStatus === "imported" ? (
-                <Badge variant="outline" className="text-xs gap-1 bg-blue-500/20 text-blue-600 border-blue-500/30">
-                  <UserX className="w-3 h-3 mr-1" />импорт
-                </Badge>
-              ) : resolvedStatus === "ghost" ? null : (
-                <Badge 
-                  variant={resolvedStatus === "active" && resolvedUserId ? "default" : "secondary"} 
-                  className="text-xs"
-                >
-                  {resolvedStatus === "active" && resolvedUserId ? (
-                    <><CheckCircle className="w-3 h-3 mr-1" />Активен</>
-                  ) : resolvedStatus === "blocked" ? (
-                    <><Ban className="w-3 h-3 mr-1" />Заблокирован</>
-                  ) : resolvedStatus === "archived" ? (
-                    <><XCircle className="w-3 h-3 mr-1" />Архивный</>
-                  ) : (
-                    <><XCircle className="w-3 h-3 mr-1" />{resolvedStatus}</>
-                  )}
-                </Badge>
+          {/* Row 1: Avatar + Name + Email */}
+          <div className="flex items-start gap-3">
+            <AvatarZoomDialog
+              avatarUrl={contact.avatar_url}
+              fallbackText={formatContactName(contact)?.[0]?.toUpperCase() || contact.email?.[0]?.toUpperCase() || "?"}
+              name={formatContactName(contact)}
+              onFetchFromTelegram={resolvedTelegramUserId ? fetchPhotoFromTelegram : undefined}
+              isFetchingPhoto={isFetchingPhoto}
+              size="md"
+            />
+            <div className="min-w-0 flex-1">
+              <SheetTitle className="text-base sm:text-lg font-semibold leading-tight break-words">{formatContactName(contact)}</SheetTitle>
+              {contact.email && (
+                <p className="text-xs text-muted-foreground break-all mt-0.5">{contact.email}</p>
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2 mt-2">
+
+          {/* Row 2: All badges & actions as uniform pills */}
+          <div className="flex flex-wrap items-center gap-1.5 mt-2">
             {returnTo && (
-              <Button 
-                variant="ghost" 
-                size="sm" 
+              <Badge
+                variant="outline"
+                className="cursor-pointer h-7 px-2.5 text-xs gap-1 hover:bg-accent"
                 onClick={() => {
                   onOpenChange(false);
                   navigate(`/admin/${returnTo}`);
                 }}
               >
-                <ArrowLeft className="w-3 h-3 mr-1" />
-                {returnTo === "deals" ? "К сделкам" : "Назад"}
-              </Button>
+                <ArrowLeft className="w-3 h-3" />
+                {returnTo === "deals" ? "к сделкам" : "назад"}
+              </Badge>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
+
+            {profileData?.loyalty_score && (
+              <LoyaltyPulse score={profileData.loyalty_score} size="sm" />
+            )}
+
+            <Badge
+              variant="outline"
+              className="cursor-pointer h-7 px-2 text-xs hover:bg-accent"
               onClick={() => copyToClipboard(getContactUrl(contact.id), "Ссылка на контакт скопирована")}
-              title="Скопировать ссылку на контакт"
             >
-              <Link2 className="w-3 h-3 mr-1" />
-              Ссылка
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setEditDialogOpen(true)}>
-              <Pencil className="w-3 h-3 mr-1" />
-              Редактировать
-            </Button>
+              <Link2 className="w-3 h-3" />
+            </Badge>
+
+            <Badge
+              variant="outline"
+              className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-primary/30 text-primary hover:bg-primary/10"
+              onClick={() => setEditDialogOpen(true)}
+            >
+              <Pencil className="w-3 h-3" />
+              редактировать
+            </Badge>
+
+            {!resolvedUserId && (
+              <Badge variant="outline" className="h-7 px-2.5 text-xs gap-1 border-amber-400 text-amber-600 dark:text-amber-400">
+                <UserX className="w-3 h-3" />
+                без аккаунта
+              </Badge>
+            )}
+
+            {resolvedStatus === "imported" ? (
+              <Badge variant="outline" className="h-7 px-2.5 text-xs gap-1 bg-blue-500/20 text-blue-600 border-blue-500/30">
+                <UserX className="w-3 h-3" />
+                импорт
+              </Badge>
+            ) : resolvedStatus === "ghost" ? null : resolvedStatus === "active" && resolvedUserId ? (
+              <Badge variant="default" className="h-7 px-2.5 text-xs gap-1">
+                <CheckCircle className="w-3 h-3" />
+                Активен
+              </Badge>
+            ) : resolvedStatus === "blocked" ? (
+              <Badge variant="secondary" className="h-7 px-2.5 text-xs gap-1">
+                <Ban className="w-3 h-3" />
+                Заблокирован
+              </Badge>
+            ) : resolvedStatus === "archived" ? (
+              <Badge variant="secondary" className="h-7 px-2.5 text-xs gap-1">
+                <XCircle className="w-3 h-3" />
+                Архивный
+              </Badge>
+            ) : null}
           </div>
         </SheetHeader>
 
