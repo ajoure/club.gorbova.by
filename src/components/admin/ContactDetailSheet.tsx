@@ -1340,7 +1340,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-[60vw] lg:max-w-3xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden">
         {/* Compact header for mobile - with padding-right for close button */}
-        <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 border-b flex-shrink-0">
+        <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 flex-shrink-0">
           {/* Row 1: Avatar + Name + Email */}
           <div className="flex items-start gap-3">
             <AvatarZoomDialog
@@ -1427,11 +1427,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               </Badge>
             ) : null}
           </div>
+          <Separator className="mx-3" />
         </SheetHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Scrollable tabs for mobile */}
-          <div className="flex-shrink-0 border-b overflow-x-auto" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
+          <div className="flex-shrink-0 overflow-x-auto" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
             <TabsList className="mx-4 sm:mx-6 my-2 sm:my-3 inline-flex w-auto whitespace-nowrap">
               <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
               <TabsTrigger value="telegram" className="text-xs sm:text-sm px-2.5 sm:px-3">
@@ -1472,6 +1473,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               )}
             </TabsList>
           </div>
+          <Separator className="mx-4 sm:mx-6" />
 
           <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
             <div className="px-4 sm:px-6 py-4 pb-24">
