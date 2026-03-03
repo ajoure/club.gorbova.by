@@ -333,7 +333,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       if (!contact?.id) return null;
       const { data, error } = await supabase
         .from("profiles")
-        .select("user_id, status, telegram_user_id, telegram_username, telegram_linked_at, telegram_link_status, loyalty_score, loyalty_updated_at, loyalty_auto_update")
+        .select("user_id, status, telegram_user_id, telegram_username, telegram_linked_at, telegram_link_status, loyalty_score, loyalty_updated_at, loyalty_auto_update, country, city, birth_date, instagram_url, gc_registered_at")
         .eq("id", contact.id)
         .single();
       if (error) throw error;
@@ -1508,6 +1508,47 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       </Button>
                     )}
                   </div>
+
+                  {/* Instagram */}
+                  {profileData?.instagram_url && (
+                    <>
+                      <Separator />
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <ExternalLink className="w-4 h-4 text-pink-500" />
+                          <span>Instagram</span>
+                        </div>
+                        <Button variant="ghost" size="sm" asChild>
+                          <a href={profileData.instagram_url} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        </Button>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Country / City */}
+                  {(profileData?.country || profileData?.city) && (
+                    <>
+                      <Separator />
+                      <div className="flex items-center gap-3 text-sm">
+                        <User className="w-4 h-4 text-muted-foreground" />
+                        <span>{[profileData?.city, profileData?.country].filter(Boolean).join(', ')}</span>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Birth date */}
+                  {profileData?.birth_date && (
+                    <>
+                      <Separator />
+                      <div className="flex items-center gap-3 text-sm">
+                        <CalendarIcon className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-muted-foreground">Дата рождения</span>
+                        <span>{format(new Date(profileData.birth_date), "dd MMM yyyy", { locale: ru })}</span>
+                      </div>
+                    </>
+                  )}
                   
                   {/* Send email button */}
                   {contact.email && (
@@ -1544,6 +1585,20 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         : "—"}
                     </span>
                   </div>
+                  {profileData?.gc_registered_at && (
+                    <>
+                      <Separator />
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 text-sm">
+                          <CalendarIcon className="w-4 h-4 text-orange-500" />
+                          <span className="text-muted-foreground">Рег. в GetCourse</span>
+                        </div>
+                        <span className="text-sm">
+                          {format(new Date(profileData.gc_registered_at), "dd MMM yyyy", { locale: ru })}
+                        </span>
+                      </div>
+                    </>
+                  )}
                   <Separator />
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3 text-sm">

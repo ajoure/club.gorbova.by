@@ -87,6 +87,7 @@ import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import { ContactFiltersBar } from "@/components/admin/ContactFiltersBar";
 import { CleanupDialog } from "@/components/admin/CleanupDialog";
+import { GetCourseContactsImportDialog } from "@/components/admin/GetCourseContactsImportDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
 import { formatTelegramDisplay, getTelegramLink } from "@/utils/telegramUtils";
@@ -302,6 +303,7 @@ export default function AdminContacts() {
   const [showMergeDialog, setShowMergeDialog] = useState(false);
   const [showTelegramCleanup, setShowTelegramCleanup] = useState(false);
   const [showDemoCleanup, setShowDemoCleanup] = useState(false);
+  const [showGCImport, setShowGCImport] = useState(false);
   const { hasPermission } = usePermissions();
   
   // Bulk action dialogs
@@ -1118,6 +1120,10 @@ export default function AdminContacts() {
               {hasPermission("admins.manage") && (
                 <>
                   <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setShowGCImport(true)}>
+                    <FileSpreadsheet className="h-4 w-4 mr-2" />
+                    Импорт GetCourse
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setShowTelegramCleanup(true)}>
                     <Sparkles className="h-4 w-4 mr-2" />
                     Telegram Cleanup
@@ -1157,6 +1163,11 @@ export default function AdminContacts() {
         </>
       )}
 
+      <GetCourseContactsImportDialog
+        open={showGCImport}
+        onOpenChange={setShowGCImport}
+        onSuccess={() => refetch()}
+      />
 
       {/* Search and Filters */}
       <div className="flex flex-col gap-4">
