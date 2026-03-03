@@ -86,10 +86,14 @@ export function normalizeGCName(row: {
     return { first_name: fn, last_name: ln, full_name: `${fn} ${ln}` };
   }
 
-  const raw = row.full_name?.trim() || fn || ln || '';
+  const raw = (row.full_name || fn || ln || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!raw) return { first_name: '', last_name: '', full_name: '' };
 
-  let tokens = raw.split(/\s+/);
+  let tokens = raw.split(' ');
 
   // Дедупликация повторяющихся токенов (case-insensitive)
   // "A B A" → "A B", "A A B" → "A B", "B A A" → "B A"
