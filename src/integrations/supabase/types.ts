@@ -9827,6 +9827,32 @@ export type Database = {
           user_id: string
         }[]
       }
+      find_profiles_for_gc_import: {
+        Args: {
+          p_emails: string[]
+          p_gc_ids: string[]
+          p_phone_keys: string[]
+          p_tg_usernames: string[]
+        }
+        Returns: {
+          birth_date: string
+          city: string
+          country: string
+          email: string
+          external_id_gc: string
+          first_name: string
+          full_name: string
+          gc_registered_at: string
+          id: string
+          instagram_url: string
+          last_name: string
+          phone: string
+          status: string
+          telegram_user_id: number
+          telegram_username: string
+          user_id: string
+        }[]
+      }
       find_unlinked_payments: {
         Args: { p_limit?: number }
         Returns: {

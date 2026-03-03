@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
   Upload, FileSpreadsheet, AlertCircle, CheckCircle2,
-  Loader2, X, ArrowRight, Play, Eye
+  Loader2, X, Play, Eye
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -48,30 +48,33 @@ interface RowResult {
   profile_id?: string;
 }
 
-interface ImportResponse {
+interface CountsChunk {
+  total: number;
+  filtered_out: number;
+  invalid: number;
+  will_create: number;
+  will_update: number;
+  will_skip_active: number;
+  will_skip_exists: number;
+  conflicts: number;
+  errors: number;
+  created: number;
+  updated: number;
+}
+
+interface ChunkResponse {
   success: boolean;
   mode: string;
   batch_id: string;
-  counts: {
-    total: number;
-    filtered_out: number;
-    invalid: number;
-    will_create: number;
-    will_update: number;
-    will_skip_active: number;
-    will_skip_exists: number;
-    conflicts: number;
-    errors: number;
-    created: number;
-    updated: number;
-  };
-  truncated: boolean;
+  chunk: { index: number; total: number };
+  counts_chunk: CountsChunk;
+  aborted: boolean;
   preview: RowResult[];
   conflicts: RowResult[];
+  error?: string;
 }
 
-// Header auto-detection mapping
-const HEADER_MAP: Record<string, keyof ParsedRow> = {};
+// Header auto-detection
 const HEADER_PATTERNS: { patterns: RegExp[]; field: keyof ParsedRow }[] = [
   { patterns: [/^id$/i, /^ID$/i, /^user_id$/i, /^ID пользователя$/i], field: 'gc_user_id' },
   { patterns: [/^e-?mail$/i], field: 'email' },
@@ -98,6 +101,30 @@ function detectField(header: string): keyof ParsedRow | null {
   return null;
 }
 
+function sumCounts(a: CountsChunk, b: CountsChunk): CountsChunk {
+  return {
+    total: a.total + b.total,
+    filtered_out: a.filtered_out + b.filtered_out,
+    invalid: a.invalid + b.invalid,
+    will_create: a.will_create + b.will_create,
+    will_update: a.will_update + b.will_update,
+    will_skip_active: a.will_skip_active + b.will_skip_active,
+    will_skip_exists: a.will_skip_exists + b.will_skip_exists,
+    conflicts: a.conflicts + b.conflicts,
+    errors: a.errors + b.errors,
+    created: a.created + b.created,
+    updated: a.updated + b.updated,
+  };
+}
+
+const EMPTY_COUNTS: CountsChunk = {
+  total: 0, filtered_out: 0, invalid: 0, will_create: 0, will_update: 0,
+  will_skip_active: 0, will_skip_exists: 0, conflicts: 0, errors: 0, created: 0, updated: 0,
+};
+
+const DRY_RUN_CHUNK_SIZE = 2000;
+const EXECUTE_CHUNK_SIZE = 1000;
+
 type Step = 'upload' | 'mapping' | 'dry_run' | 'execute' | 'done';
 
 export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }: GetCourseContactsImportDialogProps) {
@@ -108,10 +135,14 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
   const [rawHeaders, setRawHeaders] = useState<string[]>([]);
   const [headerMapping, setHeaderMapping] = useState<Record<string, keyof ParsedRow | null>>({});
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
-  const [dryRunResult, setDryRunResult] = useState<ImportResponse | null>(null);
-  const [executeResult, setExecuteResult] = useState<ImportResponse | null>(null);
+  const [totalCounts, setTotalCounts] = useState<CountsChunk>(EMPTY_COUNTS);
+  const [previewRows, setPreviewRows] = useState<RowResult[]>([]);
+  const [conflictRows, setConflictRows] = useState<RowResult[]>([]);
   const [conflictsOverride, setConflictsOverride] = useState(false);
   const [batchId, setBatchId] = useState('');
+  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number } | null>(null);
+  const [abortedAtChunk, setAbortedAtChunk] = useState<number | null>(null);
+  const abortRef = useRef(false);
 
   const reset = useCallback(() => {
     setStep('upload');
@@ -120,10 +151,14 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
     setRawHeaders([]);
     setHeaderMapping({});
     setParsedRows([]);
-    setDryRunResult(null);
-    setExecuteResult(null);
+    setTotalCounts(EMPTY_COUNTS);
+    setPreviewRows([]);
+    setConflictRows([]);
     setConflictsOverride(false);
     setBatchId('');
+    setChunkProgress(null);
+    setAbortedAtChunk(null);
+    abortRef.current = false;
   }, []);
 
   const handleClose = useCallback(() => {
@@ -160,7 +195,6 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
         return;
       }
 
-      // Auto-detect headers
       const headers = Object.keys(json[0]);
       setRawHeaders(headers);
 
@@ -170,7 +204,6 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
       }
       setHeaderMapping(mapping);
 
-      // Parse rows using detected mapping
       const rows: ParsedRow[] = json.map(row => {
         const parsed: ParsedRow = {};
         for (const [header, field] of Object.entries(mapping)) {
@@ -194,57 +227,136 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
     }
   }, []);
 
-  // ── Step 2: Confirm mapping → dry run ──
+  // ── Chunk sender ──
+  const sendChunks = useCallback(async (
+    mode: 'dry_run' | 'execute',
+    currentBatchId: string,
+    allRows: ParsedRow[],
+    chunkSize: number,
+  ): Promise<{ totals: CountsChunk; preview: RowResult[]; conflicts: RowResult[]; abortedChunk: number | null }> => {
+    const totalChunks = Math.ceil(allRows.length / chunkSize);
+    let aggregatedCounts = { ...EMPTY_COUNTS };
+    const allPreview: RowResult[] = [];
+    const allConflicts: RowResult[] = [];
+    let abortedChunk: number | null = null;
+
+    for (let i = 0; i < totalChunks; i++) {
+      if (abortRef.current) {
+        abortedChunk = i;
+        break;
+      }
+
+      const chunkRows = allRows.slice(i * chunkSize, (i + 1) * chunkSize);
+      setChunkProgress({ current: i + 1, total: totalChunks });
+
+      // Build batch_totals for last execute chunk
+      const isLastChunk = i === totalChunks - 1;
+      const body: Record<string, unknown> = {
+        mode,
+        batch_id: currentBatchId,
+        rows: chunkRows,
+        chunk: { index: i, total: totalChunks },
+      };
+
+      if (mode === 'execute' && isLastChunk) {
+        body.batch_totals = {
+          total: aggregatedCounts.total + chunkRows.length,
+          created: aggregatedCounts.created,
+          updated: aggregatedCounts.updated,
+          filtered_out: aggregatedCounts.filtered_out,
+          invalid: aggregatedCounts.invalid,
+          conflicts: aggregatedCounts.conflicts,
+          errors: aggregatedCounts.errors,
+          skipped_active: aggregatedCounts.will_skip_active,
+          skipped_no_changes: aggregatedCounts.will_skip_exists,
+        };
+      }
+
+      const { data, error } = await supabase.functions.invoke('import-contacts-gc', { body });
+
+      if (error) throw new Error(`Чанк ${i + 1}/${totalChunks}: ${error.message}`);
+      
+      const resp = data as ChunkResponse;
+      if (!resp?.success) throw new Error(resp?.error || `Ошибка в чанке ${i + 1}`);
+
+      aggregatedCounts = sumCounts(aggregatedCounts, resp.counts_chunk);
+
+      // Collect preview (first 200 total) and conflicts (first 100)
+      if (allPreview.length < 200) {
+        const offset = i * chunkSize;
+        const adjusted = resp.preview.map(r => ({ ...r, row_index: r.row_index + offset }));
+        allPreview.push(...adjusted.slice(0, 200 - allPreview.length));
+      }
+      if (allConflicts.length < 100) {
+        const offset = i * chunkSize;
+        const adjusted = resp.conflicts.map(r => ({ ...r, row_index: r.row_index + offset }));
+        allConflicts.push(...adjusted.slice(0, 100 - allConflicts.length));
+      }
+
+      // Check abort conditions for execute
+      if (mode === 'execute' && resp.aborted) {
+        abortedChunk = i;
+        break;
+      }
+    }
+
+    return { totals: aggregatedCounts, preview: allPreview, conflicts: allConflicts, abortedChunk };
+  }, []);
+
+  // ── Step 2: Dry Run ──
   const handleDryRun = useCallback(async () => {
     setLoading(true);
+    abortRef.current = false;
     try {
       const newBatchId = crypto.randomUUID();
       setBatchId(newBatchId);
 
-      const { data, error } = await supabase.functions.invoke('import-contacts-gc', {
-        body: { mode: 'dry_run', batch_id: newBatchId, rows: parsedRows },
-      });
+      const result = await sendChunks('dry_run', newBatchId, parsedRows, DRY_RUN_CHUNK_SIZE);
 
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Ошибка dry-run');
-
-      setDryRunResult(data as ImportResponse);
+      setTotalCounts(result.totals);
+      setPreviewRows(result.preview);
+      setConflictRows(result.conflicts);
       setStep('dry_run');
     } catch (err: any) {
       toast.error(`Ошибка preview: ${err.message}`);
     } finally {
       setLoading(false);
+      setChunkProgress(null);
     }
-  }, [parsedRows]);
+  }, [parsedRows, sendChunks]);
 
   // ── Step 3: Execute ──
   const handleExecute = useCallback(async () => {
-    if (!dryRunResult) return;
-    if (dryRunResult.counts.conflicts > 0 && !conflictsOverride) {
-      toast.error('Есть конфликты. Отметьте чекбокс для подтверждения или устраните конфликты.');
+    if (totalCounts.conflicts > 0 && !conflictsOverride) {
+      toast.error('Есть конфликты. Отметьте чекбокс для подтверждения.');
       return;
     }
 
     setLoading(true);
+    abortRef.current = false;
+    setAbortedAtChunk(null);
     try {
-      const { data, error } = await supabase.functions.invoke('import-contacts-gc', {
-        body: { mode: 'execute', batch_id: batchId, rows: parsedRows },
-      });
+      const result = await sendChunks('execute', batchId, parsedRows, EXECUTE_CHUNK_SIZE);
 
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Ошибка импорта');
-
-      setExecuteResult(data as ImportResponse);
+      setTotalCounts(result.totals);
+      setAbortedAtChunk(result.abortedChunk);
       setStep('done');
-      toast.success(`Импорт завершён: создано ${data.counts.created}, обновлено ${data.counts.updated}`);
+      
+      if (result.abortedChunk !== null) {
+        toast.error(`Импорт прерван на чанке ${result.abortedChunk + 1}: превышен порог ошибок`);
+      } else {
+        toast.success(`Импорт завершён: создано ${result.totals.created}, обновлено ${result.totals.updated}`);
+      }
+      
       queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
       onSuccess?.();
     } catch (err: any) {
       toast.error(`Ошибка: ${err.message}`);
     } finally {
       setLoading(false);
+      setChunkProgress(null);
     }
-  }, [dryRunResult, conflictsOverride, batchId, parsedRows, queryClient, onSuccess]);
+  }, [totalCounts, conflictsOverride, batchId, parsedRows, queryClient, onSuccess, sendChunks]);
 
   const actionBadge = (action: string) => {
     switch (action) {
@@ -257,6 +369,8 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
       default: return <Badge variant="outline">{action}</Badge>;
     }
   };
+
+  const progressPercent = chunkProgress ? Math.round((chunkProgress.current / chunkProgress.total) * 100) : 0;
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); else onOpenChange(v); }}>
@@ -339,42 +453,61 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
             </>
           )}
 
+          {/* ── PROGRESS (during dry_run/execute loading) ── */}
+          {loading && chunkProgress && (
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm text-muted-foreground">
+                <span>Чанк {chunkProgress.current} / {chunkProgress.total}</span>
+                <span>{progressPercent}%</span>
+              </div>
+              <Progress value={progressPercent} className="h-2" />
+            </div>
+          )}
+
           {/* ── DRY RUN RESULTS ── */}
-          {step === 'dry_run' && dryRunResult && (
+          {step === 'dry_run' && (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-3 rounded-md border bg-card">
-                  <div className="text-2xl font-bold">{dryRunResult.counts.total}</div>
+                  <div className="text-2xl font-bold">{totalCounts.total}</div>
                   <div className="text-xs text-muted-foreground">Всего строк</div>
                 </div>
                 <div className="p-3 rounded-md border bg-card">
-                  <div className="text-2xl font-bold text-green-600">{dryRunResult.counts.will_create}</div>
+                  <div className="text-2xl font-bold text-green-600">{totalCounts.will_create}</div>
                   <div className="text-xs text-muted-foreground">Будет создано</div>
                 </div>
                 <div className="p-3 rounded-md border bg-card">
-                  <div className="text-2xl font-bold text-blue-600">{dryRunResult.counts.will_update}</div>
+                  <div className="text-2xl font-bold text-blue-600">{totalCounts.will_update}</div>
                   <div className="text-xs text-muted-foreground">Будет обновлено</div>
                 </div>
                 <div className="p-3 rounded-md border bg-card">
-                  <div className="text-2xl font-bold">{dryRunResult.counts.will_skip_active + dryRunResult.counts.will_skip_exists}</div>
+                  <div className="text-2xl font-bold">{totalCounts.will_skip_active + totalCounts.will_skip_exists}</div>
                   <div className="text-xs text-muted-foreground">Пропущено</div>
                 </div>
               </div>
 
-              {dryRunResult.counts.conflicts > 0 && (
+              {totalCounts.conflicts > 0 && (
                 <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>
-                    Найдено {dryRunResult.counts.conflicts} конфликтов.
+                    Найдено {totalCounts.conflicts} конфликтов.
                     Конфликтные строки не будут импортированы.
                   </AlertDescription>
                 </Alert>
               )}
 
-              {dryRunResult.counts.filtered_out > 0 && (
+              {totalCounts.filtered_out > 0 && (
                 <Alert>
                   <AlertDescription>
-                    Исключено фильтрами: {dryRunResult.counts.filtered_out}
+                    Исключено фильтрами: {totalCounts.filtered_out}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {totalCounts.invalid > 0 && (
+                <Alert>
+                  <AlertDescription>
+                    Невалидных строк (нет ID/email/phone): {totalCounts.invalid}
                   </AlertDescription>
                 </Alert>
               )}
@@ -391,7 +524,7 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {dryRunResult.preview.map((r) => (
+                    {previewRows.map((r) => (
                       <TableRow key={r.row_index}>
                         <TableCell className="text-xs">{r.row_index + 1}</TableCell>
                         <TableCell className="text-xs">{r.name || '—'}</TableCell>
@@ -404,7 +537,7 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
                 </Table>
               </ScrollArea>
 
-              {dryRunResult.counts.conflicts > 0 && (
+              {totalCounts.conflicts > 0 && (
                 <div className="flex items-center gap-2">
                   <Checkbox
                     id="conflicts-override"
@@ -412,7 +545,7 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
                     onCheckedChange={(v) => setConflictsOverride(v === true)}
                   />
                   <Label htmlFor="conflicts-override" className="text-sm">
-                    Я понимаю: {dryRunResult.counts.conflicts} конфликтных строк будут пропущены. Продолжить импорт.
+                    Я понимаю: {totalCounts.conflicts} конфликтных строк будут пропущены. Продолжить импорт.
                   </Label>
                 </div>
               )}
@@ -420,30 +553,44 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
           )}
 
           {/* ── DONE ── */}
-          {step === 'done' && executeResult && (
+          {step === 'done' && (
             <div className="space-y-4">
               <div className="flex items-center gap-3">
-                <CheckCircle2 className="w-8 h-8 text-green-500" />
-                <div>
-                  <div className="font-semibold">Импорт завершён</div>
-                  <div className="text-sm text-muted-foreground">Batch: {executeResult.batch_id}</div>
-                </div>
+                {abortedAtChunk !== null ? (
+                  <>
+                    <AlertCircle className="w-8 h-8 text-destructive" />
+                    <div>
+                      <div className="font-semibold">Импорт прерван</div>
+                      <div className="text-sm text-muted-foreground">
+                        Остановлен на чанке {abortedAtChunk + 1}: превышен порог ошибок. Batch: {batchId}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-8 h-8 text-green-500" />
+                    <div>
+                      <div className="font-semibold">Импорт завершён</div>
+                      <div className="text-sm text-muted-foreground">Batch: {batchId}</div>
+                    </div>
+                  </>
+                )}
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-3 rounded-md border bg-card">
-                  <div className="text-2xl font-bold text-green-600">{executeResult.counts.created}</div>
+                  <div className="text-2xl font-bold text-green-600">{totalCounts.created}</div>
                   <div className="text-xs text-muted-foreground">Создано</div>
                 </div>
                 <div className="p-3 rounded-md border bg-card">
-                  <div className="text-2xl font-bold text-blue-600">{executeResult.counts.updated}</div>
+                  <div className="text-2xl font-bold text-blue-600">{totalCounts.updated}</div>
                   <div className="text-xs text-muted-foreground">Обновлено</div>
                 </div>
                 <div className="p-3 rounded-md border bg-card">
-                  <div className="text-2xl font-bold">{executeResult.counts.will_skip_active + executeResult.counts.will_skip_exists}</div>
+                  <div className="text-2xl font-bold">{totalCounts.will_skip_active + totalCounts.will_skip_exists}</div>
                   <div className="text-xs text-muted-foreground">Пропущено</div>
                 </div>
                 <div className="p-3 rounded-md border bg-card">
-                  <div className="text-2xl font-bold text-destructive">{executeResult.counts.errors}</div>
+                  <div className="text-2xl font-bold text-destructive">{totalCounts.errors}</div>
                   <div className="text-xs text-muted-foreground">Ошибки</div>
                 </div>
               </div>
@@ -473,10 +620,10 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
               </Button>
               <Button
                 onClick={handleExecute}
-                disabled={loading || (dryRunResult?.counts.conflicts ?? 0) > 0 && !conflictsOverride}
+                disabled={loading || (totalCounts.conflicts > 0 && !conflictsOverride)}
               >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Play className="w-4 h-4 mr-2" />}
-                Импортировать ({dryRunResult?.counts.will_create ?? 0} создать, {dryRunResult?.counts.will_update ?? 0} обновить)
+                Импортировать ({totalCounts.will_create} создать, {totalCounts.will_update} обновить)
               </Button>
             </>
           )}
