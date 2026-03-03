@@ -452,6 +452,44 @@ serve(async (req) => {
         break;
       }
 
+      case "apix_instagram_dm": {
+        // Check webhook_secret in config
+        const webhookSecret = config.webhook_secret as string;
+        if (!webhookSecret) {
+          errorMessage = "Отсутствует webhook_secret в конфигурации";
+          break;
+        }
+
+        // Check instagram_accounts record exists
+        const { data: igAccount, error: igError } = await supabaseAdmin
+          .from("instagram_accounts")
+          .select("id, is_active")
+          .eq("integration_instance_id", instance_id)
+          .maybeSingle();
+
+        if (igError) {
+          errorMessage = `Ошибка проверки instagram_accounts: ${igError.message}`;
+          break;
+        }
+
+        if (!igAccount) {
+          errorMessage = "Запись instagram_accounts не найдена. Пересоздайте подключение.";
+          break;
+        }
+
+        if (!igAccount.is_active) {
+          errorMessage = "Instagram аккаунт деактивирован";
+          break;
+        }
+
+        success = true;
+        responseData = {
+          instagram_account_id: igAccount.id,
+          webhook_configured: true,
+        };
+        break;
+      }
+
       default:
         errorMessage = `Неизвестный провайдер: ${provider}`;
     }
