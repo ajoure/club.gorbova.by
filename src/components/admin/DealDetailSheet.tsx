@@ -448,7 +448,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-[60vw] lg:max-w-3xl p-0 flex flex-col">
-        <SheetHeader className="p-4 sm:p-6 pb-4 pr-14 sm:pr-16 border-b">
+        <SheetHeader className="p-4 sm:p-6 pb-4 pr-14 sm:pr-16">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center shrink-0">
@@ -473,31 +473,37 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 </p>
               </div>
             </div>
-            <Badge className={`${statusConfig.color} shrink-0 mt-1 text-xs`}>
+            <Badge className={`${statusConfig.color} shrink-0 mt-1 h-7 px-2.5 text-xs rounded-full`}>
               <StatusIcon className="w-3 h-3 mr-1" />
               {statusConfig.label}
             </Badge>
           </div>
           
           {/* Action buttons */}
-          <div className="flex items-center gap-2 mt-3">
-            <Button
-              variant="ghost"
-              size="sm"
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
+            <Badge
+              variant="outline"
+              className="cursor-pointer h-7 px-2 text-xs gap-1 hover:bg-accent"
               onClick={() => copyToClipboardUtil(getDealUrl(deal.id), "Ссылка на сделку скопирована")}
-              title="Скопировать ссылку на сделку"
             >
-              <Link2 className="w-3 h-3 mr-1" />
-              Ссылка
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setEditDialogOpen(true)}>
-              <Pencil className="w-3 h-3 mr-1" />
-              Редактировать
-            </Button>
-            <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteDialogOpen(true)}>
-              <Trash2 className="w-3 h-3 mr-1" />
+              <Link2 className="w-3 h-3" />
+            </Badge>
+            <Badge
+              variant="outline"
+              className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-primary/30 text-primary hover:bg-primary/10"
+              onClick={() => setEditDialogOpen(true)}
+            >
+              <Pencil className="w-3 h-3" />
+              редактировать
+            </Badge>
+            <Badge
+              variant="outline"
+              className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-destructive/30 text-destructive hover:bg-destructive/10"
+              onClick={() => setDeleteDialogOpen(true)}
+            >
+              <Trash2 className="w-3 h-3" />
               Удалить
-            </Button>
+            </Badge>
           </div>
         </SheetHeader>
 

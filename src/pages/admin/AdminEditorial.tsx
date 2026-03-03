@@ -1127,13 +1127,14 @@ const AdminEditorial = () => {
 
         {showActions && (
           <div className="flex gap-2 flex-wrap">
-            <Button size="sm" onClick={() => handlePublish(news)}>
-              <Send className="h-4 w-4 mr-1" />
+            <Button size="sm" className="h-7 px-2.5 text-xs rounded-full" onClick={() => handlePublish(news)}>
+              <Send className="h-3.5 w-3.5 mr-1" />
               Опубликовать
             </Button>
             <Button
               size="sm"
               variant="outline"
+              className="h-7 px-2.5 text-xs rounded-full"
               onClick={() => {
                 if (channels && channels.length > 0) {
                   publishMutation.mutate({
@@ -1148,13 +1149,13 @@ const AdminEditorial = () => {
                 }
               }}
             >
-              <Clock className="h-4 w-4 mr-1" />
+              <Clock className="h-3.5 w-3.5 mr-1" />
               В очередь
             </Button>
             {news.source_url && (
-              <Button size="sm" variant="ghost" asChild>
+              <Button size="sm" variant="ghost" className="h-7 px-2.5 text-xs rounded-full" asChild>
                 <a href={news.source_url} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="h-4 w-4 mr-1" />
+                  <ExternalLink className="h-3.5 w-3.5 mr-1" />
                   Источник
                 </a>
               </Button>
@@ -1195,7 +1196,7 @@ const AdminEditorial = () => {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <div className="overflow-x-auto -mx-4 px-4 pb-2">
+          <div className="overflow-x-auto -mx-4 px-4 pb-2 scrollbar-none">
             <TabsList className="inline-flex w-auto min-w-full sm:w-auto">
               <TabsTrigger value="drafts" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
                 <Edit className="h-4 w-4 hidden sm:block" />
