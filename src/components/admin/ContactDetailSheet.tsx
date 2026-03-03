@@ -1359,10 +1359,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             </div>
           </div>
 
-          <Separator className="my-2" />
+          <Separator className="mt-3" />
 
           {/* Row 2: All badges & actions as uniform pills */}
-          <div className="flex flex-wrap items-center gap-1.5 bg-muted/30 rounded-lg px-3 py-2">
+          <div className="flex flex-wrap items-center gap-1.5 px-1 py-1">
             {returnTo && (
               <Badge
                 variant="outline"
@@ -1427,49 +1427,48 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               </Badge>
             ) : null}
           </div>
-          <Separator className="mx-3" />
         </SheetHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Scrollable tabs for mobile */}
-          <div className="flex-shrink-0 overflow-x-auto" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)' }}>
-            <TabsList className="mx-4 sm:mx-6 my-2 sm:my-3 inline-flex w-auto whitespace-nowrap">
-              <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3">Профиль</TabsTrigger>
-              <TabsTrigger value="telegram" className="text-xs sm:text-sm px-2.5 sm:px-3">
+          <div className="flex-shrink-0 overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ paddingLeft: 'env(safe-area-inset-left, 0px)', paddingRight: 'env(safe-area-inset-right, 0px)', scrollbarWidth: 'none' as any }}>
+            <TabsList className="mx-4 sm:mx-6 my-2 sm:my-3 inline-flex w-auto whitespace-nowrap bg-transparent h-auto p-0.5 gap-0.5">
+              <TabsTrigger value="profile" className="text-xs sm:text-sm px-2.5 sm:px-3 rounded-full data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Профиль</TabsTrigger>
+              <TabsTrigger value="telegram" className="text-xs sm:text-sm px-2.5 sm:px-3 rounded-full data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
                 <MessageCircle className="w-3 h-3 mr-1" />
                 Telegram
               </TabsTrigger>
-              <TabsTrigger value="email" className="text-xs sm:text-sm px-2.5 sm:px-3">
+              <TabsTrigger value="email" className="text-xs sm:text-sm px-2.5 sm:px-3 rounded-full data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
                 <Mail className="w-3 h-3 mr-1" />
                 Письма
               </TabsTrigger>
-              <TabsTrigger value="access" className="text-xs sm:text-sm px-2.5 sm:px-3">
+              <TabsTrigger value="access" className="text-xs sm:text-sm px-2.5 sm:px-3 rounded-full data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
                 Доступы {activeSubscriptions.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{activeSubscriptions.length}</Badge>}
               </TabsTrigger>
-              <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">
+              <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3 rounded-full data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
                 Сделки {deals && deals.filter(d => d.status === "paid").length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.filter(d => d.status === "paid").length}</Badge>}
               </TabsTrigger>
-              <TabsTrigger value="payments" className="text-xs sm:text-sm px-2.5 sm:px-3">
+              <TabsTrigger value="payments" className="text-xs sm:text-sm px-2.5 sm:px-3 rounded-full data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
                 <CreditCard className="w-3 h-3 mr-1" />
                 Платежи
               </TabsTrigger>
-              <TabsTrigger value="communications" className="text-xs sm:text-sm px-2.5 sm:px-3">События</TabsTrigger>
-              <TabsTrigger value="consent" className="text-xs sm:text-sm px-2.5 sm:px-3">
+              <TabsTrigger value="communications" className="text-xs sm:text-sm px-2.5 sm:px-3 rounded-full data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">События</TabsTrigger>
+              <TabsTrigger value="consent" className="text-xs sm:text-sm px-2.5 sm:px-3 rounded-full data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
                 Согласия
                 {profileConsent?.consent_version && (
                   <Badge variant="secondary" className="ml-1 text-xs bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">✓</Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="installments" className="text-xs sm:text-sm px-2.5 sm:px-3">
+              <TabsTrigger value="installments" className="text-xs sm:text-sm px-2.5 sm:px-3 rounded-full data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
                 <Wallet className="w-3 h-3 mr-1" />
                 Рассрочки
               </TabsTrigger>
-              <TabsTrigger value="loyalty" className="text-xs sm:text-sm px-2.5 sm:px-3">
+              <TabsTrigger value="loyalty" className="text-xs sm:text-sm px-2.5 sm:px-3 rounded-full data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">
                 <Sparkles className="w-3 h-3 mr-1" />
                 Лояльность
               </TabsTrigger>
               {contact.duplicate_flag && contact.duplicate_flag !== 'none' && (
-                <TabsTrigger value="duplicates" className="text-xs sm:text-sm px-2.5 sm:px-3">Дубли</TabsTrigger>
+                <TabsTrigger value="duplicates" className="text-xs sm:text-sm px-2.5 sm:px-3 rounded-full data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Дубли</TabsTrigger>
               )}
             </TabsList>
           </div>
