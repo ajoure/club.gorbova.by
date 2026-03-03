@@ -121,27 +121,84 @@ Deno.serve(async (req) => {
 
   try {
     const { mode, batch_id, rows, chunk, batch_totals, options } = await req.json() as {
-      mode: 'dry_run' | 'execute';
+      mode: 'dry_run' | 'execute' | 'finalize';
       batch_id?: string;
-      rows: ParsedRow[];
-      chunk: ChunkMeta;
+      rows?: ParsedRow[];
+      chunk?: ChunkMeta;
       batch_totals?: BatchTotals;
       options?: { error_threshold?: number };
     };
 
-    if (!mode || !['dry_run', 'execute'].includes(mode)) {
-      return new Response(JSON.stringify({ error: 'mode must be dry_run or execute' }), {
+    if (!mode || !['dry_run', 'execute', 'finalize'].includes(mode)) {
+      return new Response(JSON.stringify({ error: 'mode must be dry_run, execute, or finalize' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    if (!Array.isArray(rows) || rows.length === 0) {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // ── Finalize mode: write audit log only ──
+    if (mode === 'finalize') {
+      if (!batch_id) {
+        return new Response(JSON.stringify({ error: 'batch_id is required for finalize' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      if (!batch_totals) {
+        return new Response(JSON.stringify({ error: 'batch_totals is required for finalize' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Idempotent: check if audit already exists for this batch
+      const { data: existingAudit } = await supabase
+        .from('audit_logs')
+        .select('id')
+        .eq('action', 'gc_contacts_import')
+        .contains('meta', { batch_id })
+        .limit(1);
+
+      if (existingAudit && existingAudit.length > 0) {
+        // Update existing audit log with final totals
+        await supabase.from('audit_logs').update({
+          meta: {
+            batch_id,
+            mode: 'finalize',
+            ...batch_totals,
+            finalized_at: new Date().toISOString(),
+          },
+        }).eq('id', existingAudit[0].id);
+      } else {
+        // Insert new audit log
+        await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'import-contacts-gc',
+          action: 'gc_contacts_import',
+          meta: {
+            batch_id,
+            mode: 'finalize',
+            ...batch_totals,
+            finalized_at: new Date().toISOString(),
+          },
+        });
+      }
+
+      return new Response(JSON.stringify({ success: true, mode: 'finalize', batch_id }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // ── Validate rows and chunk for dry_run/execute ──
+    const safeRows = rows || [];
+    if (!Array.isArray(safeRows) || safeRows.length === 0) {
       return new Response(JSON.stringify({ error: 'rows array is required' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Validate chunk meta
     if (!chunk || typeof chunk.index !== 'number' || typeof chunk.total !== 'number' || chunk.index < 0 || chunk.total < 1 || chunk.index >= chunk.total) {
       return new Response(JSON.stringify({ error: 'chunk { index, total } is required and must be valid' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -150,7 +207,7 @@ Deno.serve(async (req) => {
 
     // Max chunk size guard
     const MAX_CHUNK_SIZE = 2000;
-    if (rows.length > MAX_CHUNK_SIZE) {
+    if (safeRows.length > MAX_CHUNK_SIZE) {
       return new Response(JSON.stringify({ error: `chunk too large, max ${MAX_CHUNK_SIZE} rows` }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -159,17 +216,13 @@ Deno.serve(async (req) => {
     const errorThreshold = options?.error_threshold || 20;
     const actualBatchId = batch_id || crypto.randomUUID();
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
-
     // ── Collect keys from chunk for targeted matching ──
     const gcIds: string[] = [];
     const emails: string[] = [];
     const phoneKeys: string[] = [];
     const tgUsernames: string[] = [];
 
-    for (const row of rows) {
+    for (const row of safeRows) {
       const gcId = row.gc_user_id?.trim();
       if (gcId) gcIds.push(gcId);
 
@@ -223,7 +276,7 @@ Deno.serve(async (req) => {
     // ── Process ALL rows in chunk ──
     const results: RowResult[] = [];
     const counts = {
-      total: rows.length,
+      total: safeRows.length,
       filtered_out: 0,
       invalid: 0,
       will_create: 0,
@@ -238,8 +291,8 @@ Deno.serve(async (req) => {
 
     let errorCount = 0;
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
+    for (let i = 0; i < safeRows.length; i++) {
+      const row = safeRows[i];
 
       // 1. Exclusion filter
       const exclusionReason = isExcluded(row);
@@ -403,33 +456,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Audit log (execute only, last chunk only) ──
-    if (mode === 'execute' && chunk.index === chunk.total - 1) {
-      const auditTotals = batch_totals || {
-        total: counts.total,
-        created: counts.created,
-        updated: counts.updated,
-        filtered_out: counts.filtered_out,
-        invalid: counts.invalid,
-        conflicts: counts.conflicts,
-        errors: counts.errors,
-        skipped_active: counts.will_skip_active,
-        skipped_no_changes: counts.will_skip_exists,
-      };
-
-      await supabase.from('audit_logs').insert({
-        actor_type: 'system',
-        actor_user_id: null,
-        actor_label: 'import-contacts-gc',
-        action: 'gc_contacts_import',
-        meta: {
-          batch_id: actualBatchId,
-          mode,
-          chunk_count: chunk.total,
-          ...auditTotals,
-        },
-      });
-    }
+    // Audit log removed from here — use mode='finalize' after all chunks
 
     return new Response(JSON.stringify({
       success: true,
