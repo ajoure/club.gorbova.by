@@ -48,9 +48,7 @@ import {
   RefreshCw,
   Ghost,
   Archive,
-  Camera,
   FileSpreadsheet,
-  Trash,
   Sparkles,
   ShoppingCart,
   FileText,
@@ -61,12 +59,18 @@ import {
   GripVertical,
   Link2,
   Download,
+  Settings,
+  Trash,
 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { exportToExcel, exportToCSV, ExportColumn } from "@/utils/exportTableData";
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
@@ -74,14 +78,14 @@ import { toast } from "sonner";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 
 import { LoyaltyBadge } from "@/components/admin/LoyaltyPulse";
-import { QuickFilters, ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
+import { ActiveFilter, FilterField, FilterPreset, applyFilters } from "@/components/admin/QuickFilters";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
 import { MergeContactsDialog } from "@/components/admin/MergeContactsDialog";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
-import AmoCRMImportDialog from "@/components/admin/AmoCRMImportDialog";
+import { ContactFiltersBar } from "@/components/admin/ContactFiltersBar";
 import { CleanupDialog } from "@/components/admin/CleanupDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ColumnSettings, ColumnConfig } from "@/components/admin/ColumnSettings";
@@ -296,7 +300,6 @@ export default function AdminContacts() {
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showMergeDialog, setShowMergeDialog] = useState(false);
-  const [showAmoCRMImport, setShowAmoCRMImport] = useState(false);
   const [showTelegramCleanup, setShowTelegramCleanup] = useState(false);
   const [showDemoCleanup, setShowDemoCleanup] = useState(false);
   const { hasPermission } = usePermissions();
@@ -1002,66 +1005,6 @@ export default function AdminContacts() {
     [selectedContactsList]
   );
 
-  // Bulk fetch photos mutation
-  const [isFetchingPhotos, setIsFetchingPhotos] = useState(false);
-  const fetchPhotosMutation = useMutation({
-    mutationFn: async () => {
-      const contactsToFetch = contacts?.filter(c => c.telegram_user_id && !c.avatar_url) || [];
-      
-      if (contactsToFetch.length === 0) {
-        throw new Error("Нет контактов для загрузки фото");
-      }
-
-      let successCount = 0;
-      let errorCount = 0;
-
-      for (const contact of contactsToFetch) {
-        try {
-          const { data, error } = await supabase.functions.invoke("telegram-admin-chat", {
-            body: {
-              action: "fetch_profile_photo",
-              user_id: contact.user_id,
-              telegram_user_id: contact.telegram_user_id,
-            },
-          });
-
-          if (error) {
-            errorCount++;
-          } else if (data?.success) {
-            successCount++;
-          } else {
-            errorCount++;
-          }
-        } catch {
-          errorCount++;
-        }
-      }
-
-      return { successCount, errorCount, total: contactsToFetch.length };
-    },
-    onSuccess: ({ successCount, errorCount, total }) => {
-      if (successCount > 0) {
-        toast.success(`Загружено ${successCount} из ${total} фото`);
-      }
-      if (errorCount > 0) {
-        toast.warning(`${errorCount} фото не удалось загрузить`);
-      }
-      queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
-      setIsFetchingPhotos(false);
-    },
-    onError: (error) => {
-      toast.error("Ошибка: " + (error as Error).message);
-      setIsFetchingPhotos(false);
-    },
-  });
-
-  const handleFetchPhotos = () => {
-    setIsFetchingPhotos(true);
-    fetchPhotosMutation.mutate();
-  };
-
-  const contactsWithoutPhoto = contacts?.filter(c => c.telegram_user_id && !c.avatar_url).length || 0;
-
   // Get column IDs for DnD (excluding checkbox)
   const draggableColumnIds = useMemo(() => 
     sortedColumns.filter(c => c.key !== 'checkbox').map(c => c.key),
@@ -1081,7 +1024,7 @@ export default function AdminContacts() {
     <div className="space-y-4 pb-24">
       {/* Pill-style Tabs */}
       <div className="px-1 pt-1 pb-1.5 shrink-0">
-        <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+        <div className="inline-flex items-center p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
           {CONTACT_PRESETS.map((preset) => {
             const isActive = activePreset === preset.id;
             return (
@@ -1109,131 +1052,110 @@ export default function AdminContacts() {
               </button>
             );
           })}
-        </div>
-      </div>
 
-      {/* Actions row */}
-      <div className="flex items-center justify-between flex-wrap gap-3 px-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          {((duplicateCount ?? 0) > 0 || computedDuplicateIds.size > 0) && (
-            <Button 
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={() => navigate("/admin/contacts/duplicates")}
-            >
-              <Copy className="w-3.5 h-3.5 mr-1.5" />
-              Дубли
-              <Badge variant="destructive" className="ml-1.5 h-4 min-w-4 px-1 text-[10px]">
-                {duplicateCount && duplicateCount > 0 ? duplicateCount : computedDuplicateIds.size}
-              </Badge>
-            </Button>
-          )}
-          {contactsWithoutPhoto > 0 && (
-            <Button 
-              variant="outline"
-              size="sm"
-              className="h-8"
-              onClick={handleFetchPhotos}
-              disabled={isFetchingPhotos}
-            >
-              {isFetchingPhotos ? (
-                <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-              ) : (
-                <Camera className="w-3.5 h-3.5 mr-1.5" />
-              )}
-              Фото
-              <Badge variant="secondary" className="ml-1.5 h-4 min-w-4 px-1 text-[10px]">
-                {contactsWithoutPhoto}
-              </Badge>
-            </Button>
-          )}
-          <Button variant="outline" size="sm" className="h-8" onClick={() => setShowAmoCRMImport(true)}>
-            <FileSpreadsheet className="h-3.5 w-3.5 sm:mr-1.5" />
-            <span className="hidden sm:inline">amoCRM</span>
-          </Button>
-          {hasPermission("admins.manage") && (
-            <>
-              <Button variant="outline" size="sm" className="h-8" onClick={() => setShowTelegramCleanup(true)}>
-                <Sparkles className="h-3.5 w-3.5" />
-              </Button>
-              <Button variant="outline" size="sm" className="h-8" onClick={() => setShowDemoCleanup(true)}>
-                <Trash className="h-3.5 w-3.5" />
-              </Button>
-            </>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8"
-            onClick={async () => {
-              toast.info("Запускаем анализ лояльности...");
-              try {
-                const { data, error } = await supabase.functions.invoke("analyze-all-loyalty", {
-                  body: { limit: 50, offset: 0 },
-                });
-                if (error) throw error;
-                toast.success(`Проанализировано ${data?.success || 0} контактов`);
-                queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
-              } catch (err: any) {
-                toast.error(`Ошибка: ${err.message}`);
-              }
-            }}
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-          </Button>
+          {/* Separator */}
+          <div className="w-px h-5 bg-border/30 mx-1" />
+
+          {/* Filter button inline */}
+          <ContactFiltersBar
+            fields={CONTACT_FILTER_FIELDS}
+            activeFilters={activeFilters}
+            onFiltersChange={setActiveFilters}
+            activePreset={activePreset}
+            presets={CONTACT_PRESETS}
+          />
+
+          {/* Gear menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8" disabled={sortedContacts.length === 0}>
-                <Download className="h-3.5 w-3.5 sm:mr-1.5" />
-                <span className="hidden sm:inline">Экспорт</span>
-              </Button>
+              <button className="flex items-center justify-center w-7 h-7 rounded-full text-muted-foreground hover:text-foreground transition-colors">
+                <Settings className="h-3.5 w-3.5" />
+              </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <Download className="h-4 w-4 mr-2" />
+                  Экспорт
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuItem onClick={async () => {
+                    const cols = getContactsExportColumns();
+                    await exportToExcel(sortedContacts, cols, `kontakty_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
+                    toast.success(`Экспортировано ${sortedContacts.length} записей`);
+                  }}>
+                    <FileSpreadsheet className="h-4 w-4 mr-2" />
+                    Excel (.xlsx)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => {
+                    const cols = getContactsExportColumns();
+                    exportToCSV(sortedContacts, cols, `kontakty_${format(new Date(), "yyyy-MM-dd")}.csv`);
+                    toast.success(`Экспортировано ${sortedContacts.length} записей`);
+                  }}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    CSV (.csv)
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+
               <DropdownMenuItem onClick={async () => {
-                const cols = getContactsExportColumns();
-                await exportToExcel(sortedContacts, cols, `kontakty_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
-                toast.success(`Экспортировано ${sortedContacts.length} записей`);
+                toast.info("Запускаем анализ лояльности...");
+                try {
+                  const { data, error } = await supabase.functions.invoke("analyze-all-loyalty", {
+                    body: { limit: 50, offset: 0 },
+                  });
+                  if (error) throw error;
+                  toast.success(`Проанализировано ${data?.success || 0} контактов`);
+                  queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+                } catch (err: any) {
+                  toast.error(`Ошибка: ${err.message}`);
+                }
               }}>
-                <FileSpreadsheet className="h-4 w-4 mr-2" />
-                Excel (.xlsx)
+                <Sparkles className="h-4 w-4 mr-2" />
+                Анализ лояльности
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => {
-                const cols = getContactsExportColumns();
-                exportToCSV(sortedContacts, cols, `kontakty_${format(new Date(), "yyyy-MM-dd")}.csv`);
-                toast.success(`Экспортировано ${sortedContacts.length} записей`);
-              }}>
-                <FileText className="h-4 w-4 mr-2" />
-                CSV (.csv)
+
+              {hasPermission("admins.manage") && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setShowTelegramCleanup(true)}>
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Telegram Cleanup
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setShowDemoCleanup(true)}>
+                    <Trash className="h-4 w-4 mr-2" />
+                    Demo Cleanup
+                  </DropdownMenuItem>
+                </>
+              )}
+
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => refetch()}>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Обновить
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="outline" size="sm" className="h-8" onClick={() => refetch()}>
-            <RefreshCw className="h-3.5 w-3.5" />
-          </Button>
         </div>
       </div>
 
-      {/* amoCRM Import Dialog */}
-      <AmoCRMImportDialog
-        open={showAmoCRMImport}
-        onOpenChange={setShowAmoCRMImport}
-        onSuccess={() => refetch()}
-      />
-
-      {/* Cleanup Dialogs */}
-      <CleanupDialog
-        open={showTelegramCleanup}
-        onOpenChange={setShowTelegramCleanup}
-        type="telegram"
-        onSuccess={() => refetch()}
-      />
-      <CleanupDialog
-        open={showDemoCleanup}
-        onOpenChange={setShowDemoCleanup}
-        type="demo"
-        onSuccess={() => refetch()}
-      />
+      {/* Cleanup Dialogs - triggered from gear menu */}
+      {hasPermission("admins.manage") && (
+        <>
+          <CleanupDialog
+            open={showTelegramCleanup}
+            onOpenChange={setShowTelegramCleanup}
+            type="telegram"
+            onSuccess={() => refetch()}
+          />
+          <CleanupDialog
+            open={showDemoCleanup}
+            onOpenChange={setShowDemoCleanup}
+            type="demo"
+            onSuccess={() => refetch()}
+          />
+        </>
+      )}
 
 
       {/* Search and Filters */}
@@ -1330,15 +1252,6 @@ export default function AdminContacts() {
           </div>
           <ColumnSettings columns={columns} onChange={setColumns} />
         </div>
-        
-        <QuickFilters
-          presets={CONTACT_PRESETS}
-          fields={CONTACT_FILTER_FIELDS}
-          activeFilters={activeFilters}
-          onFiltersChange={setActiveFilters}
-          activePreset={activePreset}
-          onPresetChange={setActivePreset}
-        />
       </div>
 
       {/* Stats */}
