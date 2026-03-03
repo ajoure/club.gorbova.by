@@ -1367,16 +1367,22 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   Ghost
                 </Badge>
               )}
+              {!resolvedUserId && (
+                <Badge variant="outline" className="text-xs gap-1 border-amber-400 text-amber-600 dark:text-amber-400">
+                  <UserX className="w-3 h-3" />
+                  Без аккаунта
+                </Badge>
+              )}
               <Badge 
-                variant={!resolvedUserId ? "secondary" : resolvedStatus === "active" ? "default" : "secondary"} 
+                variant={resolvedStatus === "active" && resolvedUserId ? "default" : "secondary"} 
                 className="text-xs"
               >
-                {!resolvedUserId ? (
-                  <><Ban className="w-3 h-3 mr-1" />Заблокирован</>
-                ) : resolvedStatus === "active" ? (
+                {resolvedStatus === "active" && resolvedUserId ? (
                   <><CheckCircle className="w-3 h-3 mr-1" />Активен</>
                 ) : resolvedStatus === "blocked" ? (
                   <><Ban className="w-3 h-3 mr-1" />Заблокирован</>
+                ) : resolvedStatus === "archived" ? (
+                  <><XCircle className="w-3 h-3 mr-1" />Архивный</>
                 ) : (
                   <><XCircle className="w-3 h-3 mr-1" />{resolvedStatus}</>
                 )}

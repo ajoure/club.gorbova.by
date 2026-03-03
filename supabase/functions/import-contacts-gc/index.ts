@@ -21,9 +21,21 @@ interface ParsedRow {
   gc_registered_at?: string;
 }
 
-interface ImportOptions {
-  batch_limit?: number;
-  error_threshold?: number;
+interface ChunkMeta {
+  index: number;
+  total: number;
+}
+
+interface BatchTotals {
+  total: number;
+  created: number;
+  updated: number;
+  filtered_out: number;
+  invalid: number;
+  conflicts: number;
+  errors: number;
+  skipped_active: number;
+  skipped_no_changes: number;
 }
 
 interface RowResult {
@@ -54,9 +66,7 @@ function normalizeInstagram(v: string | undefined | null): string | null {
   if (!v) return null;
   let trimmed = v.trim();
   if (!trimmed) return null;
-  // Already a link
   if (trimmed.startsWith('http')) return trimmed;
-  // Remove @ prefix
   trimmed = trimmed.replace(/^@/, '');
   if (!trimmed) return null;
   return `https://instagram.com/${trimmed}`;
@@ -66,16 +76,13 @@ function parseDate(v: string | undefined | null): string | null {
   if (!v) return null;
   const trimmed = v.trim();
   if (!trimmed) return null;
-  // DD.MM.YYYY
   const ddmmyyyy = trimmed.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
   if (ddmmyyyy) {
     const [, day, month, year] = ddmmyyyy;
     return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
   }
-  // YYYY-MM-DD
   const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return trimmed.substring(0, 10);
-  // Try native parsing
   const d = new Date(trimmed);
   if (!isNaN(d.getTime())) return d.toISOString().substring(0, 10);
   return null;
@@ -98,7 +105,6 @@ function isExcluded(row: ParsedRow): string | null {
   if (email && email.includes('7500084@gmail.com')) return 'excluded_email';
   const fullName = (row.full_name || `${row.first_name || ''} ${row.last_name || ''}`).trim();
   if (/сергей\s+федорчук/i.test(fullName)) return 'excluded_name';
-  // Check "тест" in key fields
   const fields = [row.email, row.first_name, row.last_name, row.full_name, row.phone];
   for (const f of fields) {
     if (f && /тест/i.test(f)) return 'excluded_test';
@@ -114,11 +120,13 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { mode, batch_id, rows, options } = await req.json() as {
+    const { mode, batch_id, rows, chunk, batch_totals, options } = await req.json() as {
       mode: 'dry_run' | 'execute';
       batch_id?: string;
       rows: ParsedRow[];
-      options?: ImportOptions;
+      chunk: ChunkMeta;
+      batch_totals?: BatchTotals;
+      options?: { error_threshold?: number };
     };
 
     if (!mode || !['dry_run', 'execute'].includes(mode)) {
@@ -133,7 +141,21 @@ Deno.serve(async (req) => {
       });
     }
 
-    const batchLimit = options?.batch_limit || 500;
+    // Validate chunk meta
+    if (!chunk || typeof chunk.index !== 'number' || typeof chunk.total !== 'number' || chunk.index < 0 || chunk.total < 1 || chunk.index >= chunk.total) {
+      return new Response(JSON.stringify({ error: 'chunk { index, total } is required and must be valid' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Max chunk size guard
+    const MAX_CHUNK_SIZE = 2000;
+    if (rows.length > MAX_CHUNK_SIZE) {
+      return new Response(JSON.stringify({ error: `chunk too large, max ${MAX_CHUNK_SIZE} rows` }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const errorThreshold = options?.error_threshold || 20;
     const actualBatchId = batch_id || crypto.randomUUID();
 
@@ -141,20 +163,45 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // ── Load existing profiles for matching ──
-    const { data: existingProfiles, error: profilesError } = await supabase
-      .from('profiles')
-      .select('id, email, phone, telegram_username, telegram_user_id, external_id_gc, status, user_id, full_name, first_name, last_name, country, city, birth_date, instagram_url, gc_registered_at');
+    // ── Collect keys from chunk for targeted matching ──
+    const gcIds: string[] = [];
+    const emails: string[] = [];
+    const phoneKeys: string[] = [];
+    const tgUsernames: string[] = [];
 
-    if (profilesError) {
-      return new Response(JSON.stringify({ error: 'Failed to load profiles', detail: profilesError.message }), {
+    for (const row of rows) {
+      const gcId = row.gc_user_id?.trim();
+      if (gcId) gcIds.push(gcId);
+
+      const email = normalizeEmail(row.email);
+      if (email) emails.push(email);
+
+      const phone = normalizePhone(row.phone);
+      if (phone) phoneKeys.push(phone.slice(-9));
+
+      const tgUsername = normalizeTelegram(row.tg_username);
+      if (tgUsername) tgUsernames.push(tgUsername);
+    }
+
+    // ── Fetch only relevant profiles via RPC ──
+    const { data: candidateProfiles, error: rpcError } = await supabase
+      .rpc('find_profiles_for_gc_import', {
+        p_gc_ids: gcIds.length > 0 ? gcIds : [],
+        p_emails: emails.length > 0 ? emails : [],
+        p_phone_keys: phoneKeys.length > 0 ? phoneKeys : [],
+        p_tg_usernames: tgUsernames.length > 0 ? tgUsernames : [],
+      });
+
+    if (rpcError) {
+      console.error('[GC Import] RPC error:', rpcError);
+      return new Response(JSON.stringify({ error: 'Failed to load candidate profiles', detail: rpcError.message }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const profiles = existingProfiles || [];
+    const profiles = candidateProfiles || [];
 
-    // Build indexes
+    // Build indexes from candidates
     const byGcId = new Map<string, typeof profiles[0]>();
     const byEmail = new Map<string, typeof profiles[0]>();
     const byPhone = new Map<string, typeof profiles[0][]>();
@@ -173,7 +220,7 @@ Deno.serve(async (req) => {
       if (p.telegram_username) byTelegram.set(p.telegram_username.toLowerCase(), p);
     }
 
-    // ── Process rows ──
+    // ── Process ALL rows in chunk ──
     const results: RowResult[] = [];
     const counts = {
       total: rows.length,
@@ -190,9 +237,8 @@ Deno.serve(async (req) => {
     };
 
     let errorCount = 0;
-    const processLimit = Math.min(rows.length, batchLimit);
 
-    for (let i = 0; i < processLimit; i++) {
+    for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
 
       // 1. Exclusion filter
@@ -229,25 +275,21 @@ Deno.serve(async (req) => {
       let matched: typeof profiles[0] | null = null;
       let matchType = '';
 
-      // Priority 1: external_id_gc
       if (gcId && byGcId.has(gcId)) {
         matched = byGcId.get(gcId)!;
         matchType = 'gc_id';
       }
 
-      // Priority 2: email
       if (!matched && email && byEmail.has(email)) {
         matched = byEmail.get(email)!;
         matchType = 'email';
       }
 
-      // Priority 3: phone (check for conflicts)
       if (!matched && phone) {
         const phoneKey = phone.slice(-9);
         const phoneMatches = byPhone.get(phoneKey) || [];
         if (phoneMatches.length === 1) {
           const phoneMatch = phoneMatches[0];
-          // Conflict check: if email doesn't match
           if (email && phoneMatch.email && phoneMatch.email.toLowerCase() !== email) {
             counts.conflicts++;
             results.push({ row_index: i, email: row.email, name: fullName, action: 'conflict', reason: 'phone_email_mismatch' });
@@ -262,7 +304,6 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Priority 4: telegram
       if (!matched && tgUsername && byTelegram.has(tgUsername)) {
         matched = byTelegram.get(tgUsername)!;
         matchType = 'telegram';
@@ -309,7 +350,7 @@ Deno.serve(async (req) => {
             errorCount++;
             counts.errors++;
             if (errorCount >= errorThreshold) {
-              console.error(`[GC Import] Error threshold (${errorThreshold}) reached, aborting`);
+              console.error(`[GC Import] Error threshold (${errorThreshold}) reached, aborting chunk ${chunk.index}`);
               break;
             }
           } else {
@@ -349,12 +390,12 @@ Deno.serve(async (req) => {
             errorCount++;
             counts.errors++;
             if (errorCount >= errorThreshold) {
-              console.error(`[GC Import] Error threshold (${errorThreshold}) reached, aborting`);
+              console.error(`[GC Import] Error threshold (${errorThreshold}) reached, aborting chunk ${chunk.index}`);
               break;
             }
           } else {
             counts.created++;
-            // Update index to prevent duplicates within same batch
+            // Update indexes to prevent duplicates within same chunk
             if (gcId) byGcId.set(gcId, insertData as any);
             if (email) byEmail.set(email, insertData as any);
           }
@@ -362,8 +403,20 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Audit log (execute only) ──
-    if (mode === 'execute') {
+    // ── Audit log (execute only, last chunk only) ──
+    if (mode === 'execute' && chunk.index === chunk.total - 1) {
+      const auditTotals = batch_totals || {
+        total: counts.total,
+        created: counts.created,
+        updated: counts.updated,
+        filtered_out: counts.filtered_out,
+        invalid: counts.invalid,
+        conflicts: counts.conflicts,
+        errors: counts.errors,
+        skipped_active: counts.will_skip_active,
+        skipped_no_changes: counts.will_skip_exists,
+      };
+
       await supabase.from('audit_logs').insert({
         actor_type: 'system',
         actor_user_id: null,
@@ -372,28 +425,19 @@ Deno.serve(async (req) => {
         meta: {
           batch_id: actualBatchId,
           mode,
-          total: counts.total,
-          created: counts.created,
-          updated: counts.updated,
-          filtered_out: counts.filtered_out,
-          invalid: counts.invalid,
-          conflicts: counts.conflicts,
-          errors: counts.errors,
-          skipped_active: counts.will_skip_active,
-          skipped_no_changes: counts.will_skip_exists,
+          chunk_count: chunk.total,
+          ...auditTotals,
         },
       });
     }
-
-    const truncated = rows.length > batchLimit;
 
     return new Response(JSON.stringify({
       success: true,
       mode,
       batch_id: actualBatchId,
-      counts,
-      truncated,
-      truncated_at: truncated ? batchLimit : undefined,
+      chunk,
+      counts_chunk: counts,
+      aborted: errorCount >= errorThreshold,
       preview: results.slice(0, 200),
       conflicts: results.filter(r => r.action === 'conflict').slice(0, 100),
     }), {
