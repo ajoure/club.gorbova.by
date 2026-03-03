@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -46,7 +46,7 @@ import {
   MessageCircle,
   Handshake,
   RefreshCw,
-  Ghost,
+  
   Archive,
   FileSpreadsheet,
   Sparkles,
@@ -294,10 +294,9 @@ export default function AdminContacts() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   // Initialize with "all" preset filter (hide archived by default)
-  const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([
-    { field: "status_account", operator: "not_equals", value: "archived" }
-  ]);
+  const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
   const [activePreset, setActivePreset] = useState("all");
+  const [displayLimit, setDisplayLimit] = useState(100);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showMergeDialog, setShowMergeDialog] = useState(false);
@@ -444,108 +443,159 @@ export default function AdminContacts() {
   // Check for contact query param to auto-open contact card
   const contactFromUrl = searchParams.get("contact");
 
-  // Fetch contacts with deals count and roles
-  const { data: contacts, isLoading, refetch } = useQuery({
-    queryKey: ["admin-contacts"],
-    queryFn: async () => {
-      // Get profiles
-      const { data: profiles, error: profilesError } = await supabase
+  const PAGE_SIZE = 100;
+
+  // Fetch contacts with server-side pagination
+  const {
+    data: profilesData,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    refetch,
+  } = useInfiniteQuery({
+    queryKey: ["admin-contacts-profiles"],
+    queryFn: async ({ pageParam = 0 }) => {
+      const { data, error } = await supabase
         .from("profiles")
         .select("*")
-        .order("created_at", { ascending: false });
-      
-      if (profilesError) throw profilesError;
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(pageParam, pageParam + PAGE_SIZE - 1);
 
-      // Get only PAID orders count per user
-      const { data: orders } = await supabase
-        .from("orders_v2")
-        .select("user_id, created_at, status")
-        .eq("status", "paid")
-        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return {
+        rows: data || [],
+        nextOffset: (data?.length || 0) === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
+      };
+    },
+    getNextPageParam: (lastPage) => lastPage.nextOffset,
+    initialPageParam: 0,
+  });
 
-      // Group paid orders by user_id
-      const ordersByUser = new Map<string, { count: number; lastAt: string | null }>();
-      orders?.forEach(order => {
-        const existing = ordersByUser.get(order.user_id);
-        if (existing) {
-          existing.count++;
-        } else {
-          ordersByUser.set(order.user_id, { count: 1, lastAt: order.created_at });
-        }
-      });
-      
-      // Get user roles
-      const { data: userRolesData } = await supabase
-        .from("user_roles_v2")
-        .select(`
-          user_id,
-          created_at,
-          roles(code, name)
-        `);
-      
-      const rolesByUserId = new Map<string, { code: string; name: string; assigned_at: string }>();
-      userRolesData?.forEach((ur: any) => {
-        if (ur.user_id && ur.roles) {
-          rolesByUserId.set(ur.user_id, {
-            code: ur.roles.code,
-            name: ur.roles.name,
-            assigned_at: ur.created_at,
-          });
-        }
-      });
-      
-      // Map to contacts
-      const contactsList: Contact[] = (profiles || []).map(profile => {
-        const isArchived = (profile as any).is_archived === true;
+  // Flat array of all loaded profiles
+  const allProfiles = useMemo(
+    () => profilesData?.pages.flatMap((p) => p.rows) || [],
+    [profilesData]
+  );
 
-        const dealsByProfileId = ordersByUser.get(profile.id);
-        const dealsByUserId = profile.user_id ? ordersByUser.get(profile.user_id) : null;
-        
-        let dealsCount = 0;
-        let lastDealAt: string | null = null;
-        
-        if (dealsByProfileId) {
-          dealsCount += dealsByProfileId.count;
-          lastDealAt = dealsByProfileId.lastAt;
-        }
-        if (dealsByUserId && profile.user_id !== profile.id) {
-          dealsCount += dealsByUserId.count;
-          if (!lastDealAt || (dealsByUserId.lastAt && dealsByUserId.lastAt > lastDealAt)) {
-            lastDealAt = dealsByUserId.lastAt;
-          }
-        }
-        
-        return {
-          id: profile.id,
-          user_id: profile.user_id,
-          email: profile.email,
-          full_name: profile.full_name,
-          first_name: profile.first_name,
-          last_name: profile.last_name,
-          phone: profile.phone,
-          telegram_username: profile.telegram_username,
-          telegram_user_id: profile.telegram_user_id,
-          avatar_url: profile.avatar_url,
-          status: isArchived ? "archived" : profile.status,
-          created_at: profile.created_at,
-          last_seen_at: profile.last_seen_at,
-          duplicate_flag: profile.duplicate_flag,
-          deals_count: dealsCount,
-          last_deal_at: lastDealAt,
-          role: profile.user_id ? rolesByUserId.get(profile.user_id) : undefined,
-          loyalty_score: (profile as any).loyalty_score,
-          loyalty_ai_summary: (profile as any).loyalty_ai_summary,
-          loyalty_status_reason: (profile as any).loyalty_status_reason,
-          loyalty_proofs: (profile as any).loyalty_proofs,
-          loyalty_analyzed_messages_count: (profile as any).loyalty_analyzed_messages_count,
-          loyalty_updated_at: (profile as any).loyalty_updated_at,
-          communication_style: (profile as any).communication_style,
-        };
-      });
-
-      return contactsList;
+  // Total count (separate query)
+  const { data: totalCount } = useQuery({
+    queryKey: ["admin-contacts-total"],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("profiles")
+        .select("id", { count: "exact", head: true });
+      if (error) throw error;
+      return count || 0;
     },
   });
+
+  // Enrich loaded profiles with orders (by profile_id, chunked)
+  const profileIds = useMemo(() => allProfiles.map((p) => p.id), [allProfiles]);
+
+  const { data: ordersData } = useQuery({
+    queryKey: ["admin-contacts-orders", profileIds.length],
+    queryFn: async () => {
+      if (profileIds.length === 0) return [];
+      let all: any[] = [];
+      for (let i = 0; i < profileIds.length; i += 500) {
+        const chunk = profileIds.slice(i, i + 500);
+        const { data } = await supabase
+          .from("orders_v2")
+          .select("user_id, profile_id, created_at, status")
+          .eq("status", "paid")
+          .in("profile_id", chunk);
+        if (data) all = all.concat(data);
+      }
+      return all;
+    },
+    enabled: profileIds.length > 0,
+  });
+
+  // Build ordersByProfileId map
+  const ordersByProfileId = useMemo(() => {
+    const map = new Map<string, { count: number; lastAt: string | null }>();
+    ordersData?.forEach((order: any) => {
+      const key = order.profile_id;
+      if (!key) return;
+      const existing = map.get(key);
+      if (existing) {
+        existing.count++;
+      } else {
+        map.set(key, { count: 1, lastAt: order.created_at });
+      }
+    });
+    return map;
+  }, [ordersData]);
+
+  // Get user roles
+  const { data: userRolesData } = useQuery({
+    queryKey: ["admin-contacts-roles"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("user_roles_v2")
+        .select(`user_id, created_at, roles(code, name)`);
+      return data || [];
+    },
+  });
+
+  const rolesByUserId = useMemo(() => {
+    const map = new Map<string, { code: string; name: string; assigned_at: string }>();
+    userRolesData?.forEach((ur: any) => {
+      if (ur.user_id && ur.roles) {
+        map.set(ur.user_id, {
+          code: ur.roles.code,
+          name: ur.roles.name,
+          assigned_at: ur.created_at,
+        });
+      }
+    });
+    return map;
+  }, [userRolesData]);
+
+  // Map to Contact objects
+  const contacts = useMemo(() => {
+    if (!allProfiles.length) return [];
+
+    const contactsList: Contact[] = allProfiles.map((profile) => {
+      const isArchived = (profile as any).is_archived === true;
+
+      const dealsByProfileId = ordersByProfileId.get(profile.id);
+
+      let dealsCount = dealsByProfileId?.count || 0;
+      let lastDealAt: string | null = dealsByProfileId?.lastAt || null;
+
+      return {
+        id: profile.id,
+        user_id: profile.user_id,
+        email: profile.email,
+        full_name: profile.full_name,
+        first_name: profile.first_name,
+        last_name: profile.last_name,
+        phone: profile.phone,
+        telegram_username: profile.telegram_username,
+        telegram_user_id: profile.telegram_user_id,
+        avatar_url: profile.avatar_url,
+        status: isArchived ? "archived" : profile.status,
+        created_at: profile.created_at,
+        last_seen_at: profile.last_seen_at,
+        duplicate_flag: profile.duplicate_flag,
+        deals_count: dealsCount,
+        last_deal_at: lastDealAt,
+        role: profile.user_id ? rolesByUserId.get(profile.user_id) : undefined,
+        loyalty_score: (profile as any).loyalty_score,
+        loyalty_ai_summary: (profile as any).loyalty_ai_summary,
+        loyalty_status_reason: (profile as any).loyalty_status_reason,
+        loyalty_proofs: (profile as any).loyalty_proofs,
+        loyalty_analyzed_messages_count: (profile as any).loyalty_analyzed_messages_count,
+        loyalty_updated_at: (profile as any).loyalty_updated_at,
+        communication_style: (profile as any).communication_style,
+      };
+    });
+
+    return contactsList;
+  }, [allProfiles, ordersByProfileId, rolesByUserId]);
 
   // Store the "from" parameter for navigation back
   const fromPage = searchParams.get("from");
@@ -782,6 +832,11 @@ export default function AdminContacts() {
     return applyFilters(result, activeFilters, getContactFieldValue);
   }, [contactsWithIndex, debouncedSearch, activeFilters, getContactFieldValue]);
 
+  // Reset display limit on search/filter change
+  useEffect(() => {
+    setDisplayLimit(100);
+  }, [debouncedSearch, activeFilters]);
+
   // Export columns builder
   const getContactsExportColumns = useCallback((): ExportColumn<Contact>[] => [
     { header: "Имя", getValue: (c) => c.full_name || "" },
@@ -804,14 +859,14 @@ export default function AdminContacts() {
 
   // Calculate counts for presets
   const presetCounts = useMemo(() => {
-    if (!contacts) return { active: 0, ghost: 0, withDeals: 0, duplicates: 0, archived: 0, noAccount: 0 };
+    if (!contacts) return { active: 0, withAccount: 0, withDeals: 0, duplicates: 0, archived: 0, noAccount: 0 };
 
     const isDup = (c: Contact) =>
       computedDuplicateIds.has(c.id) || (c.duplicate_flag && c.duplicate_flag !== "none");
 
     return {
       active: contacts.filter(c => c.status === "active").length,
-      ghost: contacts.filter(c => c.status === "ghost").length,
+      withAccount: contacts.filter(c => !!c.user_id && c.status !== "archived").length,
       withDeals: contacts.filter(c => c.deals_count > 0).length,
       duplicates: contacts.filter(isDup).length,
       archived: contacts.filter(c => c.status === "archived").length,
@@ -820,11 +875,11 @@ export default function AdminContacts() {
   }, [contacts, computedDuplicateIds]);
 
   const CONTACT_PRESETS: FilterPreset[] = useMemo(() => [
-    { id: "all", label: "Все", filters: [{ field: "status_account", operator: "not_equals", value: "archived" }] },
-    { id: "noAccount", label: "Без аккаунта", filters: [{ field: "status_account", operator: "equals", value: "no_account" }], count: presetCounts.noAccount },
+    { id: "active", label: "Активные", filters: [{ field: "status_account", operator: "equals", value: "has_account" }], count: presetCounts.withAccount },
     { id: "withDeals", label: "С покупками", filters: [{ field: "deals_count", operator: "gt", value: "0" }], count: presetCounts.withDeals },
     { id: "duplicates", label: "Дубли", filters: [{ field: "is_duplicate", operator: "equals", value: "true" }], count: presetCounts.duplicates },
-    { id: "archived", label: "Архив", filters: [{ field: "status_account", operator: "equals", value: "archived" }], count: presetCounts.archived },
+    { id: "noAccount", label: "Без аккаунта", filters: [{ field: "status_account", operator: "equals", value: "no_account" }], count: presetCounts.noAccount },
+    { id: "all", label: "Все", filters: [] },
   ], [presetCounts]);
 
   const getStatusBadge = (status: string) => {
@@ -832,7 +887,7 @@ export default function AdminContacts() {
       case "active":
         return <Badge variant="default" className="bg-green-500/20 text-green-600 border-green-500/30"><CheckCircle className="w-3 h-3 mr-1" />Активен</Badge>;
       case "ghost":
-        return <Badge variant="outline" className="text-muted-foreground"><Ghost className="w-3 h-3 mr-1" />Новый</Badge>;
+        return null; // внутренний тех.статус, не показываем
       case "archived":
         return <Badge variant="secondary" className="bg-amber-500/20 text-amber-600 border-amber-500/30"><Archive className="w-3 h-3 mr-1" />Архивный</Badge>;
       case "blocked":
@@ -840,7 +895,7 @@ export default function AdminContacts() {
       case "deleted":
         return <Badge variant="secondary"><Trash2 className="w-3 h-3 mr-1" />Удален</Badge>;
       case "imported":
-        return <Badge variant="outline" className="bg-blue-500/20 text-blue-600 border-blue-500/30"><UserX className="w-3 h-3 mr-1" />Импортирован</Badge>;
+        return <Badge variant="outline" className="bg-blue-500/20 text-blue-600 border-blue-500/30"><UserX className="w-3 h-3 mr-1" />импорт</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -904,7 +959,9 @@ export default function AdminContacts() {
     onSuccess: (count) => {
       toast.success(`Удалено ${count} контактов`);
       clearSelection();
-      queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts-profiles"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts-total"] });
       queryClient.invalidateQueries({ queryKey: ["duplicate-count"] });
     },
     onError: (error) => {
@@ -939,7 +996,9 @@ export default function AdminContacts() {
       toast.success(`Архивировано ${count} контактов`);
       clearSelection();
       setShowBulkArchiveDialog(false);
-      queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts-profiles"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contacts-total"] });
     },
     onError: (error) => {
       toast.error("Ошибка: " + (error as Error).message);
@@ -1018,6 +1077,7 @@ export default function AdminContacts() {
   // Handle tab change for pill-style navigation
   const handleTabChange = useCallback((tabId: string) => {
     setActivePreset(tabId);
+    setDisplayLimit(100); // reset pagination on tab change
     const preset = CONTACT_PRESETS.find(p => p.id === tabId);
     if (preset) {
       setActiveFilters(preset.filters);
@@ -1085,19 +1145,68 @@ export default function AdminContacts() {
                 <DropdownMenuSubContent>
                   <DropdownMenuItem onClick={async () => {
                     const cols = getContactsExportColumns();
-                    await exportToExcel(sortedContacts, cols, `kontakty_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
-                    toast.success(`Экспортировано ${sortedContacts.length} записей`);
+                    await exportToExcel(sortedContacts.slice(0, displayLimit), cols, `kontakty_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
+                    toast.success(`Экспортировано ${Math.min(displayLimit, sortedContacts.length)} из ${sortedContacts.length} загруженных`);
                   }}>
                     <FileSpreadsheet className="h-4 w-4 mr-2" />
-                    Excel (.xlsx)
+                    Excel — загруженные ({Math.min(displayLimit, sortedContacts.length)})
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => {
                     const cols = getContactsExportColumns();
-                    exportToCSV(sortedContacts, cols, `kontakty_${format(new Date(), "yyyy-MM-dd")}.csv`);
-                    toast.success(`Экспортировано ${sortedContacts.length} записей`);
+                    exportToCSV(sortedContacts.slice(0, displayLimit), cols, `kontakty_${format(new Date(), "yyyy-MM-dd")}.csv`);
+                    toast.success(`Экспортировано ${Math.min(displayLimit, sortedContacts.length)} из ${sortedContacts.length} загруженных`);
                   }}>
                     <FileText className="h-4 w-4 mr-2" />
-                    CSV (.csv)
+                    CSV — загруженные ({Math.min(displayLimit, sortedContacts.length)})
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={async () => {
+                    toast.info("Выгрузка всех контактов...");
+                    try {
+                      // Fetch all profiles in chunks for full export
+                      let allForExport: any[] = [];
+                      let from = 0;
+                      const CHUNK = 1000;
+                      while (true) {
+                        const { data, error } = await supabase
+                          .from("profiles")
+                          .select("*")
+                          .order("created_at", { ascending: false })
+                          .order("id", { ascending: false })
+                          .range(from, from + CHUNK - 1);
+                        if (error) throw error;
+                        if (!data || data.length === 0) break;
+                        allForExport = allForExport.concat(data);
+                        if (data.length < CHUNK) break;
+                        from += CHUNK;
+                      }
+                      const cols = getContactsExportColumns();
+                      const mapped = allForExport.map(p => ({
+                        id: p.id,
+                        user_id: p.user_id,
+                        email: p.email,
+                        full_name: p.full_name,
+                        first_name: p.first_name,
+                        last_name: p.last_name,
+                        phone: p.phone,
+                        telegram_username: p.telegram_username,
+                        telegram_user_id: p.telegram_user_id,
+                        avatar_url: p.avatar_url,
+                        status: p.status,
+                        created_at: p.created_at,
+                        last_seen_at: p.last_seen_at,
+                        duplicate_flag: p.duplicate_flag,
+                        deals_count: 0,
+                        last_deal_at: null,
+                      })) as Contact[];
+                      await exportToExcel(mapped, cols, `kontakty_vse_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
+                      toast.success(`Экспортировано ${mapped.length} контактов (все)`);
+                    } catch (err: any) {
+                      toast.error(`Ошибка экспорта: ${err.message}`);
+                    }
+                  }}>
+                    <FileSpreadsheet className="h-4 w-4 mr-2" />
+                    Excel — все ({totalCount ?? '...'})
                   </DropdownMenuItem>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
@@ -1110,7 +1219,7 @@ export default function AdminContacts() {
                   });
                   if (error) throw error;
                   toast.success(`Проанализировано ${data?.success || 0} контактов`);
-                  queryClient.invalidateQueries({ queryKey: ["admin-contacts"] });
+                  queryClient.invalidateQueries({ queryKey: ["admin-contacts-profiles"] });
                 } catch (err: any) {
                   toast.error(`Ошибка: ${err.message}`);
                 }
@@ -1269,13 +1378,11 @@ export default function AdminContacts() {
 
       {/* Stats */}
       <div className="flex items-center gap-4 text-sm text-muted-foreground">
+        <span>Загружено: <strong className="text-foreground">{Math.min(displayLimit, sortedContacts.length)}</strong></span>
+        <span>•</span>
         <span>Найдено: <strong className="text-foreground">{filteredContacts.length}</strong></span>
-        {contacts && (
-          <>
-            <span>•</span>
-            <span>Всего: {contacts.length}</span>
-          </>
-        )}
+        <span>•</span>
+        <span>Всего: {totalCount ?? '...'}</span>
       </div>
 
       {/* Contacts Table */}
@@ -1360,7 +1467,7 @@ export default function AdminContacts() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sortedContacts.map((contact) => (
+                {sortedContacts.slice(0, displayLimit).map((contact) => (
                   <TableRow 
                     key={contact.id}
                     ref={(el) => registerItemRef(contact.id, el)}
@@ -1568,6 +1675,46 @@ export default function AdminContacts() {
         )}
       </GlassCard>
 
+      {/* Show More button */}
+      {sortedContacts.length > displayLimit && (
+        <div className="flex justify-center py-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setDisplayLimit((prev) => prev + 100);
+              // If we're near the edge of loaded data, fetch next page
+              if (displayLimit + 100 >= allProfiles.length && hasNextPage) {
+                fetchNextPage();
+              }
+            }}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? (
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Загрузка...</>
+            ) : (
+              <>Показать ещё ({sortedContacts.length - displayLimit} осталось)</>
+            )}
+          </Button>
+        </div>
+      )}
+      {/* Load more from server if all displayed but server has more */}
+      {sortedContacts.length <= displayLimit && hasNextPage && (
+        <div className="flex justify-center py-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? (
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Загрузка...</>
+            ) : (
+              <>Загрузить ещё ({Math.max((totalCount || 0) - allProfiles.length, 0)} осталось на сервере)</>
+            )}
+          </Button>
+        </div>
+      )}
       {/* Contact Detail Sheet */}
       <ContactDetailSheet
         contact={selectedContact || null}
