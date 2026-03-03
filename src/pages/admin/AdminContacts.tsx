@@ -293,6 +293,8 @@ export default function AdminContacts() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  // P0-guard: Debounce search input (150ms) — declared early for use in server queries
+  const debouncedSearch = useDebouncedValue(search, 150);
   // Initialize with "all" preset filter (hide archived by default)
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
   const [activePreset, setActivePreset] = useState("all");
@@ -445,7 +447,19 @@ export default function AdminContacts() {
 
   const PAGE_SIZE = 100;
 
-  // Fetch contacts with server-side pagination
+  // Server-side tab counts via RPC
+  const { data: tabCounts } = useQuery({
+    queryKey: ["admin-contacts-tab-counts", debouncedSearch],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_contact_tab_counts", {
+        p_search: debouncedSearch || null,
+      });
+      if (error) throw error;
+      return data as { all: number; active: number; no_account: number; duplicates: number; archived: number; with_deals: number };
+    },
+  });
+
+  // Fetch contacts with server-side pagination — queryKey depends on preset + search
   const {
     data: profilesData,
     isLoading,
@@ -454,11 +468,53 @@ export default function AdminContacts() {
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ["admin-contacts-profiles"],
+    queryKey: ["admin-contacts-profiles", activePreset, debouncedSearch],
     queryFn: async ({ pageParam = 0 }) => {
-      const { data, error } = await supabase
+      // "withDeals" uses a separate RPC
+      if (activePreset === "withDeals") {
+        const { data, error } = await supabase.rpc("get_profiles_with_paid_orders", {
+          p_limit: PAGE_SIZE,
+          p_offset: pageParam,
+          p_search: debouncedSearch || null,
+        });
+        if (error) throw error;
+        const rows = (data || []).map((r: any) => ({
+          ...r,
+          id: r.profile_id,
+          // RPC returns extra fields
+          _paid_orders_count: r.paid_orders_count,
+          _last_paid_at: r.last_paid_at,
+        }));
+        return {
+          rows,
+          nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
+        };
+      }
+
+      // Standard profiles query with server-side filters
+      let query = supabase
         .from("profiles")
-        .select("*")
+        .select("*");
+
+      // Server-side preset filters
+      if (activePreset === "active") {
+        query = query.not("user_id", "is", null).neq("status", "archived");
+      } else if (activePreset === "noAccount") {
+        query = query.is("user_id", null).neq("status", "archived");
+      } else if (activePreset === "duplicates") {
+        query = query.not("duplicate_flag", "is", null).neq("duplicate_flag", "none");
+      } else if (activePreset === "archived") {
+        query = query.eq("status", "archived");
+      }
+      // "all" — no extra filter
+
+      // Server-side search
+      if (debouncedSearch) {
+        const s = debouncedSearch.trim();
+        query = query.or(`email.ilike.%${s}%,full_name.ilike.%${s}%,phone.ilike.%${s}%`);
+      }
+
+      const { data, error } = await query
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .range(pageParam, pageParam + PAGE_SIZE - 1);
@@ -479,17 +535,18 @@ export default function AdminContacts() {
     [profilesData]
   );
 
-  // Total count (separate query)
-  const { data: totalCount } = useQuery({
-    queryKey: ["admin-contacts-total"],
-    queryFn: async () => {
-      const { count, error } = await supabase
-        .from("profiles")
-        .select("id", { count: "exact", head: true });
-      if (error) throw error;
-      return count || 0;
-    },
-  });
+  // Total count for current preset (server-side)
+  const totalCount = useMemo(() => {
+    if (!tabCounts) return undefined;
+    switch (activePreset) {
+      case "active": return tabCounts.active;
+      case "noAccount": return tabCounts.no_account;
+      case "duplicates": return tabCounts.duplicates;
+      case "archived": return tabCounts.archived;
+      case "withDeals": return tabCounts.with_deals;
+      default: return tabCounts.all;
+    }
+  }, [tabCounts, activePreset]);
 
   // Enrich loaded profiles with orders (by profile_id, chunked)
   const profileIds = useMemo(() => allProfiles.map((p) => p.id), [allProfiles]);
@@ -816,8 +873,7 @@ export default function AdminContacts() {
     }));
   }, [contacts]);
 
-  // P0-guard: Debounce search input (150ms)
-  const debouncedSearch = useDebouncedValue(search, 150);
+  // debouncedSearch is declared at top of component (before queries)
 
   const filteredContacts = useMemo(() => {
     let result = contactsWithIndex;
@@ -832,10 +888,10 @@ export default function AdminContacts() {
     return applyFilters(result, activeFilters, getContactFieldValue);
   }, [contactsWithIndex, debouncedSearch, activeFilters, getContactFieldValue]);
 
-  // Reset display limit on search/filter change
+  // Reset display limit on search/filter/preset change
   useEffect(() => {
     setDisplayLimit(100);
-  }, [debouncedSearch, activeFilters]);
+  }, [debouncedSearch, activeFilters, activePreset]);
 
   // Export columns builder
   const getContactsExportColumns = useCallback((): ExportColumn<Contact>[] => [
@@ -857,28 +913,24 @@ export default function AdminContacts() {
     getFieldValue: getContactFieldValue,
   });
 
-  // Calculate counts for presets
+  // Server-side counts for presets
   const presetCounts = useMemo(() => {
-    if (!contacts) return { active: 0, withAccount: 0, withDeals: 0, duplicates: 0, archived: 0, noAccount: 0 };
-
-    const isDup = (c: Contact) =>
-      computedDuplicateIds.has(c.id) || (c.duplicate_flag && c.duplicate_flag !== "none");
-
+    if (!tabCounts) return { active: 0, withAccount: 0, withDeals: 0, duplicates: 0, archived: 0, noAccount: 0 };
     return {
-      active: contacts.filter(c => c.status === "active").length,
-      withAccount: contacts.filter(c => !!c.user_id && c.status !== "archived").length,
-      withDeals: contacts.filter(c => c.deals_count > 0).length,
-      duplicates: contacts.filter(isDup).length,
-      archived: contacts.filter(c => c.status === "archived").length,
-      noAccount: contacts.filter(c => !c.user_id && c.status !== "archived").length,
+      active: tabCounts.active,
+      withAccount: tabCounts.active,
+      withDeals: tabCounts.with_deals,
+      duplicates: tabCounts.duplicates,
+      archived: tabCounts.archived,
+      noAccount: tabCounts.no_account,
     };
-  }, [contacts, computedDuplicateIds]);
+  }, [tabCounts]);
 
   const CONTACT_PRESETS: FilterPreset[] = useMemo(() => [
-    { id: "active", label: "Активные", filters: [{ field: "status_account", operator: "equals", value: "has_account" }], count: presetCounts.withAccount },
-    { id: "withDeals", label: "С покупками", filters: [{ field: "deals_count", operator: "gt", value: "0" }], count: presetCounts.withDeals },
-    { id: "duplicates", label: "Дубли", filters: [{ field: "is_duplicate", operator: "equals", value: "true" }], count: presetCounts.duplicates },
-    { id: "noAccount", label: "Без аккаунта", filters: [{ field: "status_account", operator: "equals", value: "no_account" }], count: presetCounts.noAccount },
+    { id: "active", label: "Активные", filters: [], count: presetCounts.withAccount },
+    { id: "withDeals", label: "С покупками", filters: [], count: presetCounts.withDeals },
+    { id: "duplicates", label: "Дубли", filters: [], count: presetCounts.duplicates },
+    { id: "noAccount", label: "Без аккаунта", filters: [], count: presetCounts.noAccount },
     { id: "all", label: "Все", filters: [] },
   ], [presetCounts]);
 
@@ -1074,15 +1126,13 @@ export default function AdminContacts() {
     [sortedColumns]
   );
 
-  // Handle tab change for pill-style navigation
+  // Handle tab change for pill-style navigation (server-side filtering, no client filters needed)
   const handleTabChange = useCallback((tabId: string) => {
     setActivePreset(tabId);
-    setDisplayLimit(100); // reset pagination on tab change
-    const preset = CONTACT_PRESETS.find(p => p.id === tabId);
-    if (preset) {
-      setActiveFilters(preset.filters);
-    }
-  }, [CONTACT_PRESETS]);
+    setDisplayLimit(100);
+    // Clear client-side filters when switching to server-side tabs
+    setActiveFilters([]);
+  }, []);
 
   return (
     <div className="space-y-4 pb-24">
@@ -1116,6 +1166,21 @@ export default function AdminContacts() {
               </button>
             );
           })}
+
+          {/* Archive pill (only when archive preset is active) */}
+          {activePreset === "archived" && (
+            <>
+              <div className="w-px h-5 bg-border/30 mx-1" />
+              <button
+                className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-600 border border-amber-500/30 whitespace-nowrap"
+                onClick={() => handleTabChange("all")}
+              >
+                <Archive className="w-3 h-3" />
+                <span>Архив ({presetCounts.archived})</span>
+                <XCircle className="w-3 h-3 ml-0.5" />
+              </button>
+            </>
+          )}
 
           {/* Separator */}
           <div className="w-px h-5 bg-border/30 mx-1" />
@@ -1246,6 +1311,11 @@ export default function AdminContacts() {
                 </>
               )}
 
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => handleTabChange("archived")}>
+                <Archive className="h-4 w-4 mr-2" />
+                Архивные / удалённые ({presetCounts.archived})
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => refetch()}>
                 <RefreshCw className="h-4 w-4 mr-2" />
@@ -1378,11 +1448,9 @@ export default function AdminContacts() {
 
       {/* Stats */}
       <div className="flex items-center gap-4 text-sm text-muted-foreground">
-        <span>Загружено: <strong className="text-foreground">{Math.min(displayLimit, sortedContacts.length)}</strong></span>
+        <span>Показано: <strong className="text-foreground">{Math.min(displayLimit, sortedContacts.length)}</strong></span>
         <span>•</span>
-        <span>Найдено: <strong className="text-foreground">{filteredContacts.length}</strong></span>
-        <span>•</span>
-        <span>Всего: {totalCount ?? '...'}</span>
+        <span>Всего: <strong className="text-foreground">{totalCount ?? '...'}</strong></span>
       </div>
 
       {/* Contacts Table */}
@@ -1675,46 +1743,41 @@ export default function AdminContacts() {
         )}
       </GlassCard>
 
-      {/* Show More button */}
-      {sortedContacts.length > displayLimit && (
-        <div className="flex justify-center py-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setDisplayLimit((prev) => prev + 100);
-              // If we're near the edge of loaded data, fetch next page
-              if (displayLimit + 100 >= allProfiles.length && hasNextPage) {
-                fetchNextPage();
-              }
-            }}
-            disabled={isFetchingNextPage}
-          >
-            {isFetchingNextPage ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Загрузка...</>
-            ) : (
-              <>Показать ещё ({sortedContacts.length - displayLimit} осталось)</>
-            )}
-          </Button>
-        </div>
-      )}
-      {/* Load more from server if all displayed but server has more */}
-      {sortedContacts.length <= displayLimit && hasNextPage && (
-        <div className="flex justify-center py-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => fetchNextPage()}
-            disabled={isFetchingNextPage}
-          >
-            {isFetchingNextPage ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Загрузка...</>
-            ) : (
-              <>Загрузить ещё ({Math.max((totalCount || 0) - allProfiles.length, 0)} осталось на сервере)</>
-            )}
-          </Button>
-        </div>
-      )}
+      {/* Single "Show More" button */}
+      {(() => {
+        const loadedCount = Math.min(displayLimit, sortedContacts.length);
+        const remaining = Math.max((totalCount ?? 0) - loadedCount, 0);
+        if (remaining <= 0 && sortedContacts.length <= displayLimit) return null;
+        const showRemaining = sortedContacts.length > displayLimit 
+          ? sortedContacts.length - displayLimit 
+          : remaining;
+        if (showRemaining <= 0) return null;
+        return (
+          <div className="flex justify-center py-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDisplayLimit((prev) => {
+                  const next = prev + 100;
+                  // If approaching loaded edge, fetch next page
+                  if (next >= allProfiles.length && hasNextPage) {
+                    fetchNextPage();
+                  }
+                  return next;
+                });
+              }}
+              disabled={isFetchingNextPage}
+            >
+              {isFetchingNextPage ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Загрузка...</>
+              ) : (
+                <>Показать ещё ({showRemaining} осталось)</>
+              )}
+            </Button>
+          </div>
+        );
+      })()}
       {/* Contact Detail Sheet */}
       <ContactDetailSheet
         contact={selectedContact || null}

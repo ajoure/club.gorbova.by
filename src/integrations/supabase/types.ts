@@ -9942,6 +9942,7 @@ export type Database = {
           updated_at: string
         }[]
       }
+      get_contact_tab_counts: { Args: { p_search?: string }; Returns: Json }
       get_db_now: { Args: never; Returns: string }
       get_demo_profile_ids: {
         Args: never
@@ -9999,6 +10000,39 @@ export type Database = {
           payload: Json
           priority: number
         }[]
+      }
+      get_profiles_with_paid_orders: {
+        Args: { p_limit: number; p_offset: number; p_search?: string }
+        Returns: {
+          avatar_url: string
+          communication_style: Json
+          created_at: string
+          duplicate_flag: string
+          email: string
+          first_name: string
+          full_name: string
+          is_archived: boolean
+          last_name: string
+          last_paid_at: string
+          last_seen_at: string
+          loyalty_ai_summary: string
+          loyalty_analyzed_messages_count: number
+          loyalty_proofs: Json
+          loyalty_score: number
+          loyalty_status_reason: string
+          loyalty_updated_at: string
+          paid_orders_count: number
+          phone: string
+          profile_id: string
+          status: string
+          telegram_user_id: number
+          telegram_username: string
+          user_id: string
+        }[]
+      }
+      get_profiles_with_paid_orders_count: {
+        Args: { p_search?: string }
+        Returns: number
       }
       get_schema_columns: {
         Args: never

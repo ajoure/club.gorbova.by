@@ -99,7 +99,7 @@ import {
   UserX,
   DollarSign,
   Sparkles,
-  Ghost,
+  
   RefreshCw,
   Link2,
 } from "lucide-react";
@@ -1362,31 +1362,31 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 <LoyaltyPulse score={profileData.loyalty_score} size="sm" />
               )}
               {!resolvedUserId && (
-                <Badge variant="outline" className="text-xs gap-1">
-                  <Ghost className="w-3 h-3" />
-                  Ghost
-                </Badge>
-              )}
-              {!resolvedUserId && (
                 <Badge variant="outline" className="text-xs gap-1 border-amber-400 text-amber-600 dark:text-amber-400">
                   <UserX className="w-3 h-3" />
                   Без аккаунта
                 </Badge>
               )}
-              <Badge 
-                variant={resolvedStatus === "active" && resolvedUserId ? "default" : "secondary"} 
-                className="text-xs"
-              >
-                {resolvedStatus === "active" && resolvedUserId ? (
-                  <><CheckCircle className="w-3 h-3 mr-1" />Активен</>
-                ) : resolvedStatus === "blocked" ? (
-                  <><Ban className="w-3 h-3 mr-1" />Заблокирован</>
-                ) : resolvedStatus === "archived" ? (
-                  <><XCircle className="w-3 h-3 mr-1" />Архивный</>
-                ) : (
-                  <><XCircle className="w-3 h-3 mr-1" />{resolvedStatus}</>
-                )}
-              </Badge>
+              {resolvedStatus === "imported" ? (
+                <Badge variant="outline" className="text-xs gap-1 bg-blue-500/20 text-blue-600 border-blue-500/30">
+                  <UserX className="w-3 h-3 mr-1" />импорт
+                </Badge>
+              ) : resolvedStatus === "ghost" ? null : (
+                <Badge 
+                  variant={resolvedStatus === "active" && resolvedUserId ? "default" : "secondary"} 
+                  className="text-xs"
+                >
+                  {resolvedStatus === "active" && resolvedUserId ? (
+                    <><CheckCircle className="w-3 h-3 mr-1" />Активен</>
+                  ) : resolvedStatus === "blocked" ? (
+                    <><Ban className="w-3 h-3 mr-1" />Заблокирован</>
+                  ) : resolvedStatus === "archived" ? (
+                    <><XCircle className="w-3 h-3 mr-1" />Архивный</>
+                  ) : (
+                    <><XCircle className="w-3 h-3 mr-1" />{resolvedStatus}</>
+                  )}
+                </Badge>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2 mt-2">
