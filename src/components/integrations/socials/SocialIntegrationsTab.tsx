@@ -60,7 +60,7 @@ export function SocialIntegrationsTab() {
   );
 
   const webhookUrl = instagramInstances.length > 0
-    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/instagram-webhook`
+    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/instagram-webhook?integration_instance_id=${instagramInstances[0].id}`
     : null;
 
   const handleHealthCheck = async (instance: IntegrationInstance) => {
