@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Instagram, Search, MessageSquare } from "lucide-react";
@@ -14,6 +13,7 @@ import { ContactInstagramChat } from "./ContactInstagramChat";
 
 interface InstagramDialog {
   thread_key: string;
+  peer_id: string;
   sender_id: string;
   sender_name: string | null;
   ig_thread_id: string | null;
@@ -31,7 +31,6 @@ export function InstagramInboxView() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDialog, setSelectedDialog] = useState<InstagramDialog | null>(null);
 
-  // Get active instagram accounts
   const { data: accounts } = useQuery({
     queryKey: ["instagram-accounts"],
     queryFn: async () => {
@@ -45,7 +44,6 @@ export function InstagramInboxView() {
 
   const activeAccountId = accounts?.[0]?.id;
 
-  // Get dialogs
   const { data: dialogs, isLoading } = useQuery({
     queryKey: ["instagram-dialogs", activeAccountId],
     queryFn: async () => {
@@ -60,7 +58,7 @@ export function InstagramInboxView() {
     refetchInterval: 15000,
   });
 
-  // Realtime subscription
+  // PATCH-6: Realtime with filter by instagram_account_id + local guard
   useEffect(() => {
     if (!activeAccountId) return;
 
@@ -72,9 +70,13 @@ export function InstagramInboxView() {
           event: "INSERT",
           schema: "public",
           table: "instagram_messages",
+          filter: `instagram_account_id=eq.${activeAccountId}`,
         },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["instagram-dialogs", activeAccountId] });
+        (payload) => {
+          const msg = payload.new as any;
+          if (msg.instagram_account_id === activeAccountId) {
+            queryClient.invalidateQueries({ queryKey: ["instagram-dialogs", activeAccountId] });
+          }
         }
       )
       .subscribe();
@@ -101,13 +103,12 @@ export function InstagramInboxView() {
   const handleSelectDialog = useCallback(
     (dialog: InstagramDialog) => {
       setSelectedDialog(dialog);
-      // Mark as read
       if (dialog.unread_count > 0 && activeAccountId) {
         supabase.functions.invoke("instagram-admin-chat", {
           body: {
             action: "mark_read",
             instagram_account_id: activeAccountId,
-            sender_id: dialog.sender_id,
+            sender_id: dialog.peer_id,
             thread_id: dialog.ig_thread_id,
           },
         }).then(() => {
@@ -183,7 +184,7 @@ export function InstagramInboxView() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium truncate">
-                        {dialog.sender_name || dialog.instagram_username || dialog.sender_id}
+                        {dialog.sender_name || dialog.instagram_username || dialog.peer_id}
                       </span>
                       <span className="text-[10px] text-muted-foreground shrink-0 ml-1">
                         {formatDistanceToNow(new Date(dialog.last_at), { addSuffix: true, locale: ru })}
@@ -213,9 +214,9 @@ export function InstagramInboxView() {
         {selectedDialog && activeAccountId ? (
           <ContactInstagramChat
             accountId={activeAccountId}
-            senderId={selectedDialog.sender_id}
+            senderId={selectedDialog.peer_id}
             threadId={selectedDialog.ig_thread_id}
-            senderName={selectedDialog.sender_name || selectedDialog.instagram_username || selectedDialog.sender_id}
+            senderName={selectedDialog.sender_name || selectedDialog.instagram_username || selectedDialog.peer_id}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center">

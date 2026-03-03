@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Determine integration_instance_id from body or query
+  // Determine integration_instance_id from body
   const instanceId = body.integration_instance_id;
   if (!instanceId) {
     return new Response(JSON.stringify({ error: 'Missing integration_instance_id' }), {
@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Lookup integration instance and validate webhook_secret
+  // Lookup integration instance
   const { data: instance, error: instanceErr } = await supabase
     .from('integration_instances')
     .select('id, config, status')
@@ -59,7 +59,6 @@ Deno.serve(async (req) => {
     .single();
 
   if (instanceErr || !instance) {
-    // Log error
     await logEvent(supabase, instanceId, 'webhook_receive', 'error', 'Integration instance not found', body);
     return new Response(JSON.stringify({ error: 'Integration not found' }), {
       status: 404,
@@ -67,21 +66,28 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Validate webhook secret
+  // PATCH-3: Webhook secret is MANDATORY
   const config = (instance.config || {}) as Record<string, any>;
   const webhookSecret = config.webhook_secret;
-  if (webhookSecret) {
-    const authHeader = req.headers.get('authorization') || '';
-    const secretHeader = req.headers.get('x-webhook-secret') || '';
-    const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    
-    if (bearerToken !== webhookSecret && secretHeader !== webhookSecret) {
-      await logEvent(supabase, instanceId, 'webhook_receive', 'error', 'Invalid webhook secret', { sender_id: body.sender_id });
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+  if (!webhookSecret) {
+    await logEvent(supabase, instanceId, 'webhook_receive', 'error', 'webhook_secret not configured', { sender_id: body.sender_id });
+    return new Response(JSON.stringify({ error: 'Integration not configured: webhook_secret required' }), {
+      status: 409,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Validate webhook secret
+  const authHeader = req.headers.get('authorization') || '';
+  const secretHeader = req.headers.get('x-webhook-secret') || '';
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+
+  if (bearerToken !== webhookSecret && secretHeader !== webhookSecret) {
+    await logEvent(supabase, instanceId, 'webhook_receive', 'error', 'Invalid webhook secret', { sender_id: body.sender_id });
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
   // Validate required fields
@@ -94,41 +100,35 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Lookup instagram_account
+  // PATCH-4: Lookup existing instagram_account — NO auto-create
   const { data: account } = await supabase
     .from('instagram_accounts')
-    .select('id')
+    .select('id, instagram_page_id')
     .eq('integration_instance_id', instanceId)
     .eq('is_active', true)
     .limit(1)
     .single();
 
   if (!account) {
-    // Auto-create account for this instance
-    const { data: newAccount, error: createErr } = await supabase
-      .from('instagram_accounts')
-      .insert({
-        integration_instance_id: instanceId,
-        instagram_page_id: body.instagram_page_id || null,
-        is_active: true,
-        status: 'active',
-      })
-      .select('id')
-      .single();
-
-    if (createErr) {
-      await logEvent(supabase, instanceId, 'webhook_receive', 'error', `Failed to create account: ${createErr.message}`, body);
-      return new Response(JSON.stringify({ error: 'Failed to create instagram account' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    var accountId = newAccount.id;
-  } else {
-    var accountId = account.id;
+    await logEvent(supabase, instanceId, 'webhook_receive', 'error', 'Instagram account not found for instance. Create account via UI first.', { sender_id });
+    return new Response(JSON.stringify({ error: 'Instagram account not found for this instance' }), {
+      status: 404,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
-  // Insert message (idempotent)
+  // Optional guard: if payload has instagram_page_id, verify match
+  if (body.instagram_page_id && account.instagram_page_id && body.instagram_page_id !== account.instagram_page_id) {
+    await logEvent(supabase, instanceId, 'webhook_receive', 'error', `page_id mismatch: expected ${account.instagram_page_id}, got ${body.instagram_page_id}`, { sender_id });
+    return new Response(JSON.stringify({ error: 'instagram_page_id mismatch' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  const accountId = account.id;
+
+  // PATCH-5: Insert message with peer_id
   const { error: msgErr } = await supabase
     .from('instagram_messages')
     .insert({
@@ -144,13 +144,15 @@ Deno.serve(async (req) => {
       raw_payload: body,
       is_read: false,
       status: 'delivered',
+      peer_id: sender_id,          // PATCH-5: inbound peer = sender
+      sent_by_admin: null,
+      recipient_id: null,
       created_at: timestamp ? new Date(timestamp).toISOString() : new Date().toISOString(),
     })
     .select('id')
     .single();
 
   if (msgErr) {
-    // Check if duplicate (unique constraint violation)
     if (msgErr.code === '23505') {
       await logEvent(supabase, instanceId, 'webhook_receive', 'success', 'Duplicate message ignored', { external_message_id, sender_id });
       return new Response(JSON.stringify({ ok: true, duplicate: true }), {
