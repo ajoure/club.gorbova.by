@@ -839,6 +839,8 @@ export default function AdminContacts() {
         return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" />Заблокирован</Badge>;
       case "deleted":
         return <Badge variant="secondary"><Trash2 className="w-3 h-3 mr-1" />Удален</Badge>;
+      case "imported":
+        return <Badge variant="outline" className="bg-blue-500/20 text-blue-600 border-blue-500/30"><UserX className="w-3 h-3 mr-1" />Импортирован</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }

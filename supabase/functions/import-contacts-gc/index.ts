@@ -418,8 +418,8 @@ Deno.serve(async (req) => {
         if (mode === 'execute') {
           const insertData: Record<string, unknown> = {
             user_id: null,
-            status: 'archived',
-            is_archived: true,
+            status: 'imported',
+            is_archived: false,
             source: 'getcourse_import',
             import_batch_id: actualBatchId,
           };
