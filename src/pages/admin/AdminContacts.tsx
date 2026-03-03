@@ -295,9 +295,9 @@ export default function AdminContacts() {
   const [search, setSearch] = useState("");
   // P0-guard: Debounce search input (150ms) — declared early for use in server queries
   const debouncedSearch = useDebouncedValue(search, 150);
-  // Initialize with "all" preset filter (hide archived by default)
+  // Initialize with "active" preset
   const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
-  const [activePreset, setActivePreset] = useState("all");
+  const [activePreset, setActivePreset] = useState("active");
   const [displayLimit, setDisplayLimit] = useState(100);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
