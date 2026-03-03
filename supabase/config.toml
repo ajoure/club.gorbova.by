@@ -377,3 +377,9 @@ verify_jwt = false
 
 [functions.ban-intake]
 verify_jwt = false
+
+[functions.instagram-webhook]
+verify_jwt = false
+
+[functions.instagram-admin-chat]
+verify_jwt = false

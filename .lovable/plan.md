@@ -1,80 +1,61 @@
+## План: Instagram Direct через ApiX-Drive + вкладка «Соцсети»
 
-
-## План: фильтр «Бан-лист» в шестерёнке + внесение 9 контактов в бан-лист
-
----
-
-### Данные из файла — все 9 контактов НАЙДЕНЫ в базе
-
-| Email | Имя | profile_id | Статус сейчас |
-|-------|-----|-----------|---------------|
-| sestra73@mail.ru | Ольга Леонидовна | 3e56970f-... | imported |
-| lenka_pinsk@mail.ru | Елена Ильючик | fa62d1ef-... | imported |
-| dasha.burmakina@gmail.com | Дарья Протопопова | fac1c317-... | imported |
-| natalya.akulich78@gmail.com | Наталья Акулич | ba3397c7-... | imported |
-| elisabeth.mordik@gmail.com | Елизавета | 54c8ba0b-... | imported |
-| olgaapavlichenko@mail.ru | Ольга | 746db201-... | imported |
-| kekushova@yandex.ru | Ксения | 7fa29b25-... | imported |
-| nikita.rogovski.03@gmail.com | Никита Роговский | face2fde-... | imported |
-| ksukam@mail.ru | Оксана Грищенко | e98919df-... | imported |
-
-Для каждого профиля будут использоваться существующие данные: **email**, **phone**, **telegram_username**, **telegram_user_id** (где заполнены). Все данные уже есть в profiles — создавать новые профили не нужно.
+**Статус: РЕАЛИЗОВАНО ✅**
 
 ---
 
-### 1. Фильтр «Бан-лист» в gear-меню
+### Что сделано
 
-**Файл:** `src/pages/admin/AdminContacts.tsx`
+#### 1. SQL-миграция
+- `instagram_accounts` — таблица аккаунтов Instagram, FK → integration_instances, UNIQUE(instance_id, page_id)
+- `instagram_messages` — сообщения, UNIQUE(account_id, external_message_id), is_read/read_at, direction check
+- `instagram_contacts` — маппинг Instagram → profiles, UNIQUE(account_id, user_id)
+- RLS: admin/superadmin + service_role
+- Индексы: dialog (account+sender+created_at), unread partial
+- Realtime: supabase_realtime publication
+- RPC: `get_instagram_dialogs_v1` — агрегация диалогов
 
-**1.1** Добавить пресет `"banned"` в серверные фильтры (строка ~506):
-```
-} else if (activePreset === "banned") {
-  query = query.eq("status", "banned");
-}
-```
+#### 2. Edge Functions
+- `instagram-webhook` — приём POST от ApiX-Drive, валидация Bearer secret, дедупликация ON CONFLICT, логи в integration_logs
+- `instagram-admin-chat` — get_history, send_reply (idempotent по client_msg_id), mark_read, get_accounts, RBAC admin/super_admin, audit_logs
 
-**1.2** В gear-меню (строка ~1318) рядом с «Архивные / удалённые» добавить:
-```
-<DropdownMenuItem onClick={() => handleTabChange("banned")}>
-  <Ban className="h-4 w-4 mr-2" />
-  Бан-лист ({bannedCount})
-</DropdownMenuItem>
-```
+#### 3. UI: Интеграции
+- Категория `socials` в useIntegrations + CATEGORIES
+- Провайдер `apix_instagram_dm` (webhook_secret, apix_api_key, account_name)
+- Провайдер-заглушка `facebook` ("Скоро")
+- `SocialIntegrationsTab` — карточки Instagram DM и Facebook
+- AdminIntegrations: вкладка "Соцсети" между Telegram и Разное, 6-колоночная сетка
 
-**1.3** Pill-badge при активном пресете `"banned"` — аналогично архивному (красный pill с крестиком):
-```
-{activePreset === "banned" && (
-  <button className="... bg-destructive/20 text-destructive ..."
-    onClick={() => handleTabChange("active")}>
-    <Ban /> Бан-лист ({bannedCount}) <XCircle />
-  </button>
-)}
-```
-
-**1.4** Обновить `get_contact_tab_counts` — добавить ключ `banned`:
-```sql
-'banned', (select count(*) from prof where status = 'banned')
-```
-
-**1.5** Импорт `Ban` из lucide-react.
+#### 4. UI: Контакт-центр
+- `InboxTabContent` — channel type расширен на `"instagram"`
+- `AdminCommunication` — пункт Instagram в dropdown-меню Сообщения
+- `InstagramInboxView` — список диалогов, realtime, поиск, unread count
+- `ContactInstagramChat` — чат, отправка, media, статусы ошибок
 
 ---
 
-### 2. Внесение 9 контактов в бан-лист
-
-Для каждого из 9 профилей:
-1. Вызвать edge-функцию `ban-list-manage` с `action: "add"`, передав `profileId`
-2. Это создаст `ban_case`, заполнит `ban_identifiers` всеми имеющимися данными (email, phone, tg), выставит `profiles.status = 'banned'`
-
-Причина бана: «Импорт бан-листа от администратора (03.03.2026)»
-
----
-
-### Список файлов
+### Файлы изменены/созданы
 
 | Файл | Что |
 |------|-----|
-| `src/pages/admin/AdminContacts.tsx` | Пресет "banned", gear-menu пункт, pill-badge |
-| SQL-миграция | `get_contact_tab_counts` — добавить `banned` count |
-| Data operation | 9 профилей → `status='banned'` + `ban_cases` + `ban_identifiers` через edge-функцию |
+| SQL migration | instagram_accounts, instagram_messages, instagram_contacts + RLS + RPC |
+| `supabase/functions/instagram-webhook/index.ts` | Новый: приём webhook |
+| `supabase/functions/instagram-admin-chat/index.ts` | Новый: admin API |
+| `supabase/config.toml` | +2 функции (verify_jwt=false) |
+| `supabase/functions.registry.txt` | +2 функции |
+| `src/hooks/useIntegrations.tsx` | +category "socials", +2 провайдера |
+| `src/pages/admin/AdminIntegrations.tsx` | +вкладка socials, 6 колонок |
+| `src/components/integrations/socials/SocialIntegrationsTab.tsx` | Новый |
+| `src/pages/admin/AdminCommunication.tsx` | +канал Instagram |
+| `src/components/admin/communication/InboxTabContent.tsx` | +channel "instagram" |
+| `src/components/admin/communication/instagram/InstagramInboxView.tsx` | Новый |
+| `src/components/admin/communication/instagram/ContactInstagramChat.tsx` | Новый |
 
+---
+
+### Следующие шаги для пользователя
+
+1. В Интеграции → Соцсети → подключить Instagram DM (задать webhook_secret)
+2. Скопировать Webhook URL и вставить в ApiX-Drive → Приём данных → Webhooks
+3. Маппинг полей в ApiX-Drive: `integration_instance_id`, `external_message_id`, `sender_id`, `sender_name`, `message_text`, `timestamp`, `media_url`, `thread_id`
+4. (Опционально) Заполнить `apix_api_key` для отправки ответов

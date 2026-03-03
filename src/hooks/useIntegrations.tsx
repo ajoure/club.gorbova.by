@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
 
-export type IntegrationCategory = "crm" | "payments" | "email" | "telegram" | "other";
+export type IntegrationCategory = "crm" | "payments" | "email" | "telegram" | "socials" | "other";
 export type IntegrationStatus = "connected" | "error" | "disconnected";
 
 export interface IntegrationInstance {
@@ -157,6 +157,26 @@ export const PROVIDERS: ProviderConfig[] = [
       { key: "privacy_domains", label: "Разрешённые домены", type: "textarea", placeholder: "gorbova.com\nschool.gorbova.com" },
     ],
   },
+  {
+    id: "apix_instagram_dm",
+    name: "Instagram DM (ApiX-Drive)",
+    icon: "Instagram",
+    category: "socials",
+    description: "Двусторонний обмен сообщениями Instagram Direct через ApiX-Drive",
+    fields: [
+      { key: "webhook_secret", label: "Webhook Secret", type: "password", required: true, placeholder: "Секрет для валидации вебхуков" },
+      { key: "apix_api_key", label: "API-ключ ApiX-Drive", type: "password", required: false, placeholder: "Для отправки ответов" },
+      { key: "account_name", label: "Имя аккаунта Instagram", type: "text", required: false, placeholder: "@username" },
+    ],
+  },
+  {
+    id: "facebook",
+    name: "Facebook",
+    icon: "Facebook",
+    category: "socials",
+    description: "Скоро",
+    fields: [],
+  },
 ];
 
 export const CATEGORIES: { id: IntegrationCategory; label: string; icon: string }[] = [
@@ -164,6 +184,7 @@ export const CATEGORIES: { id: IntegrationCategory; label: string; icon: string 
   { id: "payments", label: "Платежи", icon: "CreditCard" },
   { id: "email", label: "Почта", icon: "Mail" },
   { id: "telegram", label: "Telegram", icon: "Send" },
+  { id: "socials", label: "Соцсети", icon: "Share2" },
   { id: "other", label: "Разное", icon: "Settings" },
 ];
 
