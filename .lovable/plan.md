@@ -1,44 +1,64 @@
 
 
-## Диагноза: Почему reminders = 0 отправок
+## План: Очистка панели кнопок и реструктуризация страницы контактов
 
-**Корневая причина найдена и подтверждена вызовом функции:**
-
-Строка 859 в `subscription-renewal-reminders/index.ts`:
-```
-console.log(`...paymentLink=${!!paymentLinkUrl}`);
-```
-Переменная `paymentLinkUrl` **не существует** — она осталась от предыдущего рефакторинга. Это вызывает `ReferenceError` в секции "expiring without SBS" (строки 746-860), который **не ловится try/catch внутри цикла** и выбрасывается наверх в глобальный catch, возвращая HTTP 500.
-
-**Важно:** Функция реально работает — она находит кандидатов (7d=1, 3d=3, 1d=0), отправляет напоминания, логирует "already sent today". Но после секции стандартных напоминаний она крашится на строке 859, и:
-- audit_logs запись `subscription.reminders_cron_completed` **не создается** (код до неё не доходит)
-- HTTP ответ = 500, поэтому edge function logs показывали "No logs" ранее (retention)
-
-## План исправления
-
-### 1. Исправить битую ссылку на переменную (1 строка)
-**Файл:** `supabase/functions/subscription-renewal-reminders/index.ts`, строка 859
-
-Заменить:
-```typescript
-console.log(`Expiring-without-SBS for user ${userId}: sent=${telegramResult.sent}, paymentLink=${!!paymentLinkUrl}`);
-```
-На:
-```typescript
-console.log(`Expiring-without-SBS for user ${userId}: sent=${telegramResult.sent}, oneTime=${!!ncOneTimeUrl}, sub=${!!ncSubscriptionUrl}`);
+### Текущая структура (что есть)
+```text
+[Pill tabs: Все | Без аккаунта | С покупками | Дубли | Архив]     ← строки 1082-1113
+[Дубли | Фото 97 | amoCRM | ✨ | 🗑 | ✨ | Экспорт | 🔄]        ← строки 1115-1214 (actions row)
+[AmoCRM Dialog + Cleanup Dialogs]                                  ← строки 1217-1236
+[Поиск ............................ | Колонки]                     ← строки 1239-1332
+[QuickFilters: Все | Без аккаунта | С покупками | ... | Фильтр+]  ← строки 1334-1341 (ДУБЛИКАТ!)
+[Найдено: 207 • Всего: 234]                                       ← строки 1344-1353
+[Таблица]
 ```
 
-Переменные `ncOneTimeUrl` и `ncSubscriptionUrl` определены выше (строки 821-822) и являются корректными для этого контекста.
+### Целевая структура
+```text
+[Pill tabs: Все | Без аккаунта | С покупками | Дубли | Архив | Фильтр+ |  ⚙️]
+[Поиск ............................ | Колонки]
+[Найдено: 207 • Всего: 234]
+[Таблица]
+```
 
-### 2. Деплой и верификация
-- Деплой функции
-- Вызвать вручную с `{"source":"manual_fix_test"}`
-- Проверить: HTTP 200, в audit_logs появится `subscription.reminders_cron_completed`
-- Проверить: в telegram_logs появятся записи `SEND_REMINDER` со статусами success/skipped
+### Что делаем
 
-### Что НЕ трогаем
-- Логику выборки кандидатов (subscriptions_v2.access_end_at) — она корректна, кандидаты есть
-- Cron job (jobid=17, 06:00 UTC) — работает, status=succeeded
-- Бот (@gorbovabybot) — найден, токен есть
-- Timezone helper — работает корректно
+#### 1. Удалить actions row целиком (строки 1115-1214)
+- **Фото** — удалить кнопку, `handleFetchPhotos`, `contactsWithoutPhoto`, `fetchPhotosMutation`
+- **amoCRM** — удалить кнопку
+- **Telegram Cleanup** — удалить кнопку
+- **Demo Cleanup** — удалить кнопку
+- **Кнопка Дубли** — убрать (уже есть в pill tabs как вкладка)
+
+#### 2. Удалить диалоги (строки 1217-1236)
+- `AmoCRMImportDialog` — удалить рендер + state `showAmoCRMImport`
+- `CleanupDialog` (telegram) — удалить рендер + state `showTelegramCleanup`
+- `CleanupDialog` (demo) — удалить рендер + state `showDemoCleanup`
+
+#### 3. Удалить QuickFilters (строки 1334-1341)
+Это дублирующий блок с теми же вкладками + фильтр. Удалить полностью.
+
+#### 4. Добавить в строку pill tabs (строка ~1112):
+- **Кнопка «Фильтр +»** — открывает dropdown с полями фильтрации (перенести логику из QuickFilters)
+- **⚙️ (шестерёнка)** справа — `DropdownMenu` с пунктами:
+  - Экспорт → подменю Excel / CSV (перенести из actions row)
+  - Анализ лояльности (перенести loyalty analyze)
+  - Telegram Cleanup (перенести, только для `admins.manage`)
+  - Demo Cleanup (перенести, только для `admins.manage`)
+  - 🔄 Обновить
+
+#### 5. Оставить без изменений
+- Поиск + Колонки (строки 1239-1332)
+- Статистика (строки 1344-1353)
+- Таблица контактов
+
+### Затрагиваемый файл
+- `src/pages/admin/AdminContacts.tsx` — удаление ~100 строк, реструктуризация pill tabs row
+
+### Что НЕ трогать
+- Логику фильтрации `applyFilters`
+- Таблицу контактов
+- Contact detail sheet
+- Bulk actions
+- Экспорт (логика остаётся, только переносится в ⚙️ меню)
 
