@@ -1,4 +1,17 @@
 
+## PATCH CONTACTS-LIST.3 — Серверные вкладки + RPC "С покупками" + counts + Архив в шестерёнке + импорт бейдж (DONE)
+
+### Реализовано:
+1. **3 RPC функции**: `get_contact_tab_counts`, `get_profiles_with_paid_orders`, `get_profiles_with_paid_orders_count`
+2. **Серверные вкладки**: queryKey зависит от `activePreset` + `debouncedSearch`, server-side WHERE в queryFn
+3. **"С покупками"** — через RPC, сортировка по last_paid_at DESC
+4. **Серверные counts** для табов — один RPC `get_contact_tab_counts`
+5. **Одна кнопка** "Показать ещё (N осталось)" — вместо двух
+6. **Архив в шестерёнке** — не занимает место в табах, pill "Архив (N)" с крестиком при активации
+7. **Ghost бейдж** — полностью убран из карточки контакта
+8. **imported бейдж** — синий "импорт" в карточке контакта (как в списке)
+9. **Server-side search** — ilike по email/full_name/phone во всех вкладках
+
 
 ## PATCH CONTACTS-LIST.2 — Серверная пагинация + "Показать ещё" + вкладки + бейджи (DONE)
 
