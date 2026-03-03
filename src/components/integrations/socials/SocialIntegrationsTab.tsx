@@ -10,13 +10,39 @@ import { EditIntegrationDialog } from "@/components/integrations/EditIntegration
 import { IntegrationLogsSheet } from "@/components/integrations/IntegrationLogsSheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useQueryClient } from "@tanstack/react-query";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 
 export function SocialIntegrationsTab() {
   const { data: instances, isLoading } = useIntegrations("socials");
+  const queryClient = useQueryClient();
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editInstance, setEditInstance] = useState<IntegrationInstance | null>(null);
   const [logsInstance, setLogsInstance] = useState<IntegrationInstance | null>(null);
   const [copiedWebhook, setCopiedWebhook] = useState(false);
+
+  const handleHealthCheck = async (instance: IntegrationInstance) => {
+    toast.info("Проверяю подключение...");
+    try {
+      const { data, error } = await supabase.functions.invoke("integration-healthcheck", {
+        body: {
+          provider: instance.provider,
+          instance_id: instance.id,
+          config: instance.config,
+        },
+      });
+      if (error) throw error;
+      if (data?.success) {
+        toast.success("Подключение работает");
+      } else {
+        toast.error(data?.error || "Ошибка проверки");
+      }
+      queryClient.invalidateQueries({ queryKey: ["integration-instances"] });
+    } catch (e) {
+      toast.error(normalizeEdgeFunctionError(e));
+    }
+  };
 
   const instagramInstances = (instances || []).filter((i) => i.provider === "apix_instagram_dm");
   const webhookUrl = instagramInstances.length > 0
@@ -63,7 +89,7 @@ export function SocialIntegrationsTab() {
                 instances={instagramInstances}
                 onEdit={setEditInstance}
                 onViewLogs={setLogsInstance}
-                onHealthCheck={() => {}}
+                onHealthCheck={handleHealthCheck}
               />
               {webhookUrl && (
                 <div className="p-3 rounded-lg bg-muted/50 border border-border/30 space-y-2">

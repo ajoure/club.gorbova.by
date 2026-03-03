@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import {
   Dialog,
   DialogContent,
@@ -97,7 +98,7 @@ export function AddIntegrationDialog({
 
     const { alias, is_default, ...configFields } = formData;
 
-    await createInstance.mutateAsync({
+    const result = await createInstance.mutateAsync({
       category: selectedProvider.category,
       provider: selectedProvider.id,
       alias: String(alias) || selectedProvider.name,
@@ -106,6 +107,24 @@ export function AddIntegrationDialog({
       config: configFields as Record<string, unknown>,
       error_message: null,
     });
+
+    // Auto-create instagram_accounts + set status to connected for apix_instagram_dm
+    if (selectedProvider.id === "apix_instagram_dm" && result?.id) {
+      try {
+        await supabase.from("instagram_accounts").insert({
+          integration_instance_id: result.id,
+          is_active: true,
+          instagram_page_id: String(configFields.account_name || ""),
+        });
+
+        await supabase
+          .from("integration_instances")
+          .update({ status: "connected" })
+          .eq("id", result.id);
+      } catch (e) {
+        console.error("Failed to auto-create instagram_accounts:", e);
+      }
+    }
 
     handleClose();
   };
