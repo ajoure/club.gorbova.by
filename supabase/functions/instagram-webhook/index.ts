@@ -119,8 +119,9 @@ Deno.serve(async (req) => {
 
   const diag = extractDiagnostics(req, body);
 
-  // Determine integration_instance_id from body
-  const instanceId = body.integration_instance_id;
+  // Determine integration_instance_id from body or query param
+  const url = new URL(req.url);
+  const instanceId = body.integration_instance_id || url.searchParams.get('integration_instance_id');
   if (!instanceId) {
     console.error('[instagram-webhook] REJECTED: missing_instance_id', JSON.stringify(diag));
     return new Response(JSON.stringify({ error: 'Missing integration_instance_id' }), {
