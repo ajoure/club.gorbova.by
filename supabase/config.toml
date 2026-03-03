@@ -383,3 +383,6 @@ verify_jwt = false
 
 [functions.instagram-admin-chat]
 verify_jwt = false
+
+[functions.instagram-webhook-test]
+verify_jwt = false
