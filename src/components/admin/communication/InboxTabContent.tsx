@@ -988,7 +988,7 @@ export function InboxTabContent({ defaultChannel = "telegram" }: InboxTabContent
           </p>
         </button>
       </div>
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div className="flex-1 min-h-0">
         <ContactTelegramChat
           userId={selectedUserId}
           telegramUserId={selectedDialog?.profile?.telegram_user_id || null}
