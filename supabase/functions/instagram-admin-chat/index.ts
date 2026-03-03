@@ -28,26 +28,37 @@ Deno.serve(async (req) => {
   const { action } = body;
   const serviceClient = createClient(supabaseUrl, serviceRoleKey);
 
-  // PATCH-7: outbox_pull and outbox_ack use webhook secret auth (no JWT)
+  // ── Outbox actions: webhook secret auth (no JWT) ──
   if (action === 'outbox_pull' || action === 'outbox_ack') {
     return await handleOutbox(req, serviceClient, body, action);
   }
 
-  // All other actions require JWT + RBAC
+  // ── All other actions: JWT + RBAC ──
   const authHeader = req.headers.get('authorization') || '';
-  const anonClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: authHeader } },
-  });
-  const { data: { user }, error: authErr } = await anonClient.auth.getUser();
-  if (authErr || !user) {
+  if (!authHeader.startsWith('Bearer ')) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
-  const { data: isAdmin } = await serviceClient.rpc('has_role_v2', { _user_id: user.id, _role_code: 'admin' });
-  const { data: isSuperAdmin } = await serviceClient.rpc('has_role_v2', { _user_id: user.id, _role_code: 'super_admin' });
+  const anonClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  });
+
+  const token = authHeader.replace('Bearer ', '');
+  const { data: claimsData, error: claimsErr } = await anonClient.auth.getClaims(token);
+  if (claimsErr || !claimsData?.claims) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  const userId = claimsData.claims.sub as string;
+
+  const { data: isAdmin } = await serviceClient.rpc('has_role_v2', { _user_id: userId, _role_code: 'admin' });
+  const { data: isSuperAdmin } = await serviceClient.rpc('has_role_v2', { _user_id: userId, _role_code: 'super_admin' });
   if (!isAdmin && !isSuperAdmin) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
@@ -60,7 +71,7 @@ Deno.serve(async (req) => {
       case 'get_history':
         return await getHistory(serviceClient, body);
       case 'send_reply':
-        return await sendReply(serviceClient, body, user.id);
+        return await sendReply(serviceClient, body, userId);
       case 'mark_read':
         return await markRead(serviceClient, body);
       case 'get_accounts':
@@ -80,7 +91,7 @@ Deno.serve(async (req) => {
   }
 });
 
-// ─── Outbox handlers (PATCH-7) ─────────────────────────────────────────────
+// ─── Outbox handlers ────────────────────────────────────────────────────────
 
 async function handleOutbox(req: Request, supabase: any, body: any, action: string) {
   const { instagram_account_id } = body;
@@ -91,7 +102,7 @@ async function handleOutbox(req: Request, supabase: any, body: any, action: stri
     });
   }
 
-  // Auth: validate webhook secret from integration instance
+  // Lookup account
   const { data: account } = await supabase
     .from('instagram_accounts')
     .select('id, integration_instance_id')
@@ -106,6 +117,7 @@ async function handleOutbox(req: Request, supabase: any, body: any, action: stri
     });
   }
 
+  // Get webhook_secret from integration instance config
   const { data: instance } = await supabase
     .from('integration_instances')
     .select('config')
@@ -121,21 +133,12 @@ async function handleOutbox(req: Request, supabase: any, body: any, action: stri
     });
   }
 
-  // Check auth: Bearer token, X-Webhook-Secret header, or Basic Auth
+  // Auth: Bearer token OR X-Webhook-Secret header (no Basic Auth)
   const authHeader = req.headers.get('authorization') || '';
   const secretHeader = req.headers.get('x-webhook-secret') || '';
   const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
 
-  let basicMatch = false;
-  if (authHeader.startsWith('Basic ')) {
-    try {
-      const decoded = atob(authHeader.slice(6));
-      const [, password] = decoded.split(':');
-      basicMatch = password === webhookSecret;
-    } catch { /* ignore */ }
-  }
-
-  if (bearerToken !== webhookSecret && secretHeader !== webhookSecret && !basicMatch) {
+  if (bearerToken !== webhookSecret && secretHeader !== webhookSecret) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -145,30 +148,20 @@ async function handleOutbox(req: Request, supabase: any, body: any, action: stri
   if (action === 'outbox_pull') {
     return await outboxPull(supabase, body, instagram_account_id);
   } else {
-    return await outboxAck(supabase, body, account.integration_instance_id);
+    return await outboxAck(supabase, body, instagram_account_id, account.integration_instance_id);
   }
 }
 
 async function outboxPull(supabase: any, body: any, accountId: string) {
-  const limit = Math.min(body.limit || 10, 20); // STOP-guard: max 20
+  const limit = Math.min(Math.max(body.limit || 10, 1), 20);
+  const lockId = crypto.randomUUID();
 
-  // Requeue stale sending (lock expired > 10 min)
-  await supabase
-    .from('instagram_messages')
-    .update({ status: 'queued', sending_at: null, sending_lock_id: null })
-    .eq('instagram_account_id', accountId)
-    .eq('status', 'sending')
-    .lt('sending_at', new Date(Date.now() - 10 * 60 * 1000).toISOString());
-
-  // Fetch queued messages
-  const { data: messages, error } = await supabase
-    .from('instagram_messages')
-    .select('id, external_message_id, peer_id, recipient_id, message_text, ig_thread_id, created_at')
-    .eq('instagram_account_id', accountId)
-    .eq('status', 'queued')
-    .eq('direction', 'outbound')
-    .order('created_at', { ascending: true })
-    .limit(limit);
+  // Atomic pull via RPC (FOR UPDATE SKIP LOCKED + requeue stale)
+  const { data: messages, error } = await supabase.rpc('instagram_outbox_pull_v1', {
+    p_account_id: accountId,
+    p_limit: limit,
+    p_lock_id: lockId,
+  });
 
   if (error) {
     return new Response(JSON.stringify({ error: error.message }), {
@@ -177,24 +170,14 @@ async function outboxPull(supabase: any, body: any, accountId: string) {
     });
   }
 
-  if (!messages || messages.length === 0) {
-    return new Response(JSON.stringify({ messages: [] }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  // Lock messages atomically
-  const lockId = crypto.randomUUID();
-  const ids = messages.map((m: any) => m.id);
-
-  await supabase
-    .from('instagram_messages')
-    .update({ status: 'sending', sending_at: new Date().toISOString(), sending_lock_id: lockId })
-    .in('id', ids)
-    .eq('status', 'queued');
-
-  const result = messages.map((m: any) => ({
-    ...m,
+  const result = (messages || []).map((m: any) => ({
+    id: m.id,
+    external_message_id: m.external_message_id,
+    peer_id: m.peer_id,
+    recipient_id: m.recipient_id,
+    message_text: m.message_text,
+    ig_thread_id: m.ig_thread_id,
+    created_at: m.created_at,
     sending_lock_id: lockId,
   }));
 
@@ -203,7 +186,7 @@ async function outboxPull(supabase: any, body: any, accountId: string) {
   });
 }
 
-async function outboxAck(supabase: any, body: any, integrationInstanceId: string) {
+async function outboxAck(supabase: any, body: any, accountId: string, integrationInstanceId: string) {
   const { messages: ackMessages } = body;
   if (!Array.isArray(ackMessages) || ackMessages.length === 0) {
     return new Response(JSON.stringify({ error: 'Missing messages array' }), {
@@ -240,7 +223,9 @@ async function outboxAck(supabase: any, body: any, integrationInstanceId: string
         sending_lock_id: null,
       })
       .eq('external_message_id', external_message_id)
-      .eq('sending_lock_id', sending_lock_id);
+      .eq('sending_lock_id', sending_lock_id)
+      .eq('instagram_account_id', accountId)
+      .eq('status', 'sending'); // guard: only finalize locked messages
 
     if (error) {
       errCount++;
@@ -267,7 +252,7 @@ async function outboxAck(supabase: any, body: any, integrationInstanceId: string
   });
 }
 
-// ─── Admin actions ─────────────────────────────────────────────────────────
+// ─── Admin actions ──────────────────────────────────────────────────────────
 
 async function getAccounts(supabase: any) {
   const { data, error } = await supabase
@@ -294,7 +279,6 @@ async function getHistory(supabase: any, body: any) {
     .order('created_at', { ascending: true })
     .range(offset, offset + lim - 1);
 
-  // PATCH-5: Filter by peer_id instead of sender_id for dialog view
   if (thread_id) {
     query = query.eq('ig_thread_id', thread_id);
   } else {
@@ -331,7 +315,6 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
     });
   }
 
-  // PATCH-7: Always save as queued — no placeholder API call
   const { data: msg, error: insertErr } = await supabase
     .from('instagram_messages')
     .insert({
@@ -343,7 +326,6 @@ async function sendReply(supabase: any, body: any, adminUserId: string) {
       direction: 'outbound',
       message_text,
       status: 'queued',
-      // PATCH-5: proper peer/admin tracking
       peer_id: sender_id,
       recipient_id: sender_id,
       sent_by_admin: adminUserId,
@@ -384,7 +366,6 @@ async function markRead(supabase: any, body: any) {
     .eq('is_read', false)
     .eq('direction', 'inbound');
 
-  // PATCH-5: use peer_id for marking read
   if (thread_id) {
     query = query.eq('ig_thread_id', thread_id);
   } else {
