@@ -1338,7 +1338,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden">
+      <SheetContent className="w-full sm:max-w-[75vw] lg:max-w-4xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden">
         {/* Compact header for mobile - with padding-right for close button */}
         <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 border-b flex-shrink-0">
           {/* Row 1: Avatar + Name + Email */}
@@ -1352,15 +1352,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               size="md"
             />
             <div className="min-w-0 flex-1">
-              <SheetTitle className="text-base sm:text-lg font-semibold leading-tight break-words">{formatContactName(contact)}</SheetTitle>
+              <SheetTitle className="text-lg sm:text-xl font-bold leading-tight break-words">{formatContactName(contact)}</SheetTitle>
               {contact.email && (
                 <p className="text-xs text-muted-foreground break-all mt-0.5">{contact.email}</p>
               )}
             </div>
           </div>
 
+          <Separator className="my-2" />
+
           {/* Row 2: All badges & actions as uniform pills */}
-          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+          <div className="flex flex-wrap items-center gap-1.5 bg-muted/30 rounded-lg px-3 py-2">
             {returnTo && (
               <Badge
                 variant="outline"

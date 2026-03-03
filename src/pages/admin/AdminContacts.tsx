@@ -552,7 +552,7 @@ export default function AdminContacts() {
   const profileIds = useMemo(() => allProfiles.map((p) => p.id), [allProfiles]);
 
   const { data: ordersData } = useQuery({
-    queryKey: ["admin-contacts-orders", profileIds.length],
+    queryKey: ["admin-contacts-orders", activePreset, debouncedSearch, profileIds.length],
     queryFn: async () => {
       if (profileIds.length === 0) return [];
       let all: any[] = [];
