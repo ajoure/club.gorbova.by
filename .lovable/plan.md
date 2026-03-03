@@ -1,26 +1,55 @@
 
 
-## Диагностика
+## Проблема
 
-### 1. Ошибка "Invalid webhook secret" при нажатии "Проверить webhook"
+ApiX-Drive отправляет данные как `application/x-www-form-urlencoded`, а наш `instagram-webhook` принимает только `application/json` (`req.json()`). В логах видно 3 отклонённых запроса от ApiX:
 
-**Причина**: `instagram-webhook-test` отправляет секрет через `Authorization: Bearer ...`, но Supabase Gateway может модифицировать этот заголовок при вызове edge function → edge function внутри проекта. Прошлые успешные тесты (curl) использовали заголовок `x-webhook-secret`.
+```
+22:10:05  REJECTED: invalid_json  content_type: application/x-www-form-urlencoded
+22:06:12  REJECTED: invalid_json  content_type: application/x-www-form-urlencoded
+```
 
-**Факт**: В логах видно `auth_scheme: bearer`, `has_auth_header: true`, но результат `invalid_secret` — токен приходит изменённым.
+Также на скриншоте ApiX видно, что "Содержимое" — это сплошная строка (form-encoded), не JSON.
 
-**Решение**: В `instagram-webhook-test` заменить `Authorization: Bearer ${webhookSecret}` на `x-webhook-secret: ${webhookSecret}`.
+## Решение
 
-### 2. Видимость кнопок
+**Файл:** `supabase/functions/instagram-webhook/index.ts`
 
-На скриншоте кнопки "Проверить webhook" и "Webhook события" мелкие, внутри блока webhook URL. Нужно сделать их заметнее:
-- Увеличить размер кнопок
-- "Проверить webhook" → variant `default` (основной цвет) вместо `outline`
-- "Webhook события" → variant `outline` вместо `ghost`
+Заменить блок парсинга body (строки 72-96) — вместо только `req.json()` добавить:
 
-## Файлы и правки
+1. Проверить `content-type`
+2. Если `application/x-www-form-urlencoded` — парсить через `URLSearchParams` из `req.text()`
+3. Если `application/json` — парсить через `req.json()`
+4. Иначе — попробовать JSON, затем form-urlencoded как fallback
 
-| Файл | Что меняется |
-|------|-------------|
-| `supabase/functions/instagram-webhook-test/index.ts` | Заголовок `Authorization: Bearer` → `x-webhook-secret` |
-| `src/components/integrations/socials/SocialIntegrationsTab.tsx` | Увеличить/выделить кнопки "Проверить webhook" и "Webhook события" |
+Конкретно:
+```typescript
+const rawText = await req.text();
+const ct = (req.headers.get('content-type') || '').toLowerCase();
+
+if (ct.includes('application/json')) {
+  body = JSON.parse(rawText);
+} else if (ct.includes('application/x-www-form-urlencoded')) {
+  const params = new URLSearchParams(rawText);
+  body = Object.fromEntries(params.entries());
+} else {
+  // Fallback: try JSON, then form-urlencoded
+  try { body = JSON.parse(rawText); } catch {
+    try {
+      const params = new URLSearchParams(rawText);
+      if ([...params.keys()].length > 0) {
+        body = Object.fromEntries(params.entries());
+      } else { throw new Error('empty'); }
+    } catch { /* reject */ }
+  }
+}
+```
+
+Остальной код без изменений — tolerant mapping, валидация, логирование продолжат работать.
+
+## Файлы
+
+| Файл | Изменение |
+|------|-----------|
+| `supabase/functions/instagram-webhook/index.ts` | Строки 72-96: добавить парсинг form-urlencoded |
 
