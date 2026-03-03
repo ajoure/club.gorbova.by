@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -305,11 +306,12 @@ function SortableResizableHeader({
 }
 
 export function BepaidSubscriptionsTabContent() {
-  // Default filter is now "active"
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
+  const location = useLocation();
+  const urlSearch = new URLSearchParams(location.search).get("search") || "";
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(urlSearch ? "all" : "active");
   const [linkFilter, setLinkFilter] = useState<LinkFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(urlSearch);
   const [sortField, setSortField] = useState<SortField>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
