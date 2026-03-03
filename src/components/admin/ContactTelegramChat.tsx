@@ -990,9 +990,9 @@ export function ContactTelegramChat({
     return (
       <div
         key={msg.id}
-        className={`flex w-full min-w-0 ${msg.direction === "outgoing" ? "justify-end" : "justify-start"} group`}
+        className={`flex w-full min-w-0 ${msg.direction === "outgoing" ? "justify-end pr-1" : "justify-start"} group`}
       >
-        <div className="relative max-w-[85%] min-w-0">
+        <div className={`relative max-w-[80%] min-w-0 ${msg.direction === "outgoing" ? "mr-1" : ""}`}>
           <div className="flex flex-col w-full min-w-0">
             <div className="relative">
               <div
@@ -1175,7 +1175,7 @@ export function ContactTelegramChat({
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-full min-h-0 overflow-hidden">
+      <div className="flex flex-col h-full min-h-0">
         {/* Header - only show if photo button is visible */}
         {!hidePhotoButton && (
           <div className="flex items-center justify-end pb-2 border-b border-border/30 shrink-0">
@@ -1198,7 +1198,7 @@ export function ContactTelegramChat({
         )}
 
         {/* Messages + Events - flex-1 with min-h-0 for proper scrolling */}
-        <ScrollArea className="flex-1 min-h-0 py-3 [&>div]:!overflow-x-hidden" ref={scrollRef}>
+        <ScrollArea className="flex-1 min-h-0 py-3 [&>[data-radix-scroll-area-viewport]>div]:!block" ref={scrollRef}>
           {isLoading ? (
             <div className="space-y-3 px-1">
               {[1, 2, 3].map((i) => (
@@ -1214,7 +1214,7 @@ export function ContactTelegramChat({
               </div>
             </div>
           ) : (
-            <div className="space-y-3 px-2 overflow-x-hidden w-full max-w-full box-border">
+            <div className="space-y-3 px-3 w-full max-w-full box-border">
               {chatItems.map((item, index) => {
                 const currentDate = new Date(item.created_at);
                 const prevItem = index > 0 ? chatItems[index - 1] : null;
