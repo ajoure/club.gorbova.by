@@ -16,6 +16,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { assertExcelAllowedOrThrow } from "@/lib/iosPreviewHardStops";
+import { normalizeGCName } from "@/lib/nameUtils";
 
 interface GetCourseContactsImportDialogProps {
   open: boolean;
@@ -214,6 +215,15 @@ export function GetCourseContactsImportDialog({ open, onOpenChange, onSuccess }:
             }
           }
         }
+        // Нормализация имён из GetCourse (дедуп, порядок first/last)
+        const normalized = normalizeGCName({
+          first_name: parsed.first_name,
+          last_name: parsed.last_name,
+          full_name: parsed.full_name,
+        });
+        parsed.first_name = normalized.first_name || parsed.first_name;
+        parsed.last_name = normalized.last_name || parsed.last_name;
+        parsed.full_name = normalized.full_name || parsed.full_name;
         return parsed;
       });
 

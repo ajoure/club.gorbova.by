@@ -25,9 +25,21 @@ SQL из ТЗ без изменений:
 3. Matching: `external_id_gc` → email → phone → telegram
 4. Конфликты: phone↔email mismatch → SKIP, ambiguous → SKIP
 5. Dry-run: только отчёт (total, will_create, will_update, will_skip, conflicts[])
-6. Execute: INSERT archived (user_id=NULL, is_archived=true, source='getcourse_import') / UPDATE только пустых полей
+6. Execute: INSERT imported (user_id=NULL, is_archived=false, source='getcourse_import') / UPDATE только пустых полей
 7. STOP guards: batch_limit (default 500), error_threshold (default 20)
 8. Audit: `audit_logs` с `actor_type='system'`, `actor_user_id=NULL`, `actor_label='import-contacts-gc'`
+
+### PATCH 5c — Нормализация имён GetCourse (DONE)
+В UI (GetCourseContactsImportDialog.tsx) при парсинге строк:
+- Функция `normalizeGCName()` в `src/lib/nameUtils.ts`
+- Дедупликация токенов (A B A → A B)
+- Эвристика порядка: default "Фамилия Имя", swap если t2 выглядит фамилией по суффиксам
+
+### PATCH 5d — Статус `imported` вместо `archived` (DONE)
+- Edge function: `status='imported'`, `is_archived=false`
+- Триггер `handle_new_user`: `WHERE p.status IN ('archived', 'imported') AND p.user_id IS NULL`
+- Бейдж "Импортирован" в AdminContacts.tsx
+- Импортированные попадают в таб "Без аккаунта", НЕ в "Архив"
 
 Добавить в `supabase/functions.registry.txt`.
 
@@ -64,7 +76,6 @@ verify_jwt = false
 6. PATCH 6 (Registry + config.toml)
 
 ### Что НЕ трогать
-- `handle_new_user` — AUTO-CLAIM уже работает
 - `AmoCRMImportDialog` — только как образец
 - RLS политики, merge-логику
 - Существующие edge functions (кроме BUGFIX в PATCH 2)
