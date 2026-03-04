@@ -11,16 +11,26 @@ import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { CreditCard, CheckCircle, Clock, Shield, ArrowLeft } from "lucide-react";
 import { Link } from "react-router-dom";
 
-interface Product {
+interface ProductV2Data {
   id: string;
   name: string;
   description: string | null;
-  price_byn: number;
+  category: string | null;
   currency: string;
-  product_type: string;
-  duration_days: number | null;
-  tier: string | null;
   is_active: boolean;
+  tariff: {
+    id: string;
+    name: string;
+    code: string;
+    access_days: number | null;
+  } | null;
+  offer: {
+    id: string;
+    amount: number;
+    button_label: string;
+    offer_type: string;
+    is_primary: boolean;
+  } | null;
 }
 
 export default function Pay() {
@@ -29,19 +39,62 @@ export default function Pay() {
   const productId = searchParams.get("product");
   const [paymentOpen, setPaymentOpen] = useState(false);
 
-  const { data: product, isLoading, error } = useQuery({
-    queryKey: ["product", productId],
-    queryFn: async () => {
+  // Fetch product from products_v2 + first active tariff + first active pay_now offer
+  const { data: productData, isLoading, error } = useQuery({
+    queryKey: ["pay-product-v2", productId],
+    queryFn: async (): Promise<ProductV2Data | null> => {
       if (!productId) return null;
-      const { data, error } = await supabase
-        .from("products")
-        .select("*")
+
+      // 1. Get product from products_v2
+      const { data: product, error: prodErr } = await supabase
+        .from("products_v2")
+        .select("id, name, description, category, currency, is_active")
         .eq("id", productId)
         .eq("is_active", true)
         .maybeSingle();
-      
-      if (error) throw error;
-      return data as Product | null;
+
+      if (prodErr) throw prodErr;
+      if (!product) return null;
+
+      // 2. Get first active tariff for this product
+      const { data: tariffs, error: tariffErr } = await supabase
+        .from("tariffs")
+        .select("id, name, code, access_days, is_active")
+        .eq("product_id", productId)
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true })
+        .limit(1);
+
+      if (tariffErr) throw tariffErr;
+      const tariff = tariffs?.[0] || null;
+
+      // 3. Get primary active pay_now offer for the tariff
+      let offer: ProductV2Data["offer"] = null;
+      if (tariff) {
+        const { data: offers, error: offerErr } = await supabase
+          .from("tariff_offers")
+          .select("id, amount, button_label, offer_type, is_primary")
+          .eq("tariff_id", tariff.id)
+          .eq("offer_type", "pay_now")
+          .eq("is_active", true)
+          .order("is_primary", { ascending: false })
+          .order("sort_order", { ascending: true })
+          .limit(1);
+
+        if (offerErr) throw offerErr;
+        offer = offers?.[0] || null;
+      }
+
+      return {
+        id: product.id,
+        name: product.name,
+        description: product.description,
+        category: product.category,
+        currency: product.currency,
+        is_active: product.is_active,
+        tariff,
+        offer,
+      };
     },
     enabled: !!productId,
   });
@@ -66,31 +119,35 @@ export default function Pay() {
 
   const isClubProduct = (clubMappings?.length ?? 0) > 0;
 
-  const formatPrice = (priceKopecks: number, currency: string) => {
-    return `${(priceKopecks / 100).toFixed(2)} ${currency}`;
+  // Product is ready for payment only if it has an active offer with a price
+  const isReadyForPayment = !!(productData?.offer && productData.offer.amount > 0);
+
+  const formatPrice = (amountByn: number, currency: string) => {
+    return `${amountByn.toFixed(2)} ${currency}`;
   };
 
-  const getProductTypeLabel = (type: string) => {
-    switch (type) {
+  const getCategoryLabel = (category: string | null) => {
+    switch (category) {
       case "subscription":
         return "Подписка";
+      case "course":
+        return "Курс";
       case "webinar":
         return "Вебинар";
-      case "one_time":
-        return "Разовая покупка";
+      case "consultation":
+        return "Консультация";
       default:
-        return type;
+        return category || "Продукт";
     }
   };
 
-  // Auto-open payment dialog if product is found
+  // Auto-open payment dialog if product is found and ready
   useEffect(() => {
-    if (product && !paymentOpen) {
-      // Small delay to let the page render first
+    if (productData && isReadyForPayment && !paymentOpen) {
       const timer = setTimeout(() => setPaymentOpen(true), 500);
       return () => clearTimeout(timer);
     }
-  }, [product]);
+  }, [productData, isReadyForPayment]);
 
   if (!productId) {
     return (
@@ -136,7 +193,8 @@ export default function Pay() {
     );
   }
 
-  if (error || !product) {
+  // Product not found or legacy UUID — show friendly error
+  if (error || !productData) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
         <LandingHeader />
@@ -144,9 +202,42 @@ export default function Pay() {
           <div className="max-w-md mx-auto text-center">
             <GlassCard className="p-8">
               <div className="text-6xl mb-4">😕</div>
-              <h1 className="text-2xl font-bold mb-4">Продукт не найден</h1>
+              <h1 className="text-2xl font-bold mb-4">Ссылка устарела</h1>
               <p className="text-muted-foreground mb-6">
-                Данный продукт недоступен или был удалён. Пожалуйста, выберите другой продукт.
+                Данный продукт больше недоступен или ссылка устарела. Пожалуйста, выберите актуальный продукт.
+              </p>
+              <div className="flex flex-col gap-3">
+                <Button asChild>
+                  <Link to="/pricing">
+                    Посмотреть тарифы
+                  </Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link to="/">
+                    На главную
+                  </Link>
+                </Button>
+              </div>
+            </GlassCard>
+          </div>
+        </main>
+        <LandingFooter />
+      </div>
+    );
+  }
+
+  // Product exists but no active offer — not ready for payment
+  if (!isReadyForPayment) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
+        <LandingHeader />
+        <main className="container mx-auto px-4 py-24">
+          <div className="max-w-md mx-auto text-center">
+            <GlassCard className="p-8">
+              <div className="text-6xl mb-4">🔧</div>
+              <h1 className="text-2xl font-bold mb-4">Продукт не готов к оплате</h1>
+              <p className="text-muted-foreground mb-6">
+                Оплата для данного продукта временно недоступна. Пожалуйста, свяжитесь с нами или выберите другой продукт.
               </p>
               <Button asChild>
                 <Link to="/pricing">
@@ -161,7 +252,8 @@ export default function Pay() {
     );
   }
 
-  const priceFormatted = formatPrice(product.price_byn, product.currency);
+  const priceFormatted = formatPrice(productData.offer!.amount, productData.currency);
+  const accessDays = productData.tariff?.access_days;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-muted/30 to-background">
@@ -182,13 +274,13 @@ export default function Pay() {
               <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
                 <CreditCard className="h-8 w-8 text-primary" />
               </div>
-              <h1 className="text-2xl font-bold mb-2">{product.name}</h1>
-              <p className="text-muted-foreground">{getProductTypeLabel(product.product_type)}</p>
+              <h1 className="text-2xl font-bold mb-2">{productData.name}</h1>
+              <p className="text-muted-foreground">{getCategoryLabel(productData.category)}</p>
             </div>
 
-            {product.description && (
+            {productData.description && (
               <p className="text-center text-muted-foreground mb-6">
-                {product.description}
+                {productData.description}
               </p>
             )}
 
@@ -197,10 +289,10 @@ export default function Pay() {
                 <CheckCircle className="h-5 w-5 text-primary shrink-0" />
                 <span>Мгновенный доступ после оплаты</span>
               </div>
-              {product.duration_days && (
+              {accessDays && (
                 <div className="flex items-center gap-3 text-sm">
                   <Clock className="h-5 w-5 text-primary shrink-0" />
-                  <span>Срок действия: {product.duration_days} дней</span>
+                  <span>Срок действия: {accessDays} дней</span>
                 </div>
               )}
               <div className="flex items-center gap-3 text-sm">
@@ -213,9 +305,9 @@ export default function Pay() {
               <div className="text-4xl font-bold text-primary mb-1">
                 {priceFormatted}
               </div>
-              {product.duration_days && (
+              {accessDays && (
                 <p className="text-sm text-muted-foreground">
-                  за {product.duration_days} дней
+                  за {accessDays} дней
                 </p>
               )}
             </div>
@@ -244,9 +336,11 @@ export default function Pay() {
       <PaymentDialog
         open={paymentOpen}
         onOpenChange={setPaymentOpen}
-        productId={product.id}
-        productName={product.name}
+        productId={productData.id}
+        productName={productData.name}
         price={priceFormatted}
+        tariffCode={productData.tariff?.code}
+        offerId={productData.offer!.id}
         isClubProduct={isClubProduct}
       />
     </div>
