@@ -18,6 +18,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { 
   ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw
 } from "lucide-react";
+import { getCategoryLabel } from "@/lib/product-names";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
@@ -510,52 +511,59 @@ export default function AdminProductDetailV2() {
 
   return (
     <AdminLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate("/admin/products-v2")}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <div className="flex-1">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold">{product.name}</h1>
-              <Badge variant={product.is_active ? "default" : "secondary"}>
-                {product.is_active ? "Активен" : "Неактивен"}
-              </Badge>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Код: <code className="bg-muted px-2 py-0.5 rounded">{product.code}</code>
-            </p>
-          </div>
-          {(product as any).primary_domain && (
-            <Button variant="outline" asChild>
-              <a href={`https://${(product as any).primary_domain}`} target="_blank" rel="noopener noreferrer">
-                <Globe className="h-4 w-4 mr-2" />
-                {(product as any).primary_domain}
-              </a>
+      <div className="space-y-4">
+        {/* Compact Header */}
+        <GlassCard className="p-4">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => navigate("/admin/products-v2")}>
+              <ArrowLeft className="h-4 w-4" />
             </Button>
-          )}
-        </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-lg font-semibold truncate">{product.name}</h1>
+                <Badge variant={product.is_active ? "default" : "secondary"} className="text-[11px]">
+                  {product.is_active ? "Активен" : "Неактивен"}
+                </Badge>
+                {(product as any).category && (
+                  <Badge variant="outline" className="text-[11px]">
+                    {getCategoryLabel((product as any).category)}
+                  </Badge>
+                )}
+              </div>
+            </div>
+            {(product as any).primary_domain && (
+              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5 shrink-0" asChild>
+                <a href={`https://${(product as any).primary_domain}`} target="_blank" rel="noopener noreferrer">
+                  <Globe className="h-3.5 w-3.5" />
+                  {(product as any).primary_domain}
+                </a>
+              </Button>
+            )}
+          </div>
+        </GlassCard>
 
+        {/* Pill-style tabs */}
         <Tabs defaultValue="tariffs">
-          <TabsList className="bg-muted/50">
-            <TabsTrigger value="tariffs" className="gap-2">
-              <Tag className="h-4 w-4" />
-              Тарифы
-            </TabsTrigger>
-            <TabsTrigger value="offers" className="gap-2">
-              <MousePointer className="h-4 w-4" />
-              Кнопки оплаты
-            </TabsTrigger>
-            <TabsTrigger value="flows" className="gap-2">
-              <Users className="h-4 w-4" />
-              Потоки
-            </TabsTrigger>
-            <TabsTrigger value="preview" className="gap-2">
-              <Eye className="h-4 w-4" />
-              Превью
-            </TabsTrigger>
-          </TabsList>
+          <div className="px-1">
+            <TabsList>
+              <TabsTrigger value="tariffs" className="gap-1.5 text-xs">
+                <Tag className="h-3.5 w-3.5" />
+                Тарифы
+              </TabsTrigger>
+              <TabsTrigger value="offers" className="gap-1.5 text-xs">
+                <MousePointer className="h-3.5 w-3.5" />
+                Кнопки оплаты
+              </TabsTrigger>
+              <TabsTrigger value="flows" className="gap-1.5 text-xs">
+                <Users className="h-3.5 w-3.5" />
+                Потоки
+              </TabsTrigger>
+              <TabsTrigger value="preview" className="gap-1.5 text-xs">
+                <Eye className="h-3.5 w-3.5" />
+                Превью
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           {/* Tariffs Tab */}
           <TabsContent value="tariffs" className="space-y-4 mt-6">
