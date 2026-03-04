@@ -127,53 +127,17 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       const existingMeta = (existingOrder.meta || {}) as Record<string, any>;
       const existingToken = existingMeta.bepaid_checkout_token;
       if (existingToken) {
-        // PATCH-PAYLINK: Validate token before reuse (GET with timeout)
-        let tokenAlive = false;
-        let expiredReason: string | null = null;
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 6000); // 6s timeout
-          const tokenCheckResp = await fetch(
-            `https://checkout.bepaid.by/ctp/api/checkouts/${existingToken}`,
-            {
-              method: 'GET',
-              headers: { 'Authorization': bepaidAuth, 'Accept': 'application/json' },
-              signal: controller.signal,
-            }
-          );
-          clearTimeout(timeout);
-          if (tokenCheckResp.ok) {
-            try {
-              const tokenData = await tokenCheckResp.json();
-              const checkoutStatus = tokenData?.checkout?.status;
-              console.log('[create-payment-checkout] Token check response:', { token: existingToken?.slice(-8), checkoutStatus, keys: Object.keys(tokenData?.checkout || {}) });
-              // Alive ONLY if status is known and NOT expired/failed/error
-              tokenAlive = !!checkoutStatus && !['expired', 'failed', 'error'].includes(checkoutStatus);
-              if (!tokenAlive) {
-                if (!checkoutStatus) {
-                  expiredReason = 'token_invalid_or_unreachable';
-                } else {
-                  expiredReason = 'checkout_status_expired';
-                }
-              }
-            } catch {
-              // JSON parse failed — cannot confirm alive, regen
-              tokenAlive = false;
-              expiredReason = 'token_invalid_or_unreachable';
-            }
-          } else {
-            expiredReason = 'token_not_found_or_invalid';
-          }
-        } catch (err) {
-          // Network error / timeout / abort — treat as expired, regen
-          console.log('[create-payment-checkout] Token validation failed (network/timeout), will regen:', err);
-          expiredReason = 'validation_timeout_or_network';
-        }
+        // PATCH-PAYLINK-v2: Time-based TTL validation (bePaid HPP API returns 'expired' immediately, so API check is unreliable)
+        const TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
+        const orderCreatedAt = new Date(existingOrder.meta?.checkout_created_at || existingOrder.meta?.created_at || 0).getTime();
+        const orderAge = Date.now() - orderCreatedAt;
+        const tokenAlive = orderAge > 0 && orderAge < TOKEN_TTL_MS;
+        const expiredReason = tokenAlive ? null : 'token_ttl_exceeded_15min';
 
         if (tokenAlive) {
-          // Token alive — reuse as before
+          // Token within TTL — reuse
           const existingUrl = `https://checkout.bepaid.by/v2/checkout?token=${existingToken}`;
-          console.log('[create-payment-checkout] Reusing existing pending one_time order (token alive):', existingOrder.id);
+          console.log('[create-payment-checkout] Reusing existing pending one_time order (TTL alive, age=' + Math.round(orderAge / 1000) + 's):', existingOrder.id);
 
           const { error: auditReusedErr } = await supabase.from('audit_logs').insert({
             actor_type: 'system',
@@ -181,7 +145,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             action: 'payment_checkout.reused',
             actor_label: 'payment_checkout',
             created_at: new Date().toISOString(),
-            meta: { reused_order_id: existingOrder.id, payment_type: 'one_time', reuse_reason: 'pending_dedup' },
+            meta: { reused_order_id: existingOrder.id, payment_type: 'one_time', reuse_reason: 'pending_dedup', token_age_s: Math.round(orderAge / 1000) },
           });
           if (auditReusedErr) console.error('[payment_checkout] audit insert failed', { action: 'payment_checkout.reused', order_id: existingOrder.id, payment_type: 'one_time', error: auditReusedErr });
 
@@ -193,14 +157,14 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           };
         }
 
-        // Token expired/invalid — mark meta (add-only, no status change) and fall through to create new
-        console.log('[create-payment-checkout] Token expired for one_time order, reason:', expiredReason, ', will create new:', existingOrder.id);
+        // Token TTL exceeded — mark meta (add-only, no status change) and fall through to create new
+        console.log('[create-payment-checkout] Token TTL exceeded for one_time order, age=' + Math.round(orderAge / 1000) + 's, will create new:', existingOrder.id);
         const { error: metaExpErr } = await supabase.from('orders_v2').update({
           meta: {
             ...existingMeta,
             checkout_expired: true,
             checkout_expired_at: new Date().toISOString(),
-            checkout_expired_reason: expiredReason ?? 'token_invalid_or_unreachable',
+            checkout_expired_reason: expiredReason,
           },
         }).eq('id', existingOrder.id).is('meta->>checkout_expired', null);
         if (metaExpErr) console.error('[payment_checkout] order meta update failed', { order_id: existingOrder.id, reason: expiredReason, error: metaExpErr });
@@ -211,7 +175,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           action: 'payment_checkout.token_expired',
           actor_label: 'payment_checkout',
           created_at: new Date().toISOString(),
-          meta: { order_id: existingOrder.id, payment_type: 'one_time', reason: expiredReason ?? 'token_invalid_or_unreachable' },
+          meta: { order_id: existingOrder.id, payment_type: 'one_time', reason: expiredReason },
         });
         if (auditExpErr) console.error('[payment_checkout] audit insert failed', { action: 'payment_checkout.token_expired', order_id: existingOrder.id, payment_type: 'one_time', error: auditExpErr });
         // Fall through — create new order + checkout below
@@ -327,6 +291,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       meta: {
         ...orderMeta,
         bepaid_checkout_token: checkoutResult.checkout.token,
+        checkout_created_at: new Date().toISOString(),
       },
     }).eq('id', order.id);
     if (metaMergeErr) console.error('[payment_checkout] order meta merge failed', { order_id: order.id, payment_type: 'one_time', error: metaMergeErr });
@@ -393,44 +358,17 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         : null;
 
       if (reusableCheckoutUrl && typeof reusableCheckoutUrl === 'string' && reusableCheckoutUrl.startsWith('http')) {
-        // PATCH-PAYLINK: Validate checkout URL before reuse (GET with timeout)
-        let checkoutAlive = false;
-        let subExpiredReason: string | null = null;
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 6000); // 6s timeout
-          const checkResp = await fetch(reusableCheckoutUrl, {
-            method: 'GET',
-            redirect: 'follow',
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-          if (checkResp.status === 200) {
-            const ct = String(checkResp.headers.get('content-type') || '');
-            if (ct.includes('text/html')) {
-              // HTML page = expired/error page from bePaid
-              checkoutAlive = false;
-              subExpiredReason = 'checkout_url_html_expired_page';
-            } else {
-              checkoutAlive = true;
-            }
-          } else {
-            checkoutAlive = false;
-            subExpiredReason = 'checkout_url_http_' + checkResp.status;
-          }
-        } catch (err) {
-          // Network error / timeout — treat as expired
-          console.log('[create-payment-checkout] Subscription checkout URL validation failed:', err);
-          subExpiredReason = 'validation_timeout_or_network';
-        }
-        // Fallback reason if somehow null and not alive
-        if (!checkoutAlive && !subExpiredReason) {
-          subExpiredReason = 'checkout_url_invalid_or_expired';
-        }
+        // PATCH-PAYLINK-v2: Time-based TTL validation (bePaid subscription checkout URLs may also expire quickly)
+        const SUB_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
+        const subMeta = (reusableProvSub?.meta || {}) as Record<string, any>;
+        const subCreatedAt = new Date(subMeta.checkout_created_at || existingSubOrder.meta?.checkout_created_at || 0).getTime();
+        const subAge = Date.now() - subCreatedAt;
+        const checkoutAlive = subAge > 0 && subAge < SUB_TOKEN_TTL_MS;
+        const subExpiredReason = checkoutAlive ? null : 'token_ttl_exceeded_15min';
 
         if (checkoutAlive) {
-          // Checkout URL alive — reuse
-          console.log('[create-payment-checkout] Reusing existing pending subscription order (URL alive):', existingSubOrder.id);
+          // Checkout URL within TTL — reuse
+          console.log('[create-payment-checkout] Reusing existing pending subscription order (TTL alive, age=' + Math.round(subAge / 1000) + 's):', existingSubOrder.id);
 
           const { error: auditSubReusedErr } = await supabase.from('audit_logs').insert({
             actor_type: 'system',
@@ -438,7 +376,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             action: 'payment_checkout.reused',
             actor_label: 'payment_checkout',
             created_at: new Date().toISOString(),
-            meta: { reused_order_id: existingSubOrder.id, payment_type: 'subscription', reuse_reason: 'pending_dedup' },
+            meta: { reused_order_id: existingSubOrder.id, payment_type: 'subscription', reuse_reason: 'pending_dedup', token_age_s: Math.round(subAge / 1000) },
           });
           if (auditSubReusedErr) console.error('[payment_checkout] audit insert failed', { action: 'payment_checkout.reused', order_id: existingSubOrder.id, payment_type: 'subscription', error: auditSubReusedErr });
 
@@ -450,8 +388,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           };
         }
 
-        // Checkout URL expired — mark meta (add-only) and fall through
-        console.log('[create-payment-checkout] Subscription checkout URL expired, reason:', subExpiredReason, ', will create new:', existingSubOrder.id);
+        // Checkout URL TTL exceeded — mark meta (add-only) and fall through
+        console.log('[create-payment-checkout] Subscription checkout TTL exceeded, age=' + Math.round(subAge / 1000) + 's, will create new:', existingSubOrder.id);
         const existingSubMeta = (existingSubOrder.meta || {}) as Record<string, any>;
         const { error: subMetaExpErr } = await supabase.from('orders_v2').update({
           meta: {
@@ -601,6 +539,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       meta: {
         tracking_id: trackingId,
         checkout_url: redirectUrl,
+        checkout_created_at: new Date().toISOString(),
         created_by_admin: actorUserId,
         order_id: order.id,
         plan_title: planTitle,
