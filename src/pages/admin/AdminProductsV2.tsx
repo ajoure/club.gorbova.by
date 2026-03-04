@@ -56,7 +56,7 @@ const defaultFormData: ProductFormData = {
 
 export default function AdminProductsV2() {
   const navigate = useNavigate();
-  const { isSuperAdmin } = usePermissions();
+  const { isSuperAdmin, loading: permLoading } = usePermissions();
   const { data: products, isLoading } = useProductsV2();
   const { data: clubs } = useTelegramClubs();
   const createMutation = useCreateProductV2();
@@ -252,7 +252,7 @@ export default function AdminProductsV2() {
               className="pl-8 h-8 text-xs"
             />
           </div>
-          {isSuperAdmin() && (
+          {!permLoading && isSuperAdmin() && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
