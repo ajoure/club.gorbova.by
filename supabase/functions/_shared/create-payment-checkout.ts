@@ -109,7 +109,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     // PATCH F1: Dedup one_time — strict key: user/product/tariff/amount/flow/currency/3d
     const { data: existingOrder } = await supabase
       .from('orders_v2')
-      .select('id, meta')
+      .select('id, meta, created_at')
       .eq('user_id', user_id)
       .eq('product_id', product_id)
       .eq('tariff_id', tariff_id)
@@ -129,7 +129,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       if (existingToken) {
         // PATCH-PAYLINK-v2: Time-based TTL validation (bePaid HPP API returns 'expired' immediately, so API check is unreliable)
         const TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
-        const orderCreatedAt = new Date(existingOrder.meta?.checkout_created_at || existingOrder.meta?.created_at || 0).getTime();
+        const orderCreatedAt = new Date(existingOrder.created_at).getTime();
         const orderAge = Date.now() - orderCreatedAt;
         const tokenAlive = orderAge > 0 && orderAge < TOKEN_TTL_MS;
         const expiredReason = tokenAlive ? null : 'token_ttl_exceeded_15min';
@@ -327,7 +327,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     // PATCH F3: Dedup subscription — strict key: user/product/tariff/amount/flow/currency/3d
     const { data: existingSubOrder } = await supabase
       .from('orders_v2')
-      .select('id, meta')
+      .select('id, meta, created_at')
       .eq('user_id', user_id)
       .eq('product_id', product_id)
       .eq('tariff_id', tariff_id)
@@ -359,12 +359,11 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
       if (reusableCheckoutUrl && typeof reusableCheckoutUrl === 'string' && reusableCheckoutUrl.startsWith('http')) {
         // PATCH-PAYLINK-v2: Time-based TTL validation (bePaid subscription checkout URLs may also expire quickly)
-        const SUB_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
-        const subMeta = (reusableProvSub?.meta || {}) as Record<string, any>;
-        const subCreatedAt = new Date(subMeta.checkout_created_at || existingSubOrder.meta?.checkout_created_at || 0).getTime();
+        const SUB_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+        const subCreatedAt = new Date(existingSubOrder.created_at).getTime();
         const subAge = Date.now() - subCreatedAt;
         const checkoutAlive = subAge > 0 && subAge < SUB_TOKEN_TTL_MS;
-        const subExpiredReason = checkoutAlive ? null : 'token_ttl_exceeded_15min';
+        const subExpiredReason = checkoutAlive ? null : 'token_ttl_exceeded_24h';
 
         if (checkoutAlive) {
           // Checkout URL within TTL — reuse
