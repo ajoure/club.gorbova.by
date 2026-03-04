@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,12 +10,18 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, Package, Globe, Users, ChevronRight, Copy, ExternalLink } from "lucide-react";
+import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, ChevronDown, ChevronUp, BookOpen } from "lucide-react";
 import { toast } from "sonner";
 import { useProductsV2, useCreateProductV2, useUpdateProductV2, useDeleteProductV2 } from "@/hooks/useProductsV2";
 import { useTelegramClubs } from "@/hooks/useTelegramIntegration";
 import { useNavigate } from "react-router-dom";
 import { PRODUCT_CATEGORIES, PRODUCT_CATEGORY_LABELS, getCategoryLabel } from "@/lib/product-names";
+import { GlassCard } from "@/components/ui/GlassCard";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { SortableTableHead } from "@/components/ui/sortable-table-head";
+import { useTableSort } from "@/hooks/useTableSort";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+
 interface ProductFormData {
   code: string;
   name: string;
@@ -48,6 +54,21 @@ const defaultFormData: ProductFormData = {
   is_active: true,
 };
 
+const CATEGORY_ORDER: string[] = ['subscription', 'course', 'module', 'service', 'digital_product'];
+
+function getStoredCollapsedState(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem("products_collapsed_groups");
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCollapsedState(state: Record<string, boolean>) {
+  localStorage.setItem("products_collapsed_groups", JSON.stringify(state));
+}
+
 export default function AdminProductsV2() {
   const navigate = useNavigate();
   const { data: products, isLoading } = useProductsV2();
@@ -60,6 +81,18 @@ export default function AdminProductsV2() {
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
   const [formData, setFormData] = useState<ProductFormData>(defaultFormData);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebouncedValue(searchQuery, 200);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(getStoredCollapsedState);
+  const [docsOpen, setDocsOpen] = useState(false);
+
+  useEffect(() => {
+    saveCollapsedState(collapsedGroups);
+  }, [collapsedGroups]);
+
+  const toggleGroup = useCallback((category: string) => {
+    setCollapsedGroups(prev => ({ ...prev, [category]: !prev[category] }));
+  }, []);
 
   const handleOpenDialog = (product?: any) => {
     if (product) {
@@ -120,7 +153,6 @@ export default function AdminProductsV2() {
     } else {
       const newProduct = await createMutation.mutateAsync(payload);
       handleCloseDialog();
-      // Navigate to product detail page to add tariffs
       if (newProduct?.id) {
         navigate(`/admin/products-v2/${newProduct.id}`);
         toast.info("Теперь добавьте тарифы для продукта");
@@ -144,17 +176,18 @@ export default function AdminProductsV2() {
   const withDomain = products?.filter(p => (p as any).primary_domain).length || 0;
   const withClub = products?.filter(p => p.telegram_club_id).length || 0;
 
-  // Tabs for filtering products
+  // Tabs
   const [activeTab, setActiveTab] = useState("all");
-  
+
   const productTabs = [
     { id: "all", label: "Все", count: products?.length || 0 },
     { id: "active", label: "Активные", count: activeProducts },
     { id: "with_club", label: "С клубом", count: withClub },
     { id: "with_domain", label: "С доменом", count: withDomain },
   ];
-  
-  const filteredProducts = useMemo(() => {
+
+  // Filter by tab
+  const tabFiltered = useMemo(() => {
     if (!products) return [];
     switch (activeTab) {
       case "active": return products.filter(p => p.is_active);
@@ -163,6 +196,141 @@ export default function AdminProductsV2() {
       default: return products;
     }
   }, [products, activeTab]);
+
+  // Filter by search
+  const searchFiltered = useMemo(() => {
+    if (!debouncedSearch.trim()) return tabFiltered;
+    const q = debouncedSearch.toLowerCase();
+    return tabFiltered.filter(p =>
+      p.name?.toLowerCase().includes(q) ||
+      p.code?.toLowerCase().includes(q) ||
+      (p.description as string | null)?.toLowerCase().includes(q)
+    );
+  }, [tabFiltered, debouncedSearch]);
+
+  const isSearching = debouncedSearch.trim().length > 0;
+
+  // Sort
+  const { sortedData, sortKey, sortDirection, handleSort } = useTableSort({
+    data: searchFiltered,
+    getFieldValue: (item: any, key: string) => {
+      switch (key) {
+        case "name": return item.name;
+        case "category": return getCategoryLabel(item.category || "course");
+        case "domain": return item.primary_domain || "";
+        case "status": return item.is_active ? "Активен" : "Неактивен";
+        default: return (item as any)[key];
+      }
+    },
+  });
+
+  // Group by category
+  const groupedProducts = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    for (const p of sortedData) {
+      const cat = (p as any).category || "course";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(p);
+    }
+    // Sort categories by predefined order
+    const ordered: { category: string; label: string; items: any[] }[] = [];
+    for (const cat of CATEGORY_ORDER) {
+      if (groups[cat]) {
+        ordered.push({ category: cat, label: getCategoryLabel(cat), items: groups[cat] });
+        delete groups[cat];
+      }
+    }
+    // Any remaining unknown categories
+    for (const [cat, items] of Object.entries(groups)) {
+      ordered.push({ category: cat, label: getCategoryLabel(cat), items });
+    }
+    return ordered;
+  }, [sortedData]);
+
+  const renderProductRow = (product: any) => (
+    <TableRow
+      key={product.id}
+      className="cursor-pointer hover:bg-muted/50"
+      onClick={() => navigate(`/admin/products-v2/${product.id}`)}
+    >
+      <TableCell>
+        <div className="space-y-1">
+          <div className="font-medium text-sm">{product.name}</div>
+          <code className="text-[11px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
+            {product.code}
+          </code>
+        </div>
+      </TableCell>
+      <TableCell>
+        <Badge variant="outline" className="text-xs">
+          {getCategoryLabel(product.category || 'course')}
+        </Badge>
+      </TableCell>
+      <TableCell>
+        {product.primary_domain ? (
+          <div className="flex items-center gap-1.5">
+            <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs">{product.primary_domain}</span>
+            <a
+              href={`https://${product.primary_domain}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
+        ) : (
+          <span className="text-muted-foreground text-xs">—</span>
+        )}
+      </TableCell>
+      <TableCell>
+        <div className="flex gap-1.5">
+          <Badge variant={product.is_active ? "default" : "secondary"} className="text-[11px]">
+            {product.is_active ? "Активен" : "Неактивен"}
+          </Badge>
+          {product.status === "draft" && (
+            <Badge variant="outline" className="text-[11px]">Черновик</Badge>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="text-right">
+        <div className="flex items-center justify-end gap-0.5">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); copyProductId(product.id); }}>
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleOpenDialog(product); }}>
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(product.id); }}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground ml-1" />
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+
+  const tableHeader = (
+    <TableHeader>
+      <TableRow>
+        <SortableTableHead sortKey="name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+          Продукт
+        </SortableTableHead>
+        <SortableTableHead sortKey="category" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+          Категория
+        </SortableTableHead>
+        <SortableTableHead sortKey="domain" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+          Домен
+        </SortableTableHead>
+        <SortableTableHead sortKey="status" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+          Статус
+        </SortableTableHead>
+        <TableHead className="text-right">Действия</TableHead>
+      </TableRow>
+    </TableHeader>
+  );
 
   return (
     <AdminLayout>
@@ -194,137 +362,205 @@ export default function AdminProductsV2() {
           </div>
         </div>
 
-        {/* Actions row */}
-        <div className="flex items-center justify-end gap-3 px-1">
+        {/* Search + Actions row */}
+        <div className="flex items-center gap-3 px-1">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder="Поиск по названию, коду..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8 h-8 text-xs"
+            />
+          </div>
           <Button size="sm" className="h-8" onClick={() => handleOpenDialog()}>
             <Plus className="h-3.5 w-3.5 mr-1.5" />
             Добавить продукт
           </Button>
         </div>
 
-        {/* Products Table */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Список продуктов</CardTitle>
-            <CardDescription className="text-xs">
-              Нажмите на продукт для настройки тарифов
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div className="text-center py-8 text-muted-foreground">Загрузка...</div>
-            ) : !products?.length ? (
-              <div className="text-center py-8 text-muted-foreground">
-                Нет продуктов. Создайте первый продукт.
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Продукт</TableHead>
-                    <TableHead>Категория</TableHead>
-                    <TableHead>Домен</TableHead>
-                    <TableHead>Telegram клуб</TableHead>
-                    <TableHead>Статус</TableHead>
-                    <TableHead className="text-right">Действия</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredProducts.map((product: any) => (
-                    <TableRow 
-                      key={product.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => navigate(`/admin/products-v2/${product.id}`)}
-                    >
-                      <TableCell>
-                        <div className="space-y-1">
-                          <div className="font-medium">{product.name}</div>
-                          <code className="text-xs bg-muted px-2 py-0.5 rounded">
-                            {product.code}
-                          </code>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-xs">
-                          {getCategoryLabel(product.category || 'course')}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {product.primary_domain ? (
-                          <div className="flex items-center gap-2">
-                            <Globe className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-sm">{product.primary_domain}</span>
-                            <a 
-                              href={`https://${product.primary_domain}`} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-muted-foreground hover:text-foreground"
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          </div>
+        {/* Products Table with Collapsible Groups */}
+        <GlassCard className="p-0 overflow-hidden">
+          {isLoading ? (
+            <div className="text-center py-8 text-muted-foreground text-sm">Загрузка...</div>
+          ) : !products?.length ? (
+            <div className="text-center py-8 text-muted-foreground text-sm">
+              Нет продуктов. Создайте первый продукт.
+            </div>
+          ) : searchFiltered.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground text-sm">
+              Ничего не найдено по запросу «{debouncedSearch}»
+            </div>
+          ) : (
+            <div>
+              {groupedProducts.map((group) => {
+                const isOpen = isSearching || !collapsedGroups[group.category];
+                return (
+                  <Collapsible key={group.category} open={isOpen} onOpenChange={() => !isSearching && toggleGroup(group.category)}>
+                    <CollapsibleTrigger asChild>
+                      <button className="w-full flex items-center gap-2 px-4 py-2.5 bg-muted/30 hover:bg-muted/50 transition-colors border-b border-border/30 text-left">
+                        {isOpen ? (
+                          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                         ) : (
-                          <span className="text-muted-foreground text-sm">Не указан</span>
+                          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                         )}
-                      </TableCell>
-                      <TableCell>
-                        {(product.telegram_clubs as any)?.club_name || (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Badge variant={product.is_active ? "default" : "secondary"}>
-                            {product.is_active ? "Активен" : "Неактивен"}
-                          </Badge>
-                          {product.status === "draft" && (
-                            <Badge variant="outline">Черновик</Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              copyProductId(product.id);
-                            }}
-                          >
-                            <Copy className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenDialog(product);
-                            }}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteConfirmId(product.id);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground ml-2" />
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                        <span className="text-xs font-semibold text-foreground">{group.label}</span>
+                        <Badge className="h-4 min-w-4 px-1.5 text-[10px] font-semibold rounded-full bg-primary/15 text-primary border-0">
+                          {group.items.length}
+                        </Badge>
+                      </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <Table>
+                        {tableHeader}
+                        <TableBody>
+                          {group.items.map(renderProductRow)}
+                        </TableBody>
+                      </Table>
+                    </CollapsibleContent>
+                  </Collapsible>
+                );
+              })}
+            </div>
+          )}
+        </GlassCard>
+
+        {/* Documentation Section */}
+        <Collapsible open={docsOpen} onOpenChange={setDocsOpen}>
+          <CollapsibleTrigger asChild>
+            <button className="w-full flex items-center gap-2 px-4 py-3 rounded-xl bg-muted/20 hover:bg-muted/30 border border-border/20 transition-colors text-left">
+              <BookOpen className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium text-foreground">Справка: Продукты и связи</span>
+              {docsOpen ? (
+                <ChevronUp className="h-3.5 w-3.5 text-muted-foreground ml-auto" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground ml-auto" />
+              )}
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <GlassCard className="mt-2 space-y-6 text-sm text-muted-foreground">
+              {/* Продукт */}
+              <div className="space-y-2">
+                <h3 className="text-foreground font-semibold text-base">Продукт <code className="text-xs bg-muted px-1.5 py-0.5 rounded">products_v2</code></h3>
+                <p>Основная сущность каталога. Каждый продукт имеет уникальный <strong>код</strong> (code) и <strong>название</strong> (name).</p>
+                <div className="overflow-x-auto">
+                  <table className="text-xs w-full border-collapse">
+                    <thead>
+                      <tr className="border-b border-border/30">
+                        <th className="text-left py-1.5 pr-4 font-medium text-foreground">Поле</th>
+                        <th className="text-left py-1.5 pr-4 font-medium text-foreground">Описание</th>
+                        <th className="text-left py-1.5 font-medium text-foreground">Связь</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/20">
+                      <tr><td className="py-1 pr-4 font-mono">code</td><td className="py-1 pr-4">Уникальный код (напр. <code>cb20</code>, <code>club</code>)</td><td className="py-1">—</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">name</td><td className="py-1 pr-4">Внутреннее название</td><td className="py-1">—</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">slug</td><td className="py-1 pr-4">URL-часть для лендинга</td><td className="py-1">Используется в маршрутизации</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">category</td><td className="py-1 pr-4">subscription, course, module, service, digital_product</td><td className="py-1">Визуальная группировка</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">primary_domain</td><td className="py-1 pr-4">Домен, на котором отображается продукт</td><td className="py-1">—</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">telegram_club_id</td><td className="py-1 pr-4">Привязанный Telegram-клуб</td><td className="py-1">→ <code>telegram_clubs</code></td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">status</td><td className="py-1 pr-4">draft / active / archived</td><td className="py-1">—</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">is_active</td><td className="py-1 pr-4">Активен ли продукт</td><td className="py-1">—</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">currency</td><td className="py-1 pr-4">BYN / RUB / USD / EUR</td><td className="py-1">—</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs"><strong>Настройки без связей</strong> (только для лендинга): <code>public_title</code>, <code>public_subtitle</code>, <code>payment_disclaimer_text</code>, <code>landing_config</code>.</p>
+              </div>
+
+              {/* Тариф */}
+              <div className="space-y-2">
+                <h3 className="text-foreground font-semibold text-base">Тариф <code className="text-xs bg-muted px-1.5 py-0.5 rounded">tariffs</code></h3>
+                <p>Пакет доступа к продукту. У одного продукта может быть несколько тарифов (Базовый, VIP и т.д.).</p>
+                <div className="overflow-x-auto">
+                  <table className="text-xs w-full border-collapse">
+                    <thead>
+                      <tr className="border-b border-border/30">
+                        <th className="text-left py-1.5 pr-4 font-medium text-foreground">Поле</th>
+                        <th className="text-left py-1.5 pr-4 font-medium text-foreground">Описание</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/20">
+                      <tr><td className="py-1 pr-4 font-mono">code</td><td className="py-1 pr-4">Уникальный код тарифа</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">name</td><td className="py-1 pr-4">Название (отображается на лендинге)</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">description</td><td className="py-1 pr-4">Описание тарифа</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">period_label</td><td className="py-1 pr-4">Метка периода (напр. «в месяц», «навсегда»)</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">access_days</td><td className="py-1 pr-4">Длительность доступа в днях</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">is_popular</td><td className="py-1 pr-4">Отметка «Популярный» на лендинге</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">badge</td><td className="py-1 pr-4">Дополнительная плашка (напр. «Лучшая цена»)</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">sort_order</td><td className="py-1 pr-4">Порядок отображения</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs"><strong>Связь:</strong> <code>product_id</code> → <code>products_v2.id</code>. Тариф → <code>tariff_features</code> (список возможностей).</p>
+              </div>
+
+              {/* Кнопка оплаты */}
+              <div className="space-y-2">
+                <h3 className="text-foreground font-semibold text-base">Кнопка оплаты <code className="text-xs bg-muted px-1.5 py-0.5 rounded">tariff_offers</code></h3>
+                <p>Способ покупки конкретного тарифа. У одного тарифа может быть несколько кнопок (оплатить, рассрочка, пробный период).</p>
+                <div className="overflow-x-auto">
+                  <table className="text-xs w-full border-collapse">
+                    <thead>
+                      <tr className="border-b border-border/30">
+                        <th className="text-left py-1.5 pr-4 font-medium text-foreground">Поле</th>
+                        <th className="text-left py-1.5 pr-4 font-medium text-foreground">Описание</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/20">
+                      <tr><td className="py-1 pr-4 font-mono">type</td><td className="py-1 pr-4">pay_now / trial / preregistration</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">price</td><td className="py-1 pr-4">Цена (основная)</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">old_price</td><td className="py-1 pr-4">Старая цена (для перечёркнутой)</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">installment_months</td><td className="py-1 pr-4">Рассрочка на N месяцев</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">tokenize_card</td><td className="py-1 pr-4">Токенизация карты (для подписок)</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">auto_charge</td><td className="py-1 pr-4">Автосписание</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">reject_virtual_cards</td><td className="py-1 pr-4">Отклонять виртуальные карты</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">meta</td><td className="py-1 pr-4">JSON: welcome_message, button_label и др.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs"><strong>Связь:</strong> <code>tariff_id</code> → <code>tariffs.id</code>. Кнопки → <code>document_generation_rules</code> (правила генерации документов).</p>
+              </div>
+
+              {/* Поток */}
+              <div className="space-y-2">
+                <h3 className="text-foreground font-semibold text-base">Поток <code className="text-xs bg-muted px-1.5 py-0.5 rounded">flows</code></h3>
+                <p>Когорта (набор) с датами старта/окончания и лимитом участников. Привязан к продукту.</p>
+                <div className="overflow-x-auto">
+                  <table className="text-xs w-full border-collapse">
+                    <thead>
+                      <tr className="border-b border-border/30">
+                        <th className="text-left py-1.5 pr-4 font-medium text-foreground">Поле</th>
+                        <th className="text-left py-1.5 pr-4 font-medium text-foreground">Описание</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/20">
+                      <tr><td className="py-1 pr-4 font-mono">name</td><td className="py-1 pr-4">Название потока</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">starts_at / ends_at</td><td className="py-1 pr-4">Даты проведения</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">max_participants</td><td className="py-1 pr-4">Лимит участников</td></tr>
+                      <tr><td className="py-1 pr-4 font-mono">is_active</td><td className="py-1 pr-4">Активен ли поток</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Цепочка связей */}
+              <div className="space-y-2">
+                <h3 className="text-foreground font-semibold text-base">Цепочка связей</h3>
+                <div className="bg-muted/30 rounded-lg p-3 font-mono text-xs leading-relaxed">
+                  <p>Продукт → Тарифы → Кнопки оплаты → Платежи (orders)</p>
+                  <p>Продукт → Подписки (subscriptions)</p>
+                  <p>Продукт → Telegram-клуб (telegram_clubs)</p>
+                  <p>Тариф → Features (tariff_features — список возможностей)</p>
+                  <p>Кнопки → Документы (document_generation_rules)</p>
+                  <p>Продукт → Потоки (flows)</p>
+                  <p>Продукт → bePaid маппинги (bepaid_product_mappings)</p>
+                </div>
+              </div>
+            </GlassCard>
+          </CollapsibleContent>
+        </Collapsible>
       </div>
 
       {/* Create/Edit Dialog */}
