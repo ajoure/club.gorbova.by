@@ -33,3 +33,7 @@ export function getContactUrl(contactId: string) {
 export function getDealUrl(dealId: string) {
   return `${window.location.origin}/admin/deals?deal=${dealId}`;
 }
+
+export function getProductPayUrl(productId: string) {
+  return `${window.location.origin}/pay?product=${productId}`;
+}
