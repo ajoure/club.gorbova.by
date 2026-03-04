@@ -69,52 +69,48 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
   // PATCH-1: Log even before JSON parse (console only for pre-instance errors due to FK constraint)
+  // PATCH-1: Payload size guard
+  const contentLength = parseInt(req.headers.get('content-length') || '0');
+  if (contentLength > MAX_PAYLOAD_SIZE) {
+    console.error('[instagram-webhook] REJECTED: payload_too_large', JSON.stringify({
+      content_type: req.headers.get('content-type'),
+      has_auth: !!(req.headers.get('authorization') || req.headers.get('x-webhook-secret')),
+      content_length: contentLength,
+    }));
+    return new Response(JSON.stringify({ error: 'Payload too large' }), {
+      status: 413,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  // PATCH: ApiX may send JSON body but force content-type: application/x-www-form-urlencoded
+  // So we always try JSON first, then fallback to form-urlencoded.
   let body: any;
+  const rawText = await req.text();
+
+  // 1) Try JSON first
   try {
-    const contentLength = parseInt(req.headers.get('content-length') || '0');
-    if (contentLength > MAX_PAYLOAD_SIZE) {
-      console.error('[instagram-webhook] REJECTED: payload_too_large', JSON.stringify({
-        content_type: req.headers.get('content-type'),
+    const parsed = JSON.parse(rawText);
+    if (parsed && typeof parsed === 'object') {
+      body = parsed;
+    } else {
+      throw new Error('JSON parsed but not an object');
+    }
+  } catch {
+    // 2) Fallback: form-urlencoded
+    const params = new URLSearchParams(rawText);
+    const keys = [...params.keys()];
+    if (keys.length === 0) {
+      console.error('[instagram-webhook] REJECTED: unparseable_body', JSON.stringify({
         has_auth: !!(req.headers.get('authorization') || req.headers.get('x-webhook-secret')),
-        content_length: contentLength,
+        content_type: req.headers.get('content-type') || 'unknown',
       }));
-      return new Response(JSON.stringify({ error: 'Payload too large' }), {
-        status: 413,
+      return new Response(JSON.stringify({ error: 'Unparseable body' }), {
+        status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-
-    const rawText = await req.text();
-    const ct = (req.headers.get('content-type') || '').toLowerCase();
-
-    if (ct.includes('application/json')) {
-      body = JSON.parse(rawText);
-    } else if (ct.includes('application/x-www-form-urlencoded')) {
-      const params = new URLSearchParams(rawText);
-      body = Object.fromEntries(params.entries());
-    } else {
-      // Fallback: try JSON first, then form-urlencoded
-      try {
-        body = JSON.parse(rawText);
-      } catch {
-        const params = new URLSearchParams(rawText);
-        if ([...params.keys()].length > 0) {
-          body = Object.fromEntries(params.entries());
-        } else {
-          throw new Error('Unparseable body');
-        }
-      }
-    }
-  } catch (parseErr) {
-    console.error('[instagram-webhook] REJECTED: unparseable_body', JSON.stringify({
-      has_auth: !!(req.headers.get('authorization') || req.headers.get('x-webhook-secret')),
-      content_type: req.headers.get('content-type') || 'unknown',
-      error: String(parseErr),
-    }));
-    return new Response(JSON.stringify({ error: 'Invalid request body' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    body = Object.fromEntries(params.entries());
   }
 
   const diag = extractDiagnostics(req, body);
