@@ -247,7 +247,17 @@ export function ContactInstagramChat({
             >
               {isRealMedia(msg) && (
                 <div className="mb-1">
-                  {msg.media_type?.startsWith("image") || msg.media_url?.match(/\.(jpg|jpeg|png|gif|webp)/i) ? (
+                  {msg.media_type?.startsWith("audio") ? (
+                    <audio controls className="max-w-full" preload="metadata">
+                      <source src={msg.media_url!} />
+                      Аудио не поддерживается
+                    </audio>
+                  ) : msg.media_type?.startsWith("video") ? (
+                    <video controls className="rounded-lg max-h-48" preload="metadata">
+                      <source src={msg.media_url!} />
+                      Видео не поддерживается
+                    </video>
+                  ) : msg.media_type?.startsWith("image") || msg.media_url?.match(/\.(jpg|jpeg|png|gif|webp)/i) ? (
                     <img
                       src={msg.media_url!}
                       alt="media"

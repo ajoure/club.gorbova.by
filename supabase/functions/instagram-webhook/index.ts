@@ -72,13 +72,7 @@ function parseApixTimestamp(raw: string | undefined | null): { iso: string; ok: 
     return { iso: new Date().toISOString(), ok: false, raw_value: rawStr };
   }
 
-  // Try standard Date.parse first (ISO, RFC, etc.)
-  const stdParsed = Date.parse(rawStr);
-  if (!isNaN(stdParsed)) {
-    return { iso: new Date(stdParsed).toISOString(), ok: true, raw_value: rawStr };
-  }
-
-  // Try DD.MM.YYYY HH:mm format — treat as Europe/Warsaw local time
+  // FIX-1: DD.MM.YYYY HH:mm MUST be checked FIRST — Date.parse treats "04.03" as MM.DD (US format)
   const match = rawStr.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
   if (match) {
     const [, day, month, year, hour, minute] = match;
@@ -101,6 +95,12 @@ function parseApixTimestamp(raw: string | undefined | null): { iso: string; ok: 
         return { iso: fallback.toISOString(), ok: true, raw_value: rawStr };
       }
     }
+  }
+
+  // Then try standard Date.parse (ISO, RFC, etc.) — safe for non-DD.MM formats
+  const stdParsed = Date.parse(rawStr);
+  if (!isNaN(stdParsed)) {
+    return { iso: new Date(stdParsed).toISOString(), ok: true, raw_value: rawStr };
   }
 
   // Fallback
