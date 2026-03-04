@@ -8,7 +8,6 @@ const corsHeaders = {
 
 const MAX_PAYLOAD_SIZE = 1024 * 256; // 256KB
 
-
 // Tolerant field mapping
 const FIELD_ALIASES: Record<string, string[]> = {
   external_message_id: ['external_message_id', 'message_id', 'id_message', 'mid'],
@@ -20,6 +19,7 @@ const FIELD_ALIASES: Record<string, string[]> = {
   media_url: ['media_url', 'attachment_url', 'image_url'],
   media_type: ['media_type', 'attachment_type'],
   thread_id: ['thread_id', 'conversation_id', 'chat_id'],
+  sender_profile_picture: ['sender_profile_picture', 'profile_picture_url', 'avatar_url', 'profile_pic'],
 };
 
 function resolveField(body: Record<string, any>, canonical: string): any {
@@ -31,6 +31,41 @@ function resolveField(body: Record<string, any>, canonical: string): any {
     }
   }
   return undefined;
+}
+
+/**
+ * Parse ApiX-Drive timestamp format: DD.MM.YYYY HH:mm
+ * Returns ISO string or null on failure.
+ */
+function parseApixTimestamp(raw: string | undefined | null): { iso: string; ok: boolean } {
+  if (!raw || typeof raw !== 'string') {
+    return { iso: new Date().toISOString(), ok: false };
+  }
+
+  // Try standard Date.parse first (ISO, RFC, etc.)
+  const stdParsed = Date.parse(raw);
+  if (!isNaN(stdParsed)) {
+    return { iso: new Date(stdParsed).toISOString(), ok: true };
+  }
+
+  // Try DD.MM.YYYY HH:mm format
+  const match = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
+  if (match) {
+    const [, day, month, year, hour, minute] = match;
+    const d = new Date(Date.UTC(
+      parseInt(year),
+      parseInt(month) - 1,
+      parseInt(day),
+      parseInt(hour),
+      parseInt(minute)
+    ));
+    if (!isNaN(d.getTime())) {
+      return { iso: d.toISOString(), ok: true };
+    }
+  }
+
+  // Fallback
+  return { iso: new Date().toISOString(), ok: false };
 }
 
 function extractDiagnostics(req: Request, body: any) {
@@ -68,8 +103,7 @@ Deno.serve(async (req) => {
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-  // PATCH-1: Log even before JSON parse (console only for pre-instance errors due to FK constraint)
-  // PATCH-1: Payload size guard
+  // Payload size guard
   const contentLength = parseInt(req.headers.get('content-length') || '0');
   if (contentLength > MAX_PAYLOAD_SIZE) {
     console.error('[instagram-webhook] REJECTED: payload_too_large', JSON.stringify({
@@ -83,12 +117,10 @@ Deno.serve(async (req) => {
     });
   }
 
-  // PATCH: ApiX may send JSON body but force content-type: application/x-www-form-urlencoded
-  // So we always try JSON first, then fallback to form-urlencoded.
+  // Tolerant parsing: JSON first, then form-urlencoded fallback
   let body: any;
   const rawText = await req.text();
 
-  // 1) Try JSON first
   try {
     const parsed = JSON.parse(rawText);
     if (parsed && typeof parsed === 'object') {
@@ -97,7 +129,6 @@ Deno.serve(async (req) => {
       throw new Error('JSON parsed but not an object');
     }
   } catch {
-    // 2) Fallback: form-urlencoded
     const params = new URLSearchParams(rawText);
     const keys = [...params.keys()];
     if (keys.length === 0) {
@@ -178,16 +209,30 @@ Deno.serve(async (req) => {
     });
   }
 
-  // PATCH-5: Tolerant field mapping
+  // Tolerant field mapping
   const externalMessageId = resolveField(body, 'external_message_id');
   const senderId = resolveField(body, 'sender_id');
   const messageText = resolveField(body, 'message_text');
   const timestamp = resolveField(body, 'timestamp');
   const senderName = resolveField(body, 'sender_name');
   const senderUsername = resolveField(body, 'sender_username');
-  const mediaUrl = resolveField(body, 'media_url');
-  const mediaType = resolveField(body, 'media_type');
+  const rawMediaUrl = resolveField(body, 'media_url');
+  const rawMediaType = resolveField(body, 'media_type');
   const threadId = resolveField(body, 'thread_id');
+  const senderProfilePicture = resolveField(body, 'sender_profile_picture');
+
+  // PATCH-2: Media guard — separate avatar from real attachment
+  // If media_url equals sender_profile_picture or media_type == 'avatar', it's an avatar, not an attachment
+  let messageMediaUrl: string | null = null;
+  let messageMediaType: string | null = null;
+
+  if (rawMediaUrl) {
+    const isAvatar = rawMediaType === 'avatar' || (senderProfilePicture && rawMediaUrl === senderProfilePicture);
+    if (!isAvatar) {
+      messageMediaUrl = rawMediaUrl;
+      messageMediaType = rawMediaType || null;
+    }
+  }
 
   // Generate safe external_message_id if missing
   let finalExternalMessageId = externalMessageId;
@@ -249,7 +294,18 @@ Deno.serve(async (req) => {
 
   const accountId = account.id;
 
-  // Insert message with peer_id
+  // PATCH-2: Safe timestamp parsing (DD.MM.YYYY HH:mm from ApiX)
+  const parsedTs = parseApixTimestamp(timestamp);
+  if (!parsedTs.ok) {
+    // Log warning but continue with fallback
+    console.warn('[instagram-webhook] timestamp_parse_warning', JSON.stringify({
+      timestamp_raw: String(timestamp).slice(0, 30),
+      fallback: parsedTs.iso,
+      sender_id: senderId,
+    }));
+  }
+
+  // Insert message with peer_id — using cleaned media (not avatar)
   const { error: msgErr } = await supabase
     .from('instagram_messages')
     .insert({
@@ -260,15 +316,15 @@ Deno.serve(async (req) => {
       ig_thread_id: threadId || null,
       direction: 'inbound',
       message_text: messageText || null,
-      media_url: mediaUrl || null,
-      media_type: mediaType || null,
+      media_url: messageMediaUrl,
+      media_type: messageMediaType,
       raw_payload: body,
       is_read: false,
       status: 'delivered',
       peer_id: senderId,
       sent_by_admin: null,
       recipient_id: null,
-      created_at: timestamp ? new Date(timestamp).toISOString() : new Date().toISOString(),
+      created_at: parsedTs.iso,
     })
     .select('id')
     .single();
@@ -301,15 +357,24 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Upsert instagram_contact
+  // PATCH-2: Upsert instagram_contact — fix: full_name separate from username, avatar_url from profile picture
+  // instagram_username only updated if real sender_username came in (not name)
+  const upsertData: Record<string, any> = {
+    instagram_account_id: accountId,
+    instagram_user_id: senderId,
+    full_name: senderName || null,
+    avatar_url: senderProfilePicture || null,
+  };
+
+  // Only set instagram_username if we have a real username (not just the name)
+  if (senderUsername && senderUsername.trim()) {
+    upsertData.instagram_username = senderUsername;
+  }
+
   await supabase
     .from('instagram_contacts')
     .upsert(
-      {
-        instagram_account_id: accountId,
-        instagram_user_id: senderId,
-        instagram_username: senderUsername || senderName || null,
-      },
+      upsertData,
       { onConflict: 'instagram_account_id,instagram_user_id' }
     );
 
@@ -322,6 +387,9 @@ Deno.serve(async (req) => {
     sender_id: senderId,
     account_id: accountId,
     source: diag.source,
+    timestamp_parsed: parsedTs.ok,
+    has_avatar: !!senderProfilePicture,
+    has_media: !!messageMediaUrl,
   });
 
   return new Response(JSON.stringify({ ok: true }), {
