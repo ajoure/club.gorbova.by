@@ -14,6 +14,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { SwipeableDialogCard } from "@/components/admin/communication/SwipeableDialogCard";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ContactInstagramChat } from "./ContactInstagramChat";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Instagram, Search, MessageSquare, ArrowLeft, RefreshCw, Check } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -39,6 +40,7 @@ interface InstagramDialog {
 }
 
 const IG_PANEL_SIZE_KEY = "ig-panel-sizes";
+const IG_ACTIVE_ACCOUNT_KEY = "ig-active-account";
 
 export function InstagramInboxView() {
   const queryClient = useQueryClient();
@@ -47,6 +49,9 @@ export function InstagramInboxView() {
   const [selectedDialog, setSelectedDialog] = useState<InstagramDialog | null>(null);
   const [filter, setFilter] = useState<"all" | "unread">("all");
   const parentRef = useRef<HTMLDivElement>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(() => {
+    try { return localStorage.getItem(IG_ACTIVE_ACCOUNT_KEY); } catch { return null; }
+  });
 
   const [savedPanelSize] = useState<number>(() => {
     try {
@@ -69,11 +74,28 @@ export function InstagramInboxView() {
         body: { action: "get_accounts" },
       });
       if (error) throw error;
-      return data.accounts || [];
+      // Filter to active accounts only
+      const all = (data.accounts || []) as Array<{ id: string; is_active?: boolean; status?: string; instagram_page_id?: string }>;
+      return all.filter(a => a.is_active !== false && a.status !== 'error');
     },
   });
 
-  const activeAccountId = accounts?.[0]?.id;
+  // Resolve active account: saved → first active → null
+  const activeAccountId = useMemo(() => {
+    if (!accounts || accounts.length === 0) return null;
+    // Check if saved selection is still valid
+    if (selectedAccountId && accounts.some(a => a.id === selectedAccountId)) {
+      return selectedAccountId;
+    }
+    // Fallback to first active
+    return accounts[0]?.id || null;
+  }, [accounts, selectedAccountId]);
+
+  const handleAccountChange = useCallback((accountId: string) => {
+    setSelectedAccountId(accountId);
+    setSelectedDialog(null);
+    try { localStorage.setItem(IG_ACTIVE_ACCOUNT_KEY, accountId); } catch {}
+  }, []);
 
   const { data: dialogs, isLoading } = useQuery({
     queryKey: ["instagram-dialogs", activeAccountId],
@@ -206,6 +228,20 @@ export function InstagramInboxView() {
             </Badge>
           )}
         </div>
+        {accounts && accounts.length > 1 && (
+          <Select value={activeAccountId || ''} onValueChange={handleAccountChange}>
+            <SelectTrigger className="h-7 text-xs">
+              <SelectValue placeholder="Аккаунт" />
+            </SelectTrigger>
+            <SelectContent>
+              {accounts.map((acc: any) => (
+                <SelectItem key={acc.id} value={acc.id} className="text-xs">
+                  {acc.instagram_page_id || acc.id.slice(0, 8)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
@@ -229,7 +265,7 @@ export function InstagramInboxView() {
               )}
               onClick={() => setFilter(f)}
             >
-              {f === "all" ? "Все" : "Новые"}
+              {f === "all" ? "Все" : "Непрочитанные"}
               {f === "unread" && totalUnread > 0 && (
                 <span className="ml-1 text-[10px]">({totalUnread})</span>
               )}

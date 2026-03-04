@@ -34,38 +34,90 @@ function resolveField(body: Record<string, any>, canonical: string): any {
 }
 
 /**
- * Parse ApiX-Drive timestamp format: DD.MM.YYYY HH:mm
- * Returns ISO string or null on failure.
+ * Get UTC offset in ms for a timezone at a given UTC timestamp.
+ * Positive = east of UTC.
  */
-function parseApixTimestamp(raw: string | undefined | null): { iso: string; ok: boolean } {
-  if (!raw || typeof raw !== 'string') {
-    return { iso: new Date().toISOString(), ok: false };
+function getUtcOffsetMs(tz: string, utcMs: number): number {
+  try {
+    const d = new Date(utcMs);
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric', month: 'numeric', day: 'numeric',
+      hour: 'numeric', minute: 'numeric', second: 'numeric',
+      hour12: false,
+    }).formatToParts(d);
+
+    const get = (type: string): number => {
+      const part = parts.find(p => p.type === type);
+      return part ? parseInt(part.value, 10) : 0;
+    };
+
+    let localHour = get('hour');
+    if (localHour === 24) localHour = 0;
+    const localAsUtcMs = Date.UTC(get('year'), get('month') - 1, get('day'), localHour, get('minute'), get('second'));
+    return localAsUtcMs - utcMs;
+  } catch {
+    // Fallback: assume UTC+1 (Warsaw winter)
+    return 3600000;
+  }
+}
+
+/**
+ * Parse ApiX-Drive timestamp: DD.MM.YYYY HH:mm (Europe/Warsaw local time).
+ * Returns ISO string in UTC.
+ */
+function parseApixTimestamp(raw: string | undefined | null): { iso: string; ok: boolean; raw_value: string } {
+  const rawStr = raw ? String(raw).trim() : '';
+  if (!rawStr) {
+    return { iso: new Date().toISOString(), ok: false, raw_value: rawStr };
   }
 
   // Try standard Date.parse first (ISO, RFC, etc.)
-  const stdParsed = Date.parse(raw);
+  const stdParsed = Date.parse(rawStr);
   if (!isNaN(stdParsed)) {
-    return { iso: new Date(stdParsed).toISOString(), ok: true };
+    return { iso: new Date(stdParsed).toISOString(), ok: true, raw_value: rawStr };
   }
 
-  // Try DD.MM.YYYY HH:mm format
-  const match = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
+  // Try DD.MM.YYYY HH:mm format — treat as Europe/Warsaw local time
+  const match = rawStr.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
   if (match) {
     const [, day, month, year, hour, minute] = match;
-    const d = new Date(Date.UTC(
-      parseInt(year),
-      parseInt(month) - 1,
-      parseInt(day),
-      parseInt(hour),
-      parseInt(minute)
-    ));
-    if (!isNaN(d.getTime())) {
-      return { iso: d.toISOString(), ok: true };
+    const y = parseInt(year), mo = parseInt(month) - 1, d = parseInt(day);
+    const h = parseInt(hour), mi = parseInt(minute);
+
+    // Build a UTC guess, then subtract Warsaw offset to get real UTC
+    const guessUtcMs = Date.UTC(y, mo, d, h, mi, 0, 0);
+    try {
+      const warsawOffset = getUtcOffsetMs('Europe/Warsaw', guessUtcMs);
+      const utcMs = guessUtcMs - warsawOffset;
+      const result = new Date(utcMs);
+      if (!isNaN(result.getTime())) {
+        return { iso: result.toISOString(), ok: true, raw_value: rawStr };
+      }
+    } catch {
+      // Fallback: treat as local (server is UTC in Edge)
+      const fallback = new Date(Date.UTC(y, mo, d, h, mi));
+      if (!isNaN(fallback.getTime())) {
+        return { iso: fallback.toISOString(), ok: true, raw_value: rawStr };
+      }
     }
   }
 
   // Fallback
-  return { iso: new Date().toISOString(), ok: false };
+  return { iso: new Date().toISOString(), ok: false, raw_value: rawStr };
+}
+
+/**
+ * Build stable hash for external_message_id fallback.
+ * Uses only deterministic fields so retries produce the same ID.
+ */
+async function buildStableHash(parts: Record<string, string | undefined | null>): Promise<string> {
+  const input = Object.entries(parts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v ?? ''}`)
+    .join('|');
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(buf)).slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 function extractDiagnostics(req: Request, body: any) {
@@ -167,9 +219,7 @@ Deno.serve(async (req) => {
 
   if (instanceErr || !instance) {
     await logEvent(supabase, instanceId, 'webhook_receive', 'error', 'Integration instance not found', {
-      ...diag,
-      status_code: 404,
-      reason: 'instance_not_found',
+      ...diag, status_code: 404, reason: 'instance_not_found',
     });
     return new Response(JSON.stringify({ error: 'Integration not found' }), {
       status: 404,
@@ -182,9 +232,7 @@ Deno.serve(async (req) => {
   const webhookSecret = config.webhook_secret;
   if (!webhookSecret) {
     await logEvent(supabase, instanceId, 'webhook_receive', 'error', 'webhook_secret not configured', {
-      ...diag,
-      status_code: 409,
-      reason: 'webhook_secret_missing',
+      ...diag, status_code: 409, reason: 'webhook_secret_missing',
     });
     return new Response(JSON.stringify({ error: 'Integration not configured: webhook_secret required' }), {
       status: 409,
@@ -199,9 +247,7 @@ Deno.serve(async (req) => {
 
   if (bearerToken !== webhookSecret && secretHeader !== webhookSecret) {
     await logEvent(supabase, instanceId, 'webhook_receive', 'error', 'Invalid webhook secret', {
-      ...diag,
-      status_code: 401,
-      reason: 'invalid_secret',
+      ...diag, status_code: 401, reason: 'invalid_secret',
     });
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
@@ -222,7 +268,6 @@ Deno.serve(async (req) => {
   const senderProfilePicture = resolveField(body, 'sender_profile_picture');
 
   // PATCH-2: Media guard — separate avatar from real attachment
-  // If media_url equals sender_profile_picture or media_type == 'avatar', it's an avatar, not an attachment
   let messageMediaUrl: string | null = null;
   let messageMediaType: string | null = null;
 
@@ -234,19 +279,24 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Generate safe external_message_id if missing
+  // PATCH-1: Generate stable external_message_id if missing
+  // Uses deterministic hash from stable event fields — retries produce the same ID
   let finalExternalMessageId = externalMessageId;
-  if (!finalExternalMessageId && senderId && timestamp) {
-    finalExternalMessageId = `apix:${senderId}:${timestamp}`;
-  } else if (!finalExternalMessageId && senderId) {
-    finalExternalMessageId = `apix:${senderId}:${Date.now()}`;
+  if (!finalExternalMessageId && senderId) {
+    const hashHex = await buildStableHash({
+      sender_id: senderId,
+      timestamp_raw: timestamp ? String(timestamp) : undefined,
+      message_text: messageText ? String(messageText) : undefined,
+      media_url: rawMediaUrl ? String(rawMediaUrl) : undefined,
+      thread_id: threadId ? String(threadId) : undefined,
+      instagram_page_id: body.instagram_page_id ? String(body.instagram_page_id) : undefined,
+    });
+    finalExternalMessageId = `apix:${senderId}:${timestamp || 'notime'}:${hashHex}`;
   }
 
   if (!finalExternalMessageId || !senderId) {
     await logEvent(supabase, instanceId, 'webhook_receive', 'error', 'Missing required fields: external_message_id, sender_id', {
-      ...diag,
-      status_code: 400,
-      reason: 'missing_required_fields',
+      ...diag, status_code: 400, reason: 'missing_required_fields',
       resolved_external_message_id: finalExternalMessageId || null,
       resolved_sender_id: senderId || null,
     });
@@ -267,10 +317,7 @@ Deno.serve(async (req) => {
 
   if (!account) {
     await logEvent(supabase, instanceId, 'webhook_receive', 'error', 'Instagram account not found for instance. Create account via UI first.', {
-      ...diag,
-      status_code: 404,
-      reason: 'account_not_found',
-      sender_id: senderId,
+      ...diag, status_code: 404, reason: 'account_not_found', sender_id: senderId,
     });
     return new Response(JSON.stringify({ error: 'Instagram account not found for this instance' }), {
       status: 404,
@@ -281,10 +328,7 @@ Deno.serve(async (req) => {
   // Optional guard: if payload has instagram_page_id, verify match
   if (body.instagram_page_id && account.instagram_page_id && body.instagram_page_id !== account.instagram_page_id) {
     await logEvent(supabase, instanceId, 'webhook_receive', 'error', `page_id mismatch: expected ${account.instagram_page_id}, got ${body.instagram_page_id}`, {
-      ...diag,
-      status_code: 400,
-      reason: 'page_id_mismatch',
-      sender_id: senderId,
+      ...diag, status_code: 400, reason: 'page_id_mismatch', sender_id: senderId,
     });
     return new Response(JSON.stringify({ error: 'instagram_page_id mismatch' }), {
       status: 400,
@@ -294,18 +338,17 @@ Deno.serve(async (req) => {
 
   const accountId = account.id;
 
-  // PATCH-2: Safe timestamp parsing (DD.MM.YYYY HH:mm from ApiX)
+  // PATCH-2: Safe timestamp parsing (DD.MM.YYYY HH:mm from ApiX, Europe/Warsaw)
   const parsedTs = parseApixTimestamp(timestamp);
   if (!parsedTs.ok) {
-    // Log warning but continue with fallback
     console.warn('[instagram-webhook] timestamp_parse_warning', JSON.stringify({
-      timestamp_raw: String(timestamp).slice(0, 30),
+      timestamp_raw: parsedTs.raw_value.slice(0, 30),
       fallback: parsedTs.iso,
       sender_id: senderId,
     }));
   }
 
-  // Insert message with peer_id — using cleaned media (not avatar)
+  // Insert message with peer_id
   const { error: msgErr } = await supabase
     .from('instagram_messages')
     .insert({
@@ -332,12 +375,8 @@ Deno.serve(async (req) => {
   if (msgErr) {
     if (msgErr.code === '23505') {
       await logEvent(supabase, instanceId, 'webhook_receive', 'success', 'Duplicate message ignored', {
-        ...diag,
-        status_code: 200,
-        reason: 'duplicate',
-        external_message_id: finalExternalMessageId,
-        sender_id: senderId,
-        source: diag.source,
+        ...diag, status_code: 200, reason: 'duplicate',
+        external_message_id: finalExternalMessageId, sender_id: senderId,
       });
       return new Response(JSON.stringify({ ok: true, duplicate: true }), {
         status: 200,
@@ -345,11 +384,8 @@ Deno.serve(async (req) => {
       });
     }
     await logEvent(supabase, instanceId, 'webhook_receive', 'error', `Insert failed: ${msgErr.message}`, {
-      ...diag,
-      status_code: 500,
-      reason: 'db_insert_failed',
-      external_message_id: finalExternalMessageId,
-      sender_id: senderId,
+      ...diag, status_code: 500, reason: 'db_insert_failed',
+      external_message_id: finalExternalMessageId, sender_id: senderId,
     });
     return new Response(JSON.stringify({ error: 'Failed to save message' }), {
       status: 500,
@@ -357,8 +393,9 @@ Deno.serve(async (req) => {
     });
   }
 
-  // PATCH-2: Upsert instagram_contact — fix: full_name separate from username, avatar_url from profile picture
-  // instagram_username only updated if real sender_username came in (not name)
+  // PATCH-3: Upsert instagram_contact — protect instagram_username from overwrite
+  const trimmedUsername = senderUsername && typeof senderUsername === 'string' ? senderUsername.trim() : '';
+
   const upsertData: Record<string, any> = {
     instagram_account_id: accountId,
     instagram_user_id: senderId,
@@ -366,28 +403,33 @@ Deno.serve(async (req) => {
     avatar_url: senderProfilePicture || null,
   };
 
-  // Only set instagram_username if we have a real username (not just the name)
-  if (senderUsername && senderUsername.trim()) {
-    upsertData.instagram_username = senderUsername;
+  if (trimmedUsername) {
+    // We have a real username — set it directly
+    upsertData.instagram_username = trimmedUsername;
+  } else {
+    // No username in payload — need to preserve existing value
+    // SELECT only when needed to avoid overwriting with null
+    const { data: existingContact } = await supabase
+      .from('instagram_contacts')
+      .select('instagram_username')
+      .eq('instagram_account_id', accountId)
+      .eq('instagram_user_id', senderId)
+      .maybeSingle();
+
+    upsertData.instagram_username = existingContact?.instagram_username || null;
   }
 
   await supabase
     .from('instagram_contacts')
-    .upsert(
-      upsertData,
-      { onConflict: 'instagram_account_id,instagram_user_id' }
-    );
+    .upsert(upsertData, { onConflict: 'instagram_account_id,instagram_user_id' });
 
-  // Log success
+  // Log success with timestamp diagnostics
   await logEvent(supabase, instanceId, 'webhook_receive', 'success', null, {
-    ...diag,
-    status_code: 200,
-    reason: 'ok',
-    external_message_id: finalExternalMessageId,
-    sender_id: senderId,
+    ...diag, status_code: 200, reason: 'ok',
+    external_message_id: finalExternalMessageId, sender_id: senderId,
     account_id: accountId,
-    source: diag.source,
-    timestamp_parsed: parsedTs.ok,
+    timestamp_raw: parsedTs.raw_value.slice(0, 30),
+    timestamp_parsed_ok: parsedTs.ok,
     has_avatar: !!senderProfilePicture,
     has_media: !!messageMediaUrl,
   });
