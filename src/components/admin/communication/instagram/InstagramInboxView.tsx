@@ -1,15 +1,23 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Instagram, Search, MessageSquare } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { SwipeableDialogCard } from "@/components/admin/communication/SwipeableDialogCard";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { ContactInstagramChat } from "./ContactInstagramChat";
+import { Instagram, Search, MessageSquare, ArrowLeft, RefreshCw, Check } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
-import { ContactInstagramChat } from "./ContactInstagramChat";
 
 interface InstagramDialog {
   thread_key: string;
@@ -23,13 +31,36 @@ interface InstagramDialog {
   last_at: string;
   unread_count: number;
   instagram_username: string | null;
+  full_name: string | null;
+  avatar_url: string | null;
   profile_id: string | null;
+  account_name: string | null;
+  integration_instance_id: string | null;
 }
+
+const IG_PANEL_SIZE_KEY = "ig-panel-sizes";
 
 export function InstagramInboxView() {
   const queryClient = useQueryClient();
+  const isMobile = useIsMobile();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDialog, setSelectedDialog] = useState<InstagramDialog | null>(null);
+  const [filter, setFilter] = useState<"all" | "unread">("all");
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const [savedPanelSize] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(IG_PANEL_SIZE_KEY);
+      if (saved) return JSON.parse(saved).left || 40;
+    } catch {}
+    return 40;
+  });
+
+  const handlePanelResize = (sizes: number[]) => {
+    try {
+      localStorage.setItem(IG_PANEL_SIZE_KEY, JSON.stringify({ left: sizes[0] }));
+    } catch {}
+  };
 
   const { data: accounts } = useQuery({
     queryKey: ["instagram-accounts"],
@@ -58,10 +89,9 @@ export function InstagramInboxView() {
     refetchInterval: 15000,
   });
 
-  // PATCH-6: Realtime with filter by instagram_account_id + local guard
+  // Realtime
   useEffect(() => {
     if (!activeAccountId) return;
-
     const channel = supabase
       .channel(`instagram-messages-rt:${activeAccountId}`)
       .on(
@@ -80,25 +110,34 @@ export function InstagramInboxView() {
         }
       )
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [activeAccountId, queryClient]);
 
   const filteredDialogs = useMemo(() => {
     if (!dialogs) return [];
-    if (!searchQuery) return dialogs;
+    let list = dialogs;
+    if (filter === "unread") {
+      list = list.filter((d) => d.unread_count > 0);
+    }
+    if (!searchQuery) return list;
     const q = searchQuery.toLowerCase();
-    return dialogs.filter(
+    return list.filter(
       (d) =>
+        (d.full_name || "").toLowerCase().includes(q) ||
         (d.sender_name || "").toLowerCase().includes(q) ||
         (d.instagram_username || "").toLowerCase().includes(q) ||
         (d.last_message || "").toLowerCase().includes(q)
     );
-  }, [dialogs, searchQuery]);
+  }, [dialogs, searchQuery, filter]);
 
   const totalUnread = useMemo(() => (dialogs || []).reduce((s, d) => s + d.unread_count, 0), [dialogs]);
+
+  const virtualizer = useVirtualizer({
+    count: filteredDialogs.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 68,
+    overscan: 5,
+  });
 
   const handleSelectDialog = useCallback(
     (dialog: InstagramDialog) => {
@@ -119,6 +158,27 @@ export function InstagramInboxView() {
     [activeAccountId, queryClient]
   );
 
+  const markChatAsRead = useCallback(
+    (peerId: string) => {
+      if (!activeAccountId) return;
+      const dialog = dialogs?.find((d) => d.peer_id === peerId);
+      supabase.functions.invoke("instagram-admin-chat", {
+        body: {
+          action: "mark_read",
+          instagram_account_id: activeAccountId,
+          sender_id: peerId,
+          thread_id: dialog?.ig_thread_id || null,
+        },
+      }).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["instagram-dialogs", activeAccountId] });
+      });
+    },
+    [activeAccountId, dialogs, queryClient]
+  );
+
+  const getDisplayName = (d: InstagramDialog) =>
+    d.full_name || d.sender_name || d.instagram_username || d.peer_id;
+
   if (!accounts || accounts.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center p-8 text-center">
@@ -133,100 +193,208 @@ export function InstagramInboxView() {
     );
   }
 
-  return (
-    <div className="flex h-full min-h-0">
-      {/* Dialog List */}
-      <div className="w-80 border-r border-border/30 flex flex-col min-h-0">
-        <div className="p-3 border-b border-border/20 shrink-0">
-          <div className="flex items-center gap-2 mb-2">
-            <Instagram className="h-4 w-4 text-pink-500" />
-            <h3 className="text-sm font-semibold">Instagram</h3>
-            {totalUnread > 0 && (
-              <Badge className="bg-pink-500 text-white text-[10px] h-4 min-w-4 px-1 rounded-full">
-                {totalUnread}
-              </Badge>
-            )}
-          </div>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              className="h-8 pl-8 text-xs"
-              placeholder="Поиск..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
+  // --- Dialog list content ---
+  const dialogListContent = (
+    <>
+      <div className="p-3 border-b border-border/20 shrink-0 space-y-2">
+        <div className="flex items-center gap-2">
+          <Instagram className="h-4 w-4 text-pink-500" />
+          <h3 className="text-sm font-semibold">Instagram</h3>
+          {totalUnread > 0 && (
+            <Badge className="bg-pink-500 text-white text-[10px] h-4 min-w-4 px-1 rounded-full">
+              {totalUnread}
+            </Badge>
+          )}
         </div>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            className="h-8 pl-8 text-xs"
+            placeholder="Поиск..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <div className="flex gap-1">
+          {(["all", "unread"] as const).map((f) => (
+            <Button
+              key={f}
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-7 text-xs rounded-full px-3",
+                filter === f
+                  ? "bg-primary text-primary-foreground shadow-md"
+                  : "bg-card/60 text-muted-foreground"
+              )}
+              onClick={() => setFilter(f)}
+            >
+              {f === "all" ? "Все" : "Новые"}
+              {f === "unread" && totalUnread > 0 && (
+                <span className="ml-1 text-[10px]">({totalUnread})</span>
+              )}
+            </Button>
+          ))}
+        </div>
+      </div>
 
-        <ScrollArea className="flex-1">
-          {isLoading ? (
-            <div className="p-4 text-center text-xs text-muted-foreground">Загрузка...</div>
-          ) : filteredDialogs.length === 0 ? (
-            <div className="p-4 text-center text-xs text-muted-foreground">
+      <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto">
+        {isLoading ? (
+          <div className="p-8 text-center text-muted-foreground">
+            <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
+            <span className="text-sm">Загрузка...</span>
+          </div>
+        ) : filteredDialogs.length === 0 ? (
+          <div className="p-8 text-center">
+            <MessageSquare className="h-10 w-10 mx-auto mb-3 text-muted-foreground/40" />
+            <p className="text-muted-foreground">
               {searchQuery ? "Ничего не найдено" : "Нет диалогов"}
-            </div>
-          ) : (
-            filteredDialogs.map((dialog) => (
-              <button
-                key={dialog.thread_key}
-                onClick={() => handleSelectDialog(dialog)}
-                className={cn(
-                  "w-full text-left p-3 border-b border-border/10 hover:bg-muted/30 transition-colors",
-                  selectedDialog?.thread_key === dialog.thread_key && "bg-muted/50"
-                )}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Avatar className="h-9 w-9 shrink-0">
-                    <AvatarFallback className="bg-gradient-to-br from-pink-500/20 to-purple-500/20 text-xs">
-                      {(dialog.sender_name || dialog.instagram_username || "?")[0]?.toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium truncate">
-                        {dialog.sender_name || dialog.instagram_username || dialog.peer_id}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground shrink-0 ml-1">
-                        {formatDistanceToNow(new Date(dialog.last_at), { addSuffix: true, locale: ru })}
-                      </span>
+            </p>
+          </div>
+        ) : (
+          <div
+            className="relative p-1.5"
+            style={{ height: `${virtualizer.getTotalSize()}px` }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const dialog = filteredDialogs[virtualRow.index];
+              const displayName = getDisplayName(dialog);
+              return (
+                <div
+                  key={dialog.thread_key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  className="absolute top-0 left-0 w-full px-1.5"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  <SwipeableDialogCard
+                    onSwipeRight={dialog.unread_count > 0 ? () => markChatAsRead(dialog.peer_id) : undefined}
+                    onClick={() => handleSelectDialog(dialog)}
+                    className={cn(
+                      "group relative grid grid-cols-[auto_1fr_24px] items-start gap-1.5 p-1.5 cursor-pointer rounded-lg border transition-colors duration-200",
+                      selectedDialog?.thread_key === dialog.thread_key
+                        ? "bg-primary/10 border-primary"
+                        : "border-transparent hover:bg-muted/40"
+                    )}
+                  >
+                    <div className="relative shrink-0">
+                      <Avatar className="h-8 w-8 ring-1 ring-border/20">
+                        <AvatarImage src={dialog.avatar_url || undefined} />
+                        <AvatarFallback className="bg-gradient-to-br from-pink-500/20 to-purple-500/20 text-xs font-semibold">
+                          {displayName[0]?.toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      {dialog.unread_count > 0 && (
+                        <div className="absolute -top-0.5 -right-0.5 h-5 min-w-5 px-1 flex items-center justify-center rounded-full bg-pink-500 text-white text-[10px] font-bold shadow-lg">
+                          {dialog.unread_count > 99 ? "99+" : dialog.unread_count}
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center justify-between mt-0.5">
-                      <p className="text-xs text-muted-foreground truncate">
+                    <div className="flex-1 min-w-0 overflow-hidden">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-xs font-semibold truncate flex-1 min-w-0 whitespace-nowrap">
+                          {displayName}
+                        </span>
+                        {dialog.account_name && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5 shrink-0 font-normal text-muted-foreground border-border/40 whitespace-nowrap max-w-[100px] truncate">
+                            {dialog.account_name}
+                          </Badge>
+                        )}
+                        <span className="text-[10px] text-muted-foreground shrink-0 whitespace-nowrap">
+                          {formatDistanceToNow(new Date(dialog.last_at), { addSuffix: false, locale: ru })}
+                        </span>
+                      </div>
+                      <p className={cn(
+                        "text-xs line-clamp-2 break-words mt-0.5 min-w-0",
+                        dialog.unread_count > 0
+                          ? "text-foreground font-medium"
+                          : "text-muted-foreground"
+                      )}>
                         {dialog.last_direction === "outbound" && "Вы: "}
                         {dialog.last_message || (dialog.last_media_url ? "📷 Медиа" : "...")}
                       </p>
-                      {dialog.unread_count > 0 && (
-                        <Badge className="bg-pink-500 text-white text-[10px] h-4 min-w-4 px-1 rounded-full ml-1 shrink-0">
-                          {dialog.unread_count}
-                        </Badge>
-                      )}
                     </div>
-                  </div>
+                    {/* Quick action: mark read */}
+                    <div className="self-stretch flex flex-col items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
+                      <button
+                        type="button"
+                        disabled={dialog.unread_count === 0}
+                        className={cn(
+                          "h-6 w-6 rounded-md flex items-center justify-center transition-colors",
+                          dialog.unread_count > 0
+                            ? "hover:bg-primary/15"
+                            : "opacity-40 cursor-not-allowed"
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (dialog.unread_count > 0) markChatAsRead(dialog.peer_id);
+                        }}
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </SwipeableDialogCard>
                 </div>
-              </button>
-            ))
-          )}
-        </ScrollArea>
-      </div>
-
-      {/* Chat Panel */}
-      <div className="flex-1 min-w-0 flex flex-col">
-        {selectedDialog && activeAccountId ? (
-          <ContactInstagramChat
-            accountId={activeAccountId}
-            senderId={selectedDialog.peer_id}
-            threadId={selectedDialog.ig_thread_id}
-            senderName={selectedDialog.sender_name || selectedDialog.instagram_username || selectedDialog.peer_id}
-          />
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <MessageSquare className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
-              <p className="text-sm text-muted-foreground">Выберите диалог</p>
-            </div>
+              );
+            })}
           </div>
         )}
       </div>
+    </>
+  );
+
+  // --- Chat panel content ---
+  const chatPanelContent = selectedDialog && activeAccountId ? (
+    <div className="h-full min-h-0 flex flex-col overflow-hidden">
+      <ContactInstagramChat
+        accountId={activeAccountId}
+        senderId={selectedDialog.peer_id}
+        threadId={selectedDialog.ig_thread_id}
+        senderName={getDisplayName(selectedDialog)}
+        avatarUrl={selectedDialog.avatar_url}
+        accountName={selectedDialog.account_name}
+        onBack={isMobile ? () => setSelectedDialog(null) : undefined}
+      />
     </div>
+  ) : (
+    <div className="h-full flex items-center justify-center text-center text-muted-foreground p-8">
+      <div>
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-pink-500/10 to-purple-500/10 flex items-center justify-center mx-auto mb-4">
+          <MessageSquare className="h-8 w-8 text-pink-500/50" />
+        </div>
+        <p className="font-medium">Выберите диалог</p>
+        <p className="text-sm text-muted-foreground/70 mt-1">для просмотра сообщений</p>
+      </div>
+    </div>
+  );
+
+  // --- Layout: mobile toggle or desktop resizable ---
+  if (isMobile) {
+    return (
+      <div className="flex flex-col h-full min-h-0 overflow-hidden">
+        {!selectedDialog ? (
+          <div className="flex flex-col h-full min-h-0">{dialogListContent}</div>
+        ) : (
+          chatPanelContent
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0 h-full" onLayout={handlePanelResize}>
+      <ResizablePanel
+        defaultSize={savedPanelSize}
+        minSize={15}
+        maxSize={40}
+        className="flex flex-col min-w-0"
+      >
+        {dialogListContent}
+      </ResizablePanel>
+      <ResizableHandle withHandle className="mx-1" />
+      <ResizablePanel defaultSize={75} minSize={50} className="min-w-0 overflow-hidden">
+        {chatPanelContent}
+      </ResizablePanel>
+    </ResizablePanelGroup>
   );
 }

@@ -3,9 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Instagram, Send, AlertCircle, Clock, Loader2, Image as ImageIcon } from "lucide-react";
+import { Instagram, Send, AlertCircle, Clock, Loader2, Image as ImageIcon, ArrowLeft } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
@@ -33,6 +33,9 @@ interface ContactInstagramChatProps {
   senderId: string;
   threadId: string | null;
   senderName: string;
+  avatarUrl?: string | null;
+  accountName?: string | null;
+  onBack?: () => void;
 }
 
 export function ContactInstagramChat({
@@ -40,6 +43,9 @@ export function ContactInstagramChat({
   senderId,
   threadId,
   senderName,
+  avatarUrl,
+  accountName,
+  onBack,
 }: ContactInstagramChatProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
@@ -64,7 +70,7 @@ export function ContactInstagramChat({
     refetchInterval: 10000,
   });
 
-  // PATCH-6: Realtime with filter + local guard by peer_id
+  // Realtime
   useEffect(() => {
     const channel = supabase
       .channel(`ig-chat-rt:${accountId}:${senderId}`)
@@ -100,9 +106,7 @@ export function ContactInstagramChat({
       )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [accountId, senderId, threadId, queryClient]);
 
   // Auto-scroll
@@ -177,23 +181,50 @@ export function ContactInstagramChat({
           </Badge>
         );
       default:
-        return null; // delivered — no badge
+        return null;
     }
+  };
+
+  // Check if media_url is actually an avatar (not a real attachment)
+  const isRealMedia = (msg: Message) => {
+    if (!msg.media_url) return false;
+    if (msg.media_type === 'avatar') return false;
+    // If the URL contains profile pic indicators, skip
+    if (msg.media_url.includes('/t51.2885-19/')) return false;
+    return true;
   };
 
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
-      <div className="p-3 border-b border-border/20 flex items-center gap-3 shrink-0">
-        <Avatar className="h-8 w-8">
-          <AvatarFallback className="bg-gradient-to-br from-pink-500/20 to-purple-500/20 text-xs">
+      <div className="p-3 border-b border-border/20 bg-card/80 backdrop-blur flex items-center gap-3 shrink-0">
+        {onBack && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-full shrink-0"
+            onClick={onBack}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+        )}
+        <Avatar className="h-10 w-10 ring-2 ring-border/20">
+          <AvatarImage src={avatarUrl || undefined} />
+          <AvatarFallback className="bg-gradient-to-br from-pink-500/20 to-purple-500/20 text-sm font-semibold">
             {senderName[0]?.toUpperCase()}
           </AvatarFallback>
         </Avatar>
-        <div>
-          <p className="text-sm font-medium">{senderName}</p>
-          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-            <Instagram className="h-3 w-3" /> Instagram Direct
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold truncate">{senderName}</p>
+          <p className="text-[10px] text-muted-foreground flex items-center gap-1 truncate">
+            <Instagram className="h-3 w-3 shrink-0" />
+            <span>Instagram Direct</span>
+            {accountName && (
+              <>
+                <span className="mx-0.5">·</span>
+                <span className="truncate">{accountName}</span>
+              </>
+            )}
           </p>
         </div>
       </div>
@@ -215,17 +246,17 @@ export function ContactInstagramChat({
                   : "mr-auto bg-muted/50 border border-border/30"
               )}
             >
-              {msg.media_url && (
+              {isRealMedia(msg) && (
                 <div className="mb-1">
-                  {msg.media_type?.startsWith("image") ? (
+                  {msg.media_type?.startsWith("image") || msg.media_url?.match(/\.(jpg|jpeg|png|gif|webp)/i) ? (
                     <img
-                      src={msg.media_url}
+                      src={msg.media_url!}
                       alt="media"
                       className="rounded-lg max-h-48 object-cover"
                     />
                   ) : (
                     <a
-                      href={msg.media_url}
+                      href={msg.media_url!}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 text-xs text-primary underline"

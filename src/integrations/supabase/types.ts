@@ -3024,7 +3024,9 @@ export type Database = {
       }
       instagram_contacts: {
         Row: {
+          avatar_url: string | null
           created_at: string
+          full_name: string | null
           id: string
           instagram_account_id: string
           instagram_user_id: string
@@ -3033,7 +3035,9 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          avatar_url?: string | null
           created_at?: string
+          full_name?: string | null
           id?: string
           instagram_account_id: string
           instagram_user_id: string
@@ -3042,7 +3046,9 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          avatar_url?: string | null
           created_at?: string
+          full_name?: string | null
           id?: string
           instagram_account_id?: string
           instagram_user_id?: string
