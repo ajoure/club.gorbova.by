@@ -1,0 +1,4 @@
+UPDATE public.admin_docs 
+SET content_text = content_text || E'\n\n============================================================\n\nNOTE: Sprint 1 Result (2026-03-04) — /pay migrated to v2\n\n============================================================\n\n- Legacy /pay?product=<legacy products.id> больше не поддерживается; отображается \"Ссылка устарела\".\n- Это касается только ранее разосланных ссылок; новые оплаты работают через v2 /pay?product=<products_v2.id> и/или через admin payment link.\n- Решение по старым ссылкам: ручная переотправка при обращении клиента.\n- Fallback на legacy products удалён из bepaid-create-token.\n- DoD подтверждён: orders_v2 + payments_v2 создаются корректно через v2 flow.\n',
+    updated_at = now()
+WHERE id = '7b140bf6-d11a-4175-bd97-0b3f75583dcb';
