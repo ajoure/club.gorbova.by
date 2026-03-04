@@ -117,7 +117,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       .eq('currency', 'BYN')
       .eq('final_price', amountByn)
       .filter('meta->>payment_flow', 'eq', paymentFlow)
+      .is('meta->>checkout_expired', null)
       .gte('created_at', new Date(Date.now() - 3 * 86400000).toISOString())
+      .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
 
@@ -144,6 +146,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             try {
               const tokenData = await tokenCheckResp.json();
               const checkoutStatus = tokenData?.checkout?.status;
+              console.log('[create-payment-checkout] Token check response:', { token: existingToken?.slice(-8), checkoutStatus, keys: Object.keys(tokenData?.checkout || {}) });
               // Alive ONLY if status is known and NOT expired/failed/error
               tokenAlive = !!checkoutStatus && !['expired', 'failed', 'error'].includes(checkoutStatus);
               if (!tokenAlive) {
@@ -367,7 +370,9 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       .eq('currency', 'BYN')
       .eq('final_price', amountByn)
       .filter('meta->>payment_flow', 'eq', paymentFlow)
+      .is('meta->>checkout_expired', null)
       .gte('created_at', new Date(Date.now() - 3 * 86400000).toISOString())
+      .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
 
