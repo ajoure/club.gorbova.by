@@ -95,6 +95,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   const effectiveOrigin = origin || 'https://club.gorbova.by';
   const actorUserId = actor_user_id || null;
   const effectiveActorType = actor_type || 'system';
+  // audit_logs CHECK constraint allows only 'user' | 'system'; map 'admin' → 'user'
+  const auditActorType = effectiveActorType === 'admin' ? 'user' : effectiveActorType;
 
   // Determine payment_flow based on actor_type and payment_type
   const paymentFlow = payment_type === 'one_time'
@@ -171,7 +173,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           console.log('[create-payment-checkout] Reusing existing pending one_time order (token alive):', existingOrder.id);
 
           await supabase.from('audit_logs').insert({
-            actor_type: effectiveActorType,
+            actor_type: auditActorType,
             actor_user_id: actorUserId,
             action: 'payment_checkout.reused',
             actor_label: 'payment_checkout',
@@ -199,7 +201,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         }).eq('id', existingOrder.id).is('meta->>checkout_expired', null);
 
         await supabase.from('audit_logs').insert({
-          actor_type: effectiveActorType,
+          actor_type: auditActorType,
           actor_user_id: actorUserId,
           action: 'payment_checkout.token_expired',
           actor_label: 'payment_checkout',
@@ -323,7 +325,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     // Audit log
     await supabase.from('audit_logs').insert({
-      actor_type: effectiveActorType,
+      actor_type: auditActorType,
       actor_user_id: actorUserId,
       target_user_id: user_id,
       action: `${effectiveActorType}.payment_link.created`,
@@ -405,7 +407,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           console.log('[create-payment-checkout] Reusing existing pending subscription order (URL alive):', existingSubOrder.id);
 
           await supabase.from('audit_logs').insert({
-            actor_type: effectiveActorType,
+            actor_type: auditActorType,
             actor_user_id: actorUserId,
             action: 'payment_checkout.reused',
             actor_label: 'payment_checkout',
@@ -434,7 +436,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         }).eq('id', existingSubOrder.id).is('meta->>checkout_expired', null);
 
         await supabase.from('audit_logs').insert({
-          actor_type: effectiveActorType,
+          actor_type: auditActorType,
           actor_user_id: actorUserId,
           action: 'payment_checkout.token_expired',
           actor_label: 'payment_checkout',
@@ -582,7 +584,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     // Audit log
     await supabase.from('audit_logs').insert({
-      actor_type: effectiveActorType,
+      actor_type: auditActorType,
       actor_user_id: actorUserId,
       target_user_id: user_id,
       action: `${effectiveActorType}.payment_link.created`,
