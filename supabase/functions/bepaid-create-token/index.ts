@@ -211,28 +211,12 @@ Deno.serve(async (req) => {
         isV2: true,
       };
     } else {
-      // Fallback to legacy products table
-      const { data: product, error: productError } = await supabase
-        .from('products')
-        .select('*')
-        .eq('id', productId)
-        .eq('is_active', true)
-        .maybeSingle();
-      
-      if (product) {
-        console.log('Found product in legacy products table:', product.name);
-        productInfo = {
-          id: product.id,
-          name: product.name,
-          price: product.price_byn,
-          currency: product.currency,
-          isV2: false,
-        };
-      }
+      console.warn('Product not found in products_v2:', productId);
+      // Legacy products table fallback removed — all products must exist in products_v2
     }
     
     if (!productInfo) {
-      console.error('Product not found in either products_v2 or products table:', productId);
+      console.error('Product not found in products_v2:', productId);
       return new Response(
         JSON.stringify({ success: false, error: 'Product not found' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
