@@ -14,6 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_docs: {
+        Row: {
+          content_text: string
+          created_at: string
+          created_by: string | null
+          id: string
+          meta: Json | null
+          section_key: string
+          status: string
+          updated_at: string
+          updated_by: string | null
+          version_label: string
+        }
+        Insert: {
+          content_text?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          meta?: Json | null
+          section_key: string
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          version_label: string
+        }
+        Update: {
+          content_text?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          meta?: Json | null
+          section_key?: string
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          version_label?: string
+        }
+        Relationships: []
+      }
       admin_menu_settings: {
         Row: {
           created_at: string | null
