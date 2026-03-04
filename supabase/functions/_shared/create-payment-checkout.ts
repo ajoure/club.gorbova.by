@@ -172,14 +172,15 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           const existingUrl = `https://checkout.bepaid.by/v2/checkout?token=${existingToken}`;
           console.log('[create-payment-checkout] Reusing existing pending one_time order (token alive):', existingOrder.id);
 
-          await supabase.from('audit_logs').insert({
-            actor_type: auditActorType,
-            actor_user_id: actorUserId,
+          const { error: auditReusedErr } = await supabase.from('audit_logs').insert({
+            actor_type: 'system',
+            actor_user_id: null,
             action: 'payment_checkout.reused',
             actor_label: 'payment_checkout',
             created_at: new Date().toISOString(),
             meta: { reused_order_id: existingOrder.id, payment_type: 'one_time', reuse_reason: 'pending_dedup' },
           });
+          if (auditReusedErr) console.error('[payment_checkout] audit insert failed', { action: 'payment_checkout.reused', order_id: existingOrder.id, payment_type: 'one_time', error: auditReusedErr });
 
           return {
             success: true,
@@ -191,7 +192,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
         // Token expired/invalid — mark meta (add-only, no status change) and fall through to create new
         console.log('[create-payment-checkout] Token expired for one_time order, reason:', expiredReason, ', will create new:', existingOrder.id);
-        await supabase.from('orders_v2').update({
+        const { error: metaExpErr } = await supabase.from('orders_v2').update({
           meta: {
             ...existingMeta,
             checkout_expired: true,
@@ -199,15 +200,17 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             checkout_expired_reason: expiredReason ?? 'token_invalid_or_unreachable',
           },
         }).eq('id', existingOrder.id).is('meta->>checkout_expired', null);
+        if (metaExpErr) console.error('[payment_checkout] order meta update failed', { order_id: existingOrder.id, reason: expiredReason, error: metaExpErr });
 
-        await supabase.from('audit_logs').insert({
-          actor_type: auditActorType,
-          actor_user_id: actorUserId,
+        const { error: auditExpErr } = await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
           action: 'payment_checkout.token_expired',
           actor_label: 'payment_checkout',
           created_at: new Date().toISOString(),
           meta: { order_id: existingOrder.id, payment_type: 'one_time', reason: expiredReason ?? 'token_invalid_or_unreachable' },
         });
+        if (auditExpErr) console.error('[payment_checkout] audit insert failed', { action: 'payment_checkout.token_expired', order_id: existingOrder.id, payment_type: 'one_time', error: auditExpErr });
         // Fall through — create new order + checkout below
       }
     }
@@ -306,7 +309,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         status: checkoutResponse.status,
         result: checkoutResult,
       });
-      await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
+      const { error: failErr1 } = await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
+      if (failErr1) console.error('[payment_checkout] order status→failed update failed', { order_id: order.id, payment_type: 'one_time', error: failErr1 });
       return {
         success: false,
         error: checkoutResult.message || checkoutResult.errors?.base?.[0] || 'bePaid checkout creation failed',
@@ -316,19 +320,21 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     const redirectUrl = checkoutResult.checkout.redirect_url;
 
     // PATCH RENEWAL+PAYMENTS.1 C3: Meta MERGE (not overwrite) after checkout token
-    await supabase.from('orders_v2').update({
+    const { error: metaMergeErr } = await supabase.from('orders_v2').update({
       meta: {
         ...orderMeta,
         bepaid_checkout_token: checkoutResult.checkout.token,
       },
     }).eq('id', order.id);
+    if (metaMergeErr) console.error('[payment_checkout] order meta merge failed', { order_id: order.id, payment_type: 'one_time', error: metaMergeErr });
 
     // Audit log
-    await supabase.from('audit_logs').insert({
+    const { error: auditCreatedErr1 } = await supabase.from('audit_logs').insert({
       actor_type: auditActorType,
       actor_user_id: actorUserId,
       target_user_id: user_id,
       action: `${effectiveActorType}.payment_link.created`,
+      created_at: new Date().toISOString(),
       meta: {
         payment_type: 'one_time',
         order_id: order.id,
@@ -337,6 +343,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         tariff_name: tariff.name,
       },
     });
+    if (auditCreatedErr1) console.error('[payment_checkout] audit insert failed', { action: 'payment_link.created', order_id: order.id, payment_type: 'one_time', error: auditCreatedErr1 });
 
     return {
       success: true,
@@ -383,7 +390,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       if (reusableCheckoutUrl && typeof reusableCheckoutUrl === 'string' && reusableCheckoutUrl.startsWith('http')) {
         // PATCH-PAYLINK: Validate checkout URL before reuse (GET with timeout)
         let checkoutAlive = false;
-        let subExpiredReason = 'checkout_url_invalid_or_expired'; // default
+        let subExpiredReason: string | null = null;
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 6000); // 6s timeout
@@ -393,27 +400,42 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             signal: controller.signal,
           });
           clearTimeout(timeout);
-          // Alive only if 200 AND not an HTML error/expired page
-          checkoutAlive = checkResp.status === 200
-            && !String(checkResp.headers.get('content-type') || '').includes('text/html');
+          if (checkResp.status === 200) {
+            const ct = String(checkResp.headers.get('content-type') || '');
+            if (ct.includes('text/html')) {
+              // HTML page = expired/error page from bePaid
+              checkoutAlive = false;
+              subExpiredReason = 'checkout_url_html_expired_page';
+            } else {
+              checkoutAlive = true;
+            }
+          } else {
+            checkoutAlive = false;
+            subExpiredReason = 'checkout_url_http_' + checkResp.status;
+          }
         } catch (err) {
           // Network error / timeout — treat as expired
           console.log('[create-payment-checkout] Subscription checkout URL validation failed:', err);
           subExpiredReason = 'validation_timeout_or_network';
+        }
+        // Fallback reason if somehow null and not alive
+        if (!checkoutAlive && !subExpiredReason) {
+          subExpiredReason = 'checkout_url_invalid_or_expired';
         }
 
         if (checkoutAlive) {
           // Checkout URL alive — reuse
           console.log('[create-payment-checkout] Reusing existing pending subscription order (URL alive):', existingSubOrder.id);
 
-          await supabase.from('audit_logs').insert({
-            actor_type: auditActorType,
-            actor_user_id: actorUserId,
+          const { error: auditSubReusedErr } = await supabase.from('audit_logs').insert({
+            actor_type: 'system',
+            actor_user_id: null,
             action: 'payment_checkout.reused',
             actor_label: 'payment_checkout',
             created_at: new Date().toISOString(),
             meta: { reused_order_id: existingSubOrder.id, payment_type: 'subscription', reuse_reason: 'pending_dedup' },
           });
+          if (auditSubReusedErr) console.error('[payment_checkout] audit insert failed', { action: 'payment_checkout.reused', order_id: existingSubOrder.id, payment_type: 'subscription', error: auditSubReusedErr });
 
           return {
             success: true,
@@ -426,7 +448,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         // Checkout URL expired — mark meta (add-only) and fall through
         console.log('[create-payment-checkout] Subscription checkout URL expired, reason:', subExpiredReason, ', will create new:', existingSubOrder.id);
         const existingSubMeta = (existingSubOrder.meta || {}) as Record<string, any>;
-        await supabase.from('orders_v2').update({
+        const { error: subMetaExpErr } = await supabase.from('orders_v2').update({
           meta: {
             ...existingSubMeta,
             checkout_expired: true,
@@ -434,15 +456,17 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             checkout_expired_reason: subExpiredReason,
           },
         }).eq('id', existingSubOrder.id).is('meta->>checkout_expired', null);
+        if (subMetaExpErr) console.error('[payment_checkout] order meta update failed', { order_id: existingSubOrder.id, reason: subExpiredReason, error: subMetaExpErr });
 
-        await supabase.from('audit_logs').insert({
-          actor_type: auditActorType,
-          actor_user_id: actorUserId,
+        const { error: auditSubExpErr } = await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
           action: 'payment_checkout.token_expired',
           actor_label: 'payment_checkout',
           created_at: new Date().toISOString(),
           meta: { order_id: existingSubOrder.id, payment_type: 'subscription', reason: subExpiredReason },
         });
+        if (auditSubExpErr) console.error('[payment_checkout] audit insert failed', { action: 'payment_checkout.token_expired', order_id: existingSubOrder.id, payment_type: 'subscription', error: auditSubExpErr });
       } else {
         // No valid checkout_url — fall through to create new order+subscription
         console.log('[create-payment-checkout] Found pending sub order but no valid checkout_url, creating new');
@@ -539,7 +563,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         status: bepaidResponse.status,
         errors: bepaidResult.errors || bepaidResult.message,
       });
-      await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
+      const { error: failErr2 } = await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
+      if (failErr2) console.error('[payment_checkout] order status→failed update failed', { order_id: order.id, payment_type: 'subscription', error: failErr2 });
       return {
         success: false,
         error: bepaidResult.message || bepaidResult.errors?.base?.[0] || 'bePaid subscription creation failed',
@@ -552,7 +577,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
     if (!bepaidSubId || !redirectUrl) {
       console.error('[create-payment-checkout] No subscription ID or redirect URL in bePaid response');
-      await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
+      const { error: failErr3 } = await supabase.from('orders_v2').update({ status: 'failed' }).eq('id', order.id);
+      if (failErr3) console.error('[payment_checkout] order status→failed update failed', { order_id: order.id, payment_type: 'subscription', error: failErr3 });
       return { success: false, error: 'bePaid did not return a subscription URL' };
     }
 
@@ -583,11 +609,12 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     }
 
     // Audit log
-    await supabase.from('audit_logs').insert({
+    const { error: auditCreatedErr2 } = await supabase.from('audit_logs').insert({
       actor_type: auditActorType,
       actor_user_id: actorUserId,
       target_user_id: user_id,
       action: `${effectiveActorType}.payment_link.created`,
+      created_at: new Date().toISOString(),
       meta: {
         payment_type: 'subscription',
         order_id: order.id,
@@ -597,6 +624,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         tariff_name: tariff.name,
       },
     });
+    if (auditCreatedErr2) console.error('[payment_checkout] audit insert failed', { action: 'payment_link.created', order_id: order.id, payment_type: 'subscription', error: auditCreatedErr2 });
 
     return {
       success: true,
