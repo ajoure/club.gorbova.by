@@ -6023,6 +6023,7 @@ export type Database = {
           name: string
           payment_disclaimer_text: string | null
           primary_domain: string | null
+          public_id: string | null
           public_subtitle: string | null
           public_title: string | null
           slug: string | null
@@ -6043,6 +6044,7 @@ export type Database = {
           name: string
           payment_disclaimer_text?: string | null
           primary_domain?: string | null
+          public_id?: string | null
           public_subtitle?: string | null
           public_title?: string | null
           slug?: string | null
@@ -6063,6 +6065,7 @@ export type Database = {
           name?: string
           payment_disclaimer_text?: string | null
           primary_domain?: string | null
+          public_id?: string | null
           public_subtitle?: string | null
           public_title?: string | null
           slug?: string | null
@@ -6411,6 +6414,24 @@ export type Database = {
           raw_data?: Json
           reason?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      public_id_sequences: {
+        Row: {
+          entity_type: string
+          last_value: number
+          prefix: string
+        }
+        Insert: {
+          entity_type: string
+          last_value?: number
+          prefix: string
+        }
+        Update: {
+          entity_type?: string
+          last_value?: number
+          prefix?: string
         }
         Relationships: []
       }
@@ -10617,10 +10638,23 @@ export type Database = {
         }
         Returns: undefined
       }
+      next_public_id: { Args: { p_entity_type: string }; Returns: string }
       norm_email: { Args: { _val: string }; Returns: string }
       norm_phone: { Args: { _val: string }; Returns: string }
       norm_tg_username: { Args: { _val: string }; Returns: string }
       normalize_card_brand: { Args: { _brand: string }; Returns: string }
+      products_bulk_delete_dryrun: {
+        Args: { product_ids: string[] }
+        Returns: {
+          can_delete: boolean
+          product_id: string
+          reasons: string[]
+        }[]
+      }
+      products_bulk_delete_execute: {
+        Args: { actor_label?: string; product_ids: string[] }
+        Returns: Json
+      }
       queue_telegram_notification: {
         Args: {
           p_club_id?: string

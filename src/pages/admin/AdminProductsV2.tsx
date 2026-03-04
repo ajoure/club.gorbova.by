@@ -8,17 +8,22 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText, FolderTree, CornerDownRight } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText, FolderTree, CornerDownRight, Link, Eye, EyeOff, Archive } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { useProductsV2, useCreateProductV2, useUpdateProductV2, useDeleteProductV2 } from "@/hooks/useProductsV2";
 import { useProductRelationCounts } from "@/hooks/useProductRelations";
+import { useBulkDeleteDryRun, useBulkDeleteExecute, useBulkStatusChange, type DryRunResult } from "@/hooks/useProductsBulkActions";
 import { useNavigate } from "react-router-dom";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useDragSelect } from "@/hooks/useDragSelect";
+import { SelectionBox } from "@/components/admin/SelectionBox";
+import { copyToClipboard, getProductPayUrl } from "@/utils/clipboardUtils";
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Активный",
@@ -33,7 +38,6 @@ const STATUS_VARIANTS: Record<string, "default" | "secondary" | "destructive" | 
 };
 
 interface ProductFormData {
-  code: string;
   name: string;
   description: string;
   status: string;
@@ -41,7 +45,6 @@ interface ProductFormData {
 }
 
 const defaultFormData: ProductFormData = {
-  code: "",
   name: "",
   description: "",
   status: "active",
@@ -57,6 +60,9 @@ export default function AdminProductsV2() {
   const createMutation = useCreateProductV2();
   const updateMutation = useUpdateProductV2();
   const deleteMutation = useDeleteProductV2();
+  const bulkStatusMutation = useBulkStatusChange();
+  const bulkDeleteDryRun = useBulkDeleteDryRun();
+  const bulkDeleteExecute = useBulkDeleteExecute();
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<string | null>(null);
@@ -65,11 +71,14 @@ export default function AdminProductsV2() {
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 200);
 
+  // Bulk delete dry-run dialog
+  const [dryRunResults, setDryRunResults] = useState<DryRunResult[] | null>(null);
+  const [showDryRunDialog, setShowDryRunDialog] = useState(false);
+
   const handleOpenDialog = (product?: any) => {
     if (product) {
       setEditingProduct(product.id);
       setFormData({
-        code: product.code,
         name: product.name,
         description: product.description || "",
         status: product.status || "active",
@@ -89,13 +98,12 @@ export default function AdminProductsV2() {
   };
 
   const handleSubmit = async () => {
-    if (!formData.code || !formData.name) {
-      toast.error("Заполните код и название");
+    if (!formData.name) {
+      toast.error("Заполните название");
       return;
     }
 
     const payload: any = {
-      code: formData.code,
       name: formData.name,
       description: formData.description || null,
       status: formData.status,
@@ -103,9 +111,12 @@ export default function AdminProductsV2() {
     };
 
     if (editingProduct) {
+      // On update: don't touch code
       await updateMutation.mutateAsync({ id: editingProduct, ...payload });
       handleCloseDialog();
     } else {
+      // On create: auto-generate code
+      payload.code = 'prd_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12);
       const newProduct = await createMutation.mutateAsync(payload);
       handleCloseDialog();
       if (newProduct?.id) {
@@ -120,11 +131,6 @@ export default function AdminProductsV2() {
       await deleteMutation.mutateAsync(deleteConfirmId);
       setDeleteConfirmId(null);
     }
-  };
-
-  const copyProductId = (id: string) => {
-    navigator.clipboard.writeText(id);
-    toast.success("ID скопирован");
   };
 
   // Counts
@@ -165,8 +171,8 @@ export default function AdminProductsV2() {
     const q = debouncedSearch.toLowerCase();
     return tabFiltered.filter(p =>
       p.name?.toLowerCase().includes(q) ||
-      p.code?.toLowerCase().includes(q) ||
-      (p.description as string | null)?.toLowerCase().includes(q)
+      (p.description as string | null)?.toLowerCase().includes(q) ||
+      (p as any).primary_domain?.toLowerCase().includes(q)
     );
   }, [tabFiltered, debouncedSearch]);
 
@@ -183,9 +189,65 @@ export default function AdminProductsV2() {
     },
   });
 
+  // Drag-select (Contacts-like)
+  const {
+    selectedIds,
+    isDragging,
+    selectionBox,
+    registerItemRef,
+    toggleSelection,
+    handleRangeSelect,
+    selectAll,
+    clearSelection,
+    handleMouseDown,
+    selectedCount,
+    hasSelection,
+  } = useDragSelect({
+    items: sortedData,
+    getItemId: (item: any) => item.id,
+  });
+
+  // Bulk actions
+  const handleBulkStatus = useCallback(async (status: string) => {
+    const ids = Array.from(selectedIds);
+    await bulkStatusMutation.mutateAsync({ ids, status });
+    clearSelection();
+  }, [selectedIds, bulkStatusMutation, clearSelection]);
+
+  const handleBulkDeleteStart = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    const result = await bulkDeleteDryRun.mutateAsync(ids);
+    setDryRunResults(result);
+    setShowDryRunDialog(true);
+  }, [selectedIds, bulkDeleteDryRun]);
+
+  const handleBulkDeleteExecute = useCallback(async () => {
+    if (!dryRunResults) return;
+    const safeIds = dryRunResults.filter(r => r.can_delete).map(r => r.product_id);
+    if (safeIds.length === 0) {
+      toast.error("Нет продуктов, которые можно безопасно удалить");
+      setShowDryRunDialog(false);
+      return;
+    }
+    await bulkDeleteExecute.mutateAsync(safeIds);
+    setShowDryRunDialog(false);
+    setDryRunResults(null);
+    clearSelection();
+  }, [dryRunResults, bulkDeleteExecute, clearSelection]);
+
+  const handleCopyLink = useCallback(() => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 1) {
+      copyToClipboard(getProductPayUrl(ids[0]), "Ссылка на оплату скопирована");
+    } else {
+      const links = ids.map(id => getProductPayUrl(id)).join("\n");
+      copyToClipboard(links, `Скопировано ${ids.length} ссылок`);
+    }
+  }, [selectedIds]);
+
   return (
     <AdminLayout>
-      <div className="space-y-4">
+      <div className="space-y-4" onMouseDown={handleMouseDown}>
         {/* Pill-style filter tabs */}
         <div className="px-1 pt-1 pb-1.5 shrink-0">
           <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
@@ -263,6 +325,15 @@ export default function AdminProductsV2() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={selectedCount > 0 && selectedCount === sortedData.length}
+                      onCheckedChange={(checked) => {
+                        if (checked) selectAll();
+                        else clearSelection();
+                      }}
+                    />
+                  </TableHead>
                   <SortableTableHead sortKey="name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
                     Продукт
                   </SortableTableHead>
@@ -279,15 +350,40 @@ export default function AdminProductsV2() {
                 {sortedData.map((product: any) => {
                   const isParent = relationCounts?.parentIds?.has(product.id);
                   const isChild = relationCounts?.childIds?.has(product.id);
+                  const isSelected = selectedIds.has(product.id);
                   return (
                     <TableRow
                       key={product.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => navigate(`/admin/products-v2/${product.id}`)}
+                      ref={(el) => registerItemRef(product.id, el)}
+                      className={`cursor-pointer hover:bg-muted/50 ${isSelected ? "bg-primary/5" : ""}`}
+                      data-state={isSelected ? "selected" : undefined}
+                      onClick={(e) => {
+                        const target = e.target as HTMLElement;
+                        if (target.closest("button, [role=checkbox], a")) return;
+                        if (e.shiftKey) {
+                          handleRangeSelect(product.id, true);
+                        } else if (e.ctrlKey || e.metaKey) {
+                          toggleSelection(product.id, true);
+                        } else {
+                          navigate(`/admin/products-v2/${product.id}`);
+                        }
+                      }}
                     >
+                      <TableCell className="w-10">
+                        <Checkbox
+                          checked={isSelected}
+                          onCheckedChange={() => toggleSelection(product.id, false)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <span className="font-medium text-sm">{product.name}</span>
+                          <div className="flex flex-col">
+                            <span className="font-medium text-sm">{product.name}</span>
+                            {product.public_id && (
+                              <span className="text-[10px] text-muted-foreground">{product.public_id}</span>
+                            )}
+                          </div>
                           {isParent && (
                             <TooltipProvider>
                               <Tooltip>
@@ -336,9 +432,34 @@ export default function AdminProductsV2() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-0.5">
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); copyProductId(product.id); }}>
-                            <Copy className="h-3.5 w-3.5" />
-                          </Button>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => {
+                                  e.stopPropagation();
+                                  copyToClipboard(getProductPayUrl(product.id), "Ссылка на оплату скопирована");
+                                }}>
+                                  <Link className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Копировать ссылку на оплату</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => {
+                                  e.stopPropagation();
+                                  copyToClipboard(product.id, "UUID скопирован");
+                                }}>
+                                  <Copy className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {product.public_id ? `${product.public_id} — копировать UUID` : "Копировать UUID"}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleOpenDialog(product); }}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
@@ -355,6 +476,62 @@ export default function AdminProductsV2() {
             </Table>
           )}
         </GlassCard>
+
+        {/* Selection box overlay */}
+        {isDragging && selectionBox && (
+          <SelectionBox
+            startX={selectionBox.startX}
+            startY={selectionBox.startY}
+            endX={selectionBox.endX}
+            endY={selectionBox.endY}
+          />
+        )}
+
+        {/* Bulk Actions Bar */}
+        {hasSelection && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4">
+            <div className="bg-background border rounded-xl shadow-lg px-4 py-3 flex items-center gap-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                  {selectedCount}
+                </div>
+                <span className="text-muted-foreground">
+                  продуктов выбрано из {sortedData.length}
+                </span>
+              </div>
+              <div className="h-6 w-px bg-border" />
+              {selectedCount < sortedData.length && (
+                <Button variant="ghost" size="sm" onClick={selectAll} className="gap-2">
+                  Выбрать все
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" className="gap-1.5 text-primary" onClick={() => handleBulkStatus("active")}>
+                <Eye className="h-4 w-4" />
+                Активные
+              </Button>
+              <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => handleBulkStatus("hidden")}>
+                <EyeOff className="h-4 w-4" />
+                Скрытые
+              </Button>
+              <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => handleBulkStatus("archived")}>
+                <Archive className="h-4 w-4" />
+                Архив
+              </Button>
+              <Button variant="ghost" size="sm" className="gap-1.5" onClick={handleCopyLink}>
+                <Link className="h-4 w-4" />
+                Ссылка
+              </Button>
+              <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleBulkDeleteStart}>
+                <Trash2 className="h-4 w-4" />
+                Удалить
+              </Button>
+              <div className="h-6 w-px bg-border" />
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={clearSelection}>
+                <span className="text-xs">✕</span>
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Create/Edit Dialog */}
@@ -372,23 +549,13 @@ export default function AdminProductsV2() {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Код *</Label>
-                <Input
-                  placeholder="gorbova_club"
-                  value={formData.code}
-                  onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Название *</Label>
-                <Input
-                  placeholder="Gorbova Club"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                />
-              </div>
+            <div className="space-y-2">
+              <Label>Название *</Label>
+              <Input
+                placeholder="Gorbova Club"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              />
             </div>
 
             <div className="space-y-2">
@@ -433,7 +600,7 @@ export default function AdminProductsV2() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation */}
+      {/* Single Delete Confirmation */}
       <Dialog open={!!deleteConfirmId} onOpenChange={() => setDeleteConfirmId(null)}>
         <DialogContent>
           <DialogHeader>
@@ -443,6 +610,52 @@ export default function AdminProductsV2() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>Отмена</Button>
             <Button variant="destructive" onClick={handleDelete} disabled={deleteMutation.isPending}>Удалить</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Delete Dry-Run Dialog */}
+      <Dialog open={showDryRunDialog} onOpenChange={setShowDryRunDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Массовое удаление продуктов</DialogTitle>
+            <DialogDescription>Результат проверки безопасности удаления</DialogDescription>
+          </DialogHeader>
+          {dryRunResults && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <Badge variant="default" className="text-xs">
+                  Можно удалить: {dryRunResults.filter(r => r.can_delete).length}
+                </Badge>
+                <Badge variant="destructive" className="text-xs">
+                  Нельзя удалить: {dryRunResults.filter(r => !r.can_delete).length}
+                </Badge>
+              </div>
+              {dryRunResults.filter(r => !r.can_delete).length > 0 && (
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  <p className="text-xs font-medium text-muted-foreground">Причины блокировки:</p>
+                  {dryRunResults.filter(r => !r.can_delete).map(r => {
+                    const prod = products?.find((p: any) => p.id === r.product_id);
+                    return (
+                      <div key={r.product_id} className="text-xs border rounded p-2">
+                        <span className="font-medium">{(prod as any)?.name || r.product_id}</span>
+                        <span className="text-muted-foreground ml-1">— {r.reasons.join(", ")}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDryRunDialog(false)}>Отмена</Button>
+            <Button
+              variant="destructive"
+              onClick={handleBulkDeleteExecute}
+              disabled={bulkDeleteExecute.isPending || !dryRunResults?.some(r => r.can_delete)}
+            >
+              Удалить безопасные ({dryRunResults?.filter(r => r.can_delete).length || 0})
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
