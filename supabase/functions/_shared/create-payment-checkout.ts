@@ -125,7 +125,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       if (existingToken) {
         // PATCH-PAYLINK: Validate token before reuse (GET with timeout)
         let tokenAlive = false;
-        let expiredReason = 'token_not_found_or_invalid'; // default
+        let expiredReason: string | null = null;
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 6000); // 6s timeout
@@ -145,12 +145,16 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
               // Alive ONLY if status is known and NOT expired/failed/error
               tokenAlive = !!checkoutStatus && !['expired', 'failed', 'error'].includes(checkoutStatus);
               if (!tokenAlive) {
-                expiredReason = checkoutStatus ? 'checkout_status_expired' : 'token_not_found_or_invalid';
+                if (!checkoutStatus) {
+                  expiredReason = 'token_invalid_or_unreachable';
+                } else {
+                  expiredReason = 'checkout_status_expired';
+                }
               }
             } catch {
               // JSON parse failed — cannot confirm alive, regen
               tokenAlive = false;
-              expiredReason = 'token_not_found_or_invalid';
+              expiredReason = 'token_invalid_or_unreachable';
             }
           } else {
             expiredReason = 'token_not_found_or_invalid';
@@ -190,7 +194,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             ...existingMeta,
             checkout_expired: true,
             checkout_expired_at: new Date().toISOString(),
-            checkout_expired_reason: expiredReason,
+            checkout_expired_reason: expiredReason ?? 'token_invalid_or_unreachable',
           },
         }).eq('id', existingOrder.id).is('meta->>checkout_expired', null);
 
@@ -200,7 +204,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           action: 'payment_checkout.token_expired',
           actor_label: 'payment_checkout',
           created_at: new Date().toISOString(),
-          meta: { order_id: existingOrder.id, payment_type: 'one_time', reason: expiredReason },
+          meta: { order_id: existingOrder.id, payment_type: 'one_time', reason: expiredReason ?? 'token_invalid_or_unreachable' },
         });
         // Fall through — create new order + checkout below
       }
