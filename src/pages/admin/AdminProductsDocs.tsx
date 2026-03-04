@@ -4,9 +4,10 @@ import { AdminLayout } from "@/components/layout/AdminLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Copy, Check, FileText, Plus, Loader2 } from "lucide-react";
+import { ArrowLeft, Copy, Check, FileText, Plus, Loader2, ShieldCheck } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
 interface DocVersion {
@@ -21,7 +22,8 @@ interface DocVersion {
 
 export default function AdminProductsDocs() {
   const navigate = useNavigate();
-  const { isSuperAdmin, loading: permLoading } = usePermissions();
+  const { user } = useAuth();
+  const { isSuperAdmin, loading: permLoading, userRoles, permissions } = usePermissions();
   const [versions, setVersions] = useState<DocVersion[]>([]);
   const [selectedVersion, setSelectedVersion] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -268,6 +270,23 @@ export default function AdminProductsDocs() {
             Версия: {currentDoc.version_label} · Статус: {currentDoc.status} ·
             Обновлено: {new Date(currentDoc.updated_at).toLocaleString("ru-RU")}
           </div>
+        )}
+
+        {/* RBAC Debug (super_admin only) */}
+        {!permLoading && isSuperAdmin() && (
+          <GlassCard className="p-4 mt-6 border-dashed border-primary/20">
+            <div className="flex items-center gap-2 mb-2">
+              <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">RBAC Debug</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-muted-foreground font-mono">
+              <div>user_id: <span className="text-foreground">{user?.id || "—"}</span></div>
+              <div>permLoading: <span className="text-foreground">{String(permLoading)}</span></div>
+              <div>isSuperAdmin(): <span className={isSuperAdmin() ? "text-green-500" : "text-destructive"}>{String(isSuperAdmin())}</span></div>
+              <div>roles: <span className="text-foreground">{userRoles.map(r => r.code).join(", ") || "—"}</span></div>
+              <div className="sm:col-span-2">permissions: <span className="text-foreground">{permissions.length > 0 ? permissions.join(", ") : "—"}</span></div>
+            </div>
+          </GlassCard>
         )}
       </div>
     </AdminLayout>
